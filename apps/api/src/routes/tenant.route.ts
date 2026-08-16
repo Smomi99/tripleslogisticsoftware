@@ -5,6 +5,7 @@ import type { ApiSuccess } from '@ff/shared';
 import { HttpError } from '../lib/http-error';
 import { resolveTenant } from '../middleware/resolve-tenant';
 import { authRouter } from './auth.route';
+import { portRouter } from './port.route';
 
 /**
  * Every tenant-scoped route mounts under this router, so tenant resolution
@@ -18,6 +19,10 @@ tenantRouter.use(resolveTenant);
 // Sign-in happens before there is a session, so this sits inside the tenant
 // router but outside `authenticate`.
 tenantRouter.use('/auth', authRouter);
+
+// Settings. Each router authenticates and carries a requirePermission guard on
+// every route — §7 calls a route without one a bug.
+tenantRouter.use('/setting/ports', portRouter);
 
 interface TenantContextPayload {
   id: string;

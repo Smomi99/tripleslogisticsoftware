@@ -5,7 +5,7 @@ import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { hash } from '@node-rs/argon2';
 
-import { CODE_PREFIX, formatCode, PERMISSIONS } from '@ff/shared';
+import { CODE_PREFIX, formatCode, normalizeUsername, PERMISSIONS } from '@ff/shared';
 
 import { PrismaClient } from '../apps/api/src/generated/prisma/client';
 
@@ -97,7 +97,7 @@ async function seedSystemLookups(): Promise<number> {
  */
 async function seedDevTenant(): Promise<void> {
   const slug = 'demo';
-  const username = 'superadmin';
+  const username = normalizeUsername('superadmin');
   const password = process.env['SEED_SUPERADMIN_PASSWORD'] ?? 'ChangeMe!2026';
 
   const tenant = await prisma.tenant.upsert({
