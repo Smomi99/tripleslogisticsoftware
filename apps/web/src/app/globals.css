@@ -1,0 +1,16 @@
+@import 'tailwindcss';
+
+/*
+ * The "Manifest" design system (CLAUDE.md §12) is built in Phase 4 — its colour
+ * tokens, IBM Plex type scale and shell live here. Nothing below is a design
+ * decision; it is the minimum needed for Phase 0 to render.
+ */
+
+body {
+  background: #f4f6f5;
+  color: #10243a;
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    sans-serif;
+}

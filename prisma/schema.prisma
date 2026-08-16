@@ -1,0 +1,27 @@
+// Freight Forwarding ERP — Prisma schema
+//
+// Models arrive in Phase 1 (CLAUDE.md §13): §5 Settings and §6 CRM, under the
+// conventions in §4 and the multi-tenancy rules in §7A.
+//
+// Conventions every model must follow (CLAUDE.md §4):
+//   - `tenant_id` first, indexed, NOT NULL (exceptions listed in §4 rule 2)
+//   - `id` BIGSERIAL PK, `code` business ID, `is_active`, timestamps,
+//     `created_by`, `updated_by`, `deleted_at` (soft delete only)
+//   - every unique constraint composite with tenant_id (§4 rule 9)
+//   - every FK `onDelete: Restrict`, and pointing within the same tenant (§4 rules 5, 10)
+//   - money and rates `@db.Decimal(18, 4)` — never Float (§4 rule 6)
+//   - a `// client: Table_X` comment above each model mapping it to the client's name
+//
+// Note: in Prisma 7 the datasource URL lives in /prisma.config.ts, not here.
+
+// The generated client is a build artifact, not source. It is emitted next to
+// its only consumer — the API service. The web app never touches the database
+// directly (CLAUDE.md §2: separate API service).
+generator client {
+  provider = "prisma-client"
+  output   = "../apps/api/src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}

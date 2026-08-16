@@ -1,0 +1,23 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ff-erp-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ff_erp
+      POSTGRES_PASSWORD: ff_erp_dev
+      POSTGRES_DB: ff_erp
+      # Deterministic collation so ORDER BY on names is stable across machines.
+      POSTGRES_INITDB_ARGS: '--locale-provider=icu --icu-locale=en-US --encoding=UTF8'
+    ports:
+      - '5432:5432'
+    volumes:
+      - ff-erp-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ff_erp -d ff_erp']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  ff-erp-pgdata:
