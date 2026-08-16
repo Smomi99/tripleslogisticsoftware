@@ -40,6 +40,28 @@ export function errorHandler(
   res: Response,
   _next: NextFunction,
 ): void {
+  // Multer reports its own limits as MulterError; without this they surface as
+  // a bare 500 rather than telling the user their file is too big.
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { name?: string }).name === 'MulterError'
+  ) {
+    const code = (error as { code?: string }).code;
+    const body: ApiFailure = {
+      success: false,
+      error: {
+        code: 'UPLOAD_REJECTED',
+        message:
+          code === 'LIMIT_FILE_SIZE'
+            ? 'That file is larger than 10 MB.'
+            : 'That upload could not be accepted.',
+      },
+    };
+    res.status(400).json(body);
+    return;
+  }
+
   if (error instanceof ZodError) {
     const body: ApiFailure = {
       success: false,

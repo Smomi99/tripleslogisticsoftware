@@ -4,6 +4,7 @@ import type { ApiSuccess } from '@ff/shared';
 
 import { HttpError } from '../lib/http-error';
 import { resolveTenant } from '../middleware/resolve-tenant';
+import { agentRouter } from './agent.route';
 import { authRouter } from './auth.route';
 import { carrierRouter } from './carrier.route';
 import { commodityRouter } from './commodity.route';
@@ -39,6 +40,7 @@ tenantRouter.use('/setting/commodity-categories', commodityRouter);
 
 // CRM.
 tenantRouter.use('/crm/customers', customerRouter);
+tenantRouter.use('/crm/agents', agentRouter);
 
 interface TenantContextPayload {
   id: string;

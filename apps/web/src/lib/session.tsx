@@ -12,7 +12,9 @@ import {
   useState,
 } from 'react';
 
-import { apiRequest, apiRequestWithMeta, type ApiResult } from './api-client';
+import { ApiError, apiRequest, apiRequestWithMeta, type ApiResult } from './api-client';
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 
 /**
  * Client session.
@@ -33,6 +35,18 @@ interface SessionValue {
   authorizedRequest: <T>(path: string, init?: { method?: 'GET' | 'POST' | 'PATCH' | 'PUT'; body?: unknown }) => Promise<T>;
   /** Same, but keeps the §9 `meta` a list screen needs for its pager. */
   authorizedList: <T>(path: string) => Promise<ApiResult<T>>;
+  /**
+   * Multipart upload. Cannot go through apiRequest, which serialises JSON —
+   * but it must still carry the bearer token and the same refresh-and-retry,
+   * which is why it lives here rather than in the calling screen.
+   */
+  authorizedUpload: <T>(path: string, file: File) => Promise<T>;
+  /**
+   * Downloads a bearer-authenticated file. A plain link cannot do this — a
+   * browser navigation carries no Authorization header — so the response is
+   * fetched and handed to a temporary object URL.
+   */
+  authorizedDownload: (path: string, fileName: string) => Promise<void>;
   /** §7 enforcement layer 4: hide what the user cannot reach. */
   can: (permissionKey: string) => boolean;
 }
@@ -145,6 +159,60 @@ export function SessionProvider({
     [withRefresh, tenantSlug],
   );
 
+  const authorizedUpload = useCallback(
+    async <T,>(path: string, file: File): Promise<T> =>
+      withRefresh(async (token) => {
+        const body = new FormData();
+        body.append('file', file);
+        const response = await fetch(`${API_BASE}${path}`, {
+          method: 'POST',
+          credentials: 'include',
+          // Content-Type is deliberately unset: the browser must add the
+          // multipart boundary itself.
+          headers: {
+            'X-Tenant-Slug': tenantSlug,
+            ...(token !== null ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body,
+        });
+        const payload = (await response.json()) as
+          | { success: true; data: T }
+          | { success: false; error: { code: string; message: string } };
+
+        if (!payload.success) {
+          throw new ApiError(response.status, payload.error.code, payload.error.message);
+        }
+        return payload.data;
+      }),
+    [withRefresh, tenantSlug],
+  );
+
+  const authorizedDownload = useCallback(
+    async (path: string, fileName: string): Promise<void> =>
+      withRefresh(async (token) => {
+        const response = await fetch(`${API_BASE}${path}`, {
+          credentials: 'include',
+          headers: {
+            'X-Tenant-Slug': tenantSlug,
+            ...(token !== null ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        });
+        if (!response.ok) {
+          throw new ApiError(response.status, 'DOWNLOAD_FAILED', 'Could not download that file.');
+        }
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = fileName;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+      }),
+    [withRefresh, tenantSlug],
+  );
+
   const signIn = useCallback(
     async (username: string, password: string) => {
       const data = await apiRequest<LoginResponse>('/api/tenant/auth/login', {
@@ -182,8 +250,8 @@ export function SessionProvider({
   );
 
   const value = useMemo<SessionValue>(
-    () => ({ user, status, tenantSlug, signIn, signOut, authorizedRequest, authorizedList, can }),
-    [user, status, tenantSlug, signIn, signOut, authorizedRequest, authorizedList, can],
+    () => ({ user, status, tenantSlug, signIn, signOut, authorizedRequest, authorizedList, authorizedUpload, authorizedDownload, can }),
+    [user, status, tenantSlug, signIn, signOut, authorizedRequest, authorizedList, authorizedUpload, authorizedDownload, can],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

@@ -292,13 +292,30 @@ describe('layer 2 — Postgres RLS, independent of the extension', () => {
     ).rejects.toThrow(/row-level security/i);
   });
 
-  it('grants the app role no DELETE privilege anywhere', async () => {
-    const rows = await owner.$queryRaw<{ count: bigint }[]>`
-      SELECT count(*)::bigint AS count
+  it('grants the app role DELETE on pure join tables and nowhere else', async () => {
+    /*
+     * §4 rule 3 is enforced by privilege, not discipline: ff_app simply cannot
+     * DELETE a business record. The exception is M:N join rows, which have no
+     * is_active or deleted_at to soft-delete with and reference nothing, so
+     * deselecting one can only mean removing it. The list is enumerated so that
+     * granting DELETE on a real table fails this test rather than passing
+     * quietly.
+     */
+    const allowed = [
+      'agent_expert_area',
+      'agent_network_member',
+      'agent_port_coverage',
+      'role_permission',
+      'user_permission',
+    ];
+
+    const rows = await owner.$queryRaw<{ table_name: string }[]>`
+      SELECT table_name
       FROM information_schema.table_privileges
       WHERE grantee = 'ff_app' AND privilege_type = 'DELETE'
+      ORDER BY table_name
     `;
-    expect(rows[0]?.count).toBe(0n);
+    expect(rows.map((r) => r.table_name)).toEqual(allowed);
   });
 
   it('does not own any table, so policies actually bind', async () => {

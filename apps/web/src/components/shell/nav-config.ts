@@ -36,6 +36,7 @@ const ROUTES: Record<string, Route> = {
   'SETTING.VENDOR': '/setting/vendor',
   'SETTING.COMMODITY_CATEGORY': '/setting/commodity',
   'CRM.CUSTOMER': '/crm/customer',
+  'CRM.AGENT': '/crm/agent',
 };
 
 export interface NavItem {
