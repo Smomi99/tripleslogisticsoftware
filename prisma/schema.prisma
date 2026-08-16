@@ -1,22 +1,72 @@
 // Freight Forwarding ERP — Prisma schema
+// Phase 1: §5 Settings + §6 CRM, under §4 conventions and §7A multi-tenancy.
 //
-// Models arrive in Phase 1 (CLAUDE.md §13): §5 Settings and §6 CRM, under the
-// conventions in §4 and the multi-tenancy rules in §7A.
+// ---------------------------------------------------------------------------
+// HOW TO READ THIS FILE
+// ---------------------------------------------------------------------------
+// Every model carries a `// client: Table_X` comment mapping it to the client's
+// own table name (§4 rule 1). Column names are snake_case via @map; Prisma
+// field names stay camelCase so application code reads naturally.
 //
-// Conventions every model must follow (CLAUDE.md §4):
-//   - `tenant_id` first, indexed, NOT NULL (exceptions listed in §4 rule 2)
-//   - `id` BIGSERIAL PK, `code` business ID, `is_active`, timestamps,
-//     `created_by`, `updated_by`, `deleted_at` (soft delete only)
-//   - every unique constraint composite with tenant_id (§4 rule 9)
-//   - every FK `onDelete: Restrict`, and pointing within the same tenant (§4 rules 5, 10)
-//   - money and rates `@db.Decimal(18, 4)` — never Float (§4 rule 6)
-//   - a `// client: Table_X` comment above each model mapping it to the client's name
+// ---------------------------------------------------------------------------
+// TWO TIERS OF DATA (§7A rule 7)
+// ---------------------------------------------------------------------------
+// SYSTEM-CAPABLE tables have a NULLABLE tenant_id. NULL = a system row visible
+// to every tenant; non-null = that tenant's own addition. Tenants may deactivate
+// a system row for themselves via tenant_master_override, never edit it.
+//     port, currency, carrier,
+//     cost_unit, carrier_type, vendor_type, expert_area, network
+//
+// TENANT-OWNED tables have tenant_id NOT NULL. Everything else.
+//
+// This split drives how foreign keys are enforced:
+//   - tenant-owned  -> tenant-owned : COMPOSITE FK (tenant_id, x_id) references
+//     (tenant_id, id). This is the §4 rule 10 guarantee — a join can never
+//     cross a tenant boundary.
+//   - anything -> system-capable : plain single-column FK. A composite FK is
+//     impossible because the parent's tenant_id may be NULL. Visibility is
+//     enforced by RLS instead: (tenant_id IS NULL OR tenant_id = current).
+//
+// ---------------------------------------------------------------------------
+// WHAT THIS SCHEMA DELIBERATELY DOES NOT MODEL
+// ---------------------------------------------------------------------------
+// 1. created_by / updated_by are plain BigInt columns, not Prisma relations.
+//    Modelling them would require ~60 back-relation fields on User for no
+//    practical gain. Their FK constraints are added in the migration SQL.
+// 2. GIN(to_tsvector(...)) search indexes (§4 rule 8) — Prisma cannot express
+//    them; they go in the migration SQL.
+// 3. employee_salary.gross_salary is a Postgres GENERATED ALWAYS column, added
+//    in migration SQL. It is optional here so Prisma never writes it (§6).
+// 4. Partial unique indexes for system rows, e.g. UNIQUE(code) WHERE tenant_id
+//    IS NULL. Postgres treats NULLs as distinct, so §4 rule 9's composite
+//    UNIQUE(tenant_id, code) does NOT stop two system rows sharing a code.
+//    Migration SQL closes that hole.
+//
+// ---------------------------------------------------------------------------
+// RESOLUTIONS APPLIED (spec gaps and conflicts, decided rather than invented)
+// ---------------------------------------------------------------------------
+// A. §7A rule 6 vs rule 7. Rule 6 seeds lookup values per tenant; rule 7 calls
+//    the same tables global. Rule 7 wins: system rows are shared, and tenant
+//    seeding creates only the tenant, its roles, permissions and admin user.
+//    Duplicating ~10,000 ports per tenant is the alternative.
+// B. Currency rates. §5 puts `conversion` on currency, but a global row is not
+//    tenant-editable. `currency.conversion` is the system default; the tenant's
+//    own rates live in the tenant-owned currency_rate_history. Effective rate =
+//    latest tenant row, else the system default.
+// C. Carrier tier. carrier is shared; carrier_pic and carrier_service_port are
+//    tenant-owned, because low_price_position / service_position are this
+//    forwarder's ranking and each forwarder keeps its own contacts.
+// D. audit_log.actor_type added — §4 rule 7's `changed_by` alone cannot
+//    distinguish a tenant user from an impersonating platform_user (§7B).
+// E. Business codes come from CODE_PREFIX in packages/shared/src/codes.ts.
+//    Join tables, 1:1 extensions and infrastructure tables carry no code; the
+//    reasoning is in that file.
+// F. vendor_pic reads as Table_Vendor_Contact_Person. §5 labels it
+//    (Table_Vendor), identical to its parent — a transcription slip; §8 names
+//    the screen Vendor_Contact_Person.
 //
 // Note: in Prisma 7 the datasource URL lives in /prisma.config.ts, not here.
 
-// The generated client is a build artifact, not source. It is emitted next to
-// its only consumer — the API service. The web app never touches the database
-// directly (CLAUDE.md §2: separate API service).
 generator client {
   provider = "prisma-client"
   output   = "../apps/api/src/generated/prisma"
@@ -24,4 +74,1104 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+// ===========================================================================
+// ENUMS — closed sets only (§4 rule 4). Anything the client may extend later
+// is a lookup table instead.
+// ===========================================================================
+
+enum PortType {
+  SEAPORT
+  AIRPORT
+
+  @@map("port_type")
+}
+
+enum CostHeadCategory {
+  SERVICE
+  ADMINISTRATIVE
+
+  @@map("cost_head_category")
+}
+
+enum CustomerType {
+  IMPORTER
+  EXPORTER
+  TRADER
+
+  @@map("customer_type")
+}
+
+enum BusinessArea {
+  INBOUND
+  OUTBOUND
+  BOTH
+
+  @@map("business_area")
+}
+
+enum AgentType {
+  GENERAL
+  EXCLUSIVE
+
+  @@map("agent_type")
+}
+
+enum TenantStatus {
+  TRIAL
+  ACTIVE
+  PAST_DUE
+  SUSPENDED
+  CANCELLED
+
+  @@map("tenant_status")
+}
+
+enum PermissionEffect {
+  ALLOW
+  DENY
+
+  @@map("permission_effect")
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DEACTIVATE
+  REACTIVATE
+
+  @@map("audit_action")
+}
+
+/// Which ID space `audit_log.changed_by` points into. §4 rule 7 fixes the
+/// column list at `changed_by` alone, but §7B requires every impersonation to
+/// be logged — and that actor is a platform_user, not a tenant user, so the
+/// two IDs are indistinguishable without this. SYSTEM covers seeds and jobs.
+enum AuditActorType {
+  USER
+  PLATFORM_USER
+  SYSTEM
+
+  @@map("audit_actor_type")
+}
+
+// ===========================================================================
+// PLATFORM TABLES — no tenant_id (§4 rule 2 exception list)
+// ===========================================================================
+
+/// The customer company. Everything tenant-owned hangs off this row.
+model Tenant {
+  id          BigInt       @id @default(autoincrement())
+  name        String       @db.VarChar(200)
+  /// Subdomain: acme.yourapp.com (§7A rule 5).
+  slug        String       @unique @db.VarChar(63)
+  country     String       @db.VarChar(100)
+  timezone    String       @default("Asia/Dhaka") @db.VarChar(64)
+  /// Base currency for display (§9). Plain FK — currency is system-capable.
+  currencyId  BigInt?      @map("currency_id")
+  status      TenantStatus @default(TRIAL)
+  trialEndsAt DateTime?    @map("trial_ends_at") @db.Timestamptz(6)
+  /// Storage key only, never the file itself (§2).
+  logoFile    String?      @map("logo_file") @db.VarChar(500)
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt   DateTime?    @map("deleted_at") @db.Timestamptz(6)
+
+  /// The tenant's base currency for display (§9).
+  currency Currency? @relation("TenantBaseCurrency", fields: [currencyId], references: [id], onDelete: Restrict)
+
+  ports                 Port[]
+  /// Currencies this tenant added itself, as opposed to the system rows.
+  currencies            Currency[]             @relation("CurrencyOwner")
+  currencyRateHistories CurrencyRateHistory[]
+  carriers              Carrier[]
+  carrierPics           CarrierPic[]
+  carrierServicePorts   CarrierServicePort[]
+  vessels               Vessel[]
+  costUnits             CostUnit[]
+  costHeads             CostHead[]
+  carrierTypes          CarrierType[]
+  vendorTypes           VendorType[]
+  vendors               Vendor[]
+  vendorPics            VendorPic[]
+  industrySectors       IndustrySector[]
+  commodityItems        CommodityItem[]
+  customers             Customer[]
+  customerPics          CustomerPic[]
+  expertAreas           ExpertArea[]
+  networks              Network[]
+  agents                Agent[]
+  agentPics             AgentPic[]
+  agentExpertAreas      AgentExpertArea[]
+  agentPortCoverages    AgentPortCoverage[]
+  agentNetworkMembers   AgentNetworkMember[]
+  employees             Employee[]
+  employeeCvs           EmployeeCv[]
+  employeeSalaries      EmployeeSalary[]
+  roles                 Role[]
+  rolePermissions       RolePermission[]
+  users                 User[]
+  userPermissions       UserPermission[]
+  masterOverrides       TenantMasterOverride[]
+  auditLogs             AuditLog[]
+
+  @@index([slug])
+  @@index([status])
+  @@index([currencyId])
+  @@map("tenant")
+}
+
+/// Your own staff, not a customer's (§7A). Bypasses plan limits (§7B).
+model PlatformUser {
+  id           BigInt    @id @default(autoincrement())
+  email        String    @unique @db.VarChar(255)
+  passwordHash String    @map("password_hash") @db.VarChar(255)
+  name         String    @db.VarChar(200)
+  isActive     Boolean   @default(true) @map("is_active")
+  lastLoginAt  DateTime? @map("last_login_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  @@map("platform_user")
+}
+
+/// The permission registry (§7). Seeded from a shared code constant, identical
+/// for every tenant — hence platform-level, no tenant_id.
+model Permission {
+  id      BigInt @id @default(autoincrement())
+  module  String @db.VarChar(50)
+  feature String @db.VarChar(100)
+  action  String @db.VarChar(30)
+  /// "<FEATURE>.<ACTION>", e.g. CRM.CUSTOMER.EDIT
+  key     String @unique @db.VarChar(150)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  rolePermissions RolePermission[]
+  userPermissions UserPermission[]
+
+  @@index([module])
+  @@index([feature])
+  @@map("permission")
+}
+
+/// Lets a tenant switch off a system master row for itself without editing it
+/// (§7A rule 7). Field list is inferred — §7A names the table but not its
+/// columns. See OPEN QUESTION 6.
+model TenantMasterOverride {
+  tenantId  BigInt   @map("tenant_id")
+  id        BigInt   @id @default(autoincrement())
+  /// Which master table the overridden row lives in, e.g. "port".
+  tableName String   @map("table_name") @db.VarChar(63)
+  recordId  BigInt   @map("record_id")
+  /// false = hidden from this tenant.
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?  @map("created_by")
+  updatedBy BigInt?  @map("updated_by")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, tableName, recordId])
+  @@index([tenantId])
+  @@map("tenant_master_override")
+}
+
+// ===========================================================================
+// §5 SETTINGS
+// ===========================================================================
+
+/// client: Table_Port_List
+/// System-capable: the world's ports are the same for everyone (§7A rule 7).
+model Port {
+  tenantId  BigInt?   @map("tenant_id")
+  id        BigInt    @id @default(autoincrement())
+  /// Business code, e.g. PL-001 (§4 rule 2).
+  code      String    @db.VarChar(32)
+  name      String    @db.VarChar(200)
+  /// UN/LOCODE or IATA code, e.g. BDCGP, DAC.
+  portCode  String    @map("port_code") @db.VarChar(20)
+  country   String    @db.VarChar(100)
+  type      PortType
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  carrierServicePorts CarrierServicePort[]
+  agentPortCoverages  AgentPortCoverage[]
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, portCode])
+  @@index([tenantId])
+  @@index([country])
+  @@index([type])
+  @@index([name])
+  @@map("port")
+}
+
+/// client: Table_Currency
+/// System-capable. `conversion` is the system default rate; a tenant's own
+/// rates live in currency_rate_history. See OPEN QUESTION 3.
+model Currency {
+  tenantId   BigInt?   @map("tenant_id")
+  id         BigInt    @id @default(autoincrement())
+  code       String    @db.VarChar(32)
+  /// ISO 4217 code plus name, e.g. USD — US Dollar.
+  currency   String    @db.VarChar(100)
+  conversion Decimal   @db.Decimal(18, 4)
+  isActive   Boolean   @default(true) @map("is_active")
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy  BigInt?   @map("created_by")
+  updatedBy  BigInt?   @map("updated_by")
+  deletedAt  DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant? @relation("CurrencyOwner", fields: [tenantId], references: [id], onDelete: Restrict)
+
+  rateHistory CurrencyRateHistory[]
+  /// Tenants using this currency as their base.
+  tenants     Tenant[]              @relation("TenantBaseCurrency")
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@index([currency])
+  @@map("currency")
+}
+
+/// client: (§5, appended to Table_Currency)
+/// Tenant-owned: each forwarder books at its own rate.
+model CurrencyRateHistory {
+  tenantId      BigInt    @map("tenant_id")
+  id            BigInt    @id @default(autoincrement())
+  currencyId    BigInt    @map("currency_id")
+  rate          Decimal   @db.Decimal(18, 4)
+  effectiveFrom DateTime  @map("effective_from") @db.Timestamptz(6)
+  /// NULL = still in force.
+  effectiveTo   DateTime? @map("effective_to") @db.Timestamptz(6)
+  isActive      Boolean   @default(true) @map("is_active")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy     BigInt?   @map("created_by")
+  updatedBy     BigInt?   @map("updated_by")
+  deletedAt     DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  currency Currency @relation(fields: [currencyId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId])
+  @@index([currencyId])
+  @@index([tenantId, currencyId, effectiveFrom])
+  @@map("currency_rate_history")
+}
+
+/// Lookup: Container, HBL, HAWB, MBL, MAWB, CBM, Trip, Contract, M.Ton, KG (§5).
+model CostUnit {
+  tenantId  BigInt?   @map("tenant_id")
+  id        BigInt    @id @default(autoincrement())
+  code      String    @db.VarChar(32)
+  name      String    @db.VarChar(100)
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant    Tenant?    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  costHeads CostHead[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@map("cost_unit")
+}
+
+/// client: Table_Cost_Head
+model CostHead {
+  tenantId  BigInt           @map("tenant_id")
+  id        BigInt           @id @default(autoincrement())
+  code      String           @db.VarChar(32)
+  category  CostHeadCategory
+  name      String           @db.VarChar(200)
+  unitId    BigInt           @map("unit_id")
+  isActive  Boolean          @default(true) @map("is_active")
+  createdAt DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?          @map("created_by")
+  updatedBy BigInt?          @map("updated_by")
+  deletedAt DateTime?        @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  unit   CostUnit @relation(fields: [unitId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([unitId])
+  @@index([category])
+  @@index([name])
+  @@map("cost_head")
+}
+
+/// Lookup: MLO, NVOCC, Airline, SOC (§5).
+model CarrierType {
+  tenantId  BigInt?   @map("tenant_id")
+  id        BigInt    @id @default(autoincrement())
+  code      String    @db.VarChar(32)
+  name      String    @db.VarChar(100)
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant   Tenant?   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  carriers Carrier[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@map("carrier_type")
+}
+
+/// client: Table_Carrier
+/// System-capable — Maersk is Maersk for every forwarder (§7A rule 7).
+/// Its PIC and service-port children are tenant-owned. See OPEN QUESTION 4.
+model Carrier {
+  tenantId      BigInt?   @map("tenant_id")
+  id            BigInt    @id @default(autoincrement())
+  code          String    @db.VarChar(32)
+  name          String    @db.VarChar(200)
+  typeId        BigInt    @map("type_id")
+  officeAddress String?   @map("office_address") @db.Text
+  isActive      Boolean   @default(true) @map("is_active")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy     BigInt?   @map("created_by")
+  updatedBy     BigInt?   @map("updated_by")
+  deletedAt     DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant?     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  type   CarrierType @relation(fields: [typeId], references: [id], onDelete: Restrict)
+
+  pics         CarrierPic[]
+  servicePorts CarrierServicePort[]
+  vessels      Vessel[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@index([typeId])
+  @@index([name])
+  @@map("carrier")
+}
+
+/// client: Table_Carrier_PIC  [child of carrier]
+model CarrierPic {
+  tenantId    BigInt    @map("tenant_id")
+  id          BigInt    @id @default(autoincrement())
+  code        String    @db.VarChar(32)
+  carrierId   BigInt    @map("carrier_id")
+  name        String    @db.VarChar(200)
+  department  String?   @db.VarChar(100)
+  designation String?   @db.VarChar(100)
+  telNo       String?   @map("tel_no") @db.VarChar(50)
+  mobileNo    String?   @map("mobile_no") @db.VarChar(50)
+  email       String?   @db.VarChar(255)
+  country     String?   @db.VarChar(100)
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy   BigInt?   @map("created_by")
+  updatedBy   BigInt?   @map("updated_by")
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  carrier Carrier @relation(fields: [carrierId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@index([carrierId])
+  @@index([name])
+  @@map("carrier_pic")
+}
+
+/// client: Table_Carrier_Service_Port  [child of carrier]
+/// low_price_position / service_position are this forwarder's own ranking of
+/// the carrier on that lane, which is why the row is tenant-owned.
+model CarrierServicePort {
+  tenantId         BigInt    @map("tenant_id")
+  id               BigInt    @id @default(autoincrement())
+  code             String    @db.VarChar(32)
+  carrierId        BigInt    @map("carrier_id")
+  portId           BigInt    @map("port_id")
+  country          String?   @db.VarChar(100)
+  lowPricePosition Int?      @map("low_price_position")
+  servicePosition  Int?      @map("service_position")
+  isActive         Boolean   @default(true) @map("is_active")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy        BigInt?   @map("created_by")
+  updatedBy        BigInt?   @map("updated_by")
+  deletedAt        DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  carrier Carrier @relation(fields: [carrierId], references: [id], onDelete: Restrict)
+  port    Port    @relation(fields: [portId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, carrierId, portId])
+  @@index([tenantId])
+  @@index([carrierId])
+  @@index([portId])
+  @@map("carrier_service_port")
+}
+
+/// client: Table_Vessel
+model Vessel {
+  tenantId  BigInt    @map("tenant_id")
+  id        BigInt    @id @default(autoincrement())
+  code      String    @db.VarChar(32)
+  name      String    @db.VarChar(200)
+  carrierId BigInt    @map("carrier_id")
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  carrier Carrier @relation(fields: [carrierId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@index([carrierId])
+  @@index([name])
+  @@map("vessel")
+}
+
+/// Lookup: LCL, Air-Master Coloader (§5).
+model VendorType {
+  tenantId  BigInt?   @map("tenant_id")
+  id        BigInt    @id @default(autoincrement())
+  code      String    @db.VarChar(32)
+  name      String    @db.VarChar(100)
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant  Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  vendors Vendor[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@map("vendor_type")
+}
+
+/// client: Table_Vendor
+model Vendor {
+  tenantId           BigInt    @map("tenant_id")
+  id                 BigInt    @id @default(autoincrement())
+  code               String    @db.VarChar(32)
+  name               String    @db.VarChar(200)
+  address            String?   @db.Text
+  country            String    @db.VarChar(100)
+  serviceDescription String?   @map("service_description") @db.Text
+  vendorTypeId       BigInt    @map("vendor_type_id")
+  bankDetails        String?   @map("bank_details") @db.Text
+  tinNo              String?   @map("tin_no") @db.VarChar(50)
+  /// Client's spec: vat_no (BIN).
+  vatNo              String?   @map("vat_no") @db.VarChar(50)
+  isActive           Boolean   @default(true) @map("is_active")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy          BigInt?   @map("created_by")
+  updatedBy          BigInt?   @map("updated_by")
+  deletedAt          DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  vendorType VendorType @relation(fields: [vendorTypeId], references: [id], onDelete: Restrict)
+
+  pics VendorPic[]
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([vendorTypeId])
+  @@index([name])
+  @@index([country])
+  @@map("vendor")
+}
+
+/// client: Table_Vendor_Contact_Person  [child of vendor]
+/// §5 labels this (Table_Vendor), identical to its parent — read as a
+/// transcription slip; §8 calls the screen Vendor_Contact_Person.
+/// See OPEN QUESTION 1.
+model VendorPic {
+  tenantId    BigInt    @map("tenant_id")
+  id          BigInt    @id @default(autoincrement())
+  code        String    @db.VarChar(32)
+  vendorId    BigInt    @map("vendor_id")
+  name        String    @db.VarChar(200)
+  department  String?   @db.VarChar(100)
+  designation String?   @db.VarChar(100)
+  mobile      String?   @db.VarChar(50)
+  email       String?   @db.VarChar(255)
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy   BigInt?   @map("created_by")
+  updatedBy   BigInt?   @map("updated_by")
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  vendor Vendor @relation(fields: [tenantId, vendorId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@index([vendorId])
+  @@index([name])
+  @@map("vendor_pic")
+}
+
+/// client: Table_Commodity_Class  (e.g. Garments)
+model IndustrySector {
+  tenantId  BigInt    @map("tenant_id")
+  id        BigInt    @id @default(autoincrement())
+  code      String    @db.VarChar(32)
+  name      String    @db.VarChar(200)
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  items     CommodityItem[]
+  customers Customer[]
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([name])
+  @@map("industry_sector")
+}
+
+/// client: Table_Industry_Sector_Item_List  [child of industry_sector]
+model CommodityItem {
+  tenantId         BigInt    @map("tenant_id")
+  id               BigInt    @id @default(autoincrement())
+  code             String    @db.VarChar(32)
+  industrySectorId BigInt    @map("industry_sector_id")
+  name             String    @db.VarChar(200)
+  hsCode           String?   @map("hs_code") @db.VarChar(20)
+  isActive         Boolean   @default(true) @map("is_active")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy        BigInt?   @map("created_by")
+  updatedBy        BigInt?   @map("updated_by")
+  deletedAt        DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  industrySector IndustrySector @relation(fields: [tenantId, industrySectorId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@index([industrySectorId])
+  @@index([name])
+  @@index([hsCode])
+  @@map("commodity_item")
+}
+
+// ===========================================================================
+// §6 CRM
+// ===========================================================================
+
+/// client: Table_Customer
+model Customer {
+  tenantId            BigInt       @map("tenant_id")
+  id                  BigInt       @id @default(autoincrement())
+  code                String       @db.VarChar(32)
+  name                String       @db.VarChar(200)
+  country             String       @db.VarChar(100)
+  address             String?      @db.Text
+  customerType        CustomerType @map("customer_type")
+  businessArea        BusinessArea @map("business_area")
+  industrySectorId    BigInt       @map("industry_sector_id")
+  /// Export sea volume, TEU per month.
+  exSeaVolumeTeuMonth Decimal?     @map("ex_sea_volume_teu_month") @db.Decimal(18, 4)
+  /// Export air volume, KG per month.
+  exAirVolumeKgMonth  Decimal?     @map("ex_air_volume_kg_month") @db.Decimal(18, 4)
+  /// Import sea volume, TEU per month.
+  imSeaVolumeTeuMonth Decimal?     @map("im_sea_volume_teu_month") @db.Decimal(18, 4)
+  /// Import air volume, KG per month.
+  imAirVolumeKgMonth  Decimal?     @map("im_air_volume_kg_month") @db.Decimal(18, 4)
+  isActive            Boolean      @default(true) @map("is_active")
+  createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy           BigInt?      @map("created_by")
+  updatedBy           BigInt?      @map("updated_by")
+  deletedAt           DateTime?    @map("deleted_at") @db.Timestamptz(6)
+
+  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  industrySector IndustrySector @relation(fields: [tenantId, industrySectorId], references: [tenantId, id], onDelete: Restrict)
+
+  pics CustomerPic[]
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([industrySectorId])
+  @@index([name])
+  @@index([country])
+  @@index([customerType])
+  @@index([businessArea])
+  @@map("customer")
+}
+
+/// client: Table_Customer_PIC  [child of customer]
+model CustomerPic {
+  tenantId    BigInt    @map("tenant_id")
+  id          BigInt    @id @default(autoincrement())
+  code        String    @db.VarChar(32)
+  customerId  BigInt    @map("customer_id")
+  name        String    @db.VarChar(200)
+  department  String?   @db.VarChar(100)
+  designation String?   @db.VarChar(100)
+  mobile      String?   @db.VarChar(50)
+  email       String?   @db.VarChar(255)
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy   BigInt?   @map("created_by")
+  updatedBy   BigInt?   @map("updated_by")
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  customer Customer @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@index([customerId])
+  @@index([name])
+  @@map("customer_pic")
+}
+
+/// Lookup: Sea-FCL, Sea-LCL, Air-General, Air-DG, Sea-DG, Project, SCM (§6).
+model ExpertArea {
+  tenantId  BigInt?   @map("tenant_id")
+  id        BigInt    @id @default(autoincrement())
+  code      String    @db.VarChar(32)
+  name      String    @db.VarChar(100)
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  agentExpertAreas AgentExpertArea[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@map("expert_area")
+}
+
+/// Lookup: WCA, JCtrans, GLA, OLO (§6).
+model Network {
+  tenantId  BigInt?   @map("tenant_id")
+  id        BigInt    @id @default(autoincrement())
+  code      String    @db.VarChar(32)
+  name      String    @db.VarChar(100)
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  agentNetworkMembers AgentNetworkMember[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@map("network")
+}
+
+/// client: Table_Agent
+model Agent {
+  tenantId      BigInt    @map("tenant_id")
+  id            BigInt    @id @default(autoincrement())
+  code          String    @db.VarChar(32)
+  name          String    @db.VarChar(200)
+  country       String    @db.VarChar(100)
+  address       String?   @db.Text
+  agentType     AgentType @map("agent_type")
+  /// Storage key only, never the file itself (§2).
+  agreementFile String?   @map("agreement_file") @db.VarChar(500)
+  isActive      Boolean   @default(true) @map("is_active")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy     BigInt?   @map("created_by")
+  updatedBy     BigInt?   @map("updated_by")
+  deletedAt     DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  pics           AgentPic[]
+  expertAreas    AgentExpertArea[]
+  portCoverages  AgentPortCoverage[]
+  networkMembers AgentNetworkMember[]
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([name])
+  @@index([country])
+  @@index([agentType])
+  @@map("agent")
+}
+
+/// client: Table_Agent_PIC  [child of agent]
+model AgentPic {
+  tenantId    BigInt    @map("tenant_id")
+  id          BigInt    @id @default(autoincrement())
+  code        String    @db.VarChar(32)
+  agentId     BigInt    @map("agent_id")
+  name        String    @db.VarChar(200)
+  department  String?   @db.VarChar(100)
+  designation String?   @db.VarChar(100)
+  mobile      String?   @db.VarChar(50)
+  email       String?   @db.VarChar(255)
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy   BigInt?   @map("created_by")
+  updatedBy   BigInt?   @map("updated_by")
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  agent  Agent  @relation(fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@index([agentId])
+  @@index([name])
+  @@map("agent_pic")
+}
+
+/// M:N join — agent expert area (§6, §8: never a comma-joined string).
+model AgentExpertArea {
+  tenantId     BigInt   @map("tenant_id")
+  id           BigInt   @id @default(autoincrement())
+  agentId      BigInt   @map("agent_id")
+  expertAreaId BigInt   @map("expert_area_id")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy    BigInt?  @map("created_by")
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  agent      Agent      @relation(fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
+  expertArea ExpertArea @relation(fields: [expertAreaId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, agentId, expertAreaId])
+  @@index([tenantId])
+  @@index([agentId])
+  @@index([expertAreaId])
+  @@map("agent_expert_area")
+}
+
+/// M:N join — agent port coverage (§6).
+model AgentPortCoverage {
+  tenantId  BigInt   @map("tenant_id")
+  id        BigInt   @id @default(autoincrement())
+  agentId   BigInt   @map("agent_id")
+  portId    BigInt   @map("port_id")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy BigInt?  @map("created_by")
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  agent  Agent  @relation(fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
+  port   Port   @relation(fields: [portId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, agentId, portId])
+  @@index([tenantId])
+  @@index([agentId])
+  @@index([portId])
+  @@map("agent_port_coverage")
+}
+
+/// M:N join — agent network membership (§6).
+model AgentNetworkMember {
+  tenantId  BigInt   @map("tenant_id")
+  id        BigInt   @id @default(autoincrement())
+  agentId   BigInt   @map("agent_id")
+  networkId BigInt   @map("network_id")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy BigInt?  @map("created_by")
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  agent   Agent   @relation(fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
+  network Network @relation(fields: [networkId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, agentId, networkId])
+  @@index([tenantId])
+  @@index([agentId])
+  @@index([networkId])
+  @@map("agent_network_member")
+}
+
+/// client: Table_Employee
+model Employee {
+  tenantId            BigInt    @map("tenant_id")
+  id                  BigInt    @id @default(autoincrement())
+  code                String    @db.VarChar(32)
+  name                String    @db.VarChar(200)
+  country             String    @db.VarChar(100)
+  department          String?   @db.VarChar(100)
+  designation         String?   @db.VarChar(100)
+  joiningDate         DateTime? @map("joining_date") @db.Date
+  officeMobile        String?   @map("office_mobile") @db.VarChar(50)
+  personalEmail       String?   @map("personal_email") @db.VarChar(255)
+  qualification       String?   @db.Text
+  /// Storage key only, never the file itself (§2).
+  serviceContractFile String?   @map("service_contract_file") @db.VarChar(500)
+  isActive            Boolean   @default(true) @map("is_active")
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy           BigInt?   @map("created_by")
+  updatedBy           BigInt?   @map("updated_by")
+  deletedAt           DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  cv     EmployeeCv?
+  salary EmployeeSalary?
+  users  User[]
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([name])
+  @@index([department])
+  @@map("employee")
+}
+
+/// client: Table_Employee  (1:1 CV screen)
+model EmployeeCv {
+  tenantId         BigInt    @map("tenant_id")
+  id               BigInt    @id @default(autoincrement())
+  employeeId       BigInt    @map("employee_id")
+  presentAddress   String?   @map("present_address") @db.Text
+  permanentAddress String?   @map("permanent_address") @db.Text
+  qualification    String?   @db.Text
+  fatherName       String?   @map("father_name") @db.VarChar(200)
+  motherName       String?   @map("mother_name") @db.VarChar(200)
+  siblingName      String?   @map("sibling_name") @db.VarChar(200)
+  siblingMobile    String?   @map("sibling_mobile") @db.VarChar(50)
+  dateOfBirth      DateTime? @map("date_of_birth") @db.Date
+  reference1       String?   @map("reference_1") @db.Text
+  reference2       String?   @map("reference_2") @db.Text
+  isActive         Boolean   @default(true) @map("is_active")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy        BigInt?   @map("created_by")
+  updatedBy        BigInt?   @map("updated_by")
+  deletedAt        DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  employee Employee @relation(fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
+
+  // One CV per employee, and the composite the 1:1 relation resolves against.
+  @@unique([tenantId, employeeId])
+  @@index([tenantId])
+  @@map("employee_cv")
+}
+
+/// client: Table_Employee  (1:1 Salary screen)
+/// gross_salary is GENERATED ALWAYS in Postgres — added in migration SQL, and
+/// left optional here so Prisma never writes to it (§6).
+model EmployeeSalary {
+  tenantId    BigInt    @map("tenant_id")
+  id          BigInt    @id @default(autoincrement())
+  employeeId  BigInt    @map("employee_id")
+  basicSalary Decimal   @default(0) @map("basic_salary") @db.Decimal(18, 4)
+  homeRent    Decimal   @default(0) @map("home_rent") @db.Decimal(18, 4)
+  medical     Decimal   @default(0) @db.Decimal(18, 4)
+  mobileBill  Decimal   @default(0) @map("mobile_bill") @db.Decimal(18, 4)
+  insurance   Decimal   @default(0) @db.Decimal(18, 4)
+  incentive   Decimal   @default(0) @db.Decimal(18, 4)
+  /// Read-only. Sum of the six components above, computed by Postgres.
+  grossSalary Decimal?  @map("gross_salary") @db.Decimal(18, 4)
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy   BigInt?   @map("created_by")
+  updatedBy   BigInt?   @map("updated_by")
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  employee Employee @relation(fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
+
+  // One salary record per employee, and the composite the 1:1 resolves against.
+  @@unique([tenantId, employeeId])
+  @@index([tenantId])
+  @@map("employee_salary")
+}
+
+// ===========================================================================
+// §7 RBAC — included here because every table's created_by/updated_by needs
+// `user` to exist, and user needs `role`. The permission *logic* is Phase 3;
+// only the tables are defined now. See OPEN QUESTION 5.
+// ===========================================================================
+
+model Role {
+  tenantId    BigInt    @map("tenant_id")
+  id          BigInt    @id @default(autoincrement())
+  code        String    @db.VarChar(32)
+  name        String    @db.VarChar(100)
+  description String?   @db.Text
+  /// Seeded template role — cannot be deleted by the tenant.
+  isSystem    Boolean   @default(false) @map("is_system")
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy   BigInt?   @map("created_by")
+  updatedBy   BigInt?   @map("updated_by")
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  permissions RolePermission[]
+  users       User[]
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, name])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@map("role")
+}
+
+model RolePermission {
+  tenantId     BigInt   @map("tenant_id")
+  id           BigInt   @id @default(autoincrement())
+  roleId       BigInt   @map("role_id")
+  permissionId BigInt   @map("permission_id")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy    BigInt?  @map("created_by")
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  role       Role       @relation(fields: [tenantId, roleId], references: [tenantId, id], onDelete: Restrict)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, roleId, permissionId])
+  @@index([tenantId])
+  @@index([roleId])
+  @@index([permissionId])
+  @@map("role_permission")
+}
+
+/// The auth account. §6 lists User under CRM with no wireframe; §7 gives its
+/// fields. Linked to an employee record.
+model User {
+  tenantId     BigInt    @map("tenant_id")
+  id           BigInt    @id @default(autoincrement())
+  code         String    @db.VarChar(32)
+  employeeId   BigInt?   @map("employee_id")
+  username     String    @db.VarChar(100)
+  email        String    @db.VarChar(255)
+  passwordHash String    @map("password_hash") @db.VarChar(255)
+  roleId       BigInt?   @map("role_id")
+  /// Tenant-level superadmin: bypasses permissions, never plan limits (§7B).
+  isSuperadmin Boolean   @default(false) @map("is_superadmin")
+  isActive     Boolean   @default(true) @map("is_active")
+  lastLoginAt  DateTime? @map("last_login_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy    BigInt?   @map("created_by")
+  updatedBy    BigInt?   @map("updated_by")
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  employee Employee? @relation(fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
+  role     Role?     @relation(fields: [tenantId, roleId], references: [tenantId, id], onDelete: Restrict)
+
+  permissions UserPermission[]
+
+  // §4 rule 9: scoped per tenant — two companies may employ the same person.
+  @@unique([tenantId, username])
+  @@unique([tenantId, email])
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([employeeId])
+  @@index([roleId])
+  @@map("user")
+}
+
+/// Per-user override on top of the role's permissions. DENY beats everything
+/// except a superadmin (§7 resolution order).
+model UserPermission {
+  tenantId     BigInt           @map("tenant_id")
+  id           BigInt           @id @default(autoincrement())
+  userId       BigInt           @map("user_id")
+  permissionId BigInt           @map("permission_id")
+  effect       PermissionEffect
+  createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy    BigInt?          @map("created_by")
+  updatedBy    BigInt?          @map("updated_by")
+
+  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  user       User       @relation(fields: [tenantId, userId], references: [tenantId, id], onDelete: Restrict)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, userId, permissionId])
+  @@index([tenantId])
+  @@index([userId])
+  @@index([permissionId])
+  @@map("user_permission")
+}
+
+// ===========================================================================
+// §4 rule 7 — AUDIT TRAIL
+// ===========================================================================
+
+/// Written by Prisma middleware on every create / update / deactivate.
+/// Columns are exactly those §4 rule 7 lists, plus tenant_id.
+model AuditLog {
+  tenantId  BigInt      @map("tenant_id")
+  id        BigInt      @id @default(autoincrement())
+  tableName String      @map("table_name") @db.VarChar(63)
+  recordId  BigInt      @map("record_id")
+  action    AuditAction
+  /// Resolves which table changed_by refers to. See AuditActorType.
+  actorType AuditActorType @default(USER) @map("actor_type")
+  changedBy BigInt?     @map("changed_by")
+  oldValues Json?       @map("old_values")
+  newValues Json?       @map("new_values")
+  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId])
+  @@index([tenantId, tableName, recordId])
+  @@index([changedBy])
+  @@index([createdAt])
+  @@map("audit_log")
 }
