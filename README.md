@@ -19,9 +19,14 @@ pnpm db:up                # start Postgres 16 in Docker
 pnpm db:migrate           # create the schema and RLS policies
 pnpm db:app-role          # grant the ff_app role a local login (once)
 pnpm db:generate          # generate the Prisma client
+pnpm db:seed              # permissions, system lookups, demo workspace
 pnpm dev                  # web on :3000, API on :4000
-pnpm test                 # tenant isolation suite
+pnpm test                 # tenancy + RBAC suites
 ```
+
+Sign in against the demo workspace with `superadmin` / `ChangeMe!2026`. Locally the workspace is
+addressed with an `X-Tenant-Slug: demo` header, since `demo.localhost` needs wildcard DNS; in
+production it is the subdomain.
 
 Check it came up: <http://localhost:3000> should report the API reachable and the database up.
 
@@ -45,8 +50,11 @@ Check it came up: <http://localhost:3000> should report the API reachable and th
 | `pnpm db:up` / `db:down` | Start / stop the Postgres container |
 | `pnpm db:migrate` | `prisma migrate dev` |
 | `pnpm db:generate` | Regenerate the Prisma client |
+| `pnpm db:seed` | Permissions, system lookups, and the demo workspace |
+| `pnpm db:app-role` | Grant the non-owner `ff_app` role a local login (once) |
 | `pnpm db:studio` | Prisma Studio |
-| `pnpm db:reset` | Drop, re-migrate and re-seed |
+| `pnpm db:reset` | Drop, re-migrate and re-seed — **destroys all data** |
+| `pnpm test` | Tenancy isolation and RBAC suites |
 
 ## Conventions worth knowing before you write code
 
@@ -69,6 +77,12 @@ Check it came up: <http://localhost:3000> should report the API reachable and th
 - **A new table must be added to `apps/api/src/lib/tenancy.ts`** and given an RLS policy. The
   isolation suite fails if a table exists in the database but not in that registry, so it cannot
   quietly default to unscoped.
+- **Prisma must own every database object.** A constraint created only in hand-written migration
+  SQL is invisible to `schema.prisma`, so the next `prisma migrate dev` generates a migration that
+  drops it. Anything Prisma *can* model belongs in the schema; the appendix is only for what it
+  genuinely cannot express (generated columns, partial and expression indexes).
+- **Permissions come from `packages/shared/src/permissions.ts`**, nowhere else. The seed derives the
+  `permission` table from it and `requirePermission` throws at startup on a key it does not define.
 
 ## Agent skills
 
@@ -97,5 +111,7 @@ Phases 0–2 of the plan in CLAUDE.md §13 are complete:
 - **1** — §5 Settings and §6 CRM schema, 36 tables, migration applied
 - **2** — tenancy layer: tenant resolution, the Prisma tenant-scoped extension, RLS policies on 34
   tables, and the two-tenant isolation suite (§7A rule 4)
+- **3** — auth and §7 RBAC: permission registry, roles, per-user ALLOW/DENY, `requirePermission`,
+  and the seed. 35 tests pass.
 
-Next up is Phase 3 — auth and the §7 RBAC.
+Next up is Phase 4 — the §12 design system and app shell.

@@ -58,6 +58,9 @@
 //    forwarder's ranking and each forwarder keeps its own contacts.
 // D. audit_log.actor_type added — §4 rule 7's `changed_by` alone cannot
 //    distinguish a tenant user from an impersonating platform_user (§7B).
+// D2. user.token_version added — §7 rule 4 requires a permission change to take
+//    effect immediately, but a permission set cached in a JWT cannot be revoked
+//    before expiry without a version to compare against.
 // E. Business codes come from CODE_PREFIX in packages/shared/src/codes.ts.
 //    Join tables, 1:1 extensions and infrastructure tables carry no code; the
 //    reasoning is in that file.
@@ -276,6 +279,12 @@ model TenantMasterOverride {
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
 
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("TenantMasterOverrideCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("TenantMasterOverrideUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
   @@unique([tenantId, tableName, recordId])
   @@index([tenantId])
   @@map("tenant_master_override")
@@ -309,6 +318,12 @@ model Port {
   carrierServicePorts CarrierServicePort[]
   agentPortCoverages  AgentPortCoverage[]
 
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("PortCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("PortUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
   @@unique([tenantId, code])
   @@unique([tenantId, portCode])
   @@index([tenantId])
@@ -341,6 +356,12 @@ model Currency {
   /// Tenants using this currency as their base.
   tenants     Tenant[]              @relation("TenantBaseCurrency")
 
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("CurrencyCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("CurrencyUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
   @@unique([tenantId, code])
   @@index([tenantId])
   @@index([currency])
@@ -367,6 +388,12 @@ model CurrencyRateHistory {
   tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   currency Currency @relation(fields: [currencyId], references: [id], onDelete: Restrict)
 
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("CurrencyRateHistoryCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("CurrencyRateHistoryUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
   @@index([tenantId])
   @@index([currencyId])
   @@index([tenantId, currencyId, effectiveFrom])
@@ -388,6 +415,12 @@ model CostUnit {
 
   tenant    Tenant?    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   costHeads CostHead[]
+
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("CostUnitCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("CostUnitUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -411,6 +444,12 @@ model CostHead {
 
   tenant Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   unit   CostUnit @relation(fields: [unitId], references: [id], onDelete: Restrict)
+
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("CostHeadCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("CostHeadUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -436,6 +475,12 @@ model CarrierType {
 
   tenant   Tenant?   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   carriers Carrier[]
+
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("CarrierTypeCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("CarrierTypeUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -465,6 +510,12 @@ model Carrier {
   pics         CarrierPic[]
   servicePorts CarrierServicePort[]
   vessels      Vessel[]
+
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("CarrierCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("CarrierUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -496,6 +547,12 @@ model CarrierPic {
   tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   carrier Carrier @relation(fields: [carrierId], references: [id], onDelete: Restrict)
 
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("CarrierPicCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("CarrierPicUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
   @@unique([tenantId, code])
   @@index([tenantId])
   @@index([carrierId])
@@ -526,6 +583,12 @@ model CarrierServicePort {
   carrier Carrier @relation(fields: [carrierId], references: [id], onDelete: Restrict)
   port    Port    @relation(fields: [portId], references: [id], onDelete: Restrict)
 
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("CarrierServicePortCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("CarrierServicePortUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
   @@unique([tenantId, code])
   @@unique([tenantId, carrierId, portId])
   @@index([tenantId])
@@ -551,6 +614,12 @@ model Vessel {
   tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   carrier Carrier @relation(fields: [carrierId], references: [id], onDelete: Restrict)
 
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("VesselCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("VesselUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
   @@unique([tenantId, code])
   @@index([tenantId])
   @@index([carrierId])
@@ -573,6 +642,12 @@ model VendorType {
 
   tenant  Tenant?  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   vendors Vendor[]
+
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("VendorTypeCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("VendorTypeUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -604,6 +679,12 @@ model Vendor {
   vendorType VendorType @relation(fields: [vendorTypeId], references: [id], onDelete: Restrict)
 
   pics VendorPic[]
+
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("VendorCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("VendorUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -638,6 +719,12 @@ model VendorPic {
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   vendor Vendor @relation(fields: [tenantId, vendorId], references: [tenantId, id], onDelete: Restrict)
 
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("VendorPicCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("VendorPicUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
   @@unique([tenantId, code])
   @@index([tenantId])
   @@index([vendorId])
@@ -663,6 +750,12 @@ model IndustrySector {
   items     CommodityItem[]
   customers Customer[]
 
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("IndustrySectorCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("IndustrySectorUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
   @@unique([tenantId, code])
   @@unique([tenantId, id])
   @@index([tenantId])
@@ -687,6 +780,12 @@ model CommodityItem {
 
   tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   industrySector IndustrySector @relation(fields: [tenantId, industrySectorId], references: [tenantId, id], onDelete: Restrict)
+
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("CommodityItemCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("CommodityItemUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -731,6 +830,12 @@ model Customer {
 
   pics CustomerPic[]
 
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("CustomerCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("CustomerUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
   @@unique([tenantId, code])
   @@unique([tenantId, id])
   @@index([tenantId])
@@ -763,6 +868,12 @@ model CustomerPic {
   tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   customer Customer @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict)
 
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("CustomerPicCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("CustomerPicUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
   @@unique([tenantId, code])
   @@index([tenantId])
   @@index([customerId])
@@ -787,6 +898,12 @@ model ExpertArea {
 
   agentExpertAreas AgentExpertArea[]
 
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("ExpertAreaCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("ExpertAreaUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
   @@unique([tenantId, code])
   @@index([tenantId])
   @@map("expert_area")
@@ -808,6 +925,12 @@ model Network {
   tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict)
 
   agentNetworkMembers AgentNetworkMember[]
+
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("NetworkCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("NetworkUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -839,6 +962,12 @@ model Agent {
   portCoverages  AgentPortCoverage[]
   networkMembers AgentNetworkMember[]
 
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("AgentCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("AgentUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
   @@unique([tenantId, code])
   @@unique([tenantId, id])
   @@index([tenantId])
@@ -869,6 +998,12 @@ model AgentPic {
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   agent  Agent  @relation(fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
 
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("AgentPicCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("AgentPicUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
   @@unique([tenantId, code])
   @@index([tenantId])
   @@index([agentId])
@@ -888,6 +1023,11 @@ model AgentExpertArea {
   tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   agent      Agent      @relation(fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
   expertArea ExpertArea @relation(fields: [expertAreaId], references: [id], onDelete: Restrict)
+
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("AgentExpertAreaCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
 
   @@unique([tenantId, agentId, expertAreaId])
   @@index([tenantId])
@@ -909,6 +1049,11 @@ model AgentPortCoverage {
   agent  Agent  @relation(fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
   port   Port   @relation(fields: [portId], references: [id], onDelete: Restrict)
 
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("AgentPortCoverageCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+
   @@unique([tenantId, agentId, portId])
   @@index([tenantId])
   @@index([agentId])
@@ -928,6 +1073,11 @@ model AgentNetworkMember {
   tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   agent   Agent   @relation(fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
   network Network @relation(fields: [networkId], references: [id], onDelete: Restrict)
+
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("AgentNetworkMemberCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
 
   @@unique([tenantId, agentId, networkId])
   @@index([tenantId])
@@ -964,6 +1114,12 @@ model Employee {
   salary EmployeeSalary?
   users  User[]
 
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("EmployeeCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("EmployeeUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
   @@unique([tenantId, code])
   @@unique([tenantId, id])
   @@index([tenantId])
@@ -998,6 +1154,13 @@ model EmployeeCv {
   employee Employee @relation(fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
 
   // One CV per employee, and the composite the 1:1 relation resolves against.
+
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("EmployeeCvCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("EmployeeCvUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
   @@unique([tenantId, employeeId])
   @@index([tenantId])
   @@map("employee_cv")
@@ -1017,7 +1180,7 @@ model EmployeeSalary {
   insurance   Decimal   @default(0) @db.Decimal(18, 4)
   incentive   Decimal   @default(0) @db.Decimal(18, 4)
   /// Read-only. Sum of the six components above, computed by Postgres.
-  grossSalary Decimal?  @map("gross_salary") @db.Decimal(18, 4)
+  grossSalary Decimal?  @default(dbgenerated()) @map("gross_salary") @db.Decimal(18, 4)
   isActive    Boolean   @default(true) @map("is_active")
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -1029,6 +1192,13 @@ model EmployeeSalary {
   employee Employee @relation(fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
 
   // One salary record per employee, and the composite the 1:1 resolves against.
+
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("EmployeeSalaryCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("EmployeeSalaryUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
   @@unique([tenantId, employeeId])
   @@index([tenantId])
   @@map("employee_salary")
@@ -1060,6 +1230,12 @@ model Role {
   permissions RolePermission[]
   users       User[]
 
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("RoleCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("RoleUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
   @@unique([tenantId, code])
   @@unique([tenantId, name])
   @@unique([tenantId, id])
@@ -1078,6 +1254,11 @@ model RolePermission {
   tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   role       Role       @relation(fields: [tenantId, roleId], references: [tenantId, id], onDelete: Restrict)
   permission Permission @relation(fields: [permissionId], references: [id], onDelete: Restrict)
+
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("RolePermissionCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
 
   @@unique([tenantId, roleId, permissionId])
   @@index([tenantId])
@@ -1099,6 +1280,12 @@ model User {
   roleId       BigInt?   @map("role_id")
   /// Tenant-level superadmin: bypasses permissions, never plan limits (§7B).
   isSuperadmin Boolean   @default(false) @map("is_superadmin")
+  /// Invalidates every access token already issued to this user.
+  /// §7 rule 4 requires a permission change to take effect immediately, but
+  /// names no mechanism, and a permission set cached in a JWT cannot otherwise
+  /// be revoked before it expires. Bumped whenever this user's role or
+  /// overrides change. Marked as a deviation from §7's field list.
+  tokenVersion Int       @default(0) @map("token_version")
   isActive     Boolean   @default(true) @map("is_active")
   lastLoginAt  DateTime? @map("last_login_at") @db.Timestamptz(6)
   createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -1114,6 +1301,73 @@ model User {
   permissions UserPermission[]
 
   // §4 rule 9: scoped per tenant — two companies may employ the same person.
+
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser                User?                  @relation("UserCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser                User?                  @relation("UserUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  createdTenantMasterOverrides TenantMasterOverride[] @relation("TenantMasterOverrideCreatedBy")
+  createdPorts                 Port[]                 @relation("PortCreatedBy")
+  createdCurrencys             Currency[]             @relation("CurrencyCreatedBy")
+  createdCurrencyRateHistorys  CurrencyRateHistory[]  @relation("CurrencyRateHistoryCreatedBy")
+  createdCostUnits             CostUnit[]             @relation("CostUnitCreatedBy")
+  createdCostHeads             CostHead[]             @relation("CostHeadCreatedBy")
+  createdCarrierTypes          CarrierType[]          @relation("CarrierTypeCreatedBy")
+  createdCarriers              Carrier[]              @relation("CarrierCreatedBy")
+  createdCarrierPics           CarrierPic[]           @relation("CarrierPicCreatedBy")
+  createdCarrierServicePorts   CarrierServicePort[]   @relation("CarrierServicePortCreatedBy")
+  createdVessels               Vessel[]               @relation("VesselCreatedBy")
+  createdVendorTypes           VendorType[]           @relation("VendorTypeCreatedBy")
+  createdVendors               Vendor[]               @relation("VendorCreatedBy")
+  createdVendorPics            VendorPic[]            @relation("VendorPicCreatedBy")
+  createdIndustrySectors       IndustrySector[]       @relation("IndustrySectorCreatedBy")
+  createdCommodityItems        CommodityItem[]        @relation("CommodityItemCreatedBy")
+  createdCustomers             Customer[]             @relation("CustomerCreatedBy")
+  createdCustomerPics          CustomerPic[]          @relation("CustomerPicCreatedBy")
+  createdExpertAreas           ExpertArea[]           @relation("ExpertAreaCreatedBy")
+  createdNetworks              Network[]              @relation("NetworkCreatedBy")
+  createdAgents                Agent[]                @relation("AgentCreatedBy")
+  createdAgentPics             AgentPic[]             @relation("AgentPicCreatedBy")
+  createdAgentExpertAreas      AgentExpertArea[]      @relation("AgentExpertAreaCreatedBy")
+  createdAgentPortCoverages    AgentPortCoverage[]    @relation("AgentPortCoverageCreatedBy")
+  createdAgentNetworkMembers   AgentNetworkMember[]   @relation("AgentNetworkMemberCreatedBy")
+  createdEmployees             Employee[]             @relation("EmployeeCreatedBy")
+  createdEmployeeCvs           EmployeeCv[]           @relation("EmployeeCvCreatedBy")
+  createdEmployeeSalarys       EmployeeSalary[]       @relation("EmployeeSalaryCreatedBy")
+  createdRoles                 Role[]                 @relation("RoleCreatedBy")
+  createdRolePermissions       RolePermission[]       @relation("RolePermissionCreatedBy")
+  createdUsers                 User[]                 @relation("UserCreatedBy")
+  createdUserPermissions       UserPermission[]       @relation("UserPermissionCreatedBy")
+  updatedTenantMasterOverrides TenantMasterOverride[] @relation("TenantMasterOverrideUpdatedBy")
+  updatedPorts                 Port[]                 @relation("PortUpdatedBy")
+  updatedCurrencys             Currency[]             @relation("CurrencyUpdatedBy")
+  updatedCurrencyRateHistorys  CurrencyRateHistory[]  @relation("CurrencyRateHistoryUpdatedBy")
+  updatedCostUnits             CostUnit[]             @relation("CostUnitUpdatedBy")
+  updatedCostHeads             CostHead[]             @relation("CostHeadUpdatedBy")
+  updatedCarrierTypes          CarrierType[]          @relation("CarrierTypeUpdatedBy")
+  updatedCarriers              Carrier[]              @relation("CarrierUpdatedBy")
+  updatedCarrierPics           CarrierPic[]           @relation("CarrierPicUpdatedBy")
+  updatedCarrierServicePorts   CarrierServicePort[]   @relation("CarrierServicePortUpdatedBy")
+  updatedVessels               Vessel[]               @relation("VesselUpdatedBy")
+  updatedVendorTypes           VendorType[]           @relation("VendorTypeUpdatedBy")
+  updatedVendors               Vendor[]               @relation("VendorUpdatedBy")
+  updatedVendorPics            VendorPic[]            @relation("VendorPicUpdatedBy")
+  updatedIndustrySectors       IndustrySector[]       @relation("IndustrySectorUpdatedBy")
+  updatedCommodityItems        CommodityItem[]        @relation("CommodityItemUpdatedBy")
+  updatedCustomers             Customer[]             @relation("CustomerUpdatedBy")
+  updatedCustomerPics          CustomerPic[]          @relation("CustomerPicUpdatedBy")
+  updatedExpertAreas           ExpertArea[]           @relation("ExpertAreaUpdatedBy")
+  updatedNetworks              Network[]              @relation("NetworkUpdatedBy")
+  updatedAgents                Agent[]                @relation("AgentUpdatedBy")
+  updatedAgentPics             AgentPic[]             @relation("AgentPicUpdatedBy")
+  updatedEmployees             Employee[]             @relation("EmployeeUpdatedBy")
+  updatedEmployeeCvs           EmployeeCv[]           @relation("EmployeeCvUpdatedBy")
+  updatedEmployeeSalarys       EmployeeSalary[]       @relation("EmployeeSalaryUpdatedBy")
+  updatedRoles                 Role[]                 @relation("RoleUpdatedBy")
+  updatedUsers                 User[]                 @relation("UserUpdatedBy")
+  updatedUserPermissions       UserPermission[]       @relation("UserPermissionUpdatedBy")
+
   @@unique([tenantId, username])
   @@unique([tenantId, email])
   @@unique([tenantId, code])
@@ -1141,6 +1395,12 @@ model UserPermission {
   user       User       @relation(fields: [tenantId, userId], references: [tenantId, id], onDelete: Restrict)
   permission Permission @relation(fields: [permissionId], references: [id], onDelete: Restrict)
 
+  // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
+  // prisma migrate owns them — an appendix-only constraint is dropped by the
+  // next migrate dev, which is how this was found.
+  createdByUser User? @relation("UserPermissionCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("UserPermissionUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
   @@unique([tenantId, userId, permissionId])
   @@index([tenantId])
   @@index([userId])
@@ -1155,17 +1415,17 @@ model UserPermission {
 /// Written by Prisma middleware on every create / update / deactivate.
 /// Columns are exactly those §4 rule 7 lists, plus tenant_id.
 model AuditLog {
-  tenantId  BigInt      @map("tenant_id")
-  id        BigInt      @id @default(autoincrement())
-  tableName String      @map("table_name") @db.VarChar(63)
-  recordId  BigInt      @map("record_id")
+  tenantId  BigInt         @map("tenant_id")
+  id        BigInt         @id @default(autoincrement())
+  tableName String         @map("table_name") @db.VarChar(63)
+  recordId  BigInt         @map("record_id")
   action    AuditAction
   /// Resolves which table changed_by refers to. See AuditActorType.
   actorType AuditActorType @default(USER) @map("actor_type")
-  changedBy BigInt?     @map("changed_by")
-  oldValues Json?       @map("old_values")
-  newValues Json?       @map("new_values")
-  createdAt DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  changedBy BigInt?        @map("changed_by")
+  oldValues Json?          @map("old_values")
+  newValues Json?          @map("new_values")
+  createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
 

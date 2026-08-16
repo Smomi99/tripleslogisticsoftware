@@ -37,7 +37,17 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO ff
 
 -- Platform-only tables are not tenant traffic.
 REVOKE ALL ON TABLE platform_user FROM ff_app;
-REVOKE ALL ON TABLE _prisma_migrations FROM ff_app;
+-- _prisma_migrations is guarded because `prisma migrate dev` replays this file
+-- against a shadow database where that table does not exist. An unguarded
+-- REVOKE there aborts the whole migration.
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = '_prisma_migrations'
+  ) THEN
+    EXECUTE 'REVOKE ALL ON TABLE _prisma_migrations FROM ff_app';
+  END IF;
+END $$;
 -- The permission registry is seeded from a code constant and read-only at runtime.
 REVOKE INSERT, UPDATE ON TABLE permission FROM ff_app;
 

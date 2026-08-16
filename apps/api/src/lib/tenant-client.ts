@@ -46,7 +46,21 @@ const READ_OPERATIONS = new Set([
   'groupBy',
 ]);
 
-const WHERE_ONLY_WRITE_OPERATIONS = new Set(['update', 'updateMany', 'updateManyAndReturn']);
+/** `where` is a plain filter here, so an AND wrapper is valid. */
+const MANY_WRITE_OPERATIONS = new Set(['updateMany', 'updateManyAndReturn']);
+
+/**
+ * `where` must carry a unique field at the top level, so the tenant is merged
+ * in beside it rather than wrapped in an AND — Prisma rejects a unique where
+ * whose only top-level key is AND.
+ */
+const UNIQUE_WRITE_OPERATIONS = new Set(['update', 'upsert']);
+
+/** Merges the tenant into a unique where, overriding anything the caller sent. */
+function mergeWhere(existing: unknown, tenantId: bigint): UnknownRecord {
+  const base = typeof existing === 'object' && existing !== null ? (existing as UnknownRecord) : {};
+  return { ...base, tenantId };
+}
 
 const CREATE_OPERATIONS = new Set(['create', 'createMany', 'createManyAndReturn']);
 
@@ -115,18 +129,20 @@ function scopedClient() {
             return query(next);
           }
 
-          if (WHERE_ONLY_WRITE_OPERATIONS.has(operation)) {
-            // Writes are always scoped to the tenant's own rows, even on a
-            // system-capable table — a tenant must not edit a system row.
+          // Writes are always scoped to the tenant's own rows, even on a
+          // system-capable table — a tenant must not edit a system row.
+          if (MANY_WRITE_OPERATIONS.has(operation)) {
             next['where'] = andWhere(next['where'], { tenantId });
             return query(next);
           }
 
-          if (operation === 'upsert') {
-            next['where'] = andWhere(next['where'], { tenantId });
-            const create = next['create'];
-            if (create !== undefined && create !== null) {
-              next['create'] = { ...(create as UnknownRecord), tenantId };
+          if (UNIQUE_WRITE_OPERATIONS.has(operation)) {
+            next['where'] = mergeWhere(next['where'], tenantId);
+            if (operation === 'upsert') {
+              const create = next['create'];
+              if (create !== undefined && create !== null) {
+                next['create'] = { ...(create as UnknownRecord), tenantId };
+              }
             }
             return query(next);
           }

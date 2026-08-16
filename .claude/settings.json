@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm typecheck)",
+      "Bash(pnpm test)",
+      "Bash(pnpm build)",
+      "Bash(pnpm install)",
+      "Bash(pnpm exec prisma validate)",
+      "Bash(pnpm exec prisma format)",
+      "Bash(pnpm exec prisma generate)",
+      "Bash(pnpm exec vitest run)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)"
+    ]
+  }
+}

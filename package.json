@@ -17,13 +17,18 @@
     "db:app-role": "prisma db execute --file scripts/dev-db-app-role.sql",
     "db:studio": "prisma studio",
     "db:reset": "prisma migrate reset",
-    "test": "pnpm --filter @ff/api test"
+    "test": "pnpm --filter @ff/api test",
+    "db:seed": "tsx prisma/seed.ts"
   },
   "devDependencies": {
     "concurrently": "10.0.5",
     "dotenv": "17.4.2",
     "prisma": "7.9.1",
     "tsx": "4.23.12",
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "@ff/shared": "workspace:*",
+    "@node-rs/argon2": "2.1.0",
+    "@prisma/adapter-pg": "7.9.1",
+    "@prisma/client": "7.9.1"
   }
 }
