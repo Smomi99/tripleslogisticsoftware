@@ -1,6 +1,9 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
 /**
+ * Next 16 renamed `middleware` to `proxy` to make the network boundary
+ * explicit; the runtime is nodejs and not configurable.
+ *
  * Resolves the tenant from the subdomain and passes it down the request
  * (CLAUDE.md §7A rule 5): acme.yourapp.com -> "acme".
  *
@@ -32,7 +35,7 @@ function slugFromHost(host: string): string | null {
   return first;
 }
 
-export function middleware(request: NextRequest): NextResponse {
+export function proxy(request: NextRequest): NextResponse {
   const host = request.headers.get('host') ?? '';
   const slug = slugFromHost(host);
 

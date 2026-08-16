@@ -1,16 +1,140 @@
 @import 'tailwindcss';
 
 /*
- * The "Manifest" design system (CLAUDE.md §12) is built in Phase 4 — its colour
- * tokens, IBM Plex type scale and shell live here. Nothing below is a design
- * decision; it is the minimum needed for Phase 0 to render.
+ * "Manifest" — the design system from CLAUDE.md §12.
+ *
+ * The visual language is borrowed from the subject's own world: shipping
+ * manifests, stencilled container markings, port schedules. The users are
+ * operations staff in Dhaka doing data entry for eight hours a day, so density,
+ * legibility and scannability beat decoration everywhere.
+ *
+ * §12 asks for tokens in globals.css AND tailwind.config.ts. Tailwind 4 is
+ * CSS-first and has no config file: an @theme block below IS the config, and it
+ * generates both the CSS custom properties and the utility classes. That
+ * satisfies the rule that matters — define once, never hardcode a hex.
+ *
+ * Dark mode is deliberately absent. §12 puts it out of scope for v1 rather than
+ * have it built half-way.
  */
 
-body {
-  background: #f4f6f5;
-  color: #10243a;
-  font-family:
-    ui-sans-serif,
-    system-ui,
-    sans-serif;
+@theme {
+  /* -- Palette (§12). Semantic names only; never write a hex in a component. */
+  --color-hull: #10243a; /* sidebar, top bar, primary headings, body text */
+  --color-steel: #64717e; /* secondary text, icons, placeholder — see note */
+  --color-harbour: #0f7173; /* primary action, links, focus ring, active nav */
+  --color-harbour-ink: #0a5254; /* hover on primary */
+  --color-paper: #f4f6f5; /* app background */
+  --color-surface: #ffffff; /* cards, tables, modals */
+  --color-line: #dde3e3; /* borders, dividers, table rules */
+  --color-verified: #2f7a54; /* active / paid / approved */
+  --color-signal: #a06212; /* pending / awaiting / warning — see note */
+  --color-alert: #b3403a; /* inactive / overdue / destructive */
+
+  /*
+   * Two tokens are darker than §12 prints them, because §12's own quality floor
+   * ("WCAG AA contrast", not optional) rules them out:
+   *
+   *   --steel   #6B7A88 -> #64717E   was 4.41:1 on surface, 4.06:1 on paper
+   *   --signal  #C87A16 -> #A06212   was 3.36:1 on surface
+   *
+   * AA needs 4.5:1 for text this size. --steel is not a minor token — it is
+   * every column header and every field label, the most-read text in an
+   * eight-hour data-entry shift, at 11px. The new values are the smallest
+   * darkening along the same hue that clears 4.5:1 on BOTH backgrounds
+   * (--steel now 4.99 / 4.60, --signal 4.96 / 4.57) and stay visually the same
+   * colour. Revert here if the original hexes are preferred to the floor.
+   */
+
+  /* Row hover, the one tint §12 names outside the palette. */
+  --color-row-hover: #f0f4f4;
+
+  /* -- Typography. Families are injected by next/font in layout.tsx. */
+  --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, monospace;
+
+  /* §12 scale, to the pixel. */
+  --text-page-title: 20px;
+  --text-page-title--line-height: 28px;
+  --text-page-title--font-weight: 600;
+
+  --text-section: 15px;
+  --text-section--line-height: 22px;
+  --text-section--font-weight: 600;
+
+  --text-body: 14px;
+  --text-body--line-height: 20px;
+
+  --text-cell: 13px;
+  --text-cell--line-height: 18px;
+
+  --text-label: 11px;
+  --text-label--line-height: 16px;
+  --text-label--font-weight: 600;
+  --text-label--letter-spacing: 0.06em;
+
+  /* -- Shape and motion. One radius, one shadow, two durations (§12). */
+  --radius-manifest: 4px;
+  --shadow-manifest: 0 1px 2px rgb(16 36 58 / 0.06);
+  --ease-manifest: cubic-bezier(0, 0, 0.2, 1);
+}
+
+@layer base {
+  html {
+    /* §12: 1280px laptop is the floor, but list screens stay usable on tablet. */
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-paper);
+    color: var(--color-hull);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+  }
+
+  /*
+   * The signature move (§12): every identifier and every number is mono with
+   * tabular figures, so digits align down a column and an operator scanning
+   * fifty container numbers sees a transposed digit instead of reading past it.
+   * Mono is a correctness tool here, not a style.
+   */
+  .font-mono,
+  [data-numeric] {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+  }
+
+  /* §12 quality floor: visible keyboard focus on every control. */
+  :focus-visible {
+    outline: 2px solid var(--color-harbour);
+    outline-offset: 1px;
+  }
+
+  ::placeholder {
+    color: var(--color-steel);
+  }
+
+  /* §12: respect prefers-reduced-motion. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /* Column headers and field labels share one treatment (§12). */
+  .label-manifest {
+    font-size: var(--text-label);
+    line-height: var(--text-label--line-height);
+    font-weight: var(--text-label--font-weight);
+    letter-spacing: var(--text-label--letter-spacing);
+    text-transform: uppercase;
+    color: var(--color-steel);
+  }
 }

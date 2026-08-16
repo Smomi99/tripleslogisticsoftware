@@ -1,17 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "Bash(pnpm typecheck)",
-      "Bash(pnpm test)",
-      "Bash(pnpm build)",
-      "Bash(pnpm install)",
-      "Bash(pnpm exec prisma validate)",
-      "Bash(pnpm exec prisma format)",
-      "Bash(pnpm exec prisma generate)",
-      "Bash(pnpm exec vitest run)",
-      "Bash(git status:*)",
-      "Bash(git diff:*)",
-      "Bash(git log:*)"
+      "Bash(echo \"demo tenant removed; tenant rows: $\\(docker exec ff-erp-postgres psql -U ff_erp -d ff_erp -tAc 'select count\\(*\\) from tenant;'\\)\")",
+      "Bash(node -e ' *)",
+      "PowerShell(foreach \\($p in @\\('@node-rs/argon2','argon2','bcryptjs','jose','jsonwebtoken','@types/jsonwebtoken','cookie'\\)\\) { \"$p @ \" + \\(npm view $p version\\) })",
+      "Bash(grep -nE '^#{2,3} |^- \\\\*\\\\*|breaking' C:/projectpersonal/logistic-software/node_modules/.pnpm/next@16.3.1_@types+node@26._13ab95ff9e62541767c5f064309b5852/node_modules/next/dist/docs/01-app/02-guides/upgrading/version-16.md)",
+      "PowerShell(foreach \\($p in @\\('clsx','tailwind-merge','class-variance-authority','@radix-ui/react-dropdown-menu','@radix-ui/react-dialog','@radix-ui/react-slot','lucide-react','sonner'\\)\\) { \"$p @ \" + \\(npm view $p version\\) })",
+      "Bash(node -e \"console.log\\(require\\('path'\\).dirname\\(require.resolve\\('@tanstack/react-table/package.json'\\)\\)\\)\")",
+      "Bash(node -e 'console.log\\(require\\('\\\\''__TRACKED_VAR__/package.json'\\\\''\\).version\\)')"
     ]
   }
 }
