@@ -8,6 +8,7 @@ import { env } from './config/env';
 import { logger } from './lib/logger';
 import { errorHandler, notFoundHandler } from './middleware/error-handler';
 import { healthRouter } from './routes/health.route';
+import { tenantRouter } from './routes/tenant.route';
 
 export function createApp(): Express {
   const app = express();
@@ -29,10 +30,12 @@ export function createApp(): Express {
   app.use(cookieParser());
   app.use(pinoHttp({ logger }));
 
+  // Health is deliberately outside the tenant router — Docker and uptime checks
+  // have no workspace.
   app.use('/api', healthRouter);
 
-  // Business routers are mounted here from Phase 3 onward. Every one of them
-  // carries a requirePermission guard (CLAUDE.md §7).
+  // Everything tenant-scoped goes under here, behind tenant resolution.
+  app.use('/api/tenant', tenantRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

@@ -1,0 +1,11 @@
+-- LOCAL DEVELOPMENT ONLY.
+--
+-- The migration creates the ff_app role with NOLOGIN and no password, because
+-- credentials are per environment and must never be committed. This grants it
+-- a login with the well-known dev password so DATABASE_URL_APP works locally.
+--
+-- Run with: pnpm db:app-role
+--
+-- In production, provision ff_app with a real secret from your secret manager
+-- and never run this file.
+ALTER ROLE ff_app LOGIN PASSWORD 'ff_app_dev';

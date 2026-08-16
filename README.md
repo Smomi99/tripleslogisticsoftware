@@ -16,8 +16,11 @@ changing anything. This README only covers how to run the repo.
 pnpm install
 cp .env.example .env      # adjust if your ports differ
 pnpm db:up                # start Postgres 16 in Docker
+pnpm db:migrate           # create the schema and RLS policies
+pnpm db:app-role          # grant the ff_app role a local login (once)
 pnpm db:generate          # generate the Prisma client
 pnpm dev                  # web on :3000, API on :4000
+pnpm test                 # tenant isolation suite
 ```
 
 Check it came up: <http://localhost:3000> should report the API reachable and the database up.
@@ -56,8 +59,16 @@ Check it came up: <http://localhost:3000> should report the API reachable and th
 - **`apps/api` is bundled with tsup, not `tsc`.** Both `@ff/shared` and the generated Prisma client
   ship as TypeScript source, so a file-by-file transpile can't build them. Type checking is a
   separate step.
-- **Never import `prisma` directly in feature code** — from Phase 2 it is wrapped in a
-  tenant-scoped extension (CLAUDE.md §7A rule 3).
+- **Never import `prisma` directly in feature code.** Use `withTenant(tenantId, db => ...)` from
+  [apps/api/src/lib/tenant-client.ts](apps/api/src/lib/tenant-client.ts). It scopes every query and
+  sets `app.tenant_id` for the RLS policies, inside one transaction.
+- **Two database roles, and the distinction is load-bearing.** `ff_erp` owns the tables and is used
+  only by migrations, the seed and tests; it *bypasses RLS*. `ff_app` owns nothing, has no `DELETE`
+  grant anywhere, and is what the API connects as. Pointing `DATABASE_URL_APP` at `ff_erp` makes
+  every tenant boundary vanish while everything still appears to work.
+- **A new table must be added to `apps/api/src/lib/tenancy.ts`** and given an RLS policy. The
+  isolation suite fails if a table exists in the database but not in that registry, so it cannot
+  quietly default to unscoped.
 
 ## Agent skills
 
@@ -80,5 +91,11 @@ deliberately — deleting them just recreates an uncommitted change.
 
 ## Build status
 
-Phase 0 of the plan in CLAUDE.md §13 is complete: monorepo scaffold, no business logic.
-Next up is Phase 1 — the §5 Settings and §6 CRM schema.
+Phases 0–2 of the plan in CLAUDE.md §13 are complete:
+
+- **0** — monorepo scaffold
+- **1** — §5 Settings and §6 CRM schema, 36 tables, migration applied
+- **2** — tenancy layer: tenant resolution, the Prisma tenant-scoped extension, RLS policies on 34
+  tables, and the two-tenant isolation suite (§7A rule 4)
+
+Next up is Phase 3 — auth and the §7 RBAC.
