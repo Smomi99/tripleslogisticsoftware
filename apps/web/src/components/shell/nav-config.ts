@@ -29,6 +29,9 @@ export const MODULE_LABEL: Record<Module, string> = {
  */
 const ROUTES: Record<string, Route> = {
   'SETTING.SEA_AIR_PORT': '/setting/port',
+  'SETTING.COST_HEAD': '/setting/cost-head',
+  'SETTING.CURRENCY': '/setting/currency',
+  'SETTING.VESSEL': '/setting/vessel',
 };
 
 export interface NavItem {

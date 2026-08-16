@@ -5,7 +5,10 @@ import type { ApiSuccess } from '@ff/shared';
 import { HttpError } from '../lib/http-error';
 import { resolveTenant } from '../middleware/resolve-tenant';
 import { authRouter } from './auth.route';
+import { costHeadRouter } from './cost-head.route';
+import { currencyRouter } from './currency.route';
 import { portRouter } from './port.route';
+import { vesselRouter } from './vessel.route';
 
 /**
  * Every tenant-scoped route mounts under this router, so tenant resolution
@@ -23,6 +26,9 @@ tenantRouter.use('/auth', authRouter);
 // Settings. Each router authenticates and carries a requirePermission guard on
 // every route — §7 calls a route without one a bug.
 tenantRouter.use('/setting/ports', portRouter);
+tenantRouter.use('/setting/cost-heads', costHeadRouter);
+tenantRouter.use('/setting/currencies', currencyRouter);
+tenantRouter.use('/setting/vessels', vesselRouter);
 
 interface TenantContextPayload {
   id: string;
