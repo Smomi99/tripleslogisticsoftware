@@ -5,9 +5,12 @@ import type { ApiSuccess } from '@ff/shared';
 import { HttpError } from '../lib/http-error';
 import { resolveTenant } from '../middleware/resolve-tenant';
 import { authRouter } from './auth.route';
+import { carrierRouter } from './carrier.route';
+import { commodityRouter } from './commodity.route';
 import { costHeadRouter } from './cost-head.route';
 import { currencyRouter } from './currency.route';
 import { portRouter } from './port.route';
+import { vendorRouter } from './vendor.route';
 import { vesselRouter } from './vessel.route';
 
 /**
@@ -29,6 +32,9 @@ tenantRouter.use('/setting/ports', portRouter);
 tenantRouter.use('/setting/cost-heads', costHeadRouter);
 tenantRouter.use('/setting/currencies', currencyRouter);
 tenantRouter.use('/setting/vessels', vesselRouter);
+tenantRouter.use('/setting/carriers', carrierRouter);
+tenantRouter.use('/setting/vendors', vendorRouter);
+tenantRouter.use('/setting/commodity-categories', commodityRouter);
 
 interface TenantContextPayload {
   id: string;

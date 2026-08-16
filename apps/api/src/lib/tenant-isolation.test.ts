@@ -108,10 +108,24 @@ beforeAll(async () => {
   }
 });
 
+/**
+ * Scoped to this suite's own tenants, NOT to a code prefix.
+ *
+ * It originally matched `code LIKE 'CUS-%'` and `'ISC-%'`, which were unique to
+ * this test until those became the real business-code prefixes in Phase 6 — at
+ * which point the suite started deleting live application rows. A foreign key
+ * caught it, which is the argument for §4 rule 5 in one line.
+ *
+ * The only rows not covered by tenant scope are the deliberately shared test
+ * rows (tenant_id IS NULL), which carry a code no real row uses.
+ */
 async function cleanup(): Promise<void> {
-  await owner.$executeRaw`DELETE FROM customer WHERE code LIKE 'CUS-%'`;
-  await owner.$executeRaw`DELETE FROM industry_sector WHERE code LIKE 'ISC-%'`;
-  await owner.$executeRaw`DELETE FROM port WHERE code LIKE 'PL-%TEST' OR code LIKE 'PL-A-%' OR code LIKE 'PL-B-%' OR code = 'PL-SYS-TEST'`;
+  const scope = `(SELECT id FROM tenant WHERE slug IN ('${SLUG_A}', '${SLUG_B}'))`;
+  await owner.$executeRawUnsafe(`DELETE FROM customer WHERE tenant_id IN ${scope}`);
+  await owner.$executeRawUnsafe(`DELETE FROM commodity_item WHERE tenant_id IN ${scope}`);
+  await owner.$executeRawUnsafe(`DELETE FROM industry_sector WHERE tenant_id IN ${scope}`);
+  await owner.$executeRawUnsafe(`DELETE FROM port WHERE tenant_id IN ${scope}`);
+  await owner.$executeRaw`DELETE FROM port WHERE tenant_id IS NULL AND code = 'PL-SYS-TEST'`;
   await owner.$executeRaw`DELETE FROM tenant WHERE slug IN (${SLUG_A}, ${SLUG_B})`;
 }
 

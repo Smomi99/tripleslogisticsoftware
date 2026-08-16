@@ -32,6 +32,9 @@ const ROUTES: Record<string, Route> = {
   'SETTING.COST_HEAD': '/setting/cost-head',
   'SETTING.CURRENCY': '/setting/currency',
   'SETTING.VESSEL': '/setting/vessel',
+  'SETTING.CARRIER': '/setting/carrier',
+  'SETTING.VENDOR': '/setting/vendor',
+  'SETTING.COMMODITY_CATEGORY': '/setting/commodity',
 };
 
 export interface NavItem {

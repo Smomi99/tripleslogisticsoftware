@@ -7,9 +7,12 @@
  */
 export * from './api';
 export * from './auth';
+export * from './carrier';
 export * from './codes';
+export * from './commodity';
 export * from './cost-head';
 export * from './currency';
 export * from './permissions';
 export * from './port';
+export * from './vendor';
 export * from './vessel';
