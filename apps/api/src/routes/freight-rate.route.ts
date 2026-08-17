@@ -573,87 +573,227 @@ freightRateRouter.get('/rates/:id', requireModePermission('VIEW'), async (req, r
 });
 
 // ===========================================================================
-// Update
+// Update — §4 rule 1, "rates are versioned, never overwritten"
 //
-// §4 rule 1 makes Edit mean "supersede and replace", not "mutate". That logic
-// lands in phase G with its own tests; until then this updates in place and
-// refuses to touch a PUBLISHED rate, so no quotation can be invalidated by an
-// edit in the meantime.
+// A DRAFT is edited in place: nothing downstream can reference it yet.
+//
+// A PUBLISHED rate is SUPERSEDED. The old row keeps every figure it was
+// quoted at and is closed off — valid_to moves to yesterday, status becomes
+// EXPIRED, superseded_by_id points at the replacement — and the new values go
+// into a new row. The spec calls mutating these in place "the single most
+// expensive mistake available in this module", because a quotation issued last
+// month must still resolve to the rate that was live when it was issued.
+//
+// Order matters inside the transaction: the old row is expired BEFORE the new
+// one is inserted, or the §4 rule 8 exclusion constraint sees two published
+// rates on one lane and refuses the write. That constraint is scoped to
+// PUBLISHED precisely so this sequence is possible.
 // ===========================================================================
+
+/** Yesterday, or the rate's own start if it has not begun — the CHECK
+ *  constraint requires valid_to >= valid_from, and a rate created for a future
+ *  period can be superseded before it ever runs. */
+function closeOffDate(validFrom: Date, today: Date): Date {
+  const yesterday = new Date(today);
+  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+  return yesterday < validFrom ? validFrom : yesterday;
+}
 
 freightRateRouter.patch('/rates/:id', requireModePermission('EDIT'), async (req, res) => {
   const auth = req.auth!;
   const id = parseId(req.params.id, 'rate');
   const input = freightRateInputSchema.parse(req.body);
   const mayPrice = canManageProfit(auth);
+  const today = startOfToday();
 
   const updated = await withTenant(auth.tenantId, async (db) => {
     const existing = await db.freightRate.findFirst({
       where: { id, deletedAt: null },
-      select: { id: true, status: true },
+      select: { id: true, status: true, validFrom: true, supersededById: true },
     });
     if (existing === null) throw HttpError.notFound('Rate not found.');
-    if (existing.status === 'PUBLISHED') {
+    if (existing.status === 'EXPIRED') {
       throw HttpError.conflict(
-        'A published rate cannot be edited — quotations already reference it. Supersede it with a new rate instead.',
+        'An expired rate cannot be edited. Buy the lane again as a new rate.',
       );
     }
-    if (existing.status === 'EXPIRED') {
-      throw HttpError.conflict('An expired rate cannot be edited.');
+    if (existing.supersededById !== null) {
+      // Belt and braces: an EXPIRED check already covers this, but a superseded
+      // row must never sprout a second successor whatever its status says.
+      throw HttpError.conflict('That rate has already been superseded.');
     }
 
     const refs = await assertReferences(db, input);
     const charges = await localChargeRows(db, input, auth.userId);
 
+    const lineData = input.lines.map((line) => ({
+      tierId: BigInt(line.tierId),
+      buyPrice: line.buyPrice,
+      profitType: mayPrice ? (line.profitType ?? 'FLAT') : 'FLAT',
+      profitValue: mayPrice ? (line.profitValue || '0') : '0',
+      minCharge: line.minCharge === undefined || line.minCharge === '' ? null : line.minCharge,
+      createdBy: auth.userId,
+      updatedBy: auth.userId,
+    }));
+
+    const rateData = {
+      mode: input.mode,
+      polId: refs.polId,
+      podId: refs.podId,
+      carrierId: refs.carrierId,
+      goodsTypeId: refs.goodsTypeId,
+      purchaseSourceType: input.purchaseSourceType,
+      purchaseCarrierId: refs.purchaseCarrierId,
+      purchaseVendorId: refs.purchaseVendorId,
+      purchaseAgentId: refs.purchaseAgentId,
+      currencyId: refs.currencyId,
+      validFrom: new Date(input.validFrom),
+      validTo: new Date(input.validTo),
+      transitDays:
+        input.transitDays === undefined || input.transitDays === ''
+          ? null
+          : Number(input.transitDays),
+      freeDays:
+        input.freeDays === undefined || input.freeDays === '' ? null : Number(input.freeDays),
+      remarks: input.remarks === undefined || input.remarks === '' ? null : input.remarks,
+      status: input.status,
+    };
+
+    // ---- §4 rule 1: supersede rather than mutate ----------------------------
+    if (existing.status === 'PUBLISHED') {
+      try {
+        // Close the old row FIRST, so the exclusion constraint sees one
+        // published rate on this lane at a time.
+        await db.freightRate.update({
+          where: { id },
+          data: {
+            validTo: closeOffDate(existing.validFrom, today),
+            status: 'EXPIRED',
+            updatedBy: auth.userId,
+          },
+        });
+
+        for (let attempt = 0; attempt < CODE_RETRY_LIMIT; attempt += 1) {
+          const code = await nextCode(db, 'freightRate', CODE_PREFIX.freightRate, auth.tenantId);
+          try {
+            const replacement = await db.freightRate.create({
+              data: {
+                tenantId: auth.tenantId,
+                code,
+                ...rateData,
+                createdBy: auth.userId,
+                updatedBy: auth.userId,
+                lines: { createMany: { data: lineData } },
+                ...(charges.length > 0 ? { localCharges: { createMany: { data: charges } } } : {}),
+              },
+              include: rateInclude,
+            });
+
+            // The old row now names its successor, so the chain is walkable.
+            await db.freightRate.update({
+              where: { id },
+              data: { supersededById: replacement.id },
+            });
+
+            return replacement;
+          } catch (error) {
+            if (isUniqueViolation(error, 'code')) continue;
+            throw error;
+          }
+        }
+        throw new HttpError(409, 'CODE_GENERATION_FAILED', 'Could not supersede the rate.');
+      } catch (error) {
+        translateWriteError(error);
+      }
+    }
+
+    // ---- DRAFT: edited in place, nothing references it yet ------------------
+    //
+    // Lines are matched to the submitted tiers rather than cleared and
+    // rebuilt. §4 rule 3 forbids hard deletes — the tenant client refuses
+    // deleteMany outright — and soft-deleting instead would collide with
+    // UNIQUE(tenant_id, rate_id, tier_id) the moment the same tier came back.
+    // Matching also preserves each line's id, which rate_profit_log points at.
     try {
-      // A draft's lines and charges are replaced wholesale. Safe only because
-      // nothing downstream can reference a draft yet.
-      await db.freightRateLine.deleteMany({ where: { rateId: id } });
-      await db.rateLocalCharge.deleteMany({ where: { rateId: id } });
+      const existingLines = await db.freightRateLine.findMany({
+        where: { rateId: id, deletedAt: null },
+        select: { id: true, tierId: true },
+      });
+      const lineByTier = new Map(existingLines.map((l) => [l.tierId.toString(), l.id]));
+      const submittedTiers = new Set(lineData.map((l) => l.tierId.toString()));
+
+      for (const line of lineData) {
+        const existingLineId = lineByTier.get(line.tierId.toString());
+        if (existingLineId === undefined) {
+          await db.freightRateLine.create({
+            data: { tenantId: auth.tenantId, rateId: id, ...line },
+          });
+        } else {
+          await db.freightRateLine.update({
+            where: { id: existingLineId },
+            data: {
+              buyPrice: line.buyPrice,
+              profitType: line.profitType,
+              profitValue: line.profitValue,
+              minCharge: line.minCharge,
+              updatedBy: auth.userId,
+            },
+          });
+        }
+      }
+      // Tiers dropped from the rate are retired, not removed.
+      for (const line of existingLines) {
+        if (!submittedTiers.has(line.tierId.toString())) {
+          await db.freightRateLine.update({
+            where: { id: line.id },
+            data: { deletedAt: new Date(), isActive: false, updatedBy: auth.userId },
+          });
+        }
+      }
+
+      const existingCharges = await db.rateLocalCharge.findMany({
+        where: { rateId: id, deletedAt: null },
+        select: { id: true, costHeadId: true, side: true },
+      });
+      const chargeKey = (costHeadId: bigint | number | string, side: string): string =>
+        `${costHeadId.toString()}:${side}`;
+      const chargeByKey = new Map(
+        existingCharges.map((c) => [chargeKey(c.costHeadId, c.side), c.id]),
+      );
+      const submittedCharges = new Set(charges.map((c) => chargeKey(c.costHeadId!, c.side!)));
+
+      for (const charge of charges) {
+        const key = chargeKey(charge.costHeadId!, charge.side!);
+        const existingChargeId = chargeByKey.get(key);
+        if (existingChargeId === undefined) {
+          await db.rateLocalCharge.create({
+            data: { tenantId: auth.tenantId, rateId: id, ...charge },
+          });
+        } else {
+          await db.rateLocalCharge.update({
+            where: { id: existingChargeId },
+            data: {
+              amount: charge.amount,
+              currencyId: charge.currencyId,
+              costUnitId: charge.costUnitId,
+              remarks: charge.remarks,
+              updatedBy: auth.userId,
+            },
+          });
+        }
+      }
+      for (const charge of existingCharges) {
+        if (!submittedCharges.has(chargeKey(charge.costHeadId, charge.side))) {
+          await db.rateLocalCharge.update({
+            where: { id: charge.id },
+            data: { deletedAt: new Date(), isActive: false, updatedBy: auth.userId },
+          });
+        }
+      }
 
       return await db.freightRate.update({
         where: { id },
-        data: {
-          mode: input.mode,
-          polId: refs.polId,
-          podId: refs.podId,
-          carrierId: refs.carrierId,
-          goodsTypeId: refs.goodsTypeId,
-          purchaseSourceType: input.purchaseSourceType,
-          purchaseCarrierId: refs.purchaseCarrierId,
-          purchaseVendorId: refs.purchaseVendorId,
-          purchaseAgentId: refs.purchaseAgentId,
-          currencyId: refs.currencyId,
-          validFrom: new Date(input.validFrom),
-          validTo: new Date(input.validTo),
-          transitDays:
-            input.transitDays === undefined || input.transitDays === ''
-              ? null
-              : Number(input.transitDays),
-          freeDays:
-            input.freeDays === undefined || input.freeDays === ''
-              ? null
-              : Number(input.freeDays),
-          remarks: input.remarks === undefined || input.remarks === '' ? null : input.remarks,
-          status: input.status,
-          updatedBy: auth.userId,
-          lines: {
-            createMany: {
-              // See the create path: the parent relation supplies tenantId.
-              data: input.lines.map((line) => ({
-                tierId: BigInt(line.tierId),
-                buyPrice: line.buyPrice,
-                profitType: mayPrice ? (line.profitType ?? 'FLAT') : 'FLAT',
-                profitValue: mayPrice ? (line.profitValue || '0') : '0',
-                minCharge:
-                  line.minCharge === undefined || line.minCharge === '' ? null : line.minCharge,
-                createdBy: auth.userId,
-                updatedBy: auth.userId,
-              })),
-            },
-          },
-          ...(charges.length > 0 ? { localCharges: { createMany: { data: charges } } } : {}),
-        },
+        data: { ...rateData, updatedBy: auth.userId },
         include: rateInclude,
       });
     } catch (error) {
@@ -661,7 +801,6 @@ freightRateRouter.patch('/rates/:id', requireModePermission('EDIT'), async (req,
     }
   });
 
-  const today = new Date(new Date().toISOString().slice(0, 10));
   const payload: ApiSuccess<FreightRateDto> = {
     success: true,
     data: visibleRate(toDto(updated, today), canSeeBuyPrice(auth)),

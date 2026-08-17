@@ -419,19 +419,27 @@ describe('§4 rule 8 — the overlap constraint reaches the user as a sentence',
 });
 
 describe('§4 rules 1 and 2 — published rates are immutable, expired ones hidden', () => {
-  it('refuses to edit a published rate', async () => {
+  it('supersedes a published rate rather than mutating it', async () => {
+    // Phase C refused this edit outright, which was the interim behaviour
+    // until §4 rule 1 landed. Phase G makes it version the rate instead;
+    // rate-versioning.test.ts covers the chain in full.
     const published = await as(tokenA)
       .post('/api/tenant/purchase/rates')
       .send(
         rateBody({ status: 'PUBLISHED', validFrom: '2029-01-01', validTo: '2029-06-30' }),
       );
     expect(published.status).toBe(201);
+    const originalId = published.body.data.id;
 
     const edit = await as(tokenA)
-      .patch(`/api/tenant/purchase/rates/${published.body.data.id}`)
+      .patch(`/api/tenant/purchase/rates/${originalId}`)
       .send(rateBody({ status: 'PUBLISHED', validFrom: '2029-01-01', validTo: '2029-07-31' }));
-    expect(edit.status).toBe(409);
-    expect(edit.body.error.message).toMatch(/supersede/i);
+    expect(edit.status).toBe(200);
+    expect(edit.body.data.id).not.toBe(originalId);
+
+    const original = await owner.freightRate.findUnique({ where: { id: BigInt(originalId) } });
+    expect(original?.status).toBe('EXPIRED');
+    expect(original?.supersededById).toBe(BigInt(edit.body.data.id));
   });
 
   it('hides an expired rate by default and shows it on request', async () => {

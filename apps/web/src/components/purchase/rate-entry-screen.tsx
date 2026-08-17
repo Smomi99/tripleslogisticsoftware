@@ -138,6 +138,8 @@ export function RateEntryScreen({
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [draft, setDraft] = useState<DraftRow>(emptyDraft(''));
+  /** The rate the add row is currently editing, if any (§5.1's Edit action). */
+  const [editing, setEditing] = useState<FreightRateDto | null>(null);
   const [addError, setAddError] = useState<string | null>(null);
   const [isSaving, setSaving] = useState(false);
   const [isPanelOpen, setPanelOpen] = useState(false);
@@ -217,6 +219,56 @@ export function RateEntryScreen({
         ? options.vendors
         : options.agents;
 
+  /**
+   * Loads an existing rate back into the add row.
+   *
+   * §5.1's list carries Edit | Delete, and this screen's shape is a row of
+   * inputs — so Edit fills that row rather than opening a second form the user
+   * would have to learn. On a published rate the save supersedes it (§4 rule 1);
+   * on a draft it edits in place. Either way the server decides, not this.
+   */
+  function beginEdit(rate: FreightRateDto): void {
+    const prices: Record<string, string> = {};
+    for (const line of rate.lines) {
+      if (line.buyPrice !== undefined) prices[line.tierId] = line.buyPrice;
+    }
+    const first = rate.lines[0];
+
+    setEditing(rate);
+    setAddError(null);
+    setDraft({
+      polId: rate.polId,
+      podId: rate.podId,
+      carrierId: rate.carrierId,
+      goodsTypeId: rate.goodsTypeId,
+      purchaseSourceType: rate.purchaseSourceType,
+      purchaseSourceId: rate.purchaseSourceId,
+      currencyId: rate.currencyId,
+      validFrom: rate.validFrom,
+      validTo: rate.validTo,
+      transitDays: rate.transitDays === null ? '' : String(rate.transitDays),
+      freeDays: rate.freeDays === null ? '' : String(rate.freeDays),
+      status: rate.status === 'EXPIRED' ? 'PUBLISHED' : rate.status,
+      prices,
+      profitType: first?.profitType ?? 'FLAT',
+      profitValue: first?.profitValue ?? '',
+      localCharges: rate.localCharges.map((charge) => ({
+        costHeadId: charge.costHeadId,
+        side: charge.side,
+        amount: charge.amount,
+        currencyId: charge.currencyId,
+        ...(charge.remarks === null ? {} : { remarks: charge.remarks }),
+      })),
+    });
+    firstFieldRef.current?.focus();
+  }
+
+  function cancelEdit(): void {
+    setEditing(null);
+    setAddError(null);
+    setDraft(emptyDraft(draft.currencyId));
+  }
+
   async function submitDraft(): Promise<void> {
     setAddError(null);
 
@@ -257,8 +309,21 @@ export function RateEntryScreen({
 
     setSaving(true);
     try {
-      await authorizedRequest('/api/tenant/purchase/rates', { method: 'POST', body });
-      toast.success('Rate added');
+      if (editing === null) {
+        await authorizedRequest('/api/tenant/purchase/rates', { method: 'POST', body });
+        toast.success('Rate added');
+      } else {
+        await authorizedRequest(`/api/tenant/purchase/rates/${editing.id}`, {
+          method: 'PATCH',
+          body,
+        });
+        // §4 rule 1: a published rate is replaced by a new version rather than
+        // changed, so say which happened instead of a bare "Saved".
+        toast.success(
+          editing.status === 'PUBLISHED' ? 'Rate superseded by a new version' : 'Rate saved',
+        );
+        setEditing(null);
+      }
       setDraft(emptyDraft(draft.currencyId));
       await load();
       firstFieldRef.current?.focus();
@@ -310,7 +375,7 @@ export function RateEntryScreen({
 
       {canCreate && (
         <section
-          aria-label="Add a rate"
+          aria-label={editing === null ? 'Add a rate' : 'Edit a rate'}
           className="rounded-manifest border border-line bg-surface p-3 shadow-manifest"
           // §5.1: Enter submits from anywhere in the add row.
           onKeyDown={(event) => {
@@ -547,9 +612,23 @@ export function RateEntryScreen({
             </LabelledControl>
 
             <Button type="button" onClick={() => void submitDraft()} disabled={isSaving}>
-              {isSaving ? 'Adding…' : 'Add'}
+              {isSaving ? 'Saving…' : editing === null ? 'Add' : 'Save changes'}
             </Button>
+            {editing !== null && (
+              <Button type="button" variant="secondary" onClick={cancelEdit} disabled={isSaving}>
+                Cancel
+              </Button>
+            )}
           </div>
+
+          {editing !== null && (
+            <p className="mt-2 text-cell text-steel">
+              Editing <span className="font-mono tabular-nums text-hull">{editing.code}</span>
+              {editing.status === 'PUBLISHED'
+                ? ' — saving closes this rate off and records a new version, so quotations already issued against it stay correct.'
+                : ' — this draft will be updated in place.'}
+            </p>
+          )}
 
           {addError !== null && (
             <p role="alert" className="mt-2 text-cell text-alert">
@@ -665,6 +744,14 @@ export function RateEntryScreen({
                   </Status>
                 </td>
                 <td className="whitespace-nowrap px-2.5 py-2">
+                  {/* Editing rewrites every price, so it needs the buy prices
+                      to load. Without VIEW_BUY_PRICE they arrive absent
+                      (§4 rule 5) and saving would silently blank the costs. */}
+                  {canEdit && options.canSeeBuyPrice && rate.status !== 'EXPIRED' && (
+                    <Button variant="text" size="inline" onClick={() => beginEdit(rate)}>
+                      Edit
+                    </Button>
+                  )}
                   {canEdit && (
                     <Button
                       variant="destructive"

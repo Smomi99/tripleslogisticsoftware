@@ -44,6 +44,14 @@ const rateFlag = process.argv.find((a) => a.startsWith('--rate='));
 if (rateFlag !== undefined) {
   const code = rateFlag.slice('--rate='.length);
   if (!/^[A-Z0-9-]{1,32}$/.test(code)) throw new Error(`Refusing an odd rate code: ${code}`);
+  // superseded_by_id is a self-reference (§4 rule 1), so break any chain
+  // pointing at this rate first — otherwise deleting a successor before its
+  // predecessor fails on the foreign key.
+  await db.$executeRawUnsafe(
+    `UPDATE freight_rate SET superseded_by_id = NULL
+      WHERE superseded_by_id IN (SELECT id FROM freight_rate WHERE code = $1)`,
+    code,
+  );
   await db.$executeRawUnsafe(
     `DELETE FROM rate_profit_log WHERE rate_line_id IN (
        SELECT l.id FROM freight_rate_line l JOIN freight_rate r ON r.id = l.rate_id WHERE r.code = $1)`,

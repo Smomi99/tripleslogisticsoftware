@@ -9,7 +9,8 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "rates:expire": "tsx src/scripts/expire-rates.mts"
   },
   "dependencies": {
     "@ff/shared": "workspace:*",
