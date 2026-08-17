@@ -291,17 +291,33 @@ If any of these FK targets does not already exist in the built schema, **stop an
 
 ## 9. OPEN QUESTIONS — ask the client before the affected phase
 
-**Blocking phase A–B:**
+**Answered 17 Aug 2026 — phase A–B unblocked:**
 
-1. **Goods type** — is this a separate list (General / DG / Reefer / Personal Effects) or does it reuse the Industry Sector / Commodity Category master already built? §3.1 assumes separate. Which?
-2. **POL Local Charges** — a single lump-sum amount, or a breakdown of cost heads? §3.2 assumes a breakdown, since Cost Head already exists in Settings with units. And is it always in the rate's currency, or in BDT while freight is in USD?
-3. **Purchase via** — which master does this point at: the Carrier directly, a Vendor (LCL coloader / air master coloader), or an Agent? Or free text? §3.2 assumes a typed FK to all three.
-4. **Rate currency** — always USD, or can a rate be bought in BDT/EUR? If mixed, the Price List needs a display-currency selector and a conversion date rule.
+1. **Goods type** — ~~separate list or reuse Industry Sector?~~
+   **Separate list.** Goods type says how the cargo must be *handled* (a reefer
+   rate and a DG rate differ regardless of what is in the box); industry sector
+   says what the customer *ships*. Built in phase A.
+2. **POL Local Charges** — ~~lump sum or breakdown?~~
+   **A breakdown by cost head**, per `rate_local_charge` in §3.2. It is the only
+   shape that lets Accounts itemise THC, documentation and seal separately.
+   Currency: each charge line carries its own `currency_id`, so local charges may
+   sit in BDT while the freight is in USD.
+3. **Purchase via** — ~~carrier, vendor, agent or free text?~~
+   **All three, as a typed FK**: `purchase_source_type ENUM('CARRIER','VENDOR','AGENT')`
+   plus `purchase_source_id`, with exactly one of the three concrete FK columns
+   set. Covers buying direct from a line, through a coloader, and via an agent.
+4. **Rate currency** — ~~USD only or mixed?~~
+   **Any currency, USD the default.** Every amount carries `currency_id`
+   (CLAUDE.md §4 rule 6), and the Price List gets a display-currency selector
+   converting through the `currency` table.
+6. **Minimum charge** — ~~needed for LCL and Air?~~
+   **Yes** — carried on the rate line, so an LCL rate can bill a minimum 1 CBM and
+   an air rate can carry a MIN below its first weight break. Added in phase B
+   rather than after quotation maths depends on it.
 
 **Blocking phase C–F:**
 
 5. **Air weight breaks** — the sheet shows four (100+, 300+, 500+, 1000+). Real airline tariffs normally include a MIN charge and -45 / +45 breaks. Should the seed include those?
-6. Is a **minimum charge** needed for LCL (e.g. minimum 1 CBM billed) and air? This affects quotation maths later, so it is cheaper to add to `rate_tier` now.
 7. **Same lane, two carriers, same period** — allowed (the buyer compares) or blocked? §4 rule 8 assumes allowed, since carrier is part of the uniqueness key.
 8. Who is the **"price team"** — a fixed role, or a permission granted per user? §6 assumes a role template plus per-user override, per the existing RBAC.
 

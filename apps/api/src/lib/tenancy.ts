@@ -52,7 +52,13 @@ export const TENANT_OWNED_MODELS = [
   'Employee',
   'EmployeeCv',
   'EmployeeSalary',
+  // Rate tables are never shared: a bought rate is one forwarder's commercial
+  // position, and freight_rate_line.buy_price is the margin on every lane.
+  'FreightRate',
+  'FreightRateLine',
   'IndustrySector',
+  'RateLocalCharge',
+  'RateProfitLog',
   'Role',
   'RolePermission',
   'TenantMasterOverride',

@@ -221,6 +221,10 @@ model Tenant {
   rateTiers             RateTier[]
   toss                  Tos[]
   inquirySources        InquirySource[]
+  freightRates          FreightRate[]
+  freightRateLines      FreightRateLine[]
+  rateLocalCharges      RateLocalCharge[]
+  rateProfitLogs        RateProfitLog[]
   masterOverrides       TenantMasterOverride[]
   auditLogs             AuditLog[]
 
@@ -322,6 +326,8 @@ model Port {
 
   carrierServicePorts CarrierServicePort[]
   agentPortCoverages  AgentPortCoverage[]
+  ratesFromHere       FreightRate[]        @relation("FreightRatePol")
+  ratesToHere         FreightRate[]        @relation("FreightRatePod")
 
   // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
   // prisma migrate owns them — an appendix-only constraint is dropped by the
@@ -357,9 +363,11 @@ model Currency {
 
   tenant Tenant? @relation("CurrencyOwner", fields: [tenantId], references: [id], onDelete: Restrict)
 
-  rateHistory CurrencyRateHistory[]
+  rateHistory      CurrencyRateHistory[]
   /// Tenants using this currency as their base.
-  tenants     Tenant[]              @relation("TenantBaseCurrency")
+  tenants          Tenant[]              @relation("TenantBaseCurrency")
+  freightRates     FreightRate[]
+  rateLocalCharges RateLocalCharge[]
 
   // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
   // prisma migrate owns them — an appendix-only constraint is dropped by the
@@ -418,8 +426,9 @@ model CostUnit {
   updatedBy BigInt?   @map("updated_by")
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
-  tenant    Tenant?    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  costHeads CostHead[]
+  tenant           Tenant?           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  costHeads        CostHead[]
+  rateLocalCharges RateLocalCharge[]
 
   // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
   // prisma migrate owns them — an appendix-only constraint is dropped by the
@@ -453,8 +462,9 @@ model CostHead {
   // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
   // prisma migrate owns them — an appendix-only constraint is dropped by the
   // next migrate dev, which is how this was found.
-  createdByUser User? @relation("CostHeadCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
-  updatedByUser User? @relation("CostHeadUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  createdByUser    User?             @relation("CostHeadCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser    User?             @relation("CostHeadUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  rateLocalCharges RateLocalCharge[]
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -512,9 +522,11 @@ model Carrier {
   tenant Tenant?     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   type   CarrierType @relation(fields: [typeId], references: [id], onDelete: Restrict)
 
-  pics         CarrierPic[]
-  servicePorts CarrierServicePort[]
-  vessels      Vessel[]
+  pics           CarrierPic[]
+  servicePorts   CarrierServicePort[]
+  vessels        Vessel[]
+  ratesCarried   FreightRate[]        @relation("FreightRateCarrier")
+  ratesPurchased FreightRate[]        @relation("FreightRatePurchaseCarrier")
 
   // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
   // prisma migrate owns them — an appendix-only constraint is dropped by the
@@ -683,7 +695,8 @@ model Vendor {
   tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   vendorType VendorType @relation(fields: [vendorTypeId], references: [id], onDelete: Restrict)
 
-  pics VendorPic[]
+  pics         VendorPic[]
+  freightRates FreightRate[]
 
   // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
   // prisma migrate owns them — an appendix-only constraint is dropped by the
@@ -966,6 +979,7 @@ model Agent {
   expertAreas    AgentExpertArea[]
   portCoverages  AgentPortCoverage[]
   networkMembers AgentNetworkMember[]
+  freightRates   FreightRate[]
 
   // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
   // prisma migrate owns them — an appendix-only constraint is dropped by the
@@ -1303,17 +1317,25 @@ model User {
   employee Employee? @relation(fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
   role     Role?     @relation(fields: [tenantId, roleId], references: [tenantId, id], onDelete: Restrict)
 
-  createdGoodsTypes     GoodsType[]      @relation("GoodsTypeCreatedBy")
-  updatedGoodsTypes     GoodsType[]      @relation("GoodsTypeUpdatedBy")
-  createdContainerTypes ContainerType[]  @relation("ContainerTypeCreatedBy")
-  updatedContainerTypes ContainerType[]  @relation("ContainerTypeUpdatedBy")
-  createdRateTiers      RateTier[]       @relation("RateTierCreatedBy")
-  updatedRateTiers      RateTier[]       @relation("RateTierUpdatedBy")
-  createdToss           Tos[]            @relation("TosCreatedBy")
-  updatedToss           Tos[]            @relation("TosUpdatedBy")
-  createdInquirySources InquirySource[]  @relation("InquirySourceCreatedBy")
-  updatedInquirySources InquirySource[]  @relation("InquirySourceUpdatedBy")
-  permissions           UserPermission[]
+  createdGoodsTypes     GoodsType[]     @relation("GoodsTypeCreatedBy")
+  updatedGoodsTypes     GoodsType[]     @relation("GoodsTypeUpdatedBy")
+  createdContainerTypes ContainerType[] @relation("ContainerTypeCreatedBy")
+  updatedContainerTypes ContainerType[] @relation("ContainerTypeUpdatedBy")
+  createdRateTiers      RateTier[]      @relation("RateTierCreatedBy")
+  updatedRateTiers      RateTier[]      @relation("RateTierUpdatedBy")
+  createdToss           Tos[]           @relation("TosCreatedBy")
+  updatedToss           Tos[]           @relation("TosUpdatedBy")
+  createdInquirySources InquirySource[] @relation("InquirySourceCreatedBy")
+  updatedInquirySources InquirySource[] @relation("InquirySourceUpdatedBy")
+
+  createdFreightRates     FreightRate[]     @relation("FreightRateCreatedBy")
+  updatedFreightRates     FreightRate[]     @relation("FreightRateUpdatedBy")
+  createdFreightRateLines FreightRateLine[] @relation("FreightRateLineCreatedBy")
+  updatedFreightRateLines FreightRateLine[] @relation("FreightRateLineUpdatedBy")
+  createdRateLocalCharges RateLocalCharge[] @relation("RateLocalChargeCreatedBy")
+  updatedRateLocalCharges RateLocalCharge[] @relation("RateLocalChargeUpdatedBy")
+  changedRateProfitLogs   RateProfitLog[]   @relation("RateProfitLogChangedBy")
+  permissions             UserPermission[]
 
   // §4 rule 9: scoped per tenant — two companies may employ the same person.
 
@@ -1500,6 +1522,8 @@ model GoodsType {
   createdByUser User?   @relation("GoodsTypeCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User?   @relation("GoodsTypeUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
+  freightRates FreightRate[]
+
   @@unique([tenantId, code])
   @@index([tenantId])
   @@index([name])
@@ -1563,6 +1587,8 @@ model RateTier {
   createdByUser User?          @relation("RateTierCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User?          @relation("RateTierUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
+  rateLines FreightRateLine[]
+
   @@unique([tenantId, code])
   @@index([tenantId])
   @@index([mode, sortOrder])
@@ -1611,4 +1637,243 @@ model InquirySource {
   @@unique([tenantId, code])
   @@index([tenantId])
   @@map("inquiry_source")
+}
+
+// ===========================================================================
+// PURCHASE — rate tables (docs/MODULE_PURCHASE_SALES.md §3.2)
+//
+// Tenant-owned, all of them: a bought rate is one forwarder's commercial
+// position and is never shared.
+//
+// §4 rule 1 is the load-bearing rule here — rates are versioned, never
+// overwritten. Editing a rate supersedes it: the current row's valid_to moves
+// to yesterday, its status goes EXPIRED, superseded_by_id points at the
+// replacement. A quotation issued last month must still resolve to the rate
+// that was live when it was issued.
+// ===========================================================================
+
+/// Which master "Purchase via" points at (§9 Q3, answered: all three).
+enum PurchaseSourceType {
+  CARRIER
+  VENDOR
+  AGENT
+
+  @@map("purchase_source_type")
+}
+
+/// §4 rule 3 — EXPIRED is set by the nightly job, never by hand.
+enum RateStatus {
+  DRAFT
+  PUBLISHED
+  EXPIRED
+
+  @@map("rate_status")
+}
+
+/// The client asked for both margin methods, chosen per rate line.
+enum ProfitType {
+  FLAT
+  PERCENT
+
+  @@map("profit_type")
+}
+
+/// Which end of the lane a local charge sits at.
+enum ChargeSide {
+  POL
+  POD
+
+  @@map("charge_side")
+}
+
+/// spec §3.2: freight_rate — one bought rate for one lane, carrier and period.
+model FreightRate {
+  tenantId    BigInt   @map("tenant_id")
+  id          BigInt   @id @default(autoincrement())
+  code        String   @db.VarChar(32)
+  mode        RateMode
+  /// AOL when mode = AIR. §4 rule 9 constrains the port type server-side.
+  polId       BigInt   @map("pol_id")
+  /// AOD when mode = AIR.
+  podId       BigInt   @map("pod_id")
+  carrierId   BigInt   @map("carrier_id")
+  goodsTypeId BigInt   @map("goods_type_id")
+
+  /// "Purchase via" (§9 Q3). The spec writes a polymorphic purchase_source_id,
+  /// which cannot carry a foreign key and so cannot satisfy §4 rule 5. Three
+  /// nullable typed columns instead, with a CHECK that exactly one is set and
+  /// agrees with purchase_source_type — same expressiveness, real integrity.
+  purchaseSourceType PurchaseSourceType @map("purchase_source_type")
+  purchaseCarrierId  BigInt?            @map("purchase_carrier_id")
+  purchaseVendorId   BigInt?            @map("purchase_vendor_id")
+  purchaseAgentId    BigInt?            @map("purchase_agent_id")
+
+  /// §9 Q4: any currency, USD the default. §4 rule 6 — currency beside amount.
+  currencyId  BigInt     @map("currency_id")
+  validFrom   DateTime   @map("valid_from") @db.Date
+  validTo     DateTime   @map("valid_to") @db.Date
+  transitDays Int?       @map("transit_days")
+  remarks     String?    @db.Text
+  status      RateStatus @default(DRAFT)
+
+  /// §4 rule 1: set on the old row when a replacement supersedes it, so the
+  /// version chain is walkable in both directions.
+  supersededById BigInt? @map("superseded_by_id")
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  // Port, carrier, goods type and currency are system-capable, so a shared row
+  // has tenant_id NULL and a composite tenant FK cannot resolve. Single-column
+  // FKs, with tenant scoping enforced by the Prisma extension and RLS — the
+  // same shape carrier_service_port already uses.
+  pol       Port      @relation("FreightRatePol", fields: [polId], references: [id], onDelete: Restrict)
+  pod       Port      @relation("FreightRatePod", fields: [podId], references: [id], onDelete: Restrict)
+  carrier   Carrier   @relation("FreightRateCarrier", fields: [carrierId], references: [id], onDelete: Restrict)
+  goodsType GoodsType @relation(fields: [goodsTypeId], references: [id], onDelete: Restrict)
+  currency  Currency  @relation(fields: [currencyId], references: [id], onDelete: Restrict)
+
+  // Vendor and agent are tenant-owned, so these get the composite tenant-safe
+  // FK §4 rule 10 asks for.
+  purchaseCarrier Carrier? @relation("FreightRatePurchaseCarrier", fields: [purchaseCarrierId], references: [id], onDelete: Restrict)
+  purchaseVendor  Vendor?  @relation(fields: [tenantId, purchaseVendorId], references: [tenantId, id], onDelete: Restrict)
+  purchaseAgent   Agent?   @relation(fields: [tenantId, purchaseAgentId], references: [tenantId, id], onDelete: Restrict)
+
+  supersededBy FreightRate?  @relation("FreightRateSupersede", fields: [tenantId, supersededById], references: [tenantId, id], onDelete: Restrict)
+  supersedes   FreightRate[] @relation("FreightRateSupersede")
+
+  createdByUser User? @relation("FreightRateCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("FreightRateUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  lines        FreightRateLine[]
+  localCharges RateLocalCharge[]
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  // The Price List's default query: this lane, this mode, still valid.
+  @@index([tenantId, mode, polId, podId, validTo])
+  @@index([tenantId, status, validTo])
+  @@index([carrierId])
+  @@index([goodsTypeId])
+  @@map("freight_rate")
+}
+
+/// spec §3.2: freight_rate_line — the price for one tier of one rate.
+model FreightRateLine {
+  tenantId BigInt @map("tenant_id")
+  id       BigInt @id @default(autoincrement())
+  rateId   BigInt @map("rate_id")
+  tierId   BigInt @map("tier_id")
+
+  /// §4 rule 5: restricted. Stripped from the API response, not just hidden.
+  buyPrice    Decimal    @map("buy_price") @db.Decimal(18, 4)
+  profitType  ProfitType @default(FLAT) @map("profit_type")
+  profitValue Decimal    @default(0) @map("profit_value") @db.Decimal(18, 4)
+
+  /// §4 rule 4: read-only, computed by Postgres. Never written by hand, never
+  /// computed in the API or the browser. The migration installs it as
+  /// GENERATED ALWAYS ... STORED.
+  sellPrice Decimal? @default(dbgenerated()) @map("sell_price") @db.Decimal(18, 4)
+
+  /// §9 Q6, answered yes: the floor this line bills at — LCL's minimum CBM,
+  /// air's MIN charge below the first weight break. Null means no floor.
+  minCharge Decimal? @map("min_charge") @db.Decimal(18, 4)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  rate   FreightRate @relation(fields: [tenantId, rateId], references: [tenantId, id], onDelete: Restrict)
+  tier   RateTier    @relation(fields: [tierId], references: [id], onDelete: Restrict)
+
+  createdByUser User? @relation("FreightRateLineCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("FreightRateLineUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  profitLog RateProfitLog[]
+
+  @@unique([tenantId, rateId, tierId])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([rateId])
+  @@index([tierId])
+  @@map("freight_rate_line")
+}
+
+/// spec §3.2: rate_local_charge — "POL Local Charges", broken down by cost
+/// head rather than a lump sum (§9 Q2, answered).
+model RateLocalCharge {
+  tenantId   BigInt     @map("tenant_id")
+  id         BigInt     @id @default(autoincrement())
+  rateId     BigInt     @map("rate_id")
+  costHeadId BigInt     @map("cost_head_id")
+  side       ChargeSide
+  amount     Decimal    @db.Decimal(18, 4)
+
+  /// §9 Q2: local charges may sit in BDT while the freight is in USD, so this
+  /// is the charge's own currency, not the rate's.
+  currencyId BigInt @map("currency_id")
+
+  /// Copied from the cost head at entry rather than joined at read time — if
+  /// the cost head's unit is later corrected, a rate agreed under the old unit
+  /// must not silently change meaning.
+  costUnitId BigInt? @map("cost_unit_id")
+
+  remarks   String?   @db.Text
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant   Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  rate     FreightRate @relation(fields: [tenantId, rateId], references: [tenantId, id], onDelete: Restrict)
+  costHead CostHead    @relation(fields: [tenantId, costHeadId], references: [tenantId, id], onDelete: Restrict)
+  currency Currency    @relation(fields: [currencyId], references: [id], onDelete: Restrict)
+  costUnit CostUnit?   @relation(fields: [costUnitId], references: [id], onDelete: Restrict)
+
+  createdByUser User? @relation("RateLocalChargeCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("RateLocalChargeUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, rateId, costHeadId, side])
+  @@index([tenantId])
+  @@index([rateId])
+  @@index([costHeadId])
+  @@map("rate_local_charge")
+}
+
+/// spec §3.2: rate_profit_log — who changed a margin, when, and from what
+/// (§4 rule 6). Append-only, so it follows the audit_log shape rather than the
+/// §4 rule 2 master-table shape: no code, no is_active, no soft delete.
+model RateProfitLog {
+  tenantId       BigInt      @map("tenant_id")
+  id             BigInt      @id @default(autoincrement())
+  rateLineId     BigInt      @map("rate_line_id")
+  oldProfitType  ProfitType? @map("old_profit_type")
+  oldProfitValue Decimal?    @map("old_profit_value") @db.Decimal(18, 4)
+  newProfitType  ProfitType  @map("new_profit_type")
+  newProfitValue Decimal     @map("new_profit_value") @db.Decimal(18, 4)
+  reason         String?     @db.Text
+  changedBy      BigInt?     @map("changed_by")
+  changedAt      DateTime    @default(now()) @map("changed_at") @db.Timestamptz(6)
+
+  tenant        Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  rateLine      FreightRateLine @relation(fields: [tenantId, rateLineId], references: [tenantId, id], onDelete: Restrict)
+  changedByUser User?           @relation("RateProfitLogChangedBy", fields: [changedBy], references: [id], onDelete: Restrict)
+
+  @@index([tenantId])
+  @@index([rateLineId])
+  @@index([changedAt])
+  @@map("rate_profit_log")
 }
