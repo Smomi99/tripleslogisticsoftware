@@ -29,13 +29,37 @@ for (const table of TABLES) {
   );
 }
 
-const rates = await db.$queryRawUnsafe<{ code: string; status: string }[]>(
-  `SELECT code, status::text AS status FROM freight_rate WHERE deleted_at IS NOT NULL`,
+const rates = await db.$queryRawUnsafe<{ code: string; status: string; deleted: boolean }[]>(
+  `SELECT code, status::text AS status, (deleted_at IS NOT NULL) AS deleted FROM freight_rate ORDER BY code`,
 );
 console.log(
-  `freight_rate     ${rates.length} soft-deleted row(s)` +
-    (rates.length > 0 ? `: ${rates.map((r) => r.code).join(', ')}` : ''),
+  `freight_rate     ${rates.length} row(s)` +
+    (rates.length > 0
+      ? `: ${rates.map((r) => `${r.code} (${r.status}${r.deleted ? ', deleted' : ''})`).join(', ')}`
+      : ''),
 );
+
+/** --rate=RATE-001 removes one rate outright, for clearing a test entry. */
+const rateFlag = process.argv.find((a) => a.startsWith('--rate='));
+if (rateFlag !== undefined) {
+  const code = rateFlag.slice('--rate='.length);
+  if (!/^[A-Z0-9-]{1,32}$/.test(code)) throw new Error(`Refusing an odd rate code: ${code}`);
+  await db.$executeRawUnsafe(
+    `DELETE FROM rate_profit_log WHERE rate_line_id IN (
+       SELECT l.id FROM freight_rate_line l JOIN freight_rate r ON r.id = l.rate_id WHERE r.code = $1)`,
+    code,
+  );
+  await db.$executeRawUnsafe(
+    `DELETE FROM rate_local_charge WHERE rate_id IN (SELECT id FROM freight_rate WHERE code = $1)`,
+    code,
+  );
+  await db.$executeRawUnsafe(
+    `DELETE FROM freight_rate_line WHERE rate_id IN (SELECT id FROM freight_rate WHERE code = $1)`,
+    code,
+  );
+  await db.$executeRawUnsafe(`DELETE FROM freight_rate WHERE code = $1`, code);
+  console.log(`\nremoved ${code}`);
+}
 
 if (process.argv.includes('--delete')) {
   // Soft-deleted rates are invisible to the app but still hold their code, so

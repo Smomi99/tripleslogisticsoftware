@@ -8,6 +8,7 @@ import {
   freightRateListQuerySchema,
   type LocalChargeDto,
   type LookupOption,
+  marginUpdateSchema,
   type PurchaseSourceType,
   type RateLineDto,
   type RateMode,
@@ -229,13 +230,19 @@ function toDto(rate: RateWithRelations, today: Date): FreightRateDto {
 // List
 // ===========================================================================
 
-freightRateRouter.get('/rates', requireModePermission('VIEW'), async (req, res) => {
-  const auth = req.auth!;
-  const query = freightRateListQuerySchema.parse(req.query);
+/** Midnight today, so a rate valid through today is still valid. */
+const startOfToday = (): Date => new Date(new Date().toISOString().slice(0, 10));
 
-  const today = new Date(new Date().toISOString().slice(0, 10));
-
-  const where: Prisma.FreightRateWhereInput = {
+/**
+ * The §4 rules 2 and 7 filter set, shared by the purchase list and the add-on
+ * search. Both screens look at the same rates through different permissions,
+ * so the filtering must not drift between them.
+ */
+function rateWhere(
+  query: ReturnType<typeof freightRateListQuerySchema.parse>,
+  today: Date,
+): Prisma.FreightRateWhereInput {
+  return {
     deletedAt: null,
     mode: query.mode,
     ...(query.polId !== undefined && query.polId !== ''
@@ -264,6 +271,13 @@ freightRateRouter.get('/rates', requireModePermission('VIEW'), async (req, res) 
         }
       : {}),
   };
+}
+
+freightRateRouter.get('/rates', requireModePermission('VIEW'), async (req, res) => {
+  const auth = req.auth!;
+  const query = freightRateListQuerySchema.parse(req.query);
+  const today = startOfToday();
+  const where = rateWhere(query, today);
 
   const sortBy: RateSortField = RATE_SORT_FIELDS.includes(query.sortBy as RateSortField)
     ? (query.sortBy as RateSortField)
@@ -669,6 +683,229 @@ freightRateRouter.post('/rates/:id/delete', requireModePermission('EDIT'), async
   const payload: ApiSuccess<{ id: string }> = { success: true, data: { id: id.toString() } };
   res.json(payload);
 });
+
+// ===========================================================================
+// Price Add-on (§5.2) — the screen where margin is set
+//
+// A separate feature from the purchase screen: a buyer records cost, the
+// pricing team adds margin, and neither needs the other's screen. On top of
+// its own VIEW/EDIT it requires PURCHASE.RATE.MANAGE_PROFIT, because a
+// screen whose entire purpose is setting margin is meaningless without it.
+// ===========================================================================
+
+const ADDON_FEATURE_BY_MODE: Record<RateMode, string> = {
+  SEA_FCL: 'PURCHASE.PRICE_ADDON_FCL_SEA',
+  SEA_LCL: 'PURCHASE.PRICE_ADDON_LCL_SEA',
+  AIR: 'PURCHASE.PRICE_ADDON_AIR',
+};
+
+function requireAddonPermission(action: string): RequestHandler {
+  const guards = new Map<RateMode, RequestHandler>(
+    (Object.keys(ADDON_FEATURE_BY_MODE) as RateMode[]).map((mode) => [
+      mode,
+      requirePermission(`${ADDON_FEATURE_BY_MODE[mode]}.${action}`),
+    ]),
+  );
+
+  return function addonGuard(req, res, next): void {
+    const raw: unknown = req.query['mode'] ?? (req.body as { mode?: unknown } | undefined)?.mode;
+    const guard = typeof raw === 'string' ? guards.get(raw as RateMode) : undefined;
+    if (guard === undefined) {
+      throw HttpError.badRequest('Choose a freight mode.');
+    }
+    guard(req, res, next);
+  };
+}
+
+/** §5.2: "Gate the whole screen behind PURCHASE.RATE.MANAGE_PROFIT." */
+const requireProfitRights: RequestHandler = (req, _res, next) => {
+  const auth = req.auth;
+  if (auth === undefined) throw HttpError.unauthorized();
+  if (!canManageProfit(auth)) {
+    throw HttpError.forbidden('Only the pricing team may set margins.');
+  }
+  next();
+};
+
+freightRateRouter.get(
+  '/addon/rates',
+  requireAddonPermission('VIEW'),
+  requireProfitRights,
+  async (req, res) => {
+    const auth = req.auth!;
+    const query = freightRateListQuerySchema.parse(req.query);
+    const today = startOfToday();
+
+    const { rows, total } = await withTenant(auth.tenantId, async (db) => {
+      const where = rateWhere(query, today);
+      const [rows, total] = await Promise.all([
+        db.freightRate.findMany({
+          where,
+          include: rateInclude,
+          orderBy: [{ pol: { name: 'asc' } }, { pod: { name: 'asc' } }, { id: 'asc' }],
+          skip: (query.page - 1) * query.limit,
+          take: query.limit,
+        }),
+        db.freightRate.count({ where }),
+      ]);
+      return { rows, total };
+    });
+
+    const payload: ApiSuccess<FreightRateDto[]> = {
+      success: true,
+      // Still stripped. Holding MANAGE_PROFIT does not imply VIEW_BUY_PRICE —
+      // a user may be trusted to set a margin without seeing what was paid.
+      data: visibleRates(
+        rows.map((r) => toDto(r, today)),
+        canSeeBuyPrice(auth),
+      ),
+      meta: buildMeta(query.page, query.limit, total),
+    };
+    res.json(payload);
+  },
+);
+
+/**
+ * §5.2: commit every edited margin in one transaction.
+ *
+ * §4 rule 6: "every change writes to rate_profit_log". Unchanged rows are
+ * skipped rather than logged, so the log answers "what actually moved" instead
+ * of "what was on screen when someone pressed Save".
+ *
+ * sell_price is never written here. It is a generated column; setting the
+ * margin is the only way to move it, which is the guarantee §4 rule 4 buys.
+ */
+freightRateRouter.patch(
+  '/addon/margins',
+  requireAddonPermission('EDIT'),
+  requireProfitRights,
+  async (req, res) => {
+    const auth = req.auth!;
+    const input = marginUpdateSchema.parse(req.body);
+
+    const ids = input.edits.map((edit) => BigInt(edit.rateLineId));
+    if (new Set(ids.map(String)).size !== ids.length) {
+      throw HttpError.badRequest('The same rate line was submitted twice.');
+    }
+
+    const changed = await withTenant(auth.tenantId, async (db) => {
+      const existing = await db.freightRateLine.findMany({
+        where: { id: { in: ids }, deletedAt: null, rate: { deletedAt: null, mode: input.mode } },
+        select: {
+          id: true,
+          profitType: true,
+          profitValue: true,
+          rate: { select: { status: true } },
+        },
+      });
+
+      // All or nothing, including the lookup: if one line is missing the whole
+      // save fails, rather than silently applying the rest.
+      if (existing.length !== ids.length) {
+        throw HttpError.notFound('One of those rate lines no longer exists.');
+      }
+
+      const before = new Map(existing.map((line) => [line.id.toString(), line]));
+      let applied = 0;
+
+      for (const edit of input.edits) {
+        const previous = before.get(edit.rateLineId)!;
+
+        // §4 rule 1 again: a published rate's price is what quotations quoted.
+        if (previous.rate.status === 'EXPIRED') {
+          throw HttpError.conflict('An expired rate cannot be re-priced.');
+        }
+
+        const sameType = previous.profitType === edit.profitType;
+        const sameValue = previous.profitValue.equals(new Prisma.Decimal(edit.profitValue));
+        if (sameType && sameValue) continue;
+
+        await db.freightRateLine.update({
+          where: { id: BigInt(edit.rateLineId) },
+          data: {
+            profitType: edit.profitType,
+            profitValue: edit.profitValue,
+            updatedBy: auth.userId,
+          },
+        });
+
+        await db.rateProfitLog.create({
+          data: {
+            tenantId: auth.tenantId,
+            rateLineId: BigInt(edit.rateLineId),
+            oldProfitType: previous.profitType,
+            oldProfitValue: previous.profitValue,
+            newProfitType: edit.profitType,
+            newProfitValue: edit.profitValue,
+            reason: input.reason === undefined || input.reason === '' ? null : input.reason,
+            changedBy: auth.userId,
+          },
+        });
+        applied += 1;
+      }
+
+      return applied;
+    });
+
+    const payload: ApiSuccess<{ changed: number }> = { success: true, data: { changed } };
+    res.json(payload);
+  },
+);
+
+/** The margin history for one line — who moved it, when, and from what. */
+freightRateRouter.get(
+  '/addon/margins/:id/history',
+  requireAddonPermission('VIEW'),
+  requireProfitRights,
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'rate line');
+
+    const entries = await withTenant(auth.tenantId, (db) =>
+      db.rateProfitLog.findMany({
+        where: { rateLineId: id },
+        orderBy: { changedAt: 'desc' },
+        take: 50,
+        select: {
+          id: true,
+          oldProfitType: true,
+          oldProfitValue: true,
+          newProfitType: true,
+          newProfitValue: true,
+          reason: true,
+          changedAt: true,
+          changedByUser: { select: { username: true } },
+        },
+      }),
+    );
+
+    const payload: ApiSuccess<MarginHistoryEntry[]> = {
+      success: true,
+      data: entries.map((entry) => ({
+        id: entry.id.toString(),
+        oldProfitType: entry.oldProfitType,
+        oldProfitValue: optionalMoney(entry.oldProfitValue),
+        newProfitType: entry.newProfitType,
+        newProfitValue: money(entry.newProfitValue),
+        reason: entry.reason,
+        changedAt: entry.changedAt.toISOString(),
+        changedBy: entry.changedByUser?.username ?? 'system',
+      })),
+    };
+    res.json(payload);
+  },
+);
+
+export interface MarginHistoryEntry {
+  id: string;
+  oldProfitType: 'FLAT' | 'PERCENT' | null;
+  oldProfitValue: string | null;
+  newProfitType: 'FLAT' | 'PERCENT';
+  newProfitValue: string;
+  reason: string | null;
+  changedAt: string;
+  changedBy: string;
+}
 
 // ===========================================================================
 // Form options — the dropdowns the entry row needs, filtered per §4 rule 9

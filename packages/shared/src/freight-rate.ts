@@ -248,5 +248,53 @@ export type FreightRateListQuery = z.infer<typeof freightRateListQuerySchema>;
 export const RATE_SORT_FIELDS = ['code', 'validFrom', 'validTo', 'status'] as const;
 export type RateSortField = (typeof RATE_SORT_FIELDS)[number];
 
+// ------------------------------------------------------ price add-on (§5.2)
+
+/**
+ * One edited margin. The line is named by id rather than by rate + tier so the
+ * server never has to re-derive which row the user meant.
+ */
+export const marginEditSchema = z.object({
+  rateLineId: idField,
+  profitType: z.enum(PROFIT_TYPES),
+  profitValue: moneyField('Enter a profit, e.g. 150 or 12.5.'),
+});
+
+export type MarginEdit = z.input<typeof marginEditSchema>;
+
+/**
+ * §5.2: "Save / Update price commits all edited rows in one transaction."
+ *
+ * All-or-nothing is the point — a half-applied margin update leaves some lanes
+ * quoted at the old price and some at the new, with nothing to say which.
+ */
+export const marginUpdateSchema = z.object({
+  mode: z.enum(RATE_MODES),
+  edits: z.array(marginEditSchema).min(1, 'Nothing has been changed yet.'),
+  /** Written to rate_profit_log alongside each change (§4 rule 6). */
+  reason: z.string().trim().max(500, 'Keep the reason under 500 characters.').optional(),
+});
+
+export type MarginUpdateInput = z.input<typeof marginUpdateSchema>;
+
+/**
+ * Sell price, computed the same way Postgres computes it.
+ *
+ * §4 rule 4 puts the authoritative calculation in the database. This exists
+ * only so the add-on screen can show the outcome under the input before the
+ * user saves — it is a preview, never a value that gets posted.
+ */
+export function previewSellPrice(
+  buyPrice: string,
+  profitType: ProfitType,
+  profitValue: string,
+): string {
+  const buy = Number(buyPrice);
+  const profit = Number(profitValue);
+  if (!Number.isFinite(buy) || !Number.isFinite(profit)) return '—';
+  const sell = profitType === 'FLAT' ? buy + profit : buy * (1 + profit / 100);
+  return sell.toFixed(4);
+}
+
 /** How near expiry a rate has to be before the list flags it (§4 rule 3). */
 export const EXPIRING_SOON_DAYS = 7;

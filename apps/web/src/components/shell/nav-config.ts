@@ -29,6 +29,7 @@ export const MODULE_LABEL: Record<Module, string> = {
  */
 const ROUTES: Record<string, Route> = {
   'PURCHASE.SEA_FREIGHT_FCL': '/purchase/sea-freight-fcl',
+  'PURCHASE.PRICE_ADDON_FCL_SEA': '/purchase/price-addon-fcl',
   'SETTING.SEA_AIR_PORT': '/setting/port',
   'SETTING.COST_HEAD': '/setting/cost-head',
   'SETTING.CURRENCY': '/setting/currency',
