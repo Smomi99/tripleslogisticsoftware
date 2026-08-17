@@ -38,6 +38,12 @@ export const CODE_PREFIX = {
   industrySector: 'ISC',
   commodityItem: 'CIT',
 
+  goodsType: 'GDT',
+  containerType: 'CNT',
+  rateTier: 'RTR',
+  tos: 'TOS',
+  inquirySource: 'INS',
+
   // §6 CRM
   customer: 'CUS',
   customerPic: 'CUP',

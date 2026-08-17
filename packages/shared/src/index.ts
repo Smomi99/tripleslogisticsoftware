@@ -18,6 +18,7 @@ export * from './customer';
 export * from './employee';
 export * from './permissions';
 export * from './port';
+export * from './rate-lookups';
 export * from './role';
 export * from './user';
 export * from './vendor';

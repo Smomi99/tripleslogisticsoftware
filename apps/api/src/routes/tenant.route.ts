@@ -14,6 +14,7 @@ import { customerRouter } from './customer.route';
 import { employeeRouter } from './employee.route';
 import { currencyRouter } from './currency.route';
 import { portRouter } from './port.route';
+import { rateLookupRouter } from './rate-lookup.route';
 import { vendorRouter } from './vendor.route';
 import { userRouter } from './user.route';
 import { vesselRouter } from './vessel.route';
@@ -40,6 +41,8 @@ tenantRouter.use('/setting/vessels', vesselRouter);
 tenantRouter.use('/setting/carriers', carrierRouter);
 tenantRouter.use('/setting/vendors', vendorRouter);
 tenantRouter.use('/setting/commodity-categories', commodityRouter);
+// Purchase & Sales lookups (docs/MODULE_PURCHASE_SALES.md §3.1).
+tenantRouter.use('/setting', rateLookupRouter);
 
 // CRM.
 tenantRouter.use('/crm/customers', customerRouter);

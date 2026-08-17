@@ -216,6 +216,11 @@ model Tenant {
   rolePermissions       RolePermission[]
   users                 User[]
   userPermissions       UserPermission[]
+  goodsTypes            GoodsType[]
+  containerTypes        ContainerType[]
+  rateTiers             RateTier[]
+  toss                  Tos[]
+  inquirySources        InquirySource[]
   masterOverrides       TenantMasterOverride[]
   auditLogs             AuditLog[]
 
@@ -1298,7 +1303,17 @@ model User {
   employee Employee? @relation(fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
   role     Role?     @relation(fields: [tenantId, roleId], references: [tenantId, id], onDelete: Restrict)
 
-  permissions UserPermission[]
+  createdGoodsTypes     GoodsType[]      @relation("GoodsTypeCreatedBy")
+  updatedGoodsTypes     GoodsType[]      @relation("GoodsTypeUpdatedBy")
+  createdContainerTypes ContainerType[]  @relation("ContainerTypeCreatedBy")
+  updatedContainerTypes ContainerType[]  @relation("ContainerTypeUpdatedBy")
+  createdRateTiers      RateTier[]       @relation("RateTierCreatedBy")
+  updatedRateTiers      RateTier[]       @relation("RateTierUpdatedBy")
+  createdToss           Tos[]            @relation("TosCreatedBy")
+  updatedToss           Tos[]            @relation("TosUpdatedBy")
+  createdInquirySources InquirySource[]  @relation("InquirySourceCreatedBy")
+  updatedInquirySources InquirySource[]  @relation("InquirySourceUpdatedBy")
+  permissions           UserPermission[]
 
   // §4 rule 9: scoped per tenant — two companies may employ the same person.
 
@@ -1434,4 +1449,166 @@ model AuditLog {
   @@index([changedBy])
   @@index([createdAt])
   @@map("audit_log")
+}
+
+// ===========================================================================
+// PURCHASE & SALES lookups (docs/MODULE_PURCHASE_SALES.md §3.1)
+//
+// System-capable like every other lookup in the system (§7A rule 7): these are
+// industry vocabularies — ISO container types, standard terms of shipment,
+// cargo classifications — identical for every forwarder. NULL tenant_id is a
+// shared row; a workspace may add its own alongside and switch a shared one off
+// for itself, but never edit it.
+//
+// The spec writes "id, tenant_id" for these, which read literally would mean
+// tenant-owned and a duplicate copy of the ISO container list per workspace.
+// Following the established lookup pattern instead — see the report.
+// ===========================================================================
+
+enum RateMode {
+  SEA_FCL
+  SEA_LCL
+  AIR
+
+  @@map("rate_mode")
+}
+
+enum RateTierUnit {
+  CONTAINER
+  CBM
+  KG
+
+  @@map("rate_tier_unit")
+}
+
+/// spec: goods_type — how the cargo must be handled, not what industry it is
+/// from. Distinct from industry_sector (Garments), which describes the customer.
+model GoodsType {
+  tenantId    BigInt?   @map("tenant_id")
+  id          BigInt    @id @default(autoincrement())
+  code        String    @db.VarChar(32)
+  name        String    @db.VarChar(200)
+  description String?   @db.Text
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy   BigInt?   @map("created_by")
+  updatedBy   BigInt?   @map("updated_by")
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdByUser User?   @relation("GoodsTypeCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User?   @relation("GoodsTypeUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@index([name])
+  @@map("goods_type")
+}
+
+/// spec: container_type — teu_factor drives volume reporting (a 40ft is 2 TEU).
+model ContainerType {
+  tenantId  BigInt?   @map("tenant_id")
+  id        BigInt    @id @default(autoincrement())
+  code      String    @db.VarChar(32)
+  name      String    @db.VarChar(200)
+  /// 20STD = 1.00, 40STD/40HC = 2.00, 45FT = 2.25
+  teuFactor Decimal   @default(1) @map("teu_factor") @db.Decimal(4, 2)
+  sortOrder Int       @default(0) @map("sort_order")
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdByUser User?   @relation("ContainerTypeCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User?   @relation("ContainerTypeUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  rateTiers RateTier[]
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@map("container_type")
+}
+
+/// spec §2: the tier definitions. This table is why the four wireframe columns
+/// are rows — an airline contract needing MIN/-45/+45 is a seed row here rather
+/// than a migration and a UI rewrite.
+model RateTier {
+  tenantId        BigInt?      @map("tenant_id")
+  id              BigInt       @id @default(autoincrement())
+  code            String       @db.VarChar(32)
+  mode            RateMode
+  label           String       @db.VarChar(100)
+  unit            RateTierUnit
+  /// Bracket bounds, e.g. LCL 5–10 CBM. NULL max = open-ended ("15+").
+  minValue        Decimal?     @map("min_value") @db.Decimal(18, 3)
+  maxValue        Decimal?     @map("max_value") @db.Decimal(18, 3)
+  sortOrder       Int          @default(0) @map("sort_order")
+  /// SEA_FCL tiers are a container type; LCL and AIR tiers are weight/volume
+  /// brackets and leave this null.
+  containerTypeId BigInt?      @map("container_type_id")
+  isActive        Boolean      @default(true) @map("is_active")
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy       BigInt?      @map("created_by")
+  updatedBy       BigInt?      @map("updated_by")
+  deletedAt       DateTime?    @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant?        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  containerType ContainerType? @relation(fields: [containerTypeId], references: [id], onDelete: Restrict)
+  createdByUser User?          @relation("RateTierCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User?          @relation("RateTierUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@index([mode, sortOrder])
+  @@map("rate_tier")
+}
+
+/// spec: tos — Terms of Shipment (CY/CY, Door/Door …).
+model Tos {
+  tenantId  BigInt?   @map("tenant_id")
+  id        BigInt    @id @default(autoincrement())
+  code      String    @db.VarChar(32)
+  name      String    @db.VarChar(200)
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdByUser User?   @relation("TosCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User?   @relation("TosUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@map("tos")
+}
+
+/// spec: inquiry_source — where the inquiry came from.
+model InquirySource {
+  tenantId  BigInt?   @map("tenant_id")
+  id        BigInt    @id @default(autoincrement())
+  code      String    @db.VarChar(32)
+  name      String    @db.VarChar(200)
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdByUser User?   @relation("InquirySourceCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User?   @relation("InquirySourceUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@map("inquiry_source")
 }

@@ -84,6 +84,63 @@ const SYSTEM_CARRIERS = [
   { name: 'Turkish Cargo', type: 'Airline' },
 ] as const;
 
+/**
+ * Purchase & Sales lookups (docs/MODULE_PURCHASE_SALES.md §3.1).
+ *
+ * rate_tier is the table §2 exists for: the wireframe's four columns are these
+ * rows. Adding a MIN charge or a -45 air break is one row here, not a migration
+ * and a UI rewrite.
+ */
+const RATE_LOOKUPS = {
+  goodsType: [
+    { code: 'GENERAL', name: 'General Cargo' },
+    { code: 'DG', name: 'Dangerous Goods (DG)' },
+    { code: 'REEFER', name: 'Reefer' },
+    { code: 'PERSONAL', name: 'Personal Effects' },
+    { code: 'PROJECT', name: 'Project Cargo' },
+  ],
+  containerType: [
+    { code: '20STD', name: "20' Standard", teuFactor: '1.00', sortOrder: 1 },
+    { code: '40STD', name: "40' Standard", teuFactor: '2.00', sortOrder: 2 },
+    { code: '40HC', name: "40' High Cube", teuFactor: '2.00', sortOrder: 3 },
+    { code: '45FT', name: "45' High Cube", teuFactor: '2.25', sortOrder: 4 },
+  ],
+  tos: [
+    { code: 'CY/CY', name: 'CY / CY' },
+    { code: 'CY/CFS', name: 'CY / CFS' },
+    { code: 'CFS/CY', name: 'CFS / CY' },
+    { code: 'CFS/CFS', name: 'CFS / CFS' },
+    { code: 'DOOR/DOOR', name: 'Door / Door' },
+    { code: 'DOOR/CY', name: 'Door / CY' },
+    { code: 'CY/DOOR', name: 'CY / Door' },
+  ],
+  inquirySource: [
+    { code: 'CALL', name: 'Direct Call' },
+    { code: 'EMAIL', name: 'Email' },
+    { code: 'WEBSITE', name: 'Website' },
+    { code: 'AGENT', name: 'Agent Referral' },
+    { code: 'EXISTING', name: 'Existing Customer' },
+    { code: 'EXHIBITION', name: 'Exhibition' },
+    { code: 'FIELD', name: 'Field Visit' },
+  ],
+} as const;
+
+/** Tier definitions per mode. Sea FCL tiers link to a container type. */
+const RATE_TIERS = [
+  { code: 'FCL-20STD', mode: 'SEA_FCL', label: '20STD', unit: 'CONTAINER', container: '20STD', sortOrder: 1 },
+  { code: 'FCL-40STD', mode: 'SEA_FCL', label: '40STD', unit: 'CONTAINER', container: '40STD', sortOrder: 2 },
+  { code: 'FCL-40HC', mode: 'SEA_FCL', label: '40HC', unit: 'CONTAINER', container: '40HC', sortOrder: 3 },
+  { code: 'FCL-45FT', mode: 'SEA_FCL', label: '45FT', unit: 'CONTAINER', container: '45FT', sortOrder: 4 },
+  { code: 'LCL-0-5', mode: 'SEA_LCL', label: '0-5', unit: 'CBM', min: '0', max: '5', sortOrder: 1 },
+  { code: 'LCL-5-10', mode: 'SEA_LCL', label: '5-10', unit: 'CBM', min: '5', max: '10', sortOrder: 2 },
+  { code: 'LCL-10-15', mode: 'SEA_LCL', label: '10-15', unit: 'CBM', min: '10', max: '15', sortOrder: 3 },
+  { code: 'LCL-15PLUS', mode: 'SEA_LCL', label: '15+', unit: 'CBM', min: '15', max: null, sortOrder: 4 },
+  { code: 'AIR-100', mode: 'AIR', label: '100+', unit: 'KG', min: '100', max: null, sortOrder: 1 },
+  { code: 'AIR-300', mode: 'AIR', label: '300+', unit: 'KG', min: '300', max: null, sortOrder: 2 },
+  { code: 'AIR-500', mode: 'AIR', label: '500+', unit: 'KG', min: '500', max: null, sortOrder: 3 },
+  { code: 'AIR-1000', mode: 'AIR', label: '1000+', unit: 'KG', min: '1000', max: null, sortOrder: 4 },
+] as const;
+
 /** System lookup values from §5 and §6. tenant_id stays NULL — see §7A rule 7. */
 const SYSTEM_LOOKUPS = {
   costUnit: ['Container', 'HBL', 'HAWB', 'MBL', 'MAWB', 'CBM', 'Trip', 'Contract', 'M.Ton', 'KG'],
@@ -219,6 +276,73 @@ async function seedSystemMasters(): Promise<{ ports: number; currencies: number;
   return { ports, currencies, carriers };
 }
 
+/** The §3.1 Purchase & Sales lookups, as shared rows. */
+async function seedRateLookups(): Promise<number> {
+  let created = 0;
+
+  const simple = [
+    { rows: RATE_LOOKUPS.goodsType, prefix: CODE_PREFIX.goodsType, model: prisma.goodsType },
+    { rows: RATE_LOOKUPS.tos, prefix: CODE_PREFIX.tos, model: prisma.tos },
+    { rows: RATE_LOOKUPS.inquirySource, prefix: CODE_PREFIX.inquirySource, model: prisma.inquirySource },
+  ];
+  for (const table of simple) {
+    for (const row of table.rows) {
+      const existing = await table.model.findFirst({
+        where: { code: row.code, tenantId: null },
+        select: { id: true },
+      });
+      if (existing === null) {
+        await table.model.create({ data: { code: row.code, name: row.name } });
+        created += 1;
+      }
+    }
+  }
+
+  for (const row of RATE_LOOKUPS.containerType) {
+    const existing = await prisma.containerType.findFirst({
+      where: { code: row.code, tenantId: null },
+      select: { id: true },
+    });
+    if (existing === null) {
+      await prisma.containerType.create({
+        data: { code: row.code, name: row.name, teuFactor: row.teuFactor, sortOrder: row.sortOrder },
+      });
+      created += 1;
+    }
+  }
+
+  // Tiers come last: the Sea FCL ones point at a container type.
+  const containers = await prisma.containerType.findMany({
+    where: { tenantId: null },
+    select: { id: true, code: true },
+  });
+  const containerByCode = new Map(containers.map((c) => [c.code, c.id]));
+
+  for (const tier of RATE_TIERS) {
+    const existing = await prisma.rateTier.findFirst({
+      where: { code: tier.code, tenantId: null },
+      select: { id: true },
+    });
+    if (existing !== null) continue;
+    await prisma.rateTier.create({
+      data: {
+        code: tier.code,
+        mode: tier.mode,
+        label: tier.label,
+        unit: tier.unit,
+        sortOrder: tier.sortOrder,
+        minValue: 'min' in tier && tier.min !== null ? tier.min : null,
+        maxValue: 'max' in tier && tier.max !== null ? tier.max : null,
+        containerTypeId:
+          'container' in tier ? (containerByCode.get(tier.container) ?? null) : null,
+      },
+    });
+    created += 1;
+  }
+
+  return created;
+}
+
 /**
  * A development tenant with a superadmin. Guarded by an explicit flag so it can
  * never run against production by accident.
@@ -322,6 +446,9 @@ async function main(): Promise<void> {
   console.log(
     `  system masters: ${masters.ports} ports, ${masters.currencies} currencies, ${masters.carriers} carriers created (idempotent)`,
   );
+
+  const rateLookups = await seedRateLookups();
+  console.log(`  rate lookups  : ${rateLookups} created (idempotent)`);
 
   if (process.env['SEED_DEV_TENANT'] === 'true') {
     await seedDevTenant();

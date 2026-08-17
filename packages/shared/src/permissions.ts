@@ -123,6 +123,16 @@ export const FEATURES: readonly FeatureDefinition[] = [
   { module: 'SETTING', feature: 'SETTING.VENDOR', label: 'Vendor', actions: MASTER },
   { module: 'SETTING', feature: 'SETTING.COMMODITY_CATEGORY', label: 'Commodity Category', actions: MASTER },
 
+  // Purchase & Sales lookups (docs/MODULE_PURCHASE_SALES.md §3.1, §6).
+  // SETTING.INQUIRY_SOURCE is not in the spec's §6 list, but inquiry_source is
+  // a §3.1 lookup with a Settings screen — without a permission its screen
+  // could not be gated at all, so it is added on the same shape as the rest.
+  { module: 'SETTING', feature: 'SETTING.GOODS_TYPE', label: 'Goods Type', actions: MASTER },
+  { module: 'SETTING', feature: 'SETTING.CONTAINER_TYPE', label: 'Container Type', actions: MASTER },
+  { module: 'SETTING', feature: 'SETTING.RATE_TIER', label: 'Rate Tier', actions: MASTER },
+  { module: 'SETTING', feature: 'SETTING.TOS', label: 'Terms of Shipment', actions: MASTER },
+  { module: 'SETTING', feature: 'SETTING.INQUIRY_SOURCE', label: 'Inquiry Source', actions: MASTER },
+
   // -- 8. CRM ----------------------------------------------------------------
   { module: 'CRM', feature: 'CRM.CUSTOMER', label: 'Customer', actions: MASTER },
   { module: 'CRM', feature: 'CRM.AGENT', label: 'Agent', actions: MASTER },
