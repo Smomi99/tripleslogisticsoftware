@@ -28,9 +28,16 @@ export const MODULE_LABEL: Record<Module, string> = {
  * 404ing for an operator.
  */
 const ROUTES: Record<string, Route> = {
+  // All nine purchase screens run on three components (phase F).
   'PURCHASE.SEA_FREIGHT_FCL': '/purchase/sea-freight-fcl',
+  'PURCHASE.SEA_FREIGHT_LCL': '/purchase/sea-freight-lcl',
+  'PURCHASE.AIR_FREIGHT_PURCHASE': '/purchase/air-freight-purchase',
   'PURCHASE.PRICE_ADDON_FCL_SEA': '/purchase/price-addon-fcl',
+  'PURCHASE.PRICE_ADDON_LCL_SEA': '/purchase/price-addon-lcl',
+  'PURCHASE.PRICE_ADDON_AIR': '/purchase/price-addon-air',
   'PURCHASE.PRICE_LIST_SEA_FCL': '/purchase/price-list-fcl',
+  'PURCHASE.PRICE_LIST_SEA_LCL': '/purchase/price-list-lcl',
+  'PURCHASE.PRICE_LIST_AIR': '/purchase/price-list-air',
   'SETTING.SEA_AIR_PORT': '/setting/port',
   'SETTING.COST_HEAD': '/setting/cost-head',
   'SETTING.CURRENCY': '/setting/currency',
