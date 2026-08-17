@@ -166,6 +166,82 @@ describe('model tier registry', () => {
   });
 });
 
+describe('§4 rule 10 — cross-tenant parent guard', () => {
+  /**
+   * A tenant-owned row pointing at a system-capable parent cannot have the
+   * composite (tenant_id, id) foreign key the rule asks for: a shared port has
+   * tenant_id NULL and the reference would never resolve. Neither the plain FK
+   * nor RLS notices when such a reference names another workspace's private
+   * row — the FK check bypasses RLS, and the policy tests the CHILD's tenant.
+   * A trigger per edge is what closes it.
+   */
+  it('guards every tenant-owned reference to a system-capable parent', async () => {
+    // Read from the catalogue, not from a list — a table added next month is
+    // covered by this test the day it exists, which is the point.
+    const edges = await owner.$queryRaw<{ child: string; col: string; guarded: boolean }[]>`
+      WITH cols AS (
+        SELECT c.relname AS tbl, a.attname, a.attnotnull
+          FROM pg_class c JOIN pg_attribute a ON a.attrelid = c.oid
+         WHERE c.relkind = 'r' AND a.attname = 'tenant_id' AND a.attnum > 0),
+      edges AS (
+        SELECT con.conrelid::regclass::text AS child,
+               (SELECT att.attname FROM unnest(con.conkey) k
+                  JOIN pg_attribute att
+                    ON att.attrelid = con.conrelid AND att.attnum = k) AS col
+          FROM pg_constraint con
+         WHERE con.contype = 'f'
+           AND array_length(con.conkey, 1) = 1
+           AND con.conrelid::regclass::text IN (SELECT tbl FROM cols WHERE attnotnull)
+           AND con.confrelid::regclass::text IN (SELECT tbl FROM cols WHERE NOT attnotnull))
+      SELECT child, col, EXISTS (
+               SELECT 1 FROM pg_trigger t
+                WHERE t.tgrelid = child::regclass
+                  AND NOT t.tgisinternal
+                  AND t.tgname = child || '_' || col || '_tenant_guard') AS guarded
+        FROM edges
+    `;
+
+    // Without this the test passes when the query finds nothing at all, which
+    // is how a coverage check quietly stops covering anything.
+    expect(edges.length).toBeGreaterThanOrEqual(28);
+
+    const unguarded = edges.filter((e) => !e.guarded).map((e) => `${e.child}.${e.col}`);
+    expect(unguarded, `references with no tenant guard: ${unguarded.join(', ')}`).toEqual([]);
+  });
+
+  it('refuses a row whose parent belongs to another tenant', async () => {
+    // Written through the OWNER client, which bypasses both the Prisma
+    // extension and RLS — so this exercises the database on its own, with
+    // every application layer removed.
+    const carrierType = await owner.carrierType.findFirstOrThrow({ where: { tenantId: null } });
+    const carrierOfB = await owner.carrier.create({
+      data: { tenantId: tenantB, code: 'GUARD-CAR', name: 'Beta Only Line', typeId: carrierType.id },
+      select: { id: true },
+    });
+
+    await expect(
+      owner.vessel.create({
+        data: {
+          tenantId: tenantA,
+          code: 'GUARD-VSL',
+          name: 'Trespasser',
+          carrierId: carrierOfB.id,
+        },
+      }),
+    ).rejects.toThrow(/cross-tenant reference/);
+
+    // And the same reference is fine once it points at a shared carrier.
+    const shared = await owner.carrier.findFirstOrThrow({ where: { tenantId: null } });
+    const ok = await owner.vessel.create({
+      data: { tenantId: tenantA, code: 'GUARD-VSL', name: 'Legitimate', carrierId: shared.id },
+      select: { id: true },
+    });
+
+    await owner.vessel.delete({ where: { id: ok.id } });
+    await owner.carrier.delete({ where: { id: carrierOfB.id } });
+  });
+});
+
 describe('layer 1 — Prisma tenant extension', () => {
   it('returns only the acting tenant rows from a list query', async () => {
     const aCustomers = await withTenant(tenantA, (db) =>
