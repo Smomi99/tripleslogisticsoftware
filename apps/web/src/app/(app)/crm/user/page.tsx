@@ -10,6 +10,7 @@ import {
   userPasswordSchema,
   type UserSortField,
 } from '@ff/shared';
+import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
@@ -178,6 +179,11 @@ export default function UserPage() {
                 }}
               >
                 Edit
+              </Button>
+            )}
+            {can('ADMIN.USER_PERMISSION.VIEW') && (
+              <Button variant="text" size="inline" asChild>
+                <Link href={`/admin/user-permission/${row.id}`}>Permissions</Link>
               </Button>
             )}
             {can('CRM.USER.EDIT') && (

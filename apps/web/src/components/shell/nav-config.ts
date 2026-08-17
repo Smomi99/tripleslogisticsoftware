@@ -39,6 +39,7 @@ const ROUTES: Record<string, Route> = {
   'CRM.AGENT': '/crm/agent',
   'CRM.EMPLOYEE': '/crm/employee',
   'CRM.USER': '/crm/user',
+  'ADMIN.ROLE': '/admin/role',
 };
 
 export interface NavItem {

@@ -4,6 +4,7 @@ import type { ApiSuccess } from '@ff/shared';
 
 import { HttpError } from '../lib/http-error';
 import { resolveTenant } from '../middleware/resolve-tenant';
+import { adminRouter } from './admin.route';
 import { agentRouter } from './agent.route';
 import { authRouter } from './auth.route';
 import { carrierRouter } from './carrier.route';
@@ -45,6 +46,9 @@ tenantRouter.use('/crm/customers', customerRouter);
 tenantRouter.use('/crm/agents', agentRouter);
 tenantRouter.use('/crm/employees', employeeRouter);
 tenantRouter.use('/crm/users', userRouter);
+
+// §7 superadmin screens.
+tenantRouter.use('/admin', adminRouter);
 
 interface TenantContextPayload {
   id: string;
