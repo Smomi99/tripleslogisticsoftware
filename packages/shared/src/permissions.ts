@@ -107,11 +107,25 @@ export interface FeatureDefinition {
    * matrix, which is the whole point of granting it separately.
    */
   columnLevel?: true;
+  /**
+   * A screen reached from a parent row, not from the sidebar (CR-001 §6).
+   *
+   * It is a real screen and carries VIEW, so the §7 rules about hiding what a
+   * user cannot see apply in full — but its route needs a parent id, so there
+   * is no sidebar entry to render. Without this the menu would show a
+   * permanently greyed "Not built yet" item for a screen that is built.
+   */
+  childScreen?: true;
 }
 
-/** Screen features — the ones the sidebar is built from. */
+/** Real screens, as opposed to gates on data inside other screens. */
 export function isScreenFeature(feature: FeatureDefinition): boolean {
   return feature.columnLevel !== true;
+}
+
+/** The subset the sidebar is built from: screens with a route of their own. */
+export function isNavFeature(feature: FeatureDefinition): boolean {
+  return isScreenFeature(feature) && feature.childScreen !== true;
 }
 
 export const FEATURES: readonly FeatureDefinition[] = [
@@ -186,6 +200,17 @@ export const FEATURES: readonly FeatureDefinition[] = [
   { module: 'SETTING', feature: 'SETTING.COST_HEAD', label: 'Cost Head', actions: MASTER },
   { module: 'SETTING', feature: 'SETTING.CURRENCY', label: 'Currency', actions: MASTER },
   { module: 'SETTING', feature: 'SETTING.CARRIER', label: 'Carrier', actions: MASTER },
+  // CR-001 §6. Carrier PIC and Service Port are gated by SETTING.CARRIER, but
+  // the client asked for Port Pair to be grantable on its own — lane rankings
+  // are the pricing team's, and not everyone who maintains carrier contacts
+  // should be able to move them. No EXPORT: the CR lists four actions.
+  {
+    module: 'SETTING',
+    feature: 'SETTING.CARRIER_PORT_PAIR',
+    label: 'Carrier Port Pair',
+    actions: ['VIEW', 'CREATE', 'EDIT', 'TOGGLE_STATUS'],
+    childScreen: true,
+  },
   { module: 'SETTING', feature: 'SETTING.VESSEL', label: 'Vessel', actions: MASTER },
   { module: 'SETTING', feature: 'SETTING.VENDOR', label: 'Vendor', actions: MASTER },
   { module: 'SETTING', feature: 'SETTING.COMMODITY_CATEGORY', label: 'Commodity Category', actions: MASTER },

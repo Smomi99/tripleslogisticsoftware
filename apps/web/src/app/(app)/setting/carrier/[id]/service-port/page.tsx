@@ -59,6 +59,13 @@ export default function CarrierServicePortPage() {
       emptyTitle="No service ports yet"
       emptyDescription="Add the ports this carrier serves. Once they are here you can pair them into lanes and rank the carrier on each one."
       describeRow={(r) => r.portName}
+      // CR-001 §4 rule 5: name the lanes that depend on this port, then let the
+      // user proceed. The pairs are never cascaded or blocked.
+      deactivateWarning={(r) =>
+        r.activePairs.length === 0
+          ? null
+          : `${r.activePairs.length === 1 ? 'One port pair uses' : `${r.activePairs.length} port pairs use`} it — ${r.activePairs.join(', ')} — and will stay as they are.`
+      }
       renderForm={({ row, onSubmit, onCancel }) => (
         <ServicePortForm servicePort={row} ports={ports} onSubmit={onSubmit} onCancel={onCancel} />
       )}

@@ -43,6 +43,13 @@ export interface ChildScreenProps<TRow extends ChildRow> {
   /** Permission feature key, e.g. SETTING.CARRIER */
   feature: string;
   columns: DataTableColumn<TRow>[];
+  /**
+   * Column the list sorts by until the user clicks a header. Defaults to
+   * "name", which is what the contact and service-port lists sort by — a child
+   * whose API takes a different set of sort fields must say so, or every list
+   * request is a 400.
+   */
+  defaultSort?: string;
   searchPlaceholder: string;
   addLabel: string;
   /** Singular noun for toasts and confirmations, e.g. "contact". */
@@ -55,6 +62,14 @@ export interface ChildScreenProps<TRow extends ChildRow> {
     onCancel: () => void;
   }) => ReactNode;
   describeRow: (row: TRow) => string;
+  /**
+   * CR-001 §4 rule 3: a create that collides with a row that already exists
+   * should reopen that row for editing rather than dead-end on an error.
+   * Returns the colliding row's id, or null to let the error surface normally.
+   */
+  conflictOpensRow?: (error: ApiError) => string | null;
+  /** Extra sentence on the deactivate confirmation — what else it affects. */
+  deactivateWarning?: (row: TRow) => string | null;
 }
 
 export function ChildScreen<TRow extends ChildRow>({
@@ -65,6 +80,7 @@ export function ChildScreen<TRow extends ChildRow>({
   title,
   feature,
   columns,
+  defaultSort = 'name',
   searchPlaceholder,
   addLabel,
   noun,
@@ -72,9 +88,11 @@ export function ChildScreen<TRow extends ChildRow>({
   emptyDescription,
   renderForm,
   describeRow,
+  conflictOpensRow,
+  deactivateWarning,
 }: ChildScreenProps<TRow>) {
   const { authorizedRequest, can } = useSession();
-  const list = useMasterList<TRow, 'name'>(childEndpoint, 'name');
+  const list = useMasterList<TRow, string>(childEndpoint, defaultSort);
 
   const [parentName, setParentName] = useState<string>('');
   const [parentError, setParentError] = useState<string | null>(null);
@@ -95,10 +113,23 @@ export function ChildScreen<TRow extends ChildRow>({
 
   async function submit(values: unknown): Promise<void> {
     const isEdit = editing !== null;
-    await authorizedRequest(isEdit ? `${childEndpoint}/${editing.id}` : childEndpoint, {
-      method: isEdit ? 'PATCH' : 'POST',
-      body: values,
-    });
+    try {
+      await authorizedRequest(isEdit ? `${childEndpoint}/${editing.id}` : childEndpoint, {
+        method: isEdit ? 'PATCH' : 'POST',
+        body: values,
+      });
+    } catch (error) {
+      const existingId =
+        error instanceof ApiError && conflictOpensRow !== undefined
+          ? conflictOpensRow(error)
+          : null;
+      if (existingId === null) throw error;
+      // Swap the open modal from create to edit on the row that already exists.
+      const existing = await authorizedRequest<TRow>(`${childEndpoint}/${existingId}`);
+      toast.info((error as ApiError).message);
+      setEditing(existing);
+      return;
+    }
     setFormOpen(false);
     setEditing(null);
     toast.success(isEdit ? 'Saved' : `${noun.charAt(0).toUpperCase()}${noun.slice(1)} added`);
@@ -197,7 +228,7 @@ export function ChildScreen<TRow extends ChildRow>({
         limit={list.meta.limit}
         sortBy={list.sortBy}
         sortOrder={list.sortOrder}
-        onSortChange={(by, order) => list.setSort(by as 'name', order)}
+        onSortChange={(by, order) => list.setSort(by, order)}
         onPageChange={list.setPage}
         isPending={list.isPending}
         actions={(row) => (
@@ -285,7 +316,12 @@ export function ChildScreen<TRow extends ChildRow>({
           toToggle === null
             ? ''
             : toToggle.isActive
-              ? `${describeRow(toToggle)} will stop appearing on new records. Existing records are unaffected.`
+              ? [
+                  `${describeRow(toToggle)} will stop appearing on new records. Existing records are unaffected.`,
+                  deactivateWarning?.(toToggle),
+                ]
+                  .filter((line) => line !== null && line !== undefined)
+                  .join(' ')
               : `${describeRow(toToggle)} will be available again.`
         }
         confirmLabel={toToggle?.isActive === true ? 'Deactivate' : 'Activate'}

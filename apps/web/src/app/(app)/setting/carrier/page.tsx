@@ -182,6 +182,13 @@ export default function CarrierPage() {
                 <Link href={`/setting/carrier/${row.id}/service-port`}>Service Port</Link>
               </Button>
             )}
+            {/* CR-001 §5: after Service Port, and on its own permission — the
+                pricing team owns lane rankings, not whoever keeps contacts. */}
+            {can('SETTING.CARRIER_PORT_PAIR.VIEW') && (
+              <Button variant="text" size="inline" asChild>
+                <Link href={`/setting/carrier/${row.id}/port-pair`}>Port Pair</Link>
+              </Button>
+            )}
             {can('SETTING.CARRIER.EDIT') && !row.isSystem && (
               <Button
                 variant="text"

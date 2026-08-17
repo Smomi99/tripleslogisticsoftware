@@ -6,9 +6,13 @@ import {
   CODE_PREFIX,
   type CarrierDto,
   carrierInputSchema,
+  type CarrierLanePortOption,
   carrierListQuerySchema,
   type CarrierPicDto,
   carrierPicInputSchema,
+  type CarrierPortPairDto,
+  carrierPortPairInputSchema,
+  carrierPortPairListQuerySchema,
   type CarrierServicePortDto,
   carrierServicePortInputSchema,
   listQuerySchema,
@@ -582,6 +586,9 @@ function spToDto(row: {
     portCode: row.port.portCode,
     country: row.country,
     isActive: row.isActive,
+    // Filled in by the list, which resolves every row's lanes in one query. A
+    // row just created or edited has none that the caller has not already seen.
+    activePairs: [],
   };
 }
 
@@ -634,7 +641,35 @@ carrierRouter.get(
         }),
         db.carrierServicePort.count({ where }),
       ]);
-      return { rows: rows.map(spToDto), total };
+
+      // CR-001 §4 rule 5: deactivating a port that a live lane depends on has
+      // to warn and name the lanes. One query for the carrier's pairs beats one
+      // per row, and the page is 25 rows at most.
+      const pairs = await db.carrierPortPair.findMany({
+        where: { carrierId, deletedAt: null, isActive: true },
+        select: {
+          polId: true,
+          podId: true,
+          pol: { select: { portCode: true } },
+          pod: { select: { portCode: true } },
+        },
+      });
+      const lanesByPort = new Map<string, string[]>();
+      for (const pair of pairs) {
+        const label = `${pair.pol.portCode} → ${pair.pod.portCode}`;
+        for (const portId of [pair.polId, pair.podId]) {
+          const key = portId.toString();
+          lanesByPort.set(key, [...(lanesByPort.get(key) ?? []), label]);
+        }
+      }
+
+      return {
+        rows: rows.map((row) => ({
+          ...spToDto(row),
+          activePairs: lanesByPort.get(row.portId.toString()) ?? [],
+        })),
+        total,
+      };
     });
 
     const payload: ApiSuccess<CarrierServicePortDto[]> = {
@@ -749,8 +784,384 @@ carrierRouter.post(
         select: { id: true, isActive: true },
       });
       if (existing === null) throw HttpError.notFound('Service port not found.');
+      // §4 rule 5 is deliberate about this: lanes using this port are named to
+      // the user before they confirm, and then the deactivation goes through.
+      // Never cascade, never block.
       const updated = await db.carrierServicePort.update({
         where: { id: spId },
+        data: { isActive: !existing.isActive, updatedBy: auth.userId },
+        select: { isActive: true },
+      });
+      return updated.isActive;
+    });
+
+    const payload: ApiSuccess<{ isActive: boolean }> = { success: true, data: { isActive } };
+    res.json(payload);
+  },
+);
+
+// ===========================================================================
+// Carrier → Port Pair   (CR-001 §3–§5)
+//
+// The lane, and this workspace's rank of the carrier on it. Its own feature,
+// not SETTING.CARRIER's — the client wants lane rankings grantable separately
+// from carrier contacts.
+// ===========================================================================
+
+const PAIR_FEATURE = 'SETTING.CARRIER_PORT_PAIR';
+
+const PAIR_SELECT = {
+  id: true,
+  code: true,
+  polId: true,
+  podId: true,
+  lowPricePosition: true,
+  servicePosition: true,
+  rankSource: true,
+  remarks: true,
+  isActive: true,
+  pol: { select: { name: true, portCode: true } },
+  pod: { select: { name: true, portCode: true } },
+} as const;
+
+interface PairRow {
+  id: bigint;
+  code: string;
+  polId: bigint;
+  podId: bigint;
+  lowPricePosition: Prisma.Decimal | null;
+  servicePosition: Prisma.Decimal | null;
+  rankSource: 'MANUAL' | 'CALCULATED';
+  remarks: string | null;
+  isActive: boolean;
+  pol: { name: string; portCode: string };
+  pod: { name: string; portCode: string };
+}
+
+function pairToDto(row: PairRow): CarrierPortPairDto {
+  return {
+    id: row.id.toString(),
+    code: row.code,
+    polId: row.polId.toString(),
+    polName: row.pol.name,
+    polCode: row.pol.portCode,
+    podId: row.podId.toString(),
+    podName: row.pod.name,
+    podCode: row.pod.portCode,
+    // Decimal.toString() drops the stored trailing zeros, so a rank of 1.00
+    // reads as "1" and 1.50 as "1.5" — which is how the pricing team writes it.
+    lowPricePosition: row.lowPricePosition?.toString() ?? null,
+    servicePosition: row.servicePosition?.toString() ?? null,
+    rankSource: row.rankSource,
+    remarks: row.remarks,
+    isActive: row.isActive,
+  };
+}
+
+function toRank(value: string | undefined): string | null {
+  return value === undefined || value === '' ? null : value;
+}
+
+/**
+ * The port type a carrier of this type can call at (CR-001 §4 rule 6).
+ *
+ * carrier_type is a lookup table, so a workspace may add its own values. The
+ * rule names four; anything else is unconstrained, because inventing a mapping
+ * for a type the client never described would refuse valid data (§10 rule 2).
+ */
+function requiredPortType(carrierTypeName: string): 'SEAPORT' | 'AIRPORT' | null {
+  const name = carrierTypeName.trim().toUpperCase();
+  if (name === 'MLO' || name === 'NVOCC' || name === 'SOC') return 'SEAPORT';
+  if (name === 'AIRLINE') return 'AIRPORT';
+  return null;
+}
+
+/**
+ * Resolves one end of a lane.
+ *
+ * §4 rule 1: a lane may only use a port this carrier is already recorded as
+ * serving. That relation is what makes the Service Port screen worth keeping —
+ * you say where a carrier calls, then you pair those calls into lanes.
+ */
+async function findLanePort(
+  db: TenantDb,
+  carrierId: bigint,
+  portId: bigint,
+  wanted: 'SEAPORT' | 'AIRPORT' | null,
+  label: string,
+) {
+  const servicePort = await db.carrierServicePort.findFirst({
+    where: { carrierId, portId, deletedAt: null, isActive: true },
+    select: { port: { select: { id: true, name: true, type: true } } },
+  });
+  if (servicePort === null) {
+    const port = await db.port.findFirst({ where: { id: portId }, select: { name: true } });
+    throw HttpError.badRequest(
+      port === null
+        ? `Choose a ${label} from this carrier's service ports.`
+        : `Add ${port.name} to this carrier's service ports before pairing it.`,
+    );
+  }
+  if (wanted !== null && servicePort.port.type !== wanted) {
+    throw HttpError.badRequest(
+      wanted === 'SEAPORT'
+        ? `${servicePort.port.name} is an airport, and this carrier ships by sea.`
+        : `${servicePort.port.name} is a seaport, and this carrier flies.`,
+    );
+  }
+  return servicePort.port;
+}
+
+/** The carrier plus the port type its lanes are limited to. */
+async function findLaneCarrier(db: TenantDb, carrierId: bigint) {
+  const carrier = await db.carrier.findFirst({
+    where: { id: carrierId, deletedAt: null },
+    select: { id: true, name: true, type: { select: { name: true } } },
+  });
+  if (carrier === null) throw HttpError.notFound('Carrier not found.');
+  return { ...carrier, portType: requiredPortType(carrier.type.name) };
+}
+
+/** The ports a lane may use — §4 rule 1's dropdown, resolved server-side. */
+carrierRouter.get(
+  '/:id/lane-ports',
+  requirePermission(`${PAIR_FEATURE}.VIEW`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const carrierId = parseId(req.params.id, 'carrier');
+
+    const options = await withTenant(auth.tenantId, async (db) => {
+      const carrier = await findLaneCarrier(db, carrierId);
+      const rows = await db.carrierServicePort.findMany({
+        where: {
+          carrierId,
+          deletedAt: null,
+          isActive: true,
+          ...(carrier.portType !== null ? { port: { type: carrier.portType } } : {}),
+        },
+        select: { port: { select: { id: true, name: true, portCode: true, country: true } } },
+        orderBy: { port: { name: 'asc' } },
+      });
+      return rows.map((row) => ({
+        id: row.port.id.toString(),
+        portCode: row.port.portCode,
+        name: row.port.name,
+        country: row.port.country,
+      }));
+    });
+
+    const payload: ApiSuccess<CarrierLanePortOption[]> = { success: true, data: options };
+    res.json(payload);
+  },
+);
+
+carrierRouter.get(
+  '/:id/port-pairs',
+  requirePermission(`${PAIR_FEATURE}.VIEW`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const carrierId = parseId(req.params.id, 'carrier');
+    const query = carrierPortPairListQuerySchema.parse(req.query);
+
+    const result = await withTenant(auth.tenantId, async (db) => {
+      await findVisibleCarrier(db, carrierId);
+      const where = {
+        carrierId,
+        deletedAt: null,
+        ...(query.isActive !== undefined ? { isActive: query.isActive } : {}),
+        ...(query.search !== undefined
+          ? {
+              OR: [
+                { pol: { name: { contains: query.search, mode: 'insensitive' as const } } },
+                { pol: { portCode: { contains: query.search, mode: 'insensitive' as const } } },
+                { pod: { name: { contains: query.search, mode: 'insensitive' as const } } },
+                { pod: { portCode: { contains: query.search, mode: 'insensitive' as const } } },
+                { remarks: { contains: query.search, mode: 'insensitive' as const } },
+              ],
+            }
+          : {}),
+      };
+
+      // §5: default sort is price rank ascending, nulls last. An unranked lane
+      // belongs at the bottom of the list, not at the top pretending to be 0.
+      const orderBy =
+        query.sortBy === 'pol'
+          ? [{ pol: { name: query.sortOrder } }, { id: 'asc' as const }]
+          : [{ [query.sortBy]: { sort: query.sortOrder, nulls: 'last' } }, { id: 'asc' as const }];
+
+      const [rows, total] = await Promise.all([
+        db.carrierPortPair.findMany({
+          where,
+          select: PAIR_SELECT,
+          orderBy: orderBy as Prisma.CarrierPortPairOrderByWithRelationInput[],
+          skip: (query.page - 1) * query.limit,
+          take: query.limit,
+        }),
+        db.carrierPortPair.count({ where }),
+      ]);
+      return { rows: rows.map(pairToDto), total };
+    });
+
+    const payload: ApiSuccess<CarrierPortPairDto[]> = {
+      success: true,
+      data: result.rows,
+      meta: buildMeta(query.page, query.limit, result.total),
+    };
+    res.json(payload);
+  },
+);
+
+/** One pair, so a create that collided can reopen the row it collided with. */
+carrierRouter.get(
+  '/:id/port-pairs/:pairId',
+  requirePermission(`${PAIR_FEATURE}.VIEW`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const carrierId = parseId(req.params.id, 'carrier');
+    const pairId = parseId(req.params.pairId, 'port pair');
+
+    const pair = await withTenant(auth.tenantId, async (db) => {
+      const row = await db.carrierPortPair.findFirst({
+        where: { id: pairId, carrierId, deletedAt: null },
+        select: PAIR_SELECT,
+      });
+      if (row === null) throw HttpError.notFound('Port pair not found.');
+      return row;
+    });
+
+    const payload: ApiSuccess<CarrierPortPairDto> = { success: true, data: pairToDto(pair) };
+    res.json(payload);
+  },
+);
+
+carrierRouter.post(
+  '/:id/port-pairs',
+  requirePermission(`${PAIR_FEATURE}.CREATE`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const carrierId = parseId(req.params.id, 'carrier');
+    const input = carrierPortPairInputSchema.parse(req.body);
+    const polId = parseRefId(input.polId, 'port of loading');
+    const podId = parseRefId(input.podId, 'port of discharge');
+
+    const created = await withTenant(auth.tenantId, async (db) => {
+      const carrier = await findLaneCarrier(db, carrierId);
+      const pol = await findLanePort(db, carrierId, polId, carrier.portType, 'port of loading');
+      const pod = await findLanePort(db, carrierId, podId, carrier.portType, 'port of discharge');
+
+      // §4 rule 3: a second row for the same lane is never what the user meant.
+      // The id travels in `fields` so the screen can reopen that row for edit
+      // rather than leaving them staring at an error they cannot act on.
+      const clash = await db.carrierPortPair.findFirst({
+        where: { carrierId, polId, podId, deletedAt: null },
+        select: { id: true },
+      });
+      if (clash !== null) {
+        throw new HttpError(
+          409,
+          'PAIR_EXISTS',
+          `This carrier already has a ${pol.name} → ${pod.name} pair. Editing it instead.`,
+          { existingId: [clash.id.toString()] },
+        );
+      }
+
+      return createWithCode(
+        db,
+        'carrierPortPair',
+        CODE_PREFIX.carrierPortPair,
+        auth.tenantId,
+        (code) =>
+          db.carrierPortPair.create({
+            data: {
+              tenantId: auth.tenantId,
+              code,
+              carrierId,
+              polId,
+              podId,
+              lowPricePosition: toRank(input.lowPricePosition),
+              servicePosition: toRank(input.servicePosition),
+              remarks: input.remarks || null,
+              createdBy: auth.userId,
+              updatedBy: auth.userId,
+            },
+            select: PAIR_SELECT,
+          }),
+        'port pair',
+      );
+    });
+
+    const payload: ApiSuccess<CarrierPortPairDto> = { success: true, data: pairToDto(created) };
+    res.status(201).json(payload);
+  },
+);
+
+carrierRouter.patch(
+  '/:id/port-pairs/:pairId',
+  requirePermission(`${PAIR_FEATURE}.EDIT`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const carrierId = parseId(req.params.id, 'carrier');
+    const pairId = parseId(req.params.pairId, 'port pair');
+    const input = carrierPortPairInputSchema.parse(req.body);
+    const polId = parseRefId(input.polId, 'port of loading');
+    const podId = parseRefId(input.podId, 'port of discharge');
+
+    const updated = await withTenant(auth.tenantId, async (db) => {
+      const existing = await db.carrierPortPair.findFirst({
+        where: { id: pairId, carrierId, deletedAt: null },
+        select: { id: true },
+      });
+      if (existing === null) throw HttpError.notFound('Port pair not found.');
+
+      const carrier = await findLaneCarrier(db, carrierId);
+      const pol = await findLanePort(db, carrierId, polId, carrier.portType, 'port of loading');
+      const pod = await findLanePort(db, carrierId, podId, carrier.portType, 'port of discharge');
+
+      const clash = await db.carrierPortPair.findFirst({
+        where: { carrierId, polId, podId, deletedAt: null, NOT: { id: pairId } },
+        select: { id: true },
+      });
+      if (clash !== null) {
+        throw HttpError.conflict(`This carrier already has a ${pol.name} → ${pod.name} pair.`);
+      }
+
+      return db.carrierPortPair.update({
+        where: { id: pairId },
+        data: {
+          polId,
+          podId,
+          lowPricePosition: toRank(input.lowPricePosition),
+          servicePosition: toRank(input.servicePosition),
+          remarks: input.remarks || null,
+          // A rank the pricing team typed is manual again, whatever set it last.
+          rankSource: 'MANUAL',
+          updatedBy: auth.userId,
+        },
+        select: PAIR_SELECT,
+      });
+    });
+
+    const payload: ApiSuccess<CarrierPortPairDto> = { success: true, data: pairToDto(updated) };
+    res.json(payload);
+  },
+);
+
+carrierRouter.post(
+  '/:id/port-pairs/:pairId/toggle-status',
+  requirePermission(`${PAIR_FEATURE}.TOGGLE_STATUS`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const carrierId = parseId(req.params.id, 'carrier');
+    const pairId = parseId(req.params.pairId, 'port pair');
+
+    const isActive = await withTenant(auth.tenantId, async (db) => {
+      const existing = await db.carrierPortPair.findFirst({
+        where: { id: pairId, carrierId, deletedAt: null },
+        select: { id: true, isActive: true },
+      });
+      if (existing === null) throw HttpError.notFound('Port pair not found.');
+      const updated = await db.carrierPortPair.update({
+        where: { id: pairId },
         data: { isActive: !existing.isActive, updatedBy: auth.userId },
         select: { isActive: true },
       });

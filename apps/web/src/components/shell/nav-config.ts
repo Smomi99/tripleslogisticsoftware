@@ -1,4 +1,4 @@
-import { FEATURES, isScreenFeature, MODULES, type Module } from '@ff/shared';
+import { FEATURES, isNavFeature, MODULES, type Module } from '@ff/shared';
 import type { Route } from 'next';
 
 /**
@@ -77,9 +77,10 @@ export function buildNav(): NavGroup[] {
   return MODULES.map((module) => ({
     module,
     label: MODULE_LABEL[module],
-    // Column-level features (PURCHASE.RATE) gate data inside other screens and
-    // have nothing to navigate to, so they never become nav items.
-    items: FEATURES.filter((f) => f.module === module && isScreenFeature(f)).map((f) => ({
+    // Column-level features (PURCHASE.RATE) gate data inside other screens, and
+    // child screens (SETTING.CARRIER_PORT_PAIR) need a parent id in their route.
+    // Neither has anything the sidebar could link to.
+    items: FEATURES.filter((f) => f.module === module && isNavFeature(f)).map((f) => ({
       feature: f.feature,
       label: f.label,
       href: ROUTES[f.feature] ?? null,

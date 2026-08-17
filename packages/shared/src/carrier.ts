@@ -110,4 +110,87 @@ export interface CarrierServicePortDto {
   /** Derived from the port, never typed. */
   country: string | null;
   isActive: boolean;
+  /**
+   * Lanes that would be left dangling if this port were deactivated, as
+   * "CGP → LON" labels. CR-001 §4 rule 5: warn and list them, then let the user
+   * proceed — never cascade.
+   */
+  activePairs: string[];
+}
+
+// ----------------------------------------------------- carrier port pair
+
+/**
+ * Carrier → Port Pair (CR-001 §3, client: Table_Carrier_Service_Port_pairing).
+ *
+ * The lane and this workspace's rank of the carrier on it.
+ */
+
+/**
+ * NUMERIC(5,2): up to three digits before the point, two after. Decimals are
+ * the point of the type — 1.5 slots a carrier between ranks 1 and 2 without
+ * renumbering the lane (CR-001 §3) — so this accepts them and rejects the
+ * fourth integer digit the column cannot hold.
+ */
+const rankSchema = z
+  .string()
+  .trim()
+  .refine(
+    (v) => v === '' || /^\d{1,3}(\.\d{1,2})?$/.test(v),
+    'Enter a rank like 1, 2 or 1.5 — up to three digits and two decimal places.',
+  )
+  .refine((v) => v === '' || Number(v) > 0, 'A rank starts at 1.')
+  .optional();
+
+export const carrierPortPairInputSchema = z
+  .object({
+    polId: z.string().regex(/^\d+$/, 'Choose a port of loading.'),
+    podId: z.string().regex(/^\d+$/, 'Choose a port of discharge.'),
+    lowPricePosition: rankSchema,
+    servicePosition: rankSchema,
+    remarks: z.string().trim().max(2000, 'Remark is too long.').optional(),
+  })
+  // CR-001 §4 rule 2. The CHECK constraint is what makes it true; this is what
+  // makes it legible, and it names the field the user has to change.
+  .refine((v) => v.polId !== v.podId, {
+    message: 'A lane runs between two different ports.',
+    path: ['podId'],
+  });
+
+export type CarrierPortPairInput = z.input<typeof carrierPortPairInputSchema>;
+
+export const CARRIER_PORT_PAIR_SORT_FIELDS = [
+  'lowPricePosition',
+  'servicePosition',
+  'pol',
+] as const;
+export type CarrierPortPairSortField = (typeof CARRIER_PORT_PAIR_SORT_FIELDS)[number];
+
+export const carrierPortPairListQuerySchema = listQuerySchema.extend({
+  sortBy: z.enum(CARRIER_PORT_PAIR_SORT_FIELDS).default('lowPricePosition'),
+});
+
+export interface CarrierPortPairDto {
+  id: string;
+  code: string;
+  polId: string;
+  polName: string;
+  polCode: string;
+  podId: string;
+  podName: string;
+  podCode: string;
+  /** Sent as strings: NUMERIC(18,4)-style precision does not survive a float. */
+  lowPricePosition: string | null;
+  servicePosition: string | null;
+  rankSource: 'MANUAL' | 'CALCULATED';
+  remarks: string | null;
+  isActive: boolean;
+}
+
+/** A port this carrier serves — the only ports a lane may use (§4 rule 1). */
+export interface CarrierLanePortOption {
+  id: string;
+  portCode: string;
+  name: string;
+  country: string;
 }
