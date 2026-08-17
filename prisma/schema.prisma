@@ -225,6 +225,12 @@ model Tenant {
   freightRateLines      FreightRateLine[]
   rateLocalCharges      RateLocalCharge[]
   rateProfitLogs        RateProfitLog[]
+  salesLeads            SalesLead[]
+  inquiries             Inquiry[]
+  salesLeadFollowups    SalesLeadFollowup[]
+  inquiryVolumes        InquiryVolume[]
+  inquiryFollowups      InquiryFollowup[]
+  inquiryRates          InquiryRate[]
   masterOverrides       TenantMasterOverride[]
   auditLogs             AuditLog[]
 
@@ -326,6 +332,8 @@ model Port {
 
   carrierServicePorts CarrierServicePort[]
   agentPortCoverages  AgentPortCoverage[]
+  inquiriesFromHere   Inquiry[]            @relation("InquiryPol")
+  inquiriesToHere     Inquiry[]            @relation("InquiryPod")
   ratesFromHere       FreightRate[]        @relation("FreightRatePol")
   ratesToHere         FreightRate[]        @relation("FreightRatePod")
 
@@ -372,8 +380,9 @@ model Currency {
   // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
   // prisma migrate owns them — an appendix-only constraint is dropped by the
   // next migrate dev, which is how this was found.
-  createdByUser User? @relation("CurrencyCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
-  updatedByUser User? @relation("CurrencyUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  createdByUser User?     @relation("CurrencyCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User?     @relation("CurrencyUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  inquiries     Inquiry[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -802,10 +811,12 @@ model CommodityItem {
   // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
   // prisma migrate owns them — an appendix-only constraint is dropped by the
   // next migrate dev, which is how this was found.
-  createdByUser User? @relation("CommodityItemCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
-  updatedByUser User? @relation("CommodityItemUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  createdByUser User?     @relation("CommodityItemCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User?     @relation("CommodityItemUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  inquiries     Inquiry[]
 
   @@unique([tenantId, code])
+  @@unique([tenantId, id])
   @@index([tenantId])
   @@index([industrySectorId])
   @@index([name])
@@ -851,8 +862,9 @@ model Customer {
   // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
   // prisma migrate owns them — an appendix-only constraint is dropped by the
   // next migrate dev, which is how this was found.
-  createdByUser User? @relation("CustomerCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
-  updatedByUser User? @relation("CustomerUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  createdByUser User?     @relation("CustomerCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User?     @relation("CustomerUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  inquiries     Inquiry[]
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -1136,8 +1148,9 @@ model Employee {
   // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
   // prisma migrate owns them — an appendix-only constraint is dropped by the
   // next migrate dev, which is how this was found.
-  createdByUser User? @relation("EmployeeCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
-  updatedByUser User? @relation("EmployeeUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  createdByUser       User?     @relation("EmployeeCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser       User?     @relation("EmployeeUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  inquiriesAsSalesman Inquiry[]
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -1328,14 +1341,27 @@ model User {
   createdInquirySources InquirySource[] @relation("InquirySourceCreatedBy")
   updatedInquirySources InquirySource[] @relation("InquirySourceUpdatedBy")
 
-  createdFreightRates     FreightRate[]     @relation("FreightRateCreatedBy")
-  updatedFreightRates     FreightRate[]     @relation("FreightRateUpdatedBy")
-  createdFreightRateLines FreightRateLine[] @relation("FreightRateLineCreatedBy")
-  updatedFreightRateLines FreightRateLine[] @relation("FreightRateLineUpdatedBy")
-  createdRateLocalCharges RateLocalCharge[] @relation("RateLocalChargeCreatedBy")
-  updatedRateLocalCharges RateLocalCharge[] @relation("RateLocalChargeUpdatedBy")
-  changedRateProfitLogs   RateProfitLog[]   @relation("RateProfitLogChangedBy")
-  permissions             UserPermission[]
+  createdFreightRates       FreightRate[]       @relation("FreightRateCreatedBy")
+  updatedFreightRates       FreightRate[]       @relation("FreightRateUpdatedBy")
+  createdFreightRateLines   FreightRateLine[]   @relation("FreightRateLineCreatedBy")
+  updatedFreightRateLines   FreightRateLine[]   @relation("FreightRateLineUpdatedBy")
+  createdRateLocalCharges   RateLocalCharge[]   @relation("RateLocalChargeCreatedBy")
+  updatedRateLocalCharges   RateLocalCharge[]   @relation("RateLocalChargeUpdatedBy")
+  createdSalesLeads         SalesLead[]         @relation("SalesLeadCreatedBy")
+  updatedSalesLeads         SalesLead[]         @relation("SalesLeadUpdatedBy")
+  createdSalesLeadFollowups SalesLeadFollowup[] @relation("SalesLeadFollowupCreatedBy")
+  updatedSalesLeadFollowups SalesLeadFollowup[] @relation("SalesLeadFollowupUpdatedBy")
+  createdInquiries          Inquiry[]           @relation("InquiryCreatedBy")
+  updatedInquiries          Inquiry[]           @relation("InquiryUpdatedBy")
+  createdInquiryVolumes     InquiryVolume[]     @relation("InquiryVolumeCreatedBy")
+  updatedInquiryVolumes     InquiryVolume[]     @relation("InquiryVolumeUpdatedBy")
+  createdInquiryFollowups   InquiryFollowup[]   @relation("InquiryFollowupCreatedBy")
+  updatedInquiryFollowups   InquiryFollowup[]   @relation("InquiryFollowupUpdatedBy")
+  addedInquiryRates         InquiryRate[]       @relation("InquiryRateAddedBy")
+  createdInquiryRates       InquiryRate[]       @relation("InquiryRateCreatedBy")
+  updatedInquiryRates       InquiryRate[]       @relation("InquiryRateUpdatedBy")
+  changedRateProfitLogs     RateProfitLog[]     @relation("RateProfitLogChangedBy")
+  permissions               UserPermission[]
 
   // §4 rule 9: scoped per tenant — two companies may employ the same person.
 
@@ -1550,7 +1576,8 @@ model ContainerType {
   createdByUser User?   @relation("ContainerTypeCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User?   @relation("ContainerTypeUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
-  rateTiers RateTier[]
+  rateTiers      RateTier[]
+  inquiryVolumes InquiryVolume[]
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -1608,9 +1635,10 @@ model Tos {
   updatedBy BigInt?   @map("updated_by")
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
-  tenant        Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  createdByUser User?   @relation("TosCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
-  updatedByUser User?   @relation("TosUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  tenant        Tenant?   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdByUser User?     @relation("TosCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User?     @relation("TosUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  inquiries     Inquiry[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -1630,9 +1658,10 @@ model InquirySource {
   updatedBy BigInt?   @map("updated_by")
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
-  tenant        Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  createdByUser User?   @relation("InquirySourceCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
-  updatedByUser User?   @relation("InquirySourceUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  tenant        Tenant?   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdByUser User?     @relation("InquirySourceCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User?     @relation("InquirySourceUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  inquiries     Inquiry[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -1757,6 +1786,7 @@ model FreightRate {
 
   lines        FreightRateLine[]
   localCharges RateLocalCharge[]
+  inquiryRates InquiryRate[]
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -1804,7 +1834,8 @@ model FreightRateLine {
   createdByUser User? @relation("FreightRateLineCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User? @relation("FreightRateLineUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
-  profitLog RateProfitLog[]
+  profitLog    RateProfitLog[]
+  inquiryRates InquiryRate[]
 
   @@unique([tenantId, rateId, tierId])
   @@unique([tenantId, id])
@@ -1880,4 +1911,321 @@ model RateProfitLog {
   @@index([rateLineId])
   @@index([changedAt])
   @@map("rate_profit_log")
+}
+
+// ===========================================================================
+// SALES — inquiry (docs/MODULE_PURCHASE_SALES.md §3.3)
+//
+// All tenant-owned. An inquiry is one customer's request on one lane, and the
+// numbers the business is measured on — won, lost, quoted — hang off its status.
+// ===========================================================================
+
+enum ShipmentType {
+  SEA
+  AIR
+
+  @@map("shipment_type")
+}
+
+/// §3.3's movement_type. Deliberately not customer.business_area, which is the
+/// same words over a different set — that one also allows BOTH.
+enum MovementType {
+  INBOUND
+  OUTBOUND
+
+  @@map("movement_type")
+}
+
+/// §9 Q10, answered: this list is right. EXPIRED is set by §4 rule 11's
+/// auto-expiry; WON and LOST need their own permission.
+enum InquiryStatus {
+  OPEN
+  QUOTED
+  WON
+  LOST
+  EXPIRED
+  CANCELLED
+
+  @@map("inquiry_status")
+}
+
+/// Which shape a volume row takes — §5.4's grid renders rows by shipment type.
+enum VolumeKind {
+  FCL
+  LCL
+  AIR
+
+  @@map("volume_kind")
+}
+
+enum ContactMode {
+  CALL
+  EMAIL
+  VISIT
+  WHATSAPP
+
+  @@map("contact_mode")
+}
+
+/// §9 Q12, answered "separate table": a lead is a conversation before there is
+/// a lane, and an inquiry links back to the one it came from.
+///
+/// SKELETON ONLY. CLAUDE.md §3 lists "New Sales Lead" and "Sales Lead
+/// Follow-up" with no wireframe, so its business fields are unspecified and are
+/// NOT invented here — see §11. The table exists now because Q12's answer makes
+/// inquiry.lead_id worth having from the start: adding that link after
+/// inquiries exist means guessing which lead each came from. The lead screens
+/// stay unbuilt until a field list arrives.
+model SalesLead {
+  tenantId  BigInt    @map("tenant_id")
+  id        BigInt    @id @default(autoincrement())
+  code      String    @db.VarChar(32)
+  /// The company or person the conversation is with. The only business field
+  /// safe to assume; everything else awaits the wireframe.
+  name      String    @db.VarChar(200)
+  notes     String?   @db.Text
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdByUser User?  @relation("SalesLeadCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User?  @relation("SalesLeadUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  followups SalesLeadFollowup[]
+  inquiries Inquiry[]
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@map("sales_lead")
+}
+
+/// spec §3.3: inquiry.
+///
+/// `code` IS the client's inquiry_no — one column, not two. §9 Q9, answered:
+/// INQ-2026-000001, per tenant per year, restarting each January. That yearly
+/// reset is why the shared nextCode helper cannot generate it; see lib/inquiry-no.
+model Inquiry {
+  tenantId    BigInt   @map("tenant_id")
+  id          BigInt   @id @default(autoincrement())
+  /// The client's Inquiry No, e.g. INQ-2026-000001.
+  code        String   @db.VarChar(32)
+  /// Held alongside code so the yearly series can be queried without parsing.
+  seriesYear  Int      @map("series_year")
+  inquiryDate DateTime @map("inquiry_date") @db.Date
+
+  sourceId        BigInt       @map("source_id")
+  shipmentType    ShipmentType @map("shipment_type")
+  customerId      BigInt       @map("customer_id")
+  movementType    MovementType @map("movement_type")
+  polId           BigInt       @map("pol_id")
+  podId           BigInt       @map("pod_id")
+  placeOfReceipt  String?      @map("place_of_receipt") @db.Text
+  commodityItemId BigInt?      @map("commodity_item_id")
+  /// §5.4: prefilled from the commodity, then editable — so it is stored, not
+  /// joined. A corrected commodity must not rewrite an inquiry already sent.
+  hsCode          String?      @map("hs_code") @db.VarChar(50)
+  tosId           BigInt?      @map("tos_id")
+
+  targetPrice Decimal? @map("target_price") @db.Decimal(18, 4)
+  currencyId  BigInt?  @map("currency_id")
+
+  expectedShipmentDate DateTime? @map("expected_shipment_date") @db.Date
+  /// "Inquiry Valid Upto". §4 rule 11 auto-expires an OPEN inquiry past this.
+  validTo              DateTime? @map("valid_to") @db.Date
+  weightKg             Decimal?  @map("weight_kg") @db.Decimal(18, 3)
+  remarks              String?   @db.Text
+
+  salesmanId BigInt?       @map("salesman_id")
+  status     InquiryStatus @default(OPEN)
+
+  /// §9 Q12: the lead this came from, when it came from one.
+  leadId BigInt? @map("lead_id")
+
+  /// Written back by §5.5's Price action from the attached rates.
+  quotedPrice Decimal? @map("quoted_price") @db.Decimal(18, 4)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  // System-capable targets take single-column FKs: a shared row has a null
+  // tenant_id, and a composite tenant FK cannot resolve against it.
+  source   InquirySource @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  pol      Port          @relation("InquiryPol", fields: [polId], references: [id], onDelete: Restrict)
+  pod      Port          @relation("InquiryPod", fields: [podId], references: [id], onDelete: Restrict)
+  tos      Tos?          @relation(fields: [tosId], references: [id], onDelete: Restrict)
+  currency Currency?     @relation(fields: [currencyId], references: [id], onDelete: Restrict)
+
+  // Tenant-owned targets take the composite tenant-safe FK (§4 rule 10).
+  customer      Customer       @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict)
+  commodityItem CommodityItem? @relation(fields: [tenantId, commodityItemId], references: [tenantId, id], onDelete: Restrict)
+  salesman      Employee?      @relation(fields: [tenantId, salesmanId], references: [tenantId, id], onDelete: Restrict)
+  lead          SalesLead?     @relation(fields: [tenantId, leadId], references: [tenantId, id], onDelete: Restrict)
+
+  createdByUser User? @relation("InquiryCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("InquiryUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  volumes   InquiryVolume[]
+  followups InquiryFollowup[]
+  rates     InquiryRate[]
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  // §5.5's filter set: date range, shipment type, lane, salesman, status.
+  @@index([tenantId, status, inquiryDate])
+  @@index([tenantId, salesmanId])
+  // §9 Q9: the Inquiry No restarts each January, so generating the next one
+  // in a year is a lookup on this. Declared here, not in an appendix — an
+  // index Prisma does not know about gets dropped by the next migration.
+  @@index([tenantId, seriesYear, code])
+  @@index([customerId])
+  @@index([polId])
+  @@index([podId])
+  @@map("inquiry")
+}
+
+/// spec §3.3: inquiry_volume — §5.4's "small grid, not six loose inputs".
+model InquiryVolume {
+  tenantId        BigInt     @map("tenant_id")
+  id              BigInt     @id @default(autoincrement())
+  inquiryId       BigInt     @map("inquiry_id")
+  volumeKind      VolumeKind @map("volume_kind")
+  /// Set for FCL rows, null for the single LCL or Air row.
+  containerTypeId BigInt?    @map("container_type_id")
+  quantity        Int?
+  cbm             Decimal?   @db.Decimal(18, 3)
+  weightKg        Decimal?   @map("weight_kg") @db.Decimal(18, 3)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  inquiry       Inquiry        @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict)
+  containerType ContainerType? @relation(fields: [containerTypeId], references: [id], onDelete: Restrict)
+
+  createdByUser User? @relation("InquiryVolumeCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("InquiryVolumeUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@index([tenantId])
+  @@index([inquiryId])
+  @@map("inquiry_volume")
+}
+
+/// spec §3.3: inquiry_followup — drives §5.5's "Follow Up(n)" counter.
+model InquiryFollowup {
+  tenantId         BigInt      @map("tenant_id")
+  id               BigInt      @id @default(autoincrement())
+  inquiryId        BigInt      @map("inquiry_id")
+  followupDate     DateTime    @map("followup_date") @db.Date
+  contactMode      ContactMode @map("contact_mode")
+  contactPerson    String?     @map("contact_person") @db.VarChar(200)
+  notes            String?     @db.Text
+  nextFollowupDate DateTime?   @map("next_followup_date") @db.Date
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  inquiry Inquiry @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict)
+
+  createdByUser User? @relation("InquiryFollowupCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("InquiryFollowupUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@index([tenantId])
+  @@index([inquiryId])
+  @@index([nextFollowupDate])
+  @@map("inquiry_followup")
+}
+
+/// spec §3.3: inquiry_rate — §5.5's Price action, attaching rates to an inquiry.
+model InquiryRate {
+  tenantId    BigInt   @map("tenant_id")
+  id          BigInt   @id @default(autoincrement())
+  inquiryId   BigInt   @map("inquiry_id")
+  rateId      BigInt   @map("rate_id")
+  rateLineId  BigInt   @map("rate_line_id")
+  /// The figure quoted from this line, captured when it was attached.
+  /// Snapshotted rather than joined: §4 rule 1 versions rates, so by the time
+  /// anyone reads this back the live line may belong to a superseded rate.
+  quotedPrice Decimal  @map("quoted_price") @db.Decimal(18, 4)
+  isSelected  Boolean  @default(false) @map("is_selected")
+  addedBy     BigInt?  @map("added_by")
+  addedAt     DateTime @default(now()) @map("added_at") @db.Timestamptz(6)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  inquiry  Inquiry         @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict)
+  rate     FreightRate     @relation(fields: [tenantId, rateId], references: [tenantId, id], onDelete: Restrict)
+  rateLine FreightRateLine @relation(fields: [tenantId, rateLineId], references: [tenantId, id], onDelete: Restrict)
+
+  addedByUser   User? @relation("InquiryRateAddedBy", fields: [addedBy], references: [id], onDelete: Restrict)
+  createdByUser User? @relation("InquiryRateCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("InquiryRateUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, inquiryId, rateLineId])
+  @@index([tenantId])
+  @@index([inquiryId])
+  @@index([rateId])
+  @@map("inquiry_rate")
+}
+
+/// Follow-ups against a lead — CLAUDE.md §3's "Sales Lead Follow-up" screen.
+///
+/// The spec defines no shape for this. It is a deliberate mirror of
+/// inquiry_followup, which the spec DOES define, pointed at a lead instead of
+/// an inquiry — not a new design. If the client's wireframe turns out to want
+/// different fields, this is the table to change, and nothing else depends on
+/// its columns.
+model SalesLeadFollowup {
+  tenantId         BigInt      @map("tenant_id")
+  id               BigInt      @id @default(autoincrement())
+  leadId           BigInt      @map("lead_id")
+  followupDate     DateTime    @map("followup_date") @db.Date
+  contactMode      ContactMode @map("contact_mode")
+  contactPerson    String?     @map("contact_person") @db.VarChar(200)
+  notes            String?     @db.Text
+  nextFollowupDate DateTime?   @map("next_followup_date") @db.Date
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  lead   SalesLead @relation(fields: [tenantId, leadId], references: [tenantId, id], onDelete: Restrict)
+
+  createdByUser User? @relation("SalesLeadFollowupCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("SalesLeadFollowupUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@index([tenantId])
+  @@index([leadId])
+  @@index([nextFollowupDate])
+  @@map("sales_lead_followup")
 }

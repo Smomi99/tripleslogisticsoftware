@@ -14,6 +14,8 @@ import { customerRouter } from './customer.route';
 import { employeeRouter } from './employee.route';
 import { currencyRouter } from './currency.route';
 import { freightRateRouter } from './freight-rate.route';
+import { inquiryRouter } from './inquiry.route';
+import { salesLeadRouter } from './sales-lead.route';
 import { portRouter } from './port.route';
 import { rateLookupRouter } from './rate-lookup.route';
 import { vendorRouter } from './vendor.route';
@@ -47,6 +49,10 @@ tenantRouter.use('/setting', rateLookupRouter);
 
 // Purchase — rate entry for all three modes (MODULE_PURCHASE_SALES §5.1).
 tenantRouter.use('/purchase', freightRateRouter);
+
+// Sales — inquiry capture (MODULE_PURCHASE_SALES §5.4).
+tenantRouter.use('/sales', inquiryRouter);
+tenantRouter.use('/sales', salesLeadRouter);
 
 // CRM.
 tenantRouter.use('/crm/customers', customerRouter);

@@ -58,6 +58,9 @@ export const CODE_PREFIX = {
   // which keeps one code format across the whole product rather than two.
   freightRate: 'RATE',
 
+  // Sales
+  salesLead: 'LED',
+
   // §7 RBAC
   role: 'ROL',
   user: 'USR',

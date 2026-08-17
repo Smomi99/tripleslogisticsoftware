@@ -43,6 +43,7 @@ const CODE_TABLES = {
   agentPic: 'agent_pic',
   employee: 'employee',
   freightRate: 'freight_rate',
+  salesLead: 'sales_lead',
   role: 'role',
   user: 'user',
 } as const;

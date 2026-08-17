@@ -39,6 +39,71 @@ console.log(
       : ''),
 );
 
+const inquiries = await db.$queryRawUnsafe<{ code: string; customer: string }[]>(
+  `SELECT i.code, c.name AS customer
+     FROM inquiry i JOIN customer c ON c.id = i.customer_id
+    ORDER BY i.code`,
+);
+console.log(
+  `inquiry          ${inquiries.length} row(s)` +
+    (inquiries.length > 0
+      ? `: ${inquiries.map((i) => `${i.code} (${i.customer})`).join(', ')}`
+      : ''),
+);
+
+/** --inquiry=INQ-2026-000001 removes one inquiry and its child rows. */
+const inquiryFlag = process.argv.find((a) => a.startsWith('--inquiry='));
+if (inquiryFlag !== undefined) {
+  const code = inquiryFlag.slice('--inquiry='.length);
+  if (!/^[A-Z0-9-]{1,32}$/.test(code)) throw new Error(`Refusing an odd inquiry code: ${code}`);
+  const scope = `(SELECT id FROM inquiry WHERE code = $1)`;
+  for (const table of ['inquiry_rate', 'inquiry_followup', 'inquiry_volume']) {
+    await db.$executeRawUnsafe(`DELETE FROM ${table} WHERE inquiry_id IN ${scope}`, code);
+  }
+  await db.$executeRawUnsafe(`DELETE FROM inquiry WHERE code = $1`, code);
+  console.log(`\nremoved ${code}`);
+}
+
+const leads = await db.$queryRawUnsafe<{ code: string; name: string }[]>(
+  `SELECT code, name FROM sales_lead ORDER BY code`,
+);
+console.log(
+  `sales_lead       ${leads.length} row(s)` +
+    (leads.length > 0 ? `: ${leads.map((l) => `${l.code} (${l.name})`).join(', ')}` : ''),
+);
+
+/** --lead=LED-001 removes a lead and its follow-ups, if no inquiry cites it. */
+const leadFlag = process.argv.find((a) => a.startsWith('--lead='));
+if (leadFlag !== undefined) {
+  const code = leadFlag.slice('--lead='.length);
+  if (!/^[A-Z0-9-]{1,32}$/.test(code)) throw new Error(`Refusing an odd lead code: ${code}`);
+  await db.$executeRawUnsafe(
+    `DELETE FROM sales_lead_followup
+      WHERE lead_id IN (SELECT id FROM sales_lead WHERE code = $1)`,
+    code,
+  );
+  const removed = await db.$executeRawUnsafe(
+    `DELETE FROM sales_lead
+      WHERE code = $1
+        AND NOT EXISTS (SELECT 1 FROM inquiry WHERE inquiry.lead_id = sales_lead.id)`,
+    code,
+  );
+  console.log(`\nremoved ${removed} lead row(s) coded ${code}`);
+}
+
+/** --customer=NAME removes a customer with no inquiries against it. */
+const customerFlag = process.argv.find((a) => a.startsWith('--customer='));
+if (customerFlag !== undefined) {
+  const name = customerFlag.slice('--customer='.length);
+  const removed = await db.$executeRawUnsafe(
+    `DELETE FROM customer
+      WHERE name = $1
+        AND NOT EXISTS (SELECT 1 FROM inquiry WHERE inquiry.customer_id = customer.id)`,
+    name,
+  );
+  console.log(`\nremoved ${removed} customer row(s) named ${name}`);
+}
+
 /** --rate=RATE-001 removes one rate outright, for clearing a test entry. */
 const rateFlag = process.argv.find((a) => a.startsWith('--rate='));
 if (rateFlag !== undefined) {

@@ -56,6 +56,12 @@ const ACTION_LABEL: Record<Action, string> = {
   // Column-level rather than screen-level — see PURCHASE.RATE in the registry.
   VIEW_BUY_PRICE: 'Buy price',
   MANAGE_PROFIT: 'Margin',
+  // The inquiry's row scope and workflow actions (§4 rule 10, §5.5, §9 Q10).
+  VIEW_ALL: 'All rows',
+  FOLLOWUP: 'Follow up',
+  ATTACH_PRICE: 'Attach price',
+  CONVERT_QUOTE: 'Quote',
+  SET_OUTCOME: 'Won / lost',
 };
 
 export function PermissionMatrix({

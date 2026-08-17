@@ -38,6 +38,8 @@ const ROUTES: Record<string, Route> = {
   'PURCHASE.PRICE_LIST_SEA_FCL': '/purchase/price-list-fcl',
   'PURCHASE.PRICE_LIST_SEA_LCL': '/purchase/price-list-lcl',
   'PURCHASE.PRICE_LIST_AIR': '/purchase/price-list-air',
+  'SALES.INQUIRY': '/sales/new-inquiry',
+  'SALES.NEW_SALES_LEAD': '/sales/sales-lead',
   'SETTING.SEA_AIR_PORT': '/setting/port',
   'SETTING.COST_HEAD': '/setting/cost-head',
   'SETTING.CURRENCY': '/setting/currency',
