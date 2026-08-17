@@ -562,8 +562,6 @@ const SP_SELECT = {
   code: true,
   portId: true,
   country: true,
-  lowPricePosition: true,
-  servicePosition: true,
   isActive: true,
   port: { select: { name: true, portCode: true } },
 } as const;
@@ -573,8 +571,6 @@ function spToDto(row: {
   code: string;
   portId: bigint;
   country: string | null;
-  lowPricePosition: number | null;
-  servicePosition: number | null;
   isActive: boolean;
   port: { name: string; portCode: string };
 }): CarrierServicePortDto {
@@ -585,14 +581,24 @@ function spToDto(row: {
     portName: row.port.name,
     portCode: row.port.portCode,
     country: row.country,
-    lowPricePosition: row.lowPricePosition,
-    servicePosition: row.servicePosition,
     isActive: row.isActive,
   };
 }
 
-function toPosition(value: string | undefined): number | null {
-  return value === undefined || value === '' ? null : Number(value);
+/**
+ * The port the workspace picked, with the country the row will store.
+ *
+ * country is derived here rather than accepted from the request (CR-001 §2), so
+ * a client cannot file Changi under Bangladesh — which is exactly what the old
+ * free-text field let three of the four existing rows do.
+ */
+async function findAvailablePort(db: TenantDb, portId: bigint) {
+  const port = await db.port.findFirst({
+    where: { id: portId, deletedAt: null, isActive: true },
+    select: { id: true, country: true },
+  });
+  if (port === null) throw HttpError.badRequest('That port is not available.');
+  return port;
 }
 
 carrierRouter.get(
@@ -622,7 +628,7 @@ carrierRouter.get(
         db.carrierServicePort.findMany({
           where,
           select: SP_SELECT,
-          orderBy: [{ lowPricePosition: { sort: 'asc', nulls: 'last' } }, { id: 'asc' }],
+          orderBy: [{ port: { name: query.sortOrder } }, { id: 'asc' }],
           skip: (query.page - 1) * query.limit,
           take: query.limit,
         }),
@@ -651,11 +657,7 @@ carrierRouter.post(
 
     const created = await withTenant(auth.tenantId, async (db) => {
       await findVisibleCarrier(db, carrierId);
-      const port = await db.port.findFirst({
-        where: { id: portId, deletedAt: null, isActive: true },
-        select: { id: true },
-      });
-      if (port === null) throw HttpError.badRequest('That port is not available.');
+      const port = await findAvailablePort(db, portId);
 
       const clash = await db.carrierServicePort.findFirst({
         where: { carrierId, portId, deletedAt: null },
@@ -677,9 +679,7 @@ carrierRouter.post(
               code,
               carrierId,
               portId,
-              country: input.country || null,
-              lowPricePosition: toPosition(input.lowPricePosition),
-              servicePosition: toPosition(input.servicePosition),
+              country: port.country,
               createdBy: auth.userId,
               updatedBy: auth.userId,
             },
@@ -711,6 +711,8 @@ carrierRouter.patch(
       });
       if (existing === null) throw HttpError.notFound('Service port not found.');
 
+      const port = await findAvailablePort(db, portId);
+
       const clash = await db.carrierServicePort.findFirst({
         where: { carrierId, portId, deletedAt: null, NOT: { id: spId } },
         select: { id: true },
@@ -721,9 +723,7 @@ carrierRouter.patch(
         where: { id: spId },
         data: {
           portId,
-          country: input.country || null,
-          lowPricePosition: toPosition(input.lowPricePosition),
-          servicePosition: toPosition(input.servicePosition),
+          country: port.country,
           updatedBy: auth.userId,
         },
         select: SP_SELECT,

@@ -11,8 +11,8 @@ import { optionalCountrySchema } from './countries';
  *
  * Carrier itself is system-capable (§7A rule 7) — Maersk is Maersk for every
  * forwarder. Both children are tenant-owned, because each forwarder keeps its
- * own contacts and its own ranking of that carrier on a lane. So a workspace
- * adds children to a parent it cannot itself edit.
+ * own contacts and knows a different part of that carrier's network. So a
+ * workspace adds children to a parent it cannot itself edit.
  */
 
 // ---------------------------------------------------------------- carrier
@@ -87,20 +87,16 @@ export interface CarrierPicDto {
 // --------------------------------------------------- carrier service port
 
 /**
- * low_price_position and service_position are this forwarder's own ranking of
- * the carrier on that lane — 1 is best. Hence the row is tenant-owned.
+ * Which ports this carrier serves — a plain list since CR-001 §2. Ranking moved
+ * to carrier_port_pair, because a rank at a port says nothing without the POD
+ * it is cheap to.
+ *
+ * `country` is not an input: the server reads it off the chosen port. A typed
+ * country was free to disagree with the port it described, and did — the
+ * migration found Changi filed under Bangladesh.
  */
-const positionSchema = z
-  .string()
-  .trim()
-  .refine((v) => v === '' || /^\d{1,4}$/.test(v), 'Enter a whole number, 1 or higher.')
-  .optional();
-
 export const carrierServicePortInputSchema = z.object({
   portId: z.string().regex(/^\d+$/, 'Choose a port.'),
-  country: optionalCountrySchema,
-  lowPricePosition: positionSchema,
-  servicePosition: positionSchema,
 });
 
 export type CarrierServicePortInput = z.input<typeof carrierServicePortInputSchema>;
@@ -111,8 +107,7 @@ export interface CarrierServicePortDto {
   portId: string;
   portName: string;
   portCode: string;
+  /** Derived from the port, never typed. */
   country: string | null;
-  lowPricePosition: number | null;
-  servicePosition: number | null;
   isActive: boolean;
 }

@@ -187,20 +187,18 @@ describe('two workspaces, one shared carrier', () => {
     expect(namesB).not.toContain('Alpha Contact');
   });
 
-  it('each sees only its own lane rankings on that carrier', async () => {
+  it('each sees only its own service port on that carrier', async () => {
     const A = as(tokenA, SLUG_A);
     const B = as(tokenB, SLUG_B);
 
-    // Both rank the SAME carrier on the SAME port — different numbers.
+    // Both record the SAME carrier serving the SAME port.
     const spA = await A.post(`/api/tenant/setting/carriers/${sharedCarrier}/service-ports`).send({
       portId: sharedPort.toString(),
-      lowPricePosition: '1',
     });
     expect(spA.status).toBe(201);
 
     const spB = await B.post(`/api/tenant/setting/carriers/${sharedCarrier}/service-ports`).send({
       portId: sharedPort.toString(),
-      lowPricePosition: '9',
     });
     // Not a duplicate: the uniqueness check is scoped to the tenant's own rows.
     expect(spB.status).toBe(201);
@@ -209,13 +207,16 @@ describe('two workspaces, one shared carrier', () => {
       `/api/tenant/setting/carriers/${sharedCarrier}/service-ports?limit=100`,
     );
     expect(listA.body.data).toHaveLength(1);
-    expect(listA.body.data[0].lowPricePosition).toBe(1);
+    expect(listA.body.data[0].id).toBe(spA.body.data.id);
 
     const listB = await B.get(
       `/api/tenant/setting/carriers/${sharedCarrier}/service-ports?limit=100`,
     );
     expect(listB.body.data).toHaveLength(1);
-    expect(listB.body.data[0].lowPricePosition).toBe(9);
+    expect(listB.body.data[0].id).toBe(spB.body.data.id);
+
+    // Two distinct rows over one shared carrier and one shared port.
+    expect(spA.body.data.id).not.toBe(spB.body.data.id);
   });
 
   it('cannot edit a contact belonging to the other workspace', async () => {

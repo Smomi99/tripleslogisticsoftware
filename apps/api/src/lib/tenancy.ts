@@ -43,6 +43,7 @@ export const TENANT_OWNED_MODELS = [
   'AgentPortCoverage',
   'AuditLog',
   'CarrierPic',
+  'CarrierPortPair',
   'CarrierServicePort',
   'CommodityItem',
   'CostHead',

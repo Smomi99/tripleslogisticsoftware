@@ -1,0 +1,5 @@
+service_port_code,tenant_id,carrier_code,carrier_name,carrier_type,port_code,port_name,port_type,port_country,typed_country,low_price_position,service_position,is_active,created_at,created_by
+CSP-001,1,CAR-009,Biman Bangladesh Airlines,Airline,SIN,Changi,AIRPORT,Singapore,Bangladesh,1,2,t,2026-08-16 18:25:24.068+00,1
+CSP-002,1,CAR-001,Maersk Line,MLO,SIN,Changi,AIRPORT,Singapore,Bangladesh,1,3,t,2026-08-16 18:33:38.343+00,1
+CSP-003,1,CAR-001,BS Cargo,NVOCC,DKAAR,Aarhus,SEAPORT,Denmark,Bangladesh,212,322,t,2026-08-17 10:03:43.978+00,1
+CSP-004,1,CAR-001,BS Cargo,NVOCC,CGP,Chittagong,SEAPORT,Bangladesh,Bangladesh,1,2,t,2026-08-17 15:31:12.358+00,1

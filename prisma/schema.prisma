@@ -191,6 +191,7 @@ model Tenant {
   carriers              Carrier[]
   carrierPics           CarrierPic[]
   carrierServicePorts   CarrierServicePort[]
+  carrierPortPairs      CarrierPortPair[]
   vessels               Vessel[]
   costUnits             CostUnit[]
   costHeads             CostHead[]
@@ -336,6 +337,8 @@ model Port {
   inquiriesToHere     Inquiry[]            @relation("InquiryPod")
   ratesFromHere       FreightRate[]        @relation("FreightRatePol")
   ratesToHere         FreightRate[]        @relation("FreightRatePod")
+  lanesFromHere       CarrierPortPair[]    @relation("CarrierPortPairPol")
+  lanesToHere         CarrierPortPair[]    @relation("CarrierPortPairPod")
 
   // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
   // prisma migrate owns them — an appendix-only constraint is dropped by the
@@ -533,6 +536,7 @@ model Carrier {
 
   pics           CarrierPic[]
   servicePorts   CarrierServicePort[]
+  portPairs      CarrierPortPair[]
   vessels        Vessel[]
   ratesCarried   FreightRate[]        @relation("FreightRateCarrier")
   ratesPurchased FreightRate[]        @relation("FreightRatePurchaseCarrier")
@@ -587,17 +591,19 @@ model CarrierPic {
 }
 
 /// client: Table_Carrier_Service_Port  [child of carrier]
-/// low_price_position / service_position are this forwarder's own ranking of
-/// the carrier on that lane, which is why the row is tenant-owned.
+/// Which ports this carrier serves — a plain list, tenant-owned because each
+/// forwarder knows a different part of a shared carrier's network.
+/// Ranking moved off this table to carrier_port_pair (CR-001 §1): a rank at a
+/// port is meaningless without the POD it is cheap to.
 model CarrierServicePort {
   tenantId         BigInt    @map("tenant_id")
   id               BigInt    @id @default(autoincrement())
   code             String    @db.VarChar(32)
   carrierId        BigInt    @map("carrier_id")
   portId           BigInt    @map("port_id")
+  // Derived from port.country, never typed (CR-001 §2). Kept as a stored column
+  // rather than a join so the list screen's search and sort stay on one table.
   country          String?   @db.VarChar(100)
-  lowPricePosition Int?      @map("low_price_position")
-  servicePosition  Int?      @map("service_position")
   isActive         Boolean   @default(true) @map("is_active")
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -621,6 +627,71 @@ model CarrierServicePort {
   @@index([carrierId])
   @@index([portId])
   @@map("carrier_service_port")
+}
+
+/// Where a rank came from (CR-001 §8 Q4). Recorded now rather than added later:
+/// the day ranks are computed from purchase rates, a column that has always
+/// been there separates the hand-set ones from the derived ones. Adding it
+/// afterwards means a migration plus reconciling live rank data.
+enum RankSource {
+  MANUAL
+  CALCULATED
+}
+
+/// client: Table_Carrier_Service_Port_pairing  [child of carrier]
+/// The lane, and this carrier's rank on it (CR-001 §3).
+///
+/// A rank at a port is meaningless on its own — cheapest out of Chittagong to
+/// Singapore says nothing about Chittagong to Hamburg — so the ranking lives
+/// on the POL → POD pair, not on carrier_service_port.
+model CarrierPortPair {
+  tenantId  BigInt @map("tenant_id")
+  id        BigInt @id @default(autoincrement())
+  code      String @db.VarChar(32)
+  /// client: Carrier_ID_no
+  carrierId BigInt @map("carrier_id")
+  /// client: Carrier_Service_port_POL
+  polId     BigInt @map("pol_id")
+  /// client: Carrier_Service_port_POD
+  podId     BigInt @map("pod_id")
+
+  /// client: Low pricewise position. NUMERIC(5,2), not INT — the pricing team
+  /// re-ranks in bulk, and a decimal lets a carrier slot in at 1.5 between
+  /// existing ranks 1 and 2 without renumbering the whole lane. Nullable: a
+  /// pair can be recorded before anyone has ranked it.
+  lowPricePosition Decimal? @map("low_price_position") @db.Decimal(5, 2)
+  /// client: Servicewise Position
+  servicePosition  Decimal? @map("service_position") @db.Decimal(5, 2)
+
+  rankSource RankSource @default(MANUAL) @map("rank_source")
+  remarks    String?    @db.Text
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  // Carrier and port are system-capable, so a shared row has tenant_id NULL and
+  // a composite tenant FK cannot resolve. Single-column FKs, tenant scoping
+  // enforced by the Prisma extension and RLS — the same shape freight_rate and
+  // carrier_service_port already use.
+  carrier Carrier @relation(fields: [carrierId], references: [id], onDelete: Restrict)
+  pol     Port    @relation("CarrierPortPairPol", fields: [polId], references: [id], onDelete: Restrict)
+  pod     Port    @relation("CarrierPortPairPod", fields: [podId], references: [id], onDelete: Restrict)
+
+  createdByUser User? @relation("CarrierPortPairCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("CarrierPortPairUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  /// The lane lookup the Price List will use once it sorts by rank.
+  @@index([tenantId, polId, podId])
+  @@index([tenantId, carrierId])
+  @@map("carrier_port_pair")
 }
 
 /// client: Table_Vessel
@@ -1380,6 +1451,7 @@ model User {
   createdCarriers              Carrier[]              @relation("CarrierCreatedBy")
   createdCarrierPics           CarrierPic[]           @relation("CarrierPicCreatedBy")
   createdCarrierServicePorts   CarrierServicePort[]   @relation("CarrierServicePortCreatedBy")
+  createdCarrierPortPairs      CarrierPortPair[]      @relation("CarrierPortPairCreatedBy")
   createdVessels               Vessel[]               @relation("VesselCreatedBy")
   createdVendorTypes           VendorType[]           @relation("VendorTypeCreatedBy")
   createdVendors               Vendor[]               @relation("VendorCreatedBy")
@@ -1412,6 +1484,7 @@ model User {
   updatedCarriers              Carrier[]              @relation("CarrierUpdatedBy")
   updatedCarrierPics           CarrierPic[]           @relation("CarrierPicUpdatedBy")
   updatedCarrierServicePorts   CarrierServicePort[]   @relation("CarrierServicePortUpdatedBy")
+  updatedCarrierPortPairs      CarrierPortPair[]      @relation("CarrierPortPairUpdatedBy")
   updatedVessels               Vessel[]               @relation("VesselUpdatedBy")
   updatedVendorTypes           VendorType[]           @relation("VendorTypeUpdatedBy")
   updatedVendors               Vendor[]               @relation("VendorUpdatedBy")

@@ -31,6 +31,7 @@ const CODE_TABLES = {
   carrierType: 'carrier_type',
   carrierPic: 'carrier_pic',
   carrierServicePort: 'carrier_service_port',
+  carrierPortPair: 'carrier_port_pair',
   vessel: 'vessel',
   vendor: 'vendor',
   vendorType: 'vendor_type',

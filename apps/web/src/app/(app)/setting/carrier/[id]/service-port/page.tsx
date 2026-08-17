@@ -15,7 +15,6 @@ import { useForm } from 'react-hook-form';
 import { ChildScreen } from '@/components/ui/child-screen';
 import type { DataTableColumn } from '@/components/ui/data-table';
 import { Field, Input, Select } from '@/components/ui/field';
-import { CountrySelect } from '@/components/ui/country-select';
 import { FormLayout } from '@/components/ui/form-layout';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
@@ -23,9 +22,9 @@ import { useSession } from '@/lib/session';
 /**
  * Carrier → Service Port (CLAUDE.md §5 Table_Carrier_Service_Port).
  *
- * low_price_position and service_position are this workspace's own ranking of
- * the carrier on that lane — 1 is best — which is why these rows are
- * tenant-owned even though the carrier itself is shared.
+ * Since CR-001 §2 this is a plain list of the ports a carrier serves. Ranking
+ * moved to Port Pair, where a rank has a POD to be cheap to; country is read
+ * off the chosen port rather than typed.
  */
 export default function CarrierServicePortPage() {
   const params = useParams<{ id: string }>();
@@ -43,20 +42,6 @@ export default function CarrierServicePortPage() {
     { id: 'port', header: 'Port', sortable: true, cell: (r) => r.portName },
     { id: 'portCode', header: 'Port Code', numeric: true, cell: (r) => r.portCode },
     { id: 'country', header: 'Country', cell: (r) => r.country ?? '—' },
-    {
-      id: 'lowPricePosition',
-      header: 'Price Rank',
-      align: 'right',
-      numeric: true,
-      cell: (r) => (r.lowPricePosition === null ? '—' : String(r.lowPricePosition)),
-    },
-    {
-      id: 'servicePosition',
-      header: 'Service Rank',
-      align: 'right',
-      numeric: true,
-      cell: (r) => (r.servicePosition === null ? '—' : String(r.servicePosition)),
-    },
   ];
 
   return (
@@ -72,7 +57,7 @@ export default function CarrierServicePortPage() {
       addLabel="+ Add service port"
       noun="service port"
       emptyTitle="No service ports yet"
-      emptyDescription="Add the lanes this carrier serves, and rank it on price and service against the others."
+      emptyDescription="Add the ports this carrier serves. Once they are here you can pair them into lanes and rank the carrier on each one."
       describeRow={(r) => r.portName}
       renderForm={({ row, onSubmit, onCancel }) => (
         <ServicePortForm servicePort={row} ports={ports} onSubmit={onSubmit} onCancel={onCancel} />
@@ -97,27 +82,20 @@ function ServicePortForm({
     register,
     handleSubmit,
     reset,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<CarrierServicePortInput>({
     resolver: zodResolver(carrierServicePortInputSchema),
-    defaultValues: { portId: '', country: '', lowPricePosition: '', servicePosition: '' },
+    defaultValues: { portId: '' },
   });
 
   useEffect(() => {
-    reset({
-      portId: servicePort?.portId ?? ports[0]?.id ?? '',
-      country: servicePort?.country ?? '',
-      lowPricePosition:
-        servicePort?.lowPricePosition === null || servicePort?.lowPricePosition === undefined
-          ? ''
-          : String(servicePort.lowPricePosition),
-      servicePosition:
-        servicePort?.servicePosition === null || servicePort?.servicePosition === undefined
-          ? ''
-          : String(servicePort.servicePosition),
-    });
+    reset({ portId: servicePort?.portId ?? ports[0]?.id ?? '' });
     setFormError(null);
   }, [servicePort, ports, reset]);
+
+  // The server derives country from the port; this only shows what it will save.
+  const selectedPort = ports.find((p) => p.id === watch('portId'));
 
   const submit = handleSubmit(async (values) => {
     setFormError(null);
@@ -141,36 +119,28 @@ function ServicePortForm({
       error={formError ?? undefined}
     >
       <Field id="portId" label="Port" required error={errors.portId?.message}>
-        <Select id="portId" autoFocus aria-invalid={errors.portId !== undefined} {...register('portId')}>
+        <Select
+          id="portId"
+          autoFocus
+          aria-invalid={errors.portId !== undefined}
+          {...register('portId')}
+        >
           <option value="">Choose a port</option>
           {ports.map((p) => (
             <option key={p.id} value={p.id}>
-              {p.name} ({p.portCode})
+              {p.portCode} — {p.name}, {p.country}
             </option>
           ))}
         </Select>
       </Field>
 
-      <Field id="country" label="Country" error={errors.country?.message}>
-        <CountrySelect id="country" placeholder="—" {...register('country')} />
-      </Field>
-
-      <Field
-        id="lowPricePosition"
-        label="Price rank"
-        hint="Where this carrier sits on price for this lane. 1 is cheapest."
-        error={errors.lowPricePosition?.message}
-      >
-        <Input id="lowPricePosition" numeric inputMode="numeric" {...register('lowPricePosition')} />
-      </Field>
-
-      <Field
-        id="servicePosition"
-        label="Service rank"
-        hint="Where it sits on service quality. 1 is best."
-        error={errors.servicePosition?.message}
-      >
-        <Input id="servicePosition" numeric inputMode="numeric" {...register('servicePosition')} />
+      <Field id="country" label="Country" hint="Taken from the port.">
+        <Input
+          id="country"
+          disabled
+          value={selectedPort?.country ?? servicePort?.country ?? '—'}
+          readOnly
+        />
       </Field>
     </FormLayout>
   );

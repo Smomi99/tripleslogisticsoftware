@@ -31,6 +31,7 @@ export const CODE_PREFIX = {
   carrierType: 'CAT',
   carrierPic: 'CAP',
   carrierServicePort: 'CSP',
+  carrierPortPair: 'CPP',
   vessel: 'VSL',
   vendor: 'VEN',
   vendorType: 'VET',
