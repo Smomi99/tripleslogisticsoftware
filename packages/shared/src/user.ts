@@ -43,6 +43,27 @@ export type UserCreateInput = z.input<typeof userCreateSchema>;
 export const userPasswordSchema = z.object({ password: passwordSchema });
 export type UserPasswordInput = z.input<typeof userPasswordSchema>;
 
+/**
+ * What the Add/Edit form binds to.
+ *
+ * One schema for both modes: password is optional, because the edit form does
+ * not show it, but is still length-checked when supplied. Requiring it on
+ * create is the API's job — userCreateSchema stays strict, so a client that
+ * omits it is rejected server-side regardless of what the form allows.
+ *
+ * Two schemas here instead would mean two different resolver output types on
+ * one useForm, which does not typecheck.
+ */
+export const userFormSchema = userInputSchema.extend({
+  password: z
+    .string()
+    .max(200, 'That password is too long.')
+    .refine((value) => value === '' || value.length >= 12, 'Use at least 12 characters.')
+    .optional(),
+});
+
+export type UserFormInput = z.input<typeof userFormSchema>;
+
 export const USER_SORT_FIELDS = ['code', 'username', 'email'] as const;
 export type UserSortField = (typeof USER_SORT_FIELDS)[number];
 

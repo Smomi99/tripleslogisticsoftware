@@ -10,9 +10,11 @@ import { carrierRouter } from './carrier.route';
 import { commodityRouter } from './commodity.route';
 import { costHeadRouter } from './cost-head.route';
 import { customerRouter } from './customer.route';
+import { employeeRouter } from './employee.route';
 import { currencyRouter } from './currency.route';
 import { portRouter } from './port.route';
 import { vendorRouter } from './vendor.route';
+import { userRouter } from './user.route';
 import { vesselRouter } from './vessel.route';
 
 /**
@@ -41,6 +43,8 @@ tenantRouter.use('/setting/commodity-categories', commodityRouter);
 // CRM.
 tenantRouter.use('/crm/customers', customerRouter);
 tenantRouter.use('/crm/agents', agentRouter);
+tenantRouter.use('/crm/employees', employeeRouter);
+tenantRouter.use('/crm/users', userRouter);
 
 interface TenantContextPayload {
   id: string;
