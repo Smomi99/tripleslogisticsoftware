@@ -1,7 +1,7 @@
 import { PrismaPg } from '@prisma/adapter-pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-import { FEATURES, PERMISSIONS, isPermissionKey } from '@ff/shared';
+import { FEATURES, PERMISSIONS, isPermissionKey, isScreenFeature } from '@ff/shared';
 
 import { env } from '../config/env';
 import { PrismaClient } from '../generated/prisma/client';
@@ -133,9 +133,16 @@ describe('the registry', () => {
     expect(withDelete.map((f) => f.feature)).toEqual([]);
   });
 
-  it('gives every feature a VIEW, since the sidebar keys off it', () => {
-    const missing = FEATURES.filter((f) => !f.actions.includes('VIEW'));
+  it('gives every screen feature a VIEW, since the sidebar keys off it', () => {
+    const missing = FEATURES.filter(
+      (f) => isScreenFeature(f) && !f.actions.includes('VIEW'),
+    );
     expect(missing.map((f) => f.feature)).toEqual([]);
+  });
+
+  it('gives column-level features no VIEW, so none can reach the sidebar', () => {
+    const stray = FEATURES.filter((f) => !isScreenFeature(f) && f.actions.includes('VIEW'));
+    expect(stray.map((f) => f.feature)).toEqual([]);
   });
 });
 

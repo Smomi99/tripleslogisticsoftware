@@ -53,6 +53,11 @@ export const CODE_PREFIX = {
   agentPic: 'AGP',
   employee: 'EMP',
 
+  // Purchase (docs/MODULE_PURCHASE_SALES.md §3.2). The spec writes RATE-000001
+  // for freight_rate; the shared padder produces RATE-001 and grows from there,
+  // which keeps one code format across the whole product rather than two.
+  freightRate: 'RATE',
+
   // §7 RBAC
   role: 'ROL',
   user: 'USR',

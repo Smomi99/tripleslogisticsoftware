@@ -1,4 +1,4 @@
-import type { InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from 'react';
+import type { ComponentPropsWithRef, ReactNode } from 'react';
 
 import { cn } from '@/lib/utils';
 
@@ -54,7 +54,11 @@ const controlClasses = cn(
   'aria-[invalid=true]:border-alert',
 );
 
-export interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
+/**
+ * React 19 passes `ref` as an ordinary prop, so no forwardRef is needed — but
+ * the prop type has to admit it, which SelectHTMLAttributes alone does not.
+ */
+export interface InputProps extends ComponentPropsWithRef<'input'> {
   /** Identifiers and numbers render in mono with tabular figures (§12). */
   numeric?: boolean;
 }
@@ -69,11 +73,7 @@ export function Input({ className, numeric, ...props }: InputProps) {
   );
 }
 
-export function Select({
-  className,
-  children,
-  ...props
-}: SelectHTMLAttributes<HTMLSelectElement>) {
+export function Select({ className, children, ...props }: ComponentPropsWithRef<'select'>) {
   return (
     <select className={cn(controlClasses, 'pr-8', className)} {...props}>
       {children}

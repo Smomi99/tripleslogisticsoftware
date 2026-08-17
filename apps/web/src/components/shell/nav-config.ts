@@ -1,4 +1,4 @@
-import { FEATURES, MODULES, type Module } from '@ff/shared';
+import { FEATURES, isScreenFeature, MODULES, type Module } from '@ff/shared';
 import type { Route } from 'next';
 
 /**
@@ -28,6 +28,7 @@ export const MODULE_LABEL: Record<Module, string> = {
  * 404ing for an operator.
  */
 const ROUTES: Record<string, Route> = {
+  'PURCHASE.SEA_FREIGHT_FCL': '/purchase/sea-freight-fcl',
   'SETTING.SEA_AIR_PORT': '/setting/port',
   'SETTING.COST_HEAD': '/setting/cost-head',
   'SETTING.CURRENCY': '/setting/currency',
@@ -65,7 +66,9 @@ export function buildNav(): NavGroup[] {
   return MODULES.map((module) => ({
     module,
     label: MODULE_LABEL[module],
-    items: FEATURES.filter((f) => f.module === module).map((f) => ({
+    // Column-level features (PURCHASE.RATE) gate data inside other screens and
+    // have nothing to navigate to, so they never become nav items.
+    items: FEATURES.filter((f) => f.module === module && isScreenFeature(f)).map((f) => ({
       feature: f.feature,
       label: f.label,
       href: ROUTES[f.feature] ?? null,

@@ -29,7 +29,25 @@ for (const table of TABLES) {
   );
 }
 
+const rates = await db.$queryRawUnsafe<{ code: string; status: string }[]>(
+  `SELECT code, status::text AS status FROM freight_rate WHERE deleted_at IS NOT NULL`,
+);
+console.log(
+  `freight_rate     ${rates.length} soft-deleted row(s)` +
+    (rates.length > 0 ? `: ${rates.map((r) => r.code).join(', ')}` : ''),
+);
+
 if (process.argv.includes('--delete')) {
+  // Soft-deleted rates are invisible to the app but still hold their code, so
+  // clearing them keeps a development database's numbering tidy.
+  await db.$executeRawUnsafe(
+    `DELETE FROM rate_local_charge WHERE rate_id IN (SELECT id FROM freight_rate WHERE deleted_at IS NOT NULL)`,
+  );
+  await db.$executeRawUnsafe(
+    `DELETE FROM freight_rate_line WHERE rate_id IN (SELECT id FROM freight_rate WHERE deleted_at IS NOT NULL)`,
+  );
+  await db.$executeRawUnsafe(`DELETE FROM freight_rate WHERE deleted_at IS NOT NULL`);
+
   // rate_tier references container_type, so it goes first.
   await db.$executeRawUnsafe(`DELETE FROM rate_tier WHERE tenant_id IS NOT NULL`);
   for (const table of TABLES) {

@@ -16,6 +16,7 @@ export * from './cost-head';
 export * from './currency';
 export * from './customer';
 export * from './employee';
+export * from './freight-rate';
 export * from './permissions';
 export * from './port';
 export * from './rate-lookups';

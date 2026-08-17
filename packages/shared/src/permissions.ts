@@ -18,6 +18,11 @@ export const ACTIONS = [
   'DELETE',
   'EXPORT',
   'APPROVE',
+  // Column-level, not screen-level (MODULE_PURCHASE_SALES §4 rules 5 and 6).
+  // A user may hold PURCHASE.SEA_FREIGHT_FCL.VIEW and still not be allowed to
+  // see what the company paid, or to move the margin.
+  'VIEW_BUY_PRICE',
+  'MANAGE_PROFIT',
 ] as const;
 
 export type Action = (typeof ACTIONS)[number];
@@ -52,6 +57,12 @@ const MASTER_APPROVE: readonly Action[] = [...MASTER, 'APPROVE'];
 const READ_ONLY: readonly Action[] = ['VIEW', 'EXPORT'];
 /** The permission matrix itself — you look at it or you change it. */
 const MATRIX: readonly Action[] = ['VIEW', 'EDIT'];
+/**
+ * The two column-level gates on a freight rate. Deliberately not paired with
+ * VIEW: seeing the Price List and seeing the margin on it are separate grants,
+ * which is the whole point of §4 rule 5.
+ */
+const RATE_COLUMNS: readonly Action[] = ['VIEW_BUY_PRICE', 'MANAGE_PROFIT'];
 
 export interface FeatureDefinition {
   module: Module;
@@ -60,6 +71,20 @@ export interface FeatureDefinition {
   /** Label for the sidebar and the permission matrix. */
   label: string;
   actions: readonly Action[];
+  /**
+   * A gate on data inside other screens rather than a screen of its own.
+   *
+   * Every screen feature carries VIEW because the sidebar keys off it. A
+   * column-level feature has no screen to navigate to, so it carries no VIEW
+   * and is never rendered as a nav item — it still appears in the permission
+   * matrix, which is the whole point of granting it separately.
+   */
+  columnLevel?: true;
+}
+
+/** Screen features — the ones the sidebar is built from. */
+export function isScreenFeature(feature: FeatureDefinition): boolean {
+  return feature.columnLevel !== true;
 }
 
 export const FEATURES: readonly FeatureDefinition[] = [
@@ -73,6 +98,16 @@ export const FEATURES: readonly FeatureDefinition[] = [
   { module: 'PURCHASE', feature: 'PURCHASE.PRICE_LIST_SEA_FCL', label: 'Price List — Sea FCL', actions: MASTER },
   { module: 'PURCHASE', feature: 'PURCHASE.PRICE_LIST_SEA_LCL', label: 'Price List — Sea LCL', actions: MASTER },
   { module: 'PURCHASE', feature: 'PURCHASE.PRICE_LIST_AIR', label: 'Price List — Air', actions: MASTER },
+  // Not a screen — a pair of column-level gates that cut across all nine
+  // purchase screens (MODULE_PURCHASE_SALES §6). It has no route, so the
+  // sidebar skips it; the permission matrix still renders it as its own row.
+  {
+    module: 'PURCHASE',
+    feature: 'PURCHASE.RATE',
+    label: 'Rate — buy price & margin',
+    actions: RATE_COLUMNS,
+    columnLevel: true,
+  },
 
   // -- 2. Sales & Marketing --------------------------------------------------
   { module: 'SALES', feature: 'SALES.NEW_INQUIRY', label: 'New Inquiry', actions: MASTER },

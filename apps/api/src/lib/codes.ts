@@ -42,6 +42,7 @@ const CODE_TABLES = {
   agent: 'agent',
   agentPic: 'agent_pic',
   employee: 'employee',
+  freightRate: 'freight_rate',
   role: 'role',
   user: 'user',
 } as const;

@@ -13,6 +13,7 @@ import { costHeadRouter } from './cost-head.route';
 import { customerRouter } from './customer.route';
 import { employeeRouter } from './employee.route';
 import { currencyRouter } from './currency.route';
+import { freightRateRouter } from './freight-rate.route';
 import { portRouter } from './port.route';
 import { rateLookupRouter } from './rate-lookup.route';
 import { vendorRouter } from './vendor.route';
@@ -43,6 +44,9 @@ tenantRouter.use('/setting/vendors', vendorRouter);
 tenantRouter.use('/setting/commodity-categories', commodityRouter);
 // Purchase & Sales lookups (docs/MODULE_PURCHASE_SALES.md §3.1).
 tenantRouter.use('/setting', rateLookupRouter);
+
+// Purchase — rate entry for all three modes (MODULE_PURCHASE_SALES §5.1).
+tenantRouter.use('/purchase', freightRateRouter);
 
 // CRM.
 tenantRouter.use('/crm/customers', customerRouter);

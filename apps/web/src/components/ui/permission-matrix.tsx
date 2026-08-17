@@ -53,6 +53,9 @@ const ACTION_LABEL: Record<Action, string> = {
   DELETE: 'Delete',
   EXPORT: 'Export',
   APPROVE: 'Approve',
+  // Column-level rather than screen-level — see PURCHASE.RATE in the registry.
+  VIEW_BUY_PRICE: 'Buy price',
+  MANAGE_PROFIT: 'Margin',
 };
 
 export function PermissionMatrix({
