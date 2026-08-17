@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { listQuerySchema } from './api';
+import { countrySchema } from './countries';
 
 /**
  * Sea-Air Port (CLAUDE.md §5, client table: Table_Port_List).
@@ -31,11 +32,7 @@ export const portInputSchema = z.object({
     .max(20, 'Port code must be 20 characters or fewer.')
     .regex(/^[A-Za-z0-9-]+$/, 'Port code may use only letters, numbers and hyphens.')
     .transform((value) => value.toUpperCase()),
-  country: z
-    .string()
-    .trim()
-    .min(1, 'Enter the country.')
-    .max(100, 'Country must be 100 characters or fewer.'),
+  country: countrySchema,
   type: z.enum(PORT_TYPES, { message: 'Choose Seaport or Airport.' }),
 });
 

@@ -10,6 +10,7 @@ import { useForm } from 'react-hook-form';
 import { ChildScreen } from '@/components/ui/child-screen';
 import type { DataTableColumn } from '@/components/ui/data-table';
 import { Field, Input } from '@/components/ui/field';
+import { CountrySelect } from '@/components/ui/country-select';
 import { FormLayout } from '@/components/ui/form-layout';
 import { ApiError } from '@/lib/api-client';
 
@@ -141,7 +142,7 @@ function CarrierPicForm({
         <Input id="email" type="email" {...register('email')} />
       </Field>
       <Field id="country" label="Country" error={errors.country?.message}>
-        <Input id="country" {...register('country')} />
+        <CountrySelect id="country" placeholder="—" {...register('country')} />
       </Field>
     </FormLayout>
   );

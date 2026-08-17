@@ -11,6 +11,7 @@ export * from './agent';
 export * from './carrier';
 export * from './codes';
 export * from './commodity';
+export * from './countries';
 export * from './cost-head';
 export * from './currency';
 export * from './customer';

@@ -17,6 +17,7 @@ import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 
 import { Field, Input, Select } from '@/components/ui/field';
+import { CountrySelect } from '@/components/ui/country-select';
 import { FormLayout } from '@/components/ui/form-layout';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
@@ -121,7 +122,7 @@ export function CustomerForm({ customer }: { customer: CustomerDto | null }) {
       </Field>
 
       <Field id="country" label="Country" required error={errors.country?.message}>
-        <Input id="country" aria-invalid={errors.country !== undefined} {...register('country')} />
+        <CountrySelect id="country" aria-invalid={errors.country !== undefined} {...register('country')} />
       </Field>
 
       <Field

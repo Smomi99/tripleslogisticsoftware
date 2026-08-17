@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { listQuerySchema } from './api';
+import { countrySchema } from './countries';
 
 /**
  * Vendor and its contact people (CLAUDE.md §5).
@@ -15,7 +16,7 @@ import { listQuerySchema } from './api';
 
 export const vendorInputSchema = z.object({
   name: z.string().trim().min(1, 'Enter the vendor name.').max(200, 'Name is too long.'),
-  country: z.string().trim().min(1, 'Enter the country.').max(100, 'Country is too long.'),
+  country: countrySchema,
   address: z.string().trim().max(2000, 'Address is too long.').optional(),
   serviceDescription: z.string().trim().max(2000, 'Description is too long.').optional(),
   vendorTypeId: z.string().regex(/^\d+$/, 'Choose a vendor type.'),

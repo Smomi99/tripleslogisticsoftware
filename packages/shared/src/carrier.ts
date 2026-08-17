@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { listQuerySchema } from './api';
+import { optionalCountrySchema } from './countries';
 
 /**
  * Carrier and its two children (CLAUDE.md §5).
@@ -65,7 +66,7 @@ export const carrierPicInputSchema = z.object({
     .max(255, 'Email is too long.')
     .refine((v) => v === '' || z.email().safeParse(v).success, 'Enter a valid email address.')
     .optional(),
-  country: z.string().trim().max(100, 'Country is too long.').optional(),
+  country: optionalCountrySchema,
 });
 
 export type CarrierPicInput = z.input<typeof carrierPicInputSchema>;
@@ -97,7 +98,7 @@ const positionSchema = z
 
 export const carrierServicePortInputSchema = z.object({
   portId: z.string().regex(/^\d+$/, 'Choose a port.'),
-  country: z.string().trim().max(100, 'Country is too long.').optional(),
+  country: optionalCountrySchema,
   lowPricePosition: positionSchema,
   servicePosition: positionSchema,
 });

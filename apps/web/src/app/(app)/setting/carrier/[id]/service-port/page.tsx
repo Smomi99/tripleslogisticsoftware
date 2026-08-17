@@ -15,6 +15,7 @@ import { useForm } from 'react-hook-form';
 import { ChildScreen } from '@/components/ui/child-screen';
 import type { DataTableColumn } from '@/components/ui/data-table';
 import { Field, Input, Select } from '@/components/ui/field';
+import { CountrySelect } from '@/components/ui/country-select';
 import { FormLayout } from '@/components/ui/form-layout';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
@@ -151,7 +152,7 @@ function ServicePortForm({
       </Field>
 
       <Field id="country" label="Country" error={errors.country?.message}>
-        <Input id="country" {...register('country')} />
+        <CountrySelect id="country" placeholder="—" {...register('country')} />
       </Field>
 
       <Field

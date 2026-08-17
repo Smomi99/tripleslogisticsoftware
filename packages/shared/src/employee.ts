@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { listQuerySchema } from './api';
+import { countrySchema } from './countries';
 
 /**
  * Employee and its two 1:1 extensions (CLAUDE.md §6).
@@ -20,7 +21,7 @@ const optionalDate = z
 
 export const employeeInputSchema = z.object({
   name: z.string().trim().min(1, 'Enter the employee name.').max(200, 'Name is too long.'),
-  country: z.string().trim().min(1, 'Enter the country.').max(100, 'Country is too long.'),
+  country: countrySchema,
   department: z.string().trim().max(100, 'Department is too long.').optional(),
   designation: z.string().trim().max(100, 'Designation is too long.').optional(),
   joiningDate: optionalDate,

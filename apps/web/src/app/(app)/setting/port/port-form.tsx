@@ -12,6 +12,7 @@ import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 
 import { Field, Input, Select } from '@/components/ui/field';
+import { CountrySelect } from '@/components/ui/country-select';
 import { FormLayout } from '@/components/ui/form-layout';
 import { ApiError } from '@/lib/api-client';
 
@@ -109,7 +110,7 @@ export function PortForm({
       </Field>
 
       <Field id="country" label="Country" required error={errors.country?.message}>
-        <Input id="country" aria-invalid={errors.country !== undefined} {...register('country')} />
+        <CountrySelect id="country" aria-invalid={errors.country !== undefined} {...register('country')} />
       </Field>
 
       <Field id="type" label="Type" required error={errors.type?.message}>

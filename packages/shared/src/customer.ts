@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { listQuerySchema } from './api';
+import { countrySchema } from './countries';
 
 /**
  * Customer and its contacts (CLAUDE.md §6).
@@ -41,7 +42,7 @@ const volumeSchema = z
 
 export const customerInputSchema = z.object({
   name: z.string().trim().min(1, 'Enter the customer name.').max(200, 'Name is too long.'),
-  country: z.string().trim().min(1, 'Enter the country.').max(100, 'Country is too long.'),
+  country: countrySchema,
   address: z.string().trim().max(2000, 'Address is too long.').optional(),
   customerType: z.enum(CUSTOMER_TYPES, { message: 'Choose importer, exporter or trader.' }),
   businessArea: z.enum(BUSINESS_AREAS, { message: 'Choose inbound, outbound or both.' }),

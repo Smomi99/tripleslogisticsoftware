@@ -8,6 +8,7 @@ import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 
 import { Field, Input } from '@/components/ui/field';
+import { CountrySelect } from '@/components/ui/country-select';
 import { FormLayout } from '@/components/ui/form-layout';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
@@ -84,7 +85,7 @@ export function EmployeeForm({ employee }: { employee: EmployeeDto | null }) {
         <Input id="name" autoFocus aria-invalid={errors.name !== undefined} {...register('name')} />
       </Field>
       <Field id="country" label="Country" required error={errors.country?.message}>
-        <Input id="country" aria-invalid={errors.country !== undefined} {...register('country')} />
+        <CountrySelect id="country" aria-invalid={errors.country !== undefined} {...register('country')} />
       </Field>
       <Field id="joiningDate" label="Joining date" error={errors.joiningDate?.message}>
         <Input id="joiningDate" type="date" numeric {...register('joiningDate')} />

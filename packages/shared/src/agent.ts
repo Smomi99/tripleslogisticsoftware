@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { listQuerySchema } from './api';
+import { countrySchema } from './countries';
 
 /**
  * Agent and its children (CLAUDE.md §6).
@@ -25,7 +26,7 @@ const idListSchema = z.array(z.string().regex(/^\d+$/)).default([]);
 
 export const agentInputSchema = z.object({
   name: z.string().trim().min(1, 'Enter the agent name.').max(200, 'Name is too long.'),
-  country: z.string().trim().min(1, 'Enter the country.').max(100, 'Country is too long.'),
+  country: countrySchema,
   address: z.string().trim().max(2000, 'Address is too long.').optional(),
   agentType: z.enum(AGENT_TYPES, { message: 'Choose general or exclusive.' }),
   expertAreaIds: idListSchema,

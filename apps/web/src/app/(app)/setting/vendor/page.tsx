@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Input, Select } from '@/components/ui/field';
+import { CountrySelect } from '@/components/ui/country-select';
 import { FormLayout, PageHeader } from '@/components/ui/form-layout';
 import { ConfirmDialog, Modal } from '@/components/ui/modal';
 import { Status } from '@/components/ui/status';
@@ -344,7 +345,7 @@ function VendorForm({
         </Select>
       </Field>
       <Field id="country" label="Country" required error={errors.country?.message}>
-        <Input id="country" aria-invalid={errors.country !== undefined} {...register('country')} />
+        <CountrySelect id="country" aria-invalid={errors.country !== undefined} {...register('country')} />
       </Field>
       <Field id="address" label="Address" error={errors.address?.message} wide>
         <Input id="address" {...register('address')} />

@@ -155,7 +155,7 @@ describe('cross-tenant writes are refused', () => {
       .patch(`/api/tenant/setting/ports/${portB}`)
       .set('Authorization', `Bearer ${tokenA}`)
       .set('X-Tenant-Slug', SLUG_A)
-      .send({ name: 'Hijacked', portCode: 'NEWNEW', country: 'X', type: 'SEAPORT' });
+      .send({ name: 'Hijacked', portCode: 'NEWNEW', country: 'Bangladesh', type: 'SEAPORT' });
 
     expect(response.status).toBe(404);
 
@@ -182,7 +182,7 @@ describe('§7A rule 7 — shared rows are read-only', () => {
       .patch(`/api/tenant/setting/ports/${systemPort}`)
       .set('Authorization', `Bearer ${tokenA}`)
       .set('X-Tenant-Slug', SLUG_A)
-      .send({ name: 'Renamed', portCode: 'SYSSYS', country: 'X', type: 'SEAPORT' });
+      .send({ name: 'Renamed', portCode: 'SYSSYS', country: 'Bangladesh', type: 'SEAPORT' });
 
     expect(response.status).toBe(403);
   });
