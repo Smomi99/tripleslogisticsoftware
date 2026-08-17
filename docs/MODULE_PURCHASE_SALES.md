@@ -330,4 +330,8 @@ If any of these FK targets does not already exist in the built schema, **stop an
 
 **Worth raising even though nothing blocks on it:**
 
-13. Should the Price List show **transit time** and **free days**? Sales are asked both on every call, and adding the columns later means re-buying rates to fill them in.
+13. **Transit time and free days on the Price List** — ~~show them?~~
+    **Both, answered 17 Aug 2026.** `transit_days` already existed on
+    `freight_rate`; `free_days` was added as a nullable column in phase E, before
+    the pricing team had keyed in enough lanes for a backfill to hurt. Both are
+    inputs on the entry row and columns on the Price List.

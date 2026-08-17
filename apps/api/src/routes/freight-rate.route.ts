@@ -20,6 +20,7 @@ import { type RequestHandler, Router } from 'express';
 import { CODE_RETRY_LIMIT, isUniqueViolation, nextCode } from '../lib/codes';
 import { Prisma } from '../generated/prisma/client';
 import { HttpError } from '../lib/http-error';
+import { buildRatePdf, buildRateWorkbook, exportFilename } from '../lib/rate-export';
 import { canManageProfit, canSeeBuyPrice, visibleRate, visibleRates } from '../lib/rate-visibility';
 import { parseId, parseRefId } from '../lib/request';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
@@ -215,6 +216,7 @@ function toDto(rate: RateWithRelations, today: Date): FreightRateDto {
     validFrom: isoDate(rate.validFrom),
     validTo: isoDate(rate.validTo),
     transitDays: rate.transitDays,
+    freeDays: rate.freeDays,
     remarks: rate.remarks,
     status: rate.status,
     isActive: rate.isActive,
@@ -505,6 +507,10 @@ freightRateRouter.post('/rates', requireModePermission('CREATE'), async (req, re
               input.transitDays === undefined || input.transitDays === ''
                 ? null
                 : Number(input.transitDays),
+            freeDays:
+              input.freeDays === undefined || input.freeDays === ''
+                ? null
+                : Number(input.freeDays),
             remarks: input.remarks === undefined || input.remarks === '' ? null : input.remarks,
             status: input.status,
             createdBy: auth.userId,
@@ -624,6 +630,10 @@ freightRateRouter.patch('/rates/:id', requireModePermission('EDIT'), async (req,
             input.transitDays === undefined || input.transitDays === ''
               ? null
               : Number(input.transitDays),
+          freeDays:
+            input.freeDays === undefined || input.freeDays === ''
+              ? null
+              : Number(input.freeDays),
           remarks: input.remarks === undefined || input.remarks === '' ? null : input.remarks,
           status: input.status,
           updatedBy: auth.userId,
@@ -906,6 +916,143 @@ export interface MarginHistoryEntry {
   changedAt: string;
   changedBy: string;
 }
+
+// ===========================================================================
+// Price List (§5.3) — the screen sales actually lives in
+//
+// Shows sell price to anyone with VIEW. Buy price and margin appear only with
+// PURCHASE.RATE.VIEW_BUY_PRICE, and are absent from the payload otherwise —
+// including from the export, which matters more because a file gets forwarded.
+// ===========================================================================
+
+const PRICE_LIST_FEATURE_BY_MODE: Record<RateMode, string> = {
+  SEA_FCL: 'PURCHASE.PRICE_LIST_SEA_FCL',
+  SEA_LCL: 'PURCHASE.PRICE_LIST_SEA_LCL',
+  AIR: 'PURCHASE.PRICE_LIST_AIR',
+};
+
+function requirePriceListPermission(action: string): RequestHandler {
+  const guards = new Map<RateMode, RequestHandler>(
+    (Object.keys(PRICE_LIST_FEATURE_BY_MODE) as RateMode[]).map((mode) => [
+      mode,
+      requirePermission(`${PRICE_LIST_FEATURE_BY_MODE[mode]}.${action}`),
+    ]),
+  );
+
+  return function priceListGuard(req, res, next): void {
+    const raw: unknown = req.query['mode'] ?? (req.body as { mode?: unknown } | undefined)?.mode;
+    const guard = typeof raw === 'string' ? guards.get(raw as RateMode) : undefined;
+    if (guard === undefined) {
+      throw HttpError.badRequest('Choose a freight mode.');
+    }
+    guard(req, res, next);
+  };
+}
+
+/** The rows behind both the list and the export, so the two cannot disagree. */
+async function priceListRows(
+  auth: NonNullable<Parameters<RequestHandler>[0]['auth']>,
+  query: ReturnType<typeof freightRateListQuerySchema.parse>,
+  limit: number,
+): Promise<{ rates: FreightRateDto[]; total: number }> {
+  const today = startOfToday();
+  const where: Prisma.FreightRateWhereInput = {
+    ...rateWhere(query, today),
+    // §4 rule 2: the price list shows what sales may actually quote.
+    ...(query.status === undefined ? { status: 'PUBLISHED' } : {}),
+  };
+
+  const { rows, total } = await withTenant(auth.tenantId, async (db) => {
+    const [rows, total] = await Promise.all([
+      db.freightRate.findMany({
+        where,
+        include: rateInclude,
+        orderBy: [{ pol: { name: 'asc' } }, { pod: { name: 'asc' } }, { code: 'asc' }],
+        skip: (query.page - 1) * limit,
+        take: limit,
+      }),
+      db.freightRate.count({ where }),
+    ]);
+    return { rows, total };
+  });
+
+  return {
+    rates: visibleRates(
+      rows.map((r) => toDto(r, today)),
+      canSeeBuyPrice(auth),
+    ),
+    total,
+  };
+}
+
+freightRateRouter.get(
+  '/price-list',
+  requirePriceListPermission('VIEW'),
+  async (req, res) => {
+    const auth = req.auth!;
+    const query = freightRateListQuerySchema.parse(req.query);
+    const { rates, total } = await priceListRows(auth, query, query.limit);
+
+    const payload: ApiSuccess<FreightRateDto[]> = {
+      success: true,
+      data: rates,
+      meta: buildMeta(query.page, query.limit, total),
+    };
+    res.json(payload);
+  },
+);
+
+/**
+ * §4 rule 12: "produces Excel and PDF of exactly the filtered rows the user is
+ * looking at". Same filters, same visibility rules, same rows — the export
+ * calls priceListRows rather than re-deriving anything.
+ *
+ * Capped rather than paginated: a download of one page would be a surprise.
+ */
+const EXPORT_ROW_CAP = 5000;
+
+freightRateRouter.get(
+  '/price-list/export',
+  requirePriceListPermission('EXPORT'),
+  async (req, res) => {
+    const auth = req.auth!;
+    const format = req.query['format'] === 'pdf' ? 'pdf' : 'xlsx';
+    const query = freightRateListQuerySchema.parse({ ...req.query, page: '1' });
+
+    const { rates, total } = await priceListRows(auth, query, EXPORT_ROW_CAP);
+    if (total > EXPORT_ROW_CAP) {
+      throw HttpError.badRequest(
+        `That is ${total} rates. Narrow the filters to ${EXPORT_ROW_CAP} or fewer before exporting.`,
+      );
+    }
+
+    const context = await withTenant(auth.tenantId, async (db) => {
+      const [tenant, user] = await Promise.all([
+        db.tenant.findFirst({ where: { id: auth.tenantId }, select: { name: true } }),
+        db.user.findFirst({ where: { id: auth.userId }, select: { username: true } }),
+      ]);
+      return {
+        mode: query.mode,
+        rates,
+        workspaceName: tenant?.name ?? 'Workspace',
+        generatedBy: user?.username ?? 'unknown',
+      };
+    });
+
+    const filename = exportFilename(query.mode, format);
+    const body =
+      format === 'pdf' ? await buildRatePdf(context) : await buildRateWorkbook(context);
+
+    res.setHeader(
+      'Content-Type',
+      format === 'pdf'
+        ? 'application/pdf'
+        : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(body);
+  },
+);
 
 // ===========================================================================
 // Form options — the dropdowns the entry row needs, filtered per §4 rule 9

@@ -1713,6 +1713,10 @@ model FreightRate {
   validFrom   DateTime   @map("valid_from") @db.Date
   validTo     DateTime   @map("valid_to") @db.Date
   transitDays Int?       @map("transit_days")
+  /// §9 Q13, answered: free days at destination before demurrage starts. Sales
+  /// are asked this on every call, and backfilling it would mean re-entering
+  /// every rate already keyed in.
+  freeDays    Int?       @map("free_days")
   remarks     String?    @db.Text
   status      RateStatus @default(DRAFT)
 

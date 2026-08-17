@@ -112,6 +112,12 @@ export const freightRateInputSchema = z
       .trim()
       .refine((v) => v === '' || /^\d{1,4}$/.test(v), 'Enter a whole number of days.')
       .optional(),
+    /** §9 Q13: free days at destination before demurrage starts. */
+    freeDays: z
+      .string()
+      .trim()
+      .refine((v) => v === '' || /^\d{1,4}$/.test(v), 'Enter a whole number of days.')
+      .optional(),
     remarks: z.string().trim().max(2000, 'Remarks are too long.').optional(),
     status: z.enum(RATE_STATUSES).default('DRAFT'),
     lines: z.array(rateLineInputSchema).min(1, 'Enter a price for at least one tier.'),
@@ -204,6 +210,7 @@ export interface FreightRateDto {
   validFrom: string;
   validTo: string;
   transitDays: number | null;
+  freeDays: number | null;
   remarks: string | null;
   status: RateStatus;
   isActive: boolean;

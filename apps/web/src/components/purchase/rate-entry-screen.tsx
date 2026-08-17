@@ -78,6 +78,8 @@ interface DraftRow {
   validFrom: string;
   validTo: string;
   transitDays: string;
+  freeDays: string;
+  status: string;
   /** tierId → buy price, as typed. */
   prices: Record<string, string>;
   profitType: string;
@@ -97,6 +99,11 @@ function emptyDraft(currencyId: string): DraftRow {
     validFrom: '',
     validTo: '',
     transitDays: '',
+    freeDays: '',
+    // A buyer records a rate because it has been bought, so the default is the
+    // one that reaches sales. Draft is there for staging a lane that is not
+    // agreed yet — see the note on status in the report for phase E.
+    status: 'PUBLISHED',
     prices: {},
     profitType: 'FLAT',
     profitValue: '',
@@ -242,7 +249,8 @@ export function RateEntryScreen({
       validFrom: draft.validFrom,
       validTo: draft.validTo,
       transitDays: draft.transitDays,
-      status: 'DRAFT',
+      freeDays: draft.freeDays,
+      status: draft.status,
       lines,
       localCharges: draft.localCharges,
     };
@@ -470,6 +478,40 @@ export function RateEntryScreen({
               />
             </LabelledControl>
 
+            {/* §9 Q13: sales are asked both of these on every call. */}
+            <LabelledControl label="Transit" width="w-20">
+              <Input
+                numeric
+                inputMode="numeric"
+                aria-label="Transit days"
+                value={draft.transitDays}
+                onChange={(e) => setDraft({ ...draft, transitDays: e.target.value })}
+              />
+            </LabelledControl>
+            <LabelledControl label="Free days" width="w-20">
+              <Input
+                numeric
+                inputMode="numeric"
+                aria-label="Free days"
+                value={draft.freeDays}
+                onChange={(e) => setDraft({ ...draft, freeDays: e.target.value })}
+              />
+            </LabelledControl>
+
+            {/* Published is what sales can quote (§4 rule 2). Draft stages a
+                lane that is not agreed yet, and is exempt from the overlap
+                constraint so alternatives can sit side by side. */}
+            <LabelledControl label="Status" width="w-28">
+              <Select
+                aria-label="Status"
+                value={draft.status}
+                onChange={(e) => setDraft({ ...draft, status: e.target.value })}
+              >
+                <option value="PUBLISHED">Published</option>
+                <option value="DRAFT">Draft</option>
+              </Select>
+            </LabelledControl>
+
             <LabelledControl label="Purchase via" width="w-32">
               <Select
                 aria-label="Purchase source type"
@@ -558,7 +600,7 @@ export function RateEntryScreen({
           </thead>
           <tbody>
             {rows.map((rate) => (
-              <tr key={rate.id} className="border-b border-line last:border-0 hover:bg-[#F0F4F4]">
+              <tr key={rate.id} className="border-b border-line last:border-0 hover:bg-row-hover">
                 <td className="bg-paper/40 px-2.5 py-2 font-mono text-cell tabular-nums text-hull">
                   {rate.code}
                 </td>
