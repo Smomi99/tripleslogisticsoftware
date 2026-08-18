@@ -222,8 +222,9 @@ describe('§4 rule 1 — a lane may only use ports the carrier serves', () => {
       `/api/tenant/setting/carriers/${seaCarrier}/lane-ports`,
     );
     expect(res.status).toBe(200);
-    const codes = res.body.data.map((p: { portCode: string }) => p.portCode);
+    const codes = res.body.data.ports.map((p: { portCode: string }) => p.portCode);
     expect(codes.sort()).toEqual(['CPPCGP', 'CPPSIN']);
+    expect(res.body.data.excludedByType).toBe(0);
   });
 });
 
@@ -253,10 +254,14 @@ describe('§4 rule 6 — ports match the carrier type', () => {
     const res = await as(tokenA, SLUG_A).get(
       `/api/tenant/setting/carriers/${airCarrier}/lane-ports`,
     );
-    const codes = res.body.data.map((p: { portCode: string }) => p.portCode);
+    const codes = res.body.data.ports.map((p: { portCode: string }) => p.portCode);
     // CGP is on this airline's service port list but is a seaport, so it is
     // filtered server-side — not merely hidden in the dropdown.
     expect(codes).toEqual(['CPPDAC']);
+    // And the screen is told WHY it is missing, so it can say something better
+    // than "add it on the Service Port screen" about a port already there.
+    expect(res.body.data.excludedByType).toBe(1);
+    expect(res.body.data.requiredPortType).toBe('AIRPORT');
   });
 });
 

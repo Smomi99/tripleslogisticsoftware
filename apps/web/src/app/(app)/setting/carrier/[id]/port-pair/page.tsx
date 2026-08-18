@@ -3,6 +3,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
   type CarrierLanePortOption,
+  type CarrierLanePorts,
   type CarrierPortPairDto,
   type CarrierPortPairInput,
   carrierPortPairInputSchema,
@@ -31,16 +32,21 @@ import { useSession } from '@/lib/session';
 export default function CarrierPortPairPage() {
   const params = useParams<{ id: string }>();
   const carrierId = params.id;
-  const { authorizedList } = useSession();
-  const [ports, setPorts] = useState<CarrierLanePortOption[]>([]);
+  const { authorizedRequest } = useSession();
+  const [lanePorts, setLanePorts] = useState<CarrierLanePorts>({
+    ports: [],
+    excludedByType: 0,
+    requiredPortType: null,
+  });
+  const ports: CarrierLanePortOption[] = lanePorts.ports;
 
   useEffect(() => {
-    void authorizedList<CarrierLanePortOption[]>(
+    void authorizedRequest<CarrierLanePorts>(
       `/api/tenant/setting/carriers/${carrierId}/lane-ports`,
     )
-      .then((response) => setPorts(response.data))
-      .catch(() => setPorts([]));
-  }, [authorizedList, carrierId]);
+      .then(setLanePorts)
+      .catch(() => setLanePorts({ ports: [], excludedByType: 0, requiredPortType: null }));
+  }, [authorizedRequest, carrierId]);
 
   const columns: DataTableColumn<CarrierPortPairDto>[] = [
     { id: 'pol', header: 'POL', sortable: true, cell: (r) => `${r.polCode} — ${r.polName}` },
@@ -91,16 +97,39 @@ export default function CarrierPortPairPage() {
       conflictOpensRow={(error) => error.fields?.['existingId']?.[0] ?? null}
       renderForm={({ row, onSubmit, onCancel }) =>
         ports.length === 0 ? (
-          <EmptyState
-            title="No service ports to pair"
-            description="A lane can only use ports this carrier already serves. Add them on the Service Port screen first."
-          />
+          <EmptyState {...noPortsMessage(lanePorts)} />
         ) : (
           <PortPairForm pair={row} ports={ports} onSubmit={onSubmit} onCancel={onCancel} />
         )
       }
     />
   );
+}
+
+/**
+ * A lane needs two ports of the right kind, and there are two ways to have
+ * none. Sending someone to the Service Port screen when the port is already
+ * there is a dead end — reproduced with Maersk Line, whose only service port
+ * was an airport.
+ */
+function noPortsMessage(lane: CarrierLanePorts): { title: string; description: string } {
+  if (lane.excludedByType === 0) {
+    return {
+      title: 'No service ports to pair',
+      description:
+        'A lane can only use ports this carrier already serves. Add them on the Service Port screen first.',
+    };
+  }
+  const flies = lane.requiredPortType === 'AIRPORT';
+  const wanted = flies ? 'airports' : 'seaports';
+  const count =
+    lane.excludedByType === 1
+      ? `its one service port is ${flies ? 'a seaport' : 'an airport'}`
+      : `all ${lane.excludedByType} of its service ports are ${flies ? 'seaports' : 'airports'}`;
+  return {
+    title: 'No usable service ports',
+    description: `This carrier's lanes run between ${wanted}, and ${count}. Add one on the Service Port screen, or correct what is there.`,
+  };
 }
 
 function PortPairForm({

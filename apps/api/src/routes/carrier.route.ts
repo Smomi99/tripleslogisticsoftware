@@ -6,7 +6,7 @@ import {
   CODE_PREFIX,
   type CarrierDto,
   carrierInputSchema,
-  type CarrierLanePortOption,
+  type CarrierLanePorts,
   carrierListQuerySchema,
   type CarrierPicDto,
   carrierPicInputSchema,
@@ -19,7 +19,7 @@ import {
   type LookupOption,
 } from '@ff/shared';
 
-import { type CodeTable, CODE_RETRY_LIMIT, isUniqueViolation, nextCode } from '../lib/codes';
+import { type CodeTable, CODE_RETRY_LIMIT, codeSortSql, isUniqueViolation, nextCode } from '../lib/codes';
 import { Prisma } from '../generated/prisma/client';
 import { HttpError } from '../lib/http-error';
 import { parseId, parseRefId } from '../lib/request';
@@ -43,7 +43,7 @@ carrierRouter.use(authenticate);
 
 const FEATURE = 'SETTING.CARRIER';
 
-const SORT_COLUMNS = { code: 'c.code', name: 'c.name' } as const;
+const SORT_COLUMNS = { code: codeSortSql('c.code'), name: 'c.name' } as const;
 
 interface CarrierRow {
   id: bigint;
@@ -930,27 +930,37 @@ carrierRouter.get(
     const auth = req.auth!;
     const carrierId = parseId(req.params.id, 'carrier');
 
-    const options = await withTenant(auth.tenantId, async (db) => {
+    const result = await withTenant(auth.tenantId, async (db) => {
       const carrier = await findLaneCarrier(db, carrierId);
       const rows = await db.carrierServicePort.findMany({
-        where: {
-          carrierId,
-          deletedAt: null,
-          isActive: true,
-          ...(carrier.portType !== null ? { port: { type: carrier.portType } } : {}),
+        where: { carrierId, deletedAt: null, isActive: true },
+        select: {
+          port: { select: { id: true, name: true, portCode: true, country: true, type: true } },
         },
-        select: { port: { select: { id: true, name: true, portCode: true, country: true } } },
         orderBy: { port: { name: 'asc' } },
       });
-      return rows.map((row) => ({
-        id: row.port.id.toString(),
-        portCode: row.port.portCode,
-        name: row.port.name,
-        country: row.port.country,
-      }));
+
+      // Rule 6 is applied here rather than in the query so the screen can tell
+      // "this carrier serves nothing yet" from "everything it serves is the
+      // wrong kind of port". Those need different advice, and the second one
+      // sent users to a screen where the port was already sitting.
+      const usable = rows.filter(
+        (row) => carrier.portType === null || row.port.type === carrier.portType,
+      );
+
+      return {
+        ports: usable.map((row) => ({
+          id: row.port.id.toString(),
+          portCode: row.port.portCode,
+          name: row.port.name,
+          country: row.port.country,
+        })),
+        excludedByType: rows.length - usable.length,
+        requiredPortType: carrier.portType,
+      };
     });
 
-    const payload: ApiSuccess<CarrierLanePortOption[]> = { success: true, data: options };
+    const payload: ApiSuccess<CarrierLanePorts> = { success: true, data: result };
     res.json(payload);
   },
 );

@@ -11,7 +11,7 @@ import {
   currencyRateInputSchema,
 } from '@ff/shared';
 
-import { CODE_RETRY_LIMIT, isUniqueViolation, nextCode } from '../lib/codes';
+import { CODE_RETRY_LIMIT, codeSortSql, isUniqueViolation, nextCode } from '../lib/codes';
 import { Prisma } from '../generated/prisma/client';
 import { HttpError } from '../lib/http-error';
 import { parseId } from '../lib/request';
@@ -35,7 +35,7 @@ currencyRouter.use(authenticate);
 const FEATURE = 'SETTING.CURRENCY';
 
 const SORT_COLUMNS = {
-  code: 'c.code',
+  code: codeSortSql('c.code'),
   currency: 'c.currency',
   conversion: 'c.conversion',
 } as const;

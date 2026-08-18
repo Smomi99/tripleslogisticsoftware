@@ -99,3 +99,20 @@ export function isUniqueViolation(error: unknown, column?: string): boolean {
   const target = meta?.target;
   return Array.isArray(target) ? target.includes(column) : String(target).includes(column);
 }
+
+/**
+ * ORDER BY expression that sorts business codes by their number, not as text.
+ *
+ * `formatCode` pads to CODE_PAD_LENGTH and then grows, so a table past its
+ * padding produces PL-999 and PL-1000 — and plain text ordering puts PL-1000
+ * before PL-999. The §12 code column is the anchor an operator scans down, so
+ * that is a correctness bug, not a cosmetic one.
+ *
+ * Splitting on the hyphen keeps the prefix as the leading sort key, so this
+ * stays right if a table ever holds more than one prefix, and the fixed lpad
+ * makes every suffix compare numerically whatever width it was written at —
+ * which means it also survives the open question about three digits versus six.
+ */
+export function codeSortSql(column: string): string {
+  return `(split_part(${column}, '-', 1), lpad(split_part(${column}, '-', 2), 12, '0'))`;
+}

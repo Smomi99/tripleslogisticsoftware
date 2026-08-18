@@ -9,7 +9,7 @@ import {
   portListQuerySchema,
 } from '@ff/shared';
 
-import { CODE_RETRY_LIMIT, isUniqueViolation, nextCode } from '../lib/codes';
+import { CODE_RETRY_LIMIT, codeSortSql, isUniqueViolation, nextCode } from '../lib/codes';
 import { HttpError } from '../lib/http-error';
 import { Prisma } from '../generated/prisma/client';
 import { withTenant } from '../lib/tenant-client';
@@ -36,7 +36,7 @@ const FEATURE = 'SETTING.SEA_AIR_PORT';
 
 /** Whitelisted sort columns — the value never reaches SQL unmapped. */
 const SORT_COLUMNS = {
-  code: 'p.code',
+  code: codeSortSql('p.code'),
   name: 'p.name',
   portCode: 'p.port_code',
   country: 'p.country',

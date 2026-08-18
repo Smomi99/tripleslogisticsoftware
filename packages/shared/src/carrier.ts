@@ -194,3 +194,19 @@ export interface CarrierLanePortOption {
   name: string;
   country: string;
 }
+
+/**
+ * What the POL and POD dropdowns may offer, and why they might be empty.
+ *
+ * Two very different empty cases hide behind a zero-length list: this carrier
+ * has no service ports at all, or it has some and §4 rule 6 excluded every one
+ * of them. Telling a user to add a port on a screen where that port already
+ * sits is a dead end, so the count comes back with the list.
+ */
+export interface CarrierLanePorts {
+  ports: CarrierLanePortOption[];
+  /** Service ports of the wrong type for this carrier — rule 6 excluded them. */
+  excludedByType: number;
+  /** SEAPORT for MLO/NVOCC/SOC, AIRPORT for Airline, null if unconstrained. */
+  requiredPortType: 'SEAPORT' | 'AIRPORT' | null;
+}
