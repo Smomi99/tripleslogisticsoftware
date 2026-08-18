@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { listQuerySchema } from './api';
+import type { RateLineDto } from './freight-rate';
 
 /**
  * Sales — inquiry (docs/MODULE_PURCHASE_SALES.md §3.3, §5.4, §5.5).
@@ -48,14 +49,17 @@ export const INQUIRY_STATUS_LABEL: Record<InquiryStatus, string> = {
 };
 
 /** §5.5: "OPEN steel · QUOTED signal · WON verified · LOST/EXPIRED alert". */
-export const INQUIRY_STATUS_TONE: Record<InquiryStatus, 'inactive' | 'pending' | 'active' | 'alert'> =
+export const INQUIRY_STATUS_TONE: Record<
+  InquiryStatus,
+  'inactive' | 'pending' | 'active' | 'overdue'
+> =
   {
     OPEN: 'inactive',
     QUOTED: 'pending',
     WON: 'active',
-    LOST: 'alert',
-    EXPIRED: 'alert',
-    CANCELLED: 'alert',
+    LOST: 'overdue',
+    EXPIRED: 'overdue',
+    CANCELLED: 'overdue',
   };
 
 /** Statuses a user may set directly. EXPIRED belongs to §4 rule 11's job. */
@@ -282,3 +286,62 @@ export type InquiryListQuery = z.infer<typeof inquiryListQuerySchema>;
 
 export const INQUIRY_SORT_FIELDS = ['code', 'inquiryDate', 'status', 'validTo'] as const;
 export type InquirySortField = (typeof INQUIRY_SORT_FIELDS)[number];
+
+// ==========================================================================
+// §5.5 row actions — Price
+// ==========================================================================
+
+/**
+ * A rate the Price drawer can offer for this inquiry's lane.
+ *
+ * Lines carry RateLineDto, so §4 rule 5's buy-price stripping applies here
+ * exactly as it does on the Price List. An inquiry is where sales quote a
+ * customer, which makes it the last place the margin should leak.
+ */
+export interface InquiryRateMatchDto {
+  rateId: string;
+  rateCode: string;
+  carrierName: string;
+  validFrom: string;
+  validTo: string;
+  currencyCode: string;
+  transitDays: number | null;
+  freeDays: number | null;
+  lines: RateLineDto[];
+}
+
+/** A rate line already attached to the inquiry. */
+export interface InquiryRateDto {
+  id: string;
+  rateId: string;
+  rateCode: string;
+  rateLineId: string;
+  tierLabel: string;
+  carrierName: string;
+  currencyCode: string;
+  /**
+   * Snapshotted when attached (§3.3). §4 rule 1 versions rates, so the live
+   * line may belong to a superseded rate by the time anyone reads this back —
+   * which is the whole reason the figure is stored rather than joined.
+   */
+  quotedPrice: string;
+  /** The one whose price the inquiry quotes. */
+  isSelected: boolean;
+  /** The rate it came from is no longer the live one for this lane. */
+  isStale: boolean;
+}
+
+export const inquiryRateAttachSchema = z.object({
+  rateLineIds: z
+    .array(z.string().regex(/^\d+$/))
+    .min(1, 'Choose at least one rate to attach.')
+    .max(20, 'Attach 20 rates at most.'),
+});
+
+export type InquiryRateAttachInput = z.input<typeof inquiryRateAttachSchema>;
+
+export const inquiryRateSelectSchema = z.object({
+  inquiryRateId: z.string().regex(/^\d+$/, 'Choose which rate the quote uses.'),
+});
+
+export type InquiryRateSelectInput = z.input<typeof inquiryRateSelectSchema>;

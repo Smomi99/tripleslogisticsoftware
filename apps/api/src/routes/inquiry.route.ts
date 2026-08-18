@@ -2,10 +2,18 @@ import {
   type ApiSuccess,
   buildMeta,
   type InquiryDto,
+  type InquiryFollowupDto,
+  inquiryFollowupInputSchema,
   inquiryInputSchema,
   inquiryListQuerySchema,
+  type InquiryRateDto,
+  inquiryRateAttachSchema,
+  type InquiryRateMatchDto,
+  inquiryRateSelectSchema,
   type InquirySortField,
   INQUIRY_SORT_FIELDS,
+  inquiryStatusInputSchema,
+  OUTCOME_STATUSES,
   type InquiryVolumeDto,
   type LookupOption,
 } from '@ff/shared';
@@ -15,9 +23,10 @@ import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
 import { Prisma } from '../generated/prisma/client';
 import { HttpError } from '../lib/http-error';
 import { nextInquiryNo, seriesYearOf } from '../lib/inquiry-no';
+import { canSeeBuyPrice, visibleLine } from '../lib/rate-visibility';
 import { parseId, parseRefId } from '../lib/request';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
-import { authenticate } from '../middleware/authenticate';
+import { type AuthContext, authenticate } from '../middleware/authenticate';
 import { requirePermission } from '../middleware/require-permission';
 
 /**
@@ -376,6 +385,86 @@ function volumeRows(
     }));
 }
 
+/**
+ * Rewrites an inquiry from the §5.4 form.
+ *
+ * Volumes are matched and rewritten rather than deleted and recreated: §4
+ * rule 3 forbids the hard delete, and the tenant client refuses deleteMany
+ * outright. Rows the new input drops are deactivated, not removed.
+ */
+async function updateInquiry(
+  db: TenantDb,
+  auth: { tenantId: bigint; userId: bigint },
+  id: bigint,
+  input: ReturnType<typeof inquiryInputSchema.parse>,
+) {
+  const refs = await assertReferences(db, input);
+  const wanted = volumeRows(input, auth.userId);
+  const existing = await db.inquiryVolume.findMany({
+    where: { inquiryId: id, deletedAt: null },
+    select: { id: true, volumeKind: true, containerTypeId: true },
+  });
+
+  const keyOf = (kind: string, containerTypeId: bigint | number | null | undefined): string =>
+    `${kind}:${containerTypeId?.toString() ?? '-'}`;
+  const byKey = new Map(existing.map((row) => [keyOf(row.volumeKind, row.containerTypeId), row.id]));
+
+  for (const row of wanted) {
+    const key = keyOf(row.volumeKind, row.containerTypeId ?? null);
+    const match = byKey.get(key);
+    if (match === undefined) {
+      await db.inquiryVolume.create({ data: { ...row, tenantId: auth.tenantId, inquiryId: id } });
+    } else {
+      await db.inquiryVolume.update({
+        where: { id: match },
+        data: {
+          quantity: row.quantity ?? null,
+          cbm: row.cbm ?? null,
+          weightKg: row.weightKg ?? null,
+          isActive: true,
+          updatedBy: auth.userId,
+        },
+      });
+      byKey.delete(key);
+    }
+  }
+  for (const orphan of byKey.values()) {
+    await db.inquiryVolume.update({
+      where: { id: orphan },
+      data: { isActive: false, updatedBy: auth.userId },
+    });
+  }
+
+  return db.inquiry.update({
+    where: { id },
+    data: {
+      inquiryDate: new Date(input.inquiryDate),
+      sourceId: refs.sourceId,
+      shipmentType: input.shipmentType,
+      customerId: refs.customerId,
+      movementType: input.movementType,
+      polId: refs.polId,
+      podId: refs.podId,
+      placeOfReceipt: input.placeOfReceipt || null,
+      commodityItemId: refs.commodityItemId,
+      hsCode: input.hsCode || null,
+      tosId: refs.tosId,
+      targetPrice: input.targetPrice || null,
+      currencyId: refs.currencyId,
+      expectedShipmentDate: input.expectedShipmentDate
+        ? new Date(input.expectedShipmentDate)
+        : null,
+      validTo: input.validTo ? new Date(input.validTo) : null,
+      weightKg: input.weightKg || null,
+      remarks: input.remarks || null,
+      salesmanId: refs.salesmanId,
+      leadId: refs.leadId,
+      updatedBy: auth.userId,
+    },
+    include: inquiryInclude,
+  });
+}
+
 inquiryRouter.post('/inquiries', requirePermission(`${FEATURE}.CREATE`), async (req, res) => {
   const auth = req.auth!;
   const input = inquiryInputSchema.parse(req.body);
@@ -545,3 +634,543 @@ inquiryRouter.get('/inquiries', requirePermission(`${FEATURE}.VIEW`), async (req
   };
   res.json(payload);
 });
+
+// ===========================================================================
+// §5.5 row actions
+//
+// Each is its own permission, per the table in §5.5. View and Edit read and
+// write the inquiry itself; Follow Up, Price and Quote each move it along the
+// pipeline, and none of them is implied by being able to see the list.
+// ===========================================================================
+
+function followupToDto(row: {
+  id: bigint;
+  followupDate: Date;
+  contactMode: 'CALL' | 'EMAIL' | 'VISIT' | 'WHATSAPP';
+  contactPerson: string | null;
+  notes: string | null;
+  nextFollowupDate: Date | null;
+  createdBy: bigint | null;
+  createdAt: Date;
+}): InquiryFollowupDto {
+  return {
+    id: row.id.toString(),
+    followupDate: isoDate(row.followupDate)!,
+    contactMode: row.contactMode,
+    contactPerson: row.contactPerson,
+    notes: row.notes,
+    nextFollowupDate: isoDate(row.nextFollowupDate),
+    createdBy: row.createdBy?.toString() ?? null,
+    createdAt: row.createdAt.toISOString(),
+  };
+}
+
+/** The inquiry, if this caller is allowed to work it. */
+async function findScopedInquiry(db: TenantDb, auth: AuthContext, id: bigint) {
+  const scope = await scopeClause(db, auth, 'OWN');
+  const maySeeAll = auth.isSuperadmin || auth.permissions.has(`${FEATURE}.VIEW_ALL`);
+  const inquiry = await db.inquiry.findFirst({
+    where: { id, deletedAt: null, ...(maySeeAll ? {} : scope) },
+    select: {
+      id: true,
+      code: true,
+      status: true,
+      shipmentType: true,
+      polId: true,
+      podId: true,
+      validTo: true,
+    },
+  });
+  if (inquiry === null) throw HttpError.notFound('Inquiry not found.');
+  return inquiry;
+}
+
+// --------------------------------------------------------------- Edit
+
+inquiryRouter.patch('/inquiries/:id', requirePermission(`${FEATURE}.EDIT`), async (req, res) => {
+  const auth = req.auth!;
+  const id = parseId(req.params.id, 'inquiry');
+  const input = inquiryInputSchema.parse(req.body);
+
+  const updated = await withTenant(auth.tenantId, async (db) => {
+    const existing = await findScopedInquiry(db, auth, id);
+    // §5.5: "Edit form; blocked once status is WON." A won inquiry is the
+    // record the business books revenue against; changing its lane or price
+    // afterwards rewrites history.
+    if (existing.status === 'WON') {
+      throw HttpError.conflict(
+        `${existing.code} is marked WON and can no longer be edited. Set it back to QUOTED first if this is wrong.`,
+      );
+    }
+    return updateInquiry(db, auth, id, input);
+  });
+
+  const payload: ApiSuccess<InquiryDto> = { success: true, data: toDto(updated, startOfToday()) };
+  res.json(payload);
+});
+
+// ---------------------------------------------------------- Follow Up(n)
+
+inquiryRouter.get(
+  '/inquiries/:id/followups',
+  requirePermission(`${FEATURE}.FOLLOWUP`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'inquiry');
+
+    const rows = await withTenant(auth.tenantId, async (db) => {
+      await findScopedInquiry(db, auth, id);
+      return db.inquiryFollowup.findMany({
+        where: { inquiryId: id, deletedAt: null },
+        orderBy: [{ followupDate: 'desc' }, { id: 'desc' }],
+      });
+    });
+
+    const payload: ApiSuccess<InquiryFollowupDto[]> = {
+      success: true,
+      data: rows.map(followupToDto),
+    };
+    res.json(payload);
+  },
+);
+
+inquiryRouter.post(
+  '/inquiries/:id/followups',
+  requirePermission(`${FEATURE}.FOLLOWUP`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'inquiry');
+    const input = inquiryFollowupInputSchema.parse(req.body);
+
+    const created = await withTenant(auth.tenantId, async (db) => {
+      await findScopedInquiry(db, auth, id);
+      return db.inquiryFollowup.create({
+        data: {
+          tenantId: auth.tenantId,
+          inquiryId: id,
+          followupDate: new Date(input.followupDate),
+          contactMode: input.contactMode,
+          contactPerson: input.contactPerson || null,
+          notes: input.notes || null,
+          nextFollowupDate:
+            input.nextFollowupDate === undefined || input.nextFollowupDate === ''
+              ? null
+              : new Date(input.nextFollowupDate),
+          createdBy: auth.userId,
+          updatedBy: auth.userId,
+        },
+      });
+    });
+
+    const payload: ApiSuccess<InquiryFollowupDto> = {
+      success: true,
+      data: followupToDto(created),
+    };
+    res.status(201).json(payload);
+  },
+);
+
+/**
+ * sell_price is a GENERATED column (§4 rule 4), so Prisma types it nullable
+ * even though buy_price and profit_value are both NOT NULL and the expression
+ * cannot produce null. The existing rate screens format a missing one as
+ * 0.0000; a quote may not. Quoting a customer zero because a column came back
+ * empty is precisely the class of silent failure §4 rule 1 is written about.
+ */
+function sellPriceOf(line: { sellPrice: Prisma.Decimal | null }): Prisma.Decimal {
+  if (line.sellPrice === null) {
+    throw new HttpError(
+      500,
+      'RATE_SELL_PRICE_MISSING',
+      'That rate has no sell price. Ask the pricing team to re-save it before quoting.',
+    );
+  }
+  return line.sellPrice;
+}
+
+// ------------------------------------------------------------------ Price
+
+/** Sea inquiries can quote either FCL or LCL; air has one mode. */
+const MODES_FOR: Record<'SEA' | 'AIR', ('SEA_FCL' | 'SEA_LCL' | 'AIR')[]> = {
+  SEA: ['SEA_FCL', 'SEA_LCL'],
+  AIR: ['AIR'],
+};
+
+/**
+ * §5.5 Price: "Opens matching rates for that lane/mode/validity."
+ *
+ * Validity follows §4 rule 2 — only rates live today, and only PUBLISHED ones.
+ * A quote built on an expired or draft rate is a number the company cannot
+ * honour.
+ */
+inquiryRouter.get(
+  '/inquiries/:id/matching-rates',
+  requirePermission(`${FEATURE}.ATTACH_PRICE`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'inquiry');
+    const today = startOfToday();
+
+    const matches = await withTenant(auth.tenantId, async (db) => {
+      const inquiry = await findScopedInquiry(db, auth, id);
+      return db.freightRate.findMany({
+        where: {
+          deletedAt: null,
+          status: 'PUBLISHED',
+          mode: { in: MODES_FOR[inquiry.shipmentType] },
+          polId: inquiry.polId,
+          podId: inquiry.podId,
+          validFrom: { lte: today },
+          validTo: { gte: today },
+        },
+        include: {
+          carrier: { select: { name: true } },
+          currency: { select: { currency: true } },
+          lines: {
+            where: { deletedAt: null },
+            include: { tier: { select: { code: true, label: true } } },
+            orderBy: { id: 'asc' },
+          },
+        },
+        orderBy: [{ carrier: { name: 'asc' } }, { code: 'asc' }],
+        take: 50,
+      });
+    });
+
+    const showBuy = canSeeBuyPrice(auth);
+    const payload: ApiSuccess<InquiryRateMatchDto[]> = {
+      success: true,
+      data: matches.map((rate) => ({
+        rateId: rate.id.toString(),
+        rateCode: rate.code,
+        carrierName: rate.carrier.name,
+        validFrom: isoDate(rate.validFrom)!,
+        validTo: isoDate(rate.validTo)!,
+        currencyCode: isoCurrency(rate.currency.currency),
+        transitDays: rate.transitDays,
+        freeDays: rate.freeDays,
+        // §4 rule 5 — the enforcement point, not a formatting choice.
+        lines: rate.lines.map((line) =>
+          visibleLine(
+            {
+              id: line.id.toString(),
+              tierId: line.tierId.toString(),
+              tierCode: line.tier.code,
+              tierLabel: line.tier.label,
+              sellPrice: sellPriceOf(line).toFixed(4),
+              minCharge: line.minCharge === null ? null : line.minCharge.toFixed(4),
+              buyPrice: line.buyPrice.toFixed(4),
+              profitType: line.profitType,
+              profitValue: line.profitValue.toFixed(4),
+            },
+            showBuy,
+          ),
+        ),
+      })),
+    };
+    res.json(payload);
+  },
+);
+
+const attachedInclude = {
+  rateLine: { include: { tier: { select: { label: true } } } },
+  rate: {
+    select: {
+      code: true,
+      status: true,
+      validTo: true,
+      supersededById: true,
+      carrier: { select: { name: true } },
+      currency: { select: { currency: true } },
+    },
+  },
+} satisfies Prisma.InquiryRateInclude;
+
+function attachedToDto(
+  row: Prisma.InquiryRateGetPayload<{ include: typeof attachedInclude }>,
+  today: Date,
+): InquiryRateDto {
+  return {
+    id: row.id.toString(),
+    rateId: row.rateId.toString(),
+    rateCode: row.rate.code,
+    rateLineId: row.rateLineId.toString(),
+    tierLabel: row.rateLine.tier.label,
+    carrierName: row.rate.carrier.name,
+    currencyCode: isoCurrency(row.rate.currency.currency),
+    quotedPrice: row.quotedPrice.toFixed(4),
+    isSelected: row.isSelected,
+    // The snapshot is still what was quoted; this only tells the user the
+    // underlying rate has moved on (§4 rule 1).
+    isStale:
+      row.rate.supersededById !== null ||
+      row.rate.status !== 'PUBLISHED' ||
+      row.rate.validTo < today,
+  };
+}
+
+/** Writes the selected line's price onto the inquiry (§5.5 Price). */
+async function syncQuotedPrice(db: TenantDb, auth: AuthContext, inquiryId: bigint): Promise<void> {
+  const selected = await db.inquiryRate.findFirst({
+    where: { inquiryId, deletedAt: null, isSelected: true },
+    select: { quotedPrice: true },
+  });
+  await db.inquiry.update({
+    where: { id: inquiryId },
+    data: { quotedPrice: selected?.quotedPrice ?? null, updatedBy: auth.userId },
+  });
+}
+
+async function attachedRates(db: TenantDb, inquiryId: bigint) {
+  return db.inquiryRate.findMany({
+    where: { inquiryId, deletedAt: null },
+    include: attachedInclude,
+    orderBy: [{ isSelected: 'desc' }, { id: 'asc' }],
+  });
+}
+
+inquiryRouter.get(
+  '/inquiries/:id/rates',
+  requirePermission(`${FEATURE}.ATTACH_PRICE`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'inquiry');
+
+    const rows = await withTenant(auth.tenantId, async (db) => {
+      await findScopedInquiry(db, auth, id);
+      return attachedRates(db, id);
+    });
+
+    const payload: ApiSuccess<InquiryRateDto[]> = {
+      success: true,
+      data: rows.map((row) => attachedToDto(row, startOfToday())),
+    };
+    res.json(payload);
+  },
+);
+
+inquiryRouter.post(
+  '/inquiries/:id/rates',
+  requirePermission(`${FEATURE}.ATTACH_PRICE`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'inquiry');
+    const input = inquiryRateAttachSchema.parse(req.body);
+
+    const rows = await withTenant(auth.tenantId, async (db) => {
+      const inquiry = await findScopedInquiry(db, auth, id);
+      if (inquiry.status === 'WON') {
+        throw HttpError.conflict(`${inquiry.code} is marked WON. Its pricing is settled.`);
+      }
+
+      for (const rateLineId of input.rateLineIds) {
+        const line = await db.freightRateLine.findFirst({
+          where: { id: BigInt(rateLineId), deletedAt: null },
+          select: {
+            id: true,
+            rateId: true,
+            sellPrice: true,
+            rate: { select: { polId: true, podId: true, status: true } },
+          },
+        });
+        if (line === null) throw HttpError.badRequest('That rate is no longer available.');
+        // The lane is re-checked server-side: the picker filtered by it, and a
+        // filtered picker is a convenience, not a constraint (§4 rule 9).
+        if (line.rate.polId !== inquiry.polId || line.rate.podId !== inquiry.podId) {
+          throw HttpError.badRequest('That rate is for a different lane.');
+        }
+        if (line.rate.status !== 'PUBLISHED') {
+          throw HttpError.badRequest('That rate is not published.');
+        }
+
+        const already = await db.inquiryRate.findFirst({
+          where: { inquiryId: id, rateLineId: line.id },
+          select: { id: true },
+        });
+        if (already !== null) {
+          // Re-attaching something previously removed revives it rather than
+          // colliding with the unique index — §4 rule 3 leaves the row behind.
+          await db.inquiryRate.update({
+            where: { id: already.id },
+            data: {
+              deletedAt: null,
+              isActive: true,
+              quotedPrice: sellPriceOf(line),
+              updatedBy: auth.userId,
+            },
+          });
+          continue;
+        }
+        await db.inquiryRate.create({
+          data: {
+            tenantId: auth.tenantId,
+            inquiryId: id,
+            rateId: line.rateId,
+            rateLineId: line.id,
+            quotedPrice: sellPriceOf(line),
+            addedBy: auth.userId,
+            createdBy: auth.userId,
+            updatedBy: auth.userId,
+          },
+        });
+      }
+
+      // The cheapest line attached becomes the quoted one, so an inquiry never
+      // sits with rates attached and no price. The user can move it after.
+      const anySelected = await db.inquiryRate.count({
+        where: { inquiryId: id, deletedAt: null, isSelected: true },
+      });
+      if (anySelected === 0) {
+        const cheapest = await db.inquiryRate.findFirst({
+          where: { inquiryId: id, deletedAt: null },
+          orderBy: { quotedPrice: 'asc' },
+          select: { id: true },
+        });
+        if (cheapest !== null) {
+          await db.inquiryRate.update({
+            where: { id: cheapest.id },
+            data: { isSelected: true, updatedBy: auth.userId },
+          });
+        }
+      }
+      await syncQuotedPrice(db, auth, id);
+      return attachedRates(db, id);
+    });
+
+    const payload: ApiSuccess<InquiryRateDto[]> = {
+      success: true,
+      data: rows.map((row) => attachedToDto(row, startOfToday())),
+    };
+    res.status(201).json(payload);
+  },
+);
+
+/** Moves which attached line the inquiry quotes. */
+inquiryRouter.post(
+  '/inquiries/:id/rates/select',
+  requirePermission(`${FEATURE}.ATTACH_PRICE`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'inquiry');
+    const input = inquiryRateSelectSchema.parse(req.body);
+
+    const rows = await withTenant(auth.tenantId, async (db) => {
+      await findScopedInquiry(db, auth, id);
+      const target = await db.inquiryRate.findFirst({
+        where: { id: BigInt(input.inquiryRateId), inquiryId: id, deletedAt: null },
+        select: { id: true },
+      });
+      if (target === null) throw HttpError.notFound('That rate is not attached to this inquiry.');
+
+      await db.inquiryRate.updateMany({
+        where: { inquiryId: id, deletedAt: null, isSelected: true },
+        data: { isSelected: false, updatedBy: auth.userId },
+      });
+      await db.inquiryRate.update({
+        where: { id: target.id },
+        data: { isSelected: true, updatedBy: auth.userId },
+      });
+      await syncQuotedPrice(db, auth, id);
+      return attachedRates(db, id);
+    });
+
+    const payload: ApiSuccess<InquiryRateDto[]> = {
+      success: true,
+      data: rows.map((row) => attachedToDto(row, startOfToday())),
+    };
+    res.json(payload);
+  },
+);
+
+// ----------------------------------------------------------------- Status
+
+inquiryRouter.post(
+  '/inquiries/:id/status',
+  requirePermission(`${FEATURE}.VIEW`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'inquiry');
+    const input = inquiryStatusInputSchema.parse(req.body);
+
+    // §9 Q10, answered: WON and LOST are the numbers the business is measured
+    // on, so they need SET_OUTCOME. Everything else is ordinary EDIT. The route
+    // guard cannot express this — which permission applies depends on the body.
+    const isOutcome = OUTCOME_STATUSES.includes(input.status);
+    const needed = isOutcome ? `${FEATURE}.SET_OUTCOME` : `${FEATURE}.EDIT`;
+    if (!auth.isSuperadmin && !auth.permissions.has(needed)) {
+      throw HttpError.forbidden(
+        isOutcome
+          ? 'Only a user who may set an outcome can mark an inquiry WON or LOST.'
+          : 'You do not have permission to change this inquiry.',
+      );
+    }
+
+    const updated = await withTenant(auth.tenantId, async (db) => {
+      await findScopedInquiry(db, auth, id);
+      await db.inquiry.update({
+        where: { id },
+        data: { status: input.status, updatedBy: auth.userId },
+      });
+      if (input.reason !== undefined && input.reason !== '') {
+        // The reason belongs on the follow-up trail, which is where anyone
+        // reviewing a lost inquiry will go looking for it.
+        await db.inquiryFollowup.create({
+          data: {
+            tenantId: auth.tenantId,
+            inquiryId: id,
+            followupDate: startOfToday(),
+            contactMode: 'CALL',
+            notes: `Status set to ${input.status}: ${input.reason}`,
+            createdBy: auth.userId,
+            updatedBy: auth.userId,
+          },
+        });
+      }
+      return db.inquiry.findFirstOrThrow({ where: { id }, include: inquiryInclude });
+    });
+
+    const payload: ApiSuccess<InquiryDto> = { success: true, data: toDto(updated, startOfToday()) };
+    res.json(payload);
+  },
+);
+
+// ------------------------------------------------------------------ Quote
+
+/**
+ * §5.5 Quote: "Creates a quotation from the inquiry and sets status QUOTED."
+ *
+ * Only the second half happens here. The quotation record is §3.4, which is
+ * phase J and stops at a stub — the client's Quotation sheet ends after six
+ * fields, and §9 Q11 is still open on everything past them.
+ */
+inquiryRouter.post(
+  '/inquiries/:id/quote',
+  requirePermission(`${FEATURE}.CONVERT_QUOTE`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'inquiry');
+
+    const updated = await withTenant(auth.tenantId, async (db) => {
+      const inquiry = await findScopedInquiry(db, auth, id);
+      if (inquiry.status === 'WON' || inquiry.status === 'LOST') {
+        throw HttpError.conflict(`${inquiry.code} is already ${inquiry.status}.`);
+      }
+      const priced = await db.inquiryRate.count({
+        where: { inquiryId: id, deletedAt: null, isSelected: true },
+      });
+      if (priced === 0) {
+        throw HttpError.badRequest(
+          'Attach a rate with Price before quoting, so the quotation has a figure.',
+        );
+      }
+      await db.inquiry.update({
+        where: { id },
+        data: { status: 'QUOTED', updatedBy: auth.userId },
+      });
+      return db.inquiry.findFirstOrThrow({ where: { id }, include: inquiryInclude });
+    });
+
+    const payload: ApiSuccess<InquiryDto> = { success: true, data: toDto(updated, startOfToday()) };
+    res.json(payload);
+  },
+);

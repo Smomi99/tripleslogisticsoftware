@@ -38,7 +38,9 @@ const ROUTES: Record<string, Route> = {
   'PURCHASE.PRICE_LIST_SEA_FCL': '/purchase/price-list-fcl',
   'PURCHASE.PRICE_LIST_SEA_LCL': '/purchase/price-list-lcl',
   'PURCHASE.PRICE_LIST_AIR': '/purchase/price-list-air',
-  'SALES.INQUIRY': '/sales/new-inquiry',
+  // The list, not the capture form: §8 makes the list the screen a feature
+  // opens on, with New reached from its Add button.
+  'SALES.INQUIRY': '/sales/inquiry',
   'SALES.NEW_SALES_LEAD': '/sales/sales-lead',
   'SETTING.SEA_AIR_PORT': '/setting/port',
   'SETTING.COST_HEAD': '/setting/cost-head',
