@@ -61,6 +61,31 @@ const envSchema = z.object({
 
   STORAGE_DRIVER: z.enum(['local', 's3']).default('local'),
   STORAGE_LOCAL_PATH: z.string().min(1).default('./storage'),
+
+  // S3-compatible storage (§2: local disk in dev, S3-compatible in prod).
+  // Required only when STORAGE_DRIVER=s3; checked below rather than here, so
+  // a local deployment is not asked for credentials it will never use.
+  S3_BUCKET: z.string().min(1).optional(),
+  S3_REGION: z.string().min(1).default('auto'),
+  S3_ENDPOINT: z.string().url().optional(),
+  S3_ACCESS_KEY_ID: z.string().min(1).optional(),
+  S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+
+  /**
+   * Pins this deployment to ONE workspace, by slug.
+   *
+   * §7A rule 5 addresses a tenant by subdomain, which needs wildcard DNS —
+   * not available on a free host. Setting this names the workspace in
+   * server-side configuration instead, and it takes precedence over the Host
+   * header: a platform hostname like ff-api.vercel.app would otherwise be read
+   * as a workspace called "ff-api".
+   *
+   * This does NOT weaken §7A rule 1. The value is operator configuration, not
+   * client input — a caller still cannot name a tenant it does not belong to.
+   * Leave it unset the moment wildcard DNS exists, or the deployment can only
+   * ever serve one company.
+   */
+  DEFAULT_TENANT_SLUG: z.string().min(1).optional(),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -106,3 +131,48 @@ function resolveStorageRoot(): string {
 /** Null when the driver is not `local`, where a filesystem root is meaningless. */
 export const STORAGE_ROOT: string | null =
   env.STORAGE_DRIVER === 'local' ? resolveStorageRoot() : null;
+
+export interface S3Config {
+  bucket: string;
+  region: string;
+  endpoint: string | undefined;
+  accessKeyId: string;
+  secretAccessKey: string;
+}
+
+/**
+ * S3 settings, complete or not at all.
+ *
+ * Checked at boot for the same reason as the storage root: a half-configured
+ * bucket must not survive until the first operator tries to attach an agency
+ * agreement and gets a 500.
+ */
+function resolveS3Config(): S3Config {
+  const missing = (
+    [
+      ['S3_BUCKET', env.S3_BUCKET],
+      ['S3_ACCESS_KEY_ID', env.S3_ACCESS_KEY_ID],
+      ['S3_SECRET_ACCESS_KEY', env.S3_SECRET_ACCESS_KEY],
+    ] as const
+  )
+    .filter(([, value]) => value === undefined)
+    .map(([name]) => name);
+
+  if (missing.length > 0) {
+    throw new Error(
+      `STORAGE_DRIVER=s3 but ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} not set.`,
+    );
+  }
+
+  return {
+    bucket: env.S3_BUCKET as string,
+    region: env.S3_REGION,
+    endpoint: env.S3_ENDPOINT,
+    accessKeyId: env.S3_ACCESS_KEY_ID as string,
+    secretAccessKey: env.S3_SECRET_ACCESS_KEY as string,
+  };
+}
+
+/** Null when the driver is not `s3`. */
+export const S3_CONFIG: S3Config | null =
+  env.STORAGE_DRIVER === 's3' ? resolveS3Config() : null;

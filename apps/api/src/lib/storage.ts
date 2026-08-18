@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 
 import { env, STORAGE_ROOT } from '../config/env';
 import { HttpError } from './http-error';
+import { s3Get, s3Put, s3Remove } from './s3';
 
 /**
  * File storage (CLAUDE.md §2: local disk in dev, S3-compatible in prod, and
@@ -118,7 +119,7 @@ export async function putFile(
     await mkdir(path.dirname(destination), { recursive: true });
     await writeFile(destination, file.buffer);
   } else {
-    throw new HttpError(500, 'STORAGE_UNAVAILABLE', 'S3 storage is not configured yet.');
+    await s3Put(key, file.buffer, file.mimetype);
   }
 
   return {
@@ -143,7 +144,9 @@ export async function openFile(
   }
 
   if (env.STORAGE_DRIVER !== 'local') {
-    throw new HttpError(500, 'STORAGE_UNAVAILABLE', 'S3 storage is not configured yet.');
+    // The tenant-prefix check above still applies: it is the same guarantee,
+    // enforced on the key rather than on a resolved filesystem path.
+    return s3Get(key);
   }
 
   const root = localRoot();
@@ -163,7 +166,10 @@ export async function openFile(
 
 /** Best-effort removal — a missing file is not an error worth surfacing. */
 export async function removeFile(key: string): Promise<void> {
-  if (env.STORAGE_DRIVER !== 'local') return;
+  if (env.STORAGE_DRIVER !== 'local') {
+    await s3Remove(key);
+    return;
+  }
   try {
     await unlink(path.resolve(localRoot(), key));
   } catch {

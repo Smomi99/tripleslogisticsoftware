@@ -1,0 +1,53 @@
+# Render blueprint — the fallback host for the API.
+#
+# Use this instead of the Vercel function when you want the API to be a real
+# long-running process: `src/server.ts` unchanged, one pool for the whole
+# instance, no cold-start-per-request and no serverless caveats.
+#
+# The cost of the free plan is that Render stops the service after 15 minutes
+# of inactivity and the next request pays roughly a minute of start-up. For a
+# demo you are clicking through with the client, that is worse than it sounds —
+# the first click of every session hangs. Prefer the Vercel function unless you
+# have a reason not to; see docs/DEPLOY.md.
+#
+# Deploy: push this file, then New > Blueprint on render.com and pick the repo.
+
+services:
+  - type: web
+    name: ff-erp-api
+    runtime: node
+    plan: free
+    region: singapore # closest Render region to Dhaka
+    rootDir: .
+    buildCommand: pnpm install --frozen-lockfile && pnpm db:generate && pnpm --filter @ff/api build
+    startCommand: node apps/api/dist/server.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: API_PORT
+        value: 10000 # Render routes to this port by convention
+      # Everything below is set in the Render dashboard, not here — see
+      # docs/DEPLOY.md. sync:false means "prompt me, never commit a value".
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_URL_APP
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        sync: false
+      - key: JWT_REFRESH_SECRET
+        sync: false
+      - key: WEB_ORIGIN
+        sync: false
+      - key: DEFAULT_TENANT_SLUG
+        sync: false
+      - key: STORAGE_DRIVER
+        value: s3 # Render's free disk is ephemeral; uploads must leave the box
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_ENDPOINT
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false

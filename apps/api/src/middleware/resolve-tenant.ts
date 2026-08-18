@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 
-import { isProduction } from '../config/env';
+import { env, isProduction } from '../config/env';
 import { HttpError } from '../lib/http-error';
 import { resolveTenantBySlug, type ResolvedTenant } from '../lib/tenant-client';
 
@@ -46,7 +46,13 @@ export async function resolveTenant(
   next: NextFunction,
 ): Promise<void> {
   const headerSlug = isProduction ? undefined : req.get('x-tenant-slug');
-  const slug = headerSlug ?? slugFromHost(req.hostname);
+
+  // DEFAULT_TENANT_SLUG beats the Host header on purpose. A single-workspace
+  // deployment has no wildcard DNS, so its hostname carries no slug — and the
+  // platform hostname it does carry (ff-api.vercel.app) would otherwise be
+  // read as a workspace called "ff-api". Operator configuration, never client
+  // input, so §7A rule 1 still holds.
+  const slug = headerSlug ?? env.DEFAULT_TENANT_SLUG ?? slugFromHost(req.hostname);
 
   if (slug === undefined || slug.length === 0) {
     throw new HttpError(400, 'TENANT_NOT_SPECIFIED', 'No tenant in this request.');
