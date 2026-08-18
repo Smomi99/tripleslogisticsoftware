@@ -44,13 +44,30 @@ if (REPO_ROOT !== null) {
   dotenv.config({ path: path.join(REPO_ROOT, '.env'), quiet: true });
 }
 
+/**
+ * An optional setting that an orchestrator may pass as an EMPTY STRING.
+ *
+ * docker-compose writes `KEY: ${KEY:-}` for anything unset, so the variable
+ * arrives as "" rather than absent, and a bare `.optional()` then fails its
+ * inner check — the API refused to boot with "DEFAULT_TENANT_SLUG: Too small",
+ * on precisely the configuration the VPS runbook prescribes. Empty means unset.
+ *
+ * Exported so the test exercises this function rather than a copy of it.
+ */
+export function optional<T extends z.ZodTypeAny>(schema: T) {
+  return z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    schema.optional(),
+  );
+}
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   API_PORT: z.coerce.number().int().min(1).max(65535).default(4000),
   WEB_ORIGIN: z.string().url().default('http://localhost:3000'),
 
   DATABASE_URL: z.string().min(1, 'DATABASE_URL is required — copy .env.example to .env'),
-  DATABASE_URL_APP: z.string().min(1).optional(),
+  DATABASE_URL_APP: optional(z.string().min(1)),
 
   // Consumed in Phase 3 (CLAUDE.md §7). Declared now so a missing secret fails
   // at boot rather than at the first login attempt.
@@ -65,11 +82,11 @@ const envSchema = z.object({
   // S3-compatible storage (§2: local disk in dev, S3-compatible in prod).
   // Required only when STORAGE_DRIVER=s3; checked below rather than here, so
   // a local deployment is not asked for credentials it will never use.
-  S3_BUCKET: z.string().min(1).optional(),
+  S3_BUCKET: optional(z.string().min(1)),
   S3_REGION: z.string().min(1).default('auto'),
-  S3_ENDPOINT: z.string().url().optional(),
-  S3_ACCESS_KEY_ID: z.string().min(1).optional(),
-  S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
+  S3_ENDPOINT: optional(z.string().url()),
+  S3_ACCESS_KEY_ID: optional(z.string().min(1)),
+  S3_SECRET_ACCESS_KEY: optional(z.string().min(1)),
 
   /**
    * Pins this deployment to ONE workspace, by slug.
@@ -85,7 +102,7 @@ const envSchema = z.object({
    * Leave it unset the moment wildcard DNS exists, or the deployment can only
    * ever serve one company.
    */
-  DEFAULT_TENANT_SLUG: z.string().min(1).optional(),
+  DEFAULT_TENANT_SLUG: optional(z.string().min(1)),
 });
 
 const parsed = envSchema.safeParse(process.env);

@@ -14,6 +14,7 @@ apps/api/src/generated/
 .env
 .env.*
 !.env.example
+!.env.production.example
 
 # uploads (CLAUDE.md §2: local disk in dev)
 storage/

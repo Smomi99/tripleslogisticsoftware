@@ -13,6 +13,7 @@
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
     "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
     "db:generate": "prisma generate",
     "db:app-role": "prisma db execute --file scripts/dev-db-app-role.sql",
     "db:studio": "prisma studio",

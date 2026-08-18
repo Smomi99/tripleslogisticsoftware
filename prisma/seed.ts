@@ -347,18 +347,37 @@ async function seedRateLookups(): Promise<number> {
  * A development tenant with a superadmin. Guarded by an explicit flag so it can
  * never run against production by accident.
  */
+/**
+ * Creates one workspace and its first superadmin.
+ *
+ * The name and slug are overridable because this is also how the FIRST real
+ * workspace gets created on a deployment — §7A rule 6's zero-touch onboarding
+ * and the §7B platform console are not built yet, so there is no other way in.
+ * The defaults keep local development exactly as it was.
+ *
+ * The slug is the subdomain: slug `acme` is served at acme.yourdomain.com.
+ */
 async function seedDevTenant(): Promise<void> {
-  const slug = 'demo';
+  const slug = process.env['SEED_TENANT_SLUG'] ?? 'demo';
+  const name = process.env['SEED_TENANT_NAME'] ?? 'Demo Freight Ltd';
+  const country = process.env['SEED_TENANT_COUNTRY'] ?? 'Bangladesh';
   const username = normalizeUsername('superadmin');
   const password = process.env['SEED_SUPERADMIN_PASSWORD'] ?? 'ChangeMe!2026';
+
+  if (!/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(slug)) {
+    throw new Error(
+      `SEED_TENANT_SLUG="${slug}" is not usable as a subdomain. ` +
+        'Use lowercase letters, digits and hyphens, starting and ending with a letter or digit.',
+    );
+  }
 
   const tenant = await prisma.tenant.upsert({
     where: { slug },
     update: {},
     create: {
-      name: 'Demo Freight Ltd',
+      name,
       slug,
-      country: 'Bangladesh',
+      country,
       timezone: 'Asia/Dhaka',
       status: 'TRIAL',
       trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),

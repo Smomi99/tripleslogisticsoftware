@@ -3,7 +3,9 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { env, findRepoRoot, REPO_ROOT, STORAGE_ROOT } from './env';
+import { z } from 'zod';
+
+import { env, findRepoRoot, optional, REPO_ROOT, STORAGE_ROOT } from './env';
 
 /**
  * Where the API believes the repo root is.
@@ -67,5 +69,32 @@ describe('STORAGE_ROOT', () => {
     const root = REPO_ROOT as string;
     expect(STORAGE_ROOT).toBe(path.join(root, env.STORAGE_LOCAL_PATH));
     expect(path.relative(root, STORAGE_ROOT as string).startsWith('..')).toBe(false);
+  });
+});
+
+describe('optional settings passed as an empty string', () => {
+  /**
+   * docker-compose writes `KEY: ${KEY:-}` for anything unset, so the variable
+   * arrives as "" rather than absent. A bare `.optional()` accepts undefined
+   * but not "", so the API refused to boot with "DEFAULT_TENANT_SLUG: Too
+   * small" on exactly the configuration docs/DEPLOY_VPS.md prescribes for
+   * subdomain routing. Empty must mean unset.
+   */
+  const slug = z.object({ DEFAULT_TENANT_SLUG: optional(z.string().min(1)) });
+  const endpoint = z.object({ S3_ENDPOINT: optional(z.string().url()) });
+
+  it('reads an empty value as unset, not as invalid', () => {
+    expect(slug.parse({ DEFAULT_TENANT_SLUG: '' }).DEFAULT_TENANT_SLUG).toBeUndefined();
+    expect(slug.parse({ DEFAULT_TENANT_SLUG: '   ' }).DEFAULT_TENANT_SLUG).toBeUndefined();
+    expect(slug.parse({}).DEFAULT_TENANT_SLUG).toBeUndefined();
+  });
+
+  it('keeps a real value', () => {
+    expect(slug.parse({ DEFAULT_TENANT_SLUG: 'acme' }).DEFAULT_TENANT_SLUG).toBe('acme');
+  });
+
+  it('still rejects a value that is present but wrong', () => {
+    expect(endpoint.parse({ S3_ENDPOINT: '' }).S3_ENDPOINT).toBeUndefined();
+    expect(() => endpoint.parse({ S3_ENDPOINT: 'not-a-url' })).toThrow();
   });
 });

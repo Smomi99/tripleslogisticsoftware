@@ -1,0 +1,154 @@
+# Production stack for a single Ubuntu VPS. See docs/DEPLOY_VPS.md.
+#
+#   docker compose -f docker-compose.prod.yml up -d --build
+#
+# Four containers: Postgres, the API, the web app, and Caddy terminating TLS.
+# Caddy is the only one on a public port. The API and the web app are reachable
+# only over the internal network; Postgres is published to the server's own
+# loopback so an SSH tunnel can reach it, and to nothing else.
+#
+# docker-compose.yml (the dev one) is untouched and still runs `pnpm db:up`.
+
+name: ff-erp
+
+# Docker keeps container logs forever by default. On a VPS that is a slow disk
+# leak that ends in a full filesystem and a database that cannot write.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: '10m'
+    max-file: '3'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    logging: *logging
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env.production}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.production}
+      POSTGRES_DB: ${POSTGRES_DB:-ff_erp}
+      # Same deterministic collation as development, so ORDER BY on names
+      # sorts identically on the server and on a developer's machine.
+      POSTGRES_INITDB_ARGS: '--locale-provider=icu --icu-locale=en-US --encoding=UTF8'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-ff_erp}']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    ports:
+      # Bound to the server's LOOPBACK, not to 0.0.0.0. Nothing outside the
+      # machine can reach it — ufw is not even involved — but an SSH tunnel
+      # from your laptop can (see docs/DEPLOY_VPS.md §11), which is what makes
+      # Prisma Studio and a desktop SQL client usable.
+      # Writing `- '5432:5432'` here instead would publish the database to the
+      # internet and quietly bypass the firewall, because Docker writes its own
+      # iptables rules ahead of ufw's.
+      - '127.0.0.1:5432:5432'
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    logging: *logging
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      API_PORT: 4000
+      # The owner connection. Migrations only — never the runtime.
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ff_erp}?schema=public
+      # The runtime connection, as the non-owner ff_app role. §7A rule 2: a
+      # table OWNER bypasses RLS, so pointing this at POSTGRES_USER silently
+      # removes every tenant boundary in the system.
+      DATABASE_URL_APP: postgresql://ff_app:${FF_APP_PASSWORD:?set FF_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-ff_erp}?schema=public
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?set JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?set JWT_REFRESH_SECRET}
+      WEB_ORIGIN: https://${APP_DOMAIN:?set APP_DOMAIN}
+      STORAGE_DRIVER: local
+      STORAGE_LOCAL_PATH: /app/storage
+      # Unset on a VPS: wildcard DNS means the workspace comes from the
+      # subdomain, the way §7A rule 5 intends. Set it only to pin the whole
+      # server to one workspace.
+      DEFAULT_TENANT_SLUG: ${DEFAULT_TENANT_SLUG:-}
+    volumes:
+      - uploads:/app/storage
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        # Empty means same-origin: the browser calls /api/... on whatever host
+        # it is already on, and Caddy routes that to the API. Baked into the
+        # client bundle at build time, so changing it needs a rebuild.
+        NEXT_PUBLIC_API_URL: ''
+        NEXT_PUBLIC_TENANT_SLUG: '${DEFAULT_TENANT_SLUG:-}'
+    logging: *logging
+    restart: unless-stopped
+    depends_on:
+      - api
+
+  # One-off admin container: migrations, seeding, the rate-expiry job. Built
+  # from the API Dockerfile's `build` stage, which still has the Prisma CLI,
+  # tsx and the schema — none of which belong in the long-running API image.
+  #
+  # `profiles: [tools]` keeps it out of `up`. Run it deliberately:
+  #   docker compose -f docker-compose.prod.yml run --rm tools \
+  #     pnpm prisma migrate deploy
+  tools:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: build
+    profiles: ['tools']
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-ff_erp}?schema=public
+      DATABASE_URL_APP: postgresql://ff_app:${FF_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-ff_erp}?schema=public
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      STORAGE_LOCAL_PATH: /app/storage
+      SEED_SUPERADMIN_PASSWORD: ${SEED_SUPERADMIN_PASSWORD:-}
+      SEED_DEV_TENANT: ${SEED_DEV_TENANT:-false}
+    volumes:
+      - uploads:/app/storage
+    # Never started by `up` — the profile sees to that. This only gives the
+    # service a harmless default if someone runs it without a command.
+    command: ['true']
+
+  caddy:
+    build:
+      context: ./deploy
+      dockerfile: caddy.Dockerfile
+    logging: *logging
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:?set CLOUDFLARE_API_TOKEN}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates live here. Losing this volume means re-issuing every
+      # certificate, and Let's Encrypt rate-limits that.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+      - api
+
+volumes:
+  pgdata:
+  uploads:
+  caddy_data:
+  caddy_config:

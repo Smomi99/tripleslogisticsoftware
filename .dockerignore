@@ -1,0 +1,59 @@
+# What must never reach the build context.
+#
+# The two entries that matter most are node_modules and .env.
+#
+# node_modules: both Dockerfiles run `pnpm install` inside the image and then
+# `COPY . .`. Without this file that COPY drops a Windows/macOS node_modules
+# tree on top of the Linux one just installed, and @node-rs/argon2 — a native
+# module — is then the wrong binary for the platform. Password hashing fails at
+# runtime, not at build time.
+#
+# .env: a build context is baked into image layers. A secret copied in is still
+# recoverable from the image even if a later layer deletes it.
+
+# Dependencies — always installed inside the image, never copied in
+node_modules
+**/node_modules
+.pnpm-store
+
+# Secrets
+.env
+.env.*
+!.env.production.example
+
+# Build output — regenerated in the image
+.next
+**/.next
+dist
+**/dist
+out
+**/out
+*.tsbuildinfo
+apps/api/src/generated
+
+# Uploads live in a volume, not in the image
+storage
+uploads
+
+# Version control and tooling noise
+.git
+.gitignore
+.github
+.vscode
+.idea
+.claude
+.agents
+skills-lock.json
+
+# Test and log output
+coverage
+*.log
+
+# Docs and deployment descriptors the runtime does not read
+docs
+README.md
+CLAUDE.md
+**/AGENTS.md
+render.yaml
+docker-compose.yml
+docker-compose.prod.yml
