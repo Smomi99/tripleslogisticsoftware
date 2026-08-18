@@ -411,10 +411,33 @@ describe('§5.5 Edit — blocked once WON', () => {
     volumes: [],
   });
 
-  it('edits an open inquiry', async () => {
+  it('edits an open inquiry in place, without raising a second one', async () => {
+    const before = await as(tokenSales).get(path());
     const res = await as(tokenSales).patch(path()).send(body());
     expect(res.status, JSON.stringify(res.body.error ?? {})).toBe(200);
     expect(res.body.data.inquiryDate).toBe('2026-03-16');
+
+    // The bug this guards: Edit linked at the capture screen, which only ever
+    // POSTed, so editing silently raised a duplicate with a fresh number.
+    expect(res.body.data.id).toBe(before.body.data.id);
+    expect(res.body.data.code).toBe(before.body.data.code);
+    expect(await owner.inquiry.count({ where: { tenantId, deletedAt: null } })).toBe(1);
+  });
+
+  it('rewrites the volume grid rather than stacking rows onto it', async () => {
+    await as(tokenSales)
+      .patch(path())
+      .send({ ...body(), volumes: [{ volumeKind: 'LCL', cbm: '12.5' }] });
+    const first = await as(tokenSales).get(path());
+    expect(first.body.data.volumes).toHaveLength(1);
+
+    await as(tokenSales)
+      .patch(path())
+      .send({ ...body(), volumes: [{ volumeKind: 'LCL', cbm: '20' }] });
+    const second = await as(tokenSales).get(path());
+    // §4 rule 3 forbids deleting the old row, so the risk is duplication.
+    expect(second.body.data.volumes).toHaveLength(1);
+    expect(second.body.data.volumes[0].cbm).toBe('20.000');
   });
 
   it('refuses once the inquiry is WON', async () => {

@@ -8,7 +8,6 @@ import {
   type LookupOption,
   SHIPMENT_TYPES,
 } from '@ff/shared';
-import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -16,7 +15,9 @@ import { Button } from '@/components/ui/button';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Input, Select } from '@/components/ui/field';
+import { InquiryForm } from '@/components/sales/inquiry-form';
 import { PageHeader } from '@/components/ui/form-layout';
+import { Modal } from '@/components/ui/modal';
 import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
@@ -71,6 +72,8 @@ export default function InquiryListPage() {
   const [followingUp, setFollowingUp] = useState<InquiryDto | null>(null);
   const [pricing, setPricing] = useState<InquiryDto | null>(null);
   const [quoting, setQuoting] = useState<string | null>(null);
+  /** null closed · 'new' raising · an inquiry editing that one. */
+  const [formFor, setFormFor] = useState<InquiryDto | 'new' | null>(null);
 
   useEffect(() => {
     void authorizedRequest<InquiryOptions>('/api/tenant/sales/inquiry-options')
@@ -151,9 +154,7 @@ export default function InquiryListPage() {
         description="Every customer request on the board. Price it, follow it up, and turn it into a quotation."
         action={
           can('SALES.INQUIRY.CREATE') ? (
-            <Button asChild>
-              <Link href="/sales/new-inquiry">+ New inquiry</Link>
-            </Button>
+            <Button onClick={() => setFormFor('new')}>+ New inquiry</Button>
           ) : null
         }
       />
@@ -302,8 +303,8 @@ export default function InquiryListPage() {
             )}
             {/* §5.5: Edit is blocked once WON. Hidden rather than disabled (§7). */}
             {can('SALES.INQUIRY.EDIT') && row.status !== 'WON' && (
-              <Button variant="text" size="inline" asChild>
-                <Link href={`/sales/new-inquiry?id=${row.id}`}>Edit</Link>
+              <Button variant="text" size="inline" onClick={() => setFormFor(row)}>
+                Edit
               </Button>
             )}
             {can('SALES.INQUIRY.ATTACH_PRICE') && (
@@ -347,15 +348,43 @@ export default function InquiryListPage() {
               description="Raise your first inquiry to start working the pipeline."
               action={
                 can('SALES.INQUIRY.CREATE') ? (
-                  <Button asChild>
-                    <Link href="/sales/new-inquiry">+ New inquiry</Link>
-                  </Button>
+                  <Button onClick={() => setFormFor('new')}>+ New inquiry</Button>
                 ) : null
               }
             />
           )
         }
       />
+
+      {/* The client asked for the form as a modal. §8 would send seventeen
+          fields to a full page, so the modal is the wide variant rather than
+          the 32rem default — a single scrolling column would be worse than the
+          page it replaces. */}
+      <Modal
+        open={formFor !== null}
+        onOpenChange={(open) => !open && setFormFor(null)}
+        size="wide"
+        title={formFor === 'new' || formFor === null ? 'New inquiry' : `Edit ${formFor.code}`}
+        description={
+          formFor === 'new' || formFor === null
+            ? 'Capture what the customer asked for. The number is assigned on save.'
+            : undefined
+        }
+      >
+        {formFor !== null && (
+          <InquiryForm
+            // Remounts between rows, so an edit never opens on the last one's
+            // values — the form seeds its state from props on mount.
+            key={formFor === 'new' ? 'new' : formFor.id}
+            inquiry={formFor === 'new' ? null : formFor}
+            onSaved={() => {
+              setFormFor(null);
+              void list.reload();
+            }}
+            onCancel={() => setFormFor(null)}
+          />
+        )}
+      </Modal>
 
       <ViewDrawer
         inquiry={viewing}

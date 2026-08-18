@@ -21,12 +21,19 @@ export function Modal({
   title,
   description,
   children,
+  size = 'default',
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
   description?: string;
   children: ReactNode;
+  /**
+   * "wide" is for a form §8 would otherwise send to a full page. The client
+   * asked for the inquiry form as a modal; at 32rem its seventeen fields would
+   * be a single scrolling column, which is worse than the page it replaced.
+   */
+  size?: 'default' | 'wide';
 }) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -39,7 +46,10 @@ export function Modal({
         />
         <Dialog.Content
           className={cn(
-            'fixed left-1/2 top-1/2 z-50 w-[min(32rem,calc(100vw-2rem))]',
+            'fixed left-1/2 top-1/2 z-50',
+            size === 'wide'
+              ? 'w-[min(68rem,calc(100vw-2rem))]'
+              : 'w-[min(32rem,calc(100vw-2rem))]',
             '-translate-x-1/2 -translate-y-1/2',
             'rounded-manifest border border-line bg-surface p-5 shadow-manifest',
             'max-h-[calc(100vh-2rem)] overflow-y-auto',
