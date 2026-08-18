@@ -3,7 +3,7 @@ import { mkdir, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
-import { env, REPO_ROOT } from '../config/env';
+import { env, STORAGE_ROOT } from '../config/env';
 import { HttpError } from './http-error';
 
 /**
@@ -28,11 +28,17 @@ export interface StoredFile {
   mimeType: string;
 }
 
-/** §2 keeps uploads out of the repo; the path is configurable per environment. */
+/**
+ * §2 keeps uploads out of the repo; the path is configurable per environment.
+ *
+ * Resolved at boot in config/env so a misconfigured path fails on start rather
+ * than on the first upload of the day.
+ */
 function localRoot(): string {
-  return path.isAbsolute(env.STORAGE_LOCAL_PATH)
-    ? env.STORAGE_LOCAL_PATH
-    : path.join(REPO_ROOT, env.STORAGE_LOCAL_PATH);
+  if (STORAGE_ROOT === null) {
+    throw new HttpError(500, 'STORAGE_UNAVAILABLE', 'Local file storage is not configured.');
+  }
+  return STORAGE_ROOT;
 }
 
 /** Agreements and contracts only — this is not a general file share. */

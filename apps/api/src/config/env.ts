@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -8,9 +9,40 @@ import { z } from 'zod';
 // on a single set of values. Resolve it relative to this file, not to cwd —
 // the API is started from several different working directories.
 const here = path.dirname(fileURLToPath(import.meta.url));
-export const REPO_ROOT = path.resolve(here, '../../../..');
 
-dotenv.config({ path: path.join(REPO_ROOT, '.env'), quiet: true });
+/**
+ * The monorepo root: the directory holding pnpm-workspace.yaml.
+ *
+ * Found by walking up rather than by counting `..` segments, because the depth
+ * differs between the TypeScript source (apps/api/src/config/) and the bundled
+ * output (apps/api/dist/). A fixed `../../../..` is right under tsx and lands
+ * one level ABOVE the repo once tsup has bundled it — so in production .env
+ * went unread and a relative STORAGE_LOCAL_PATH resolved outside the repo,
+ * which in a container means outside the mounted volume. Uploads written there
+ * survive exactly until the next rebuild.
+ *
+ * Null when the marker is absent — a deployment shipping only dist/ and
+ * node_modules. Harmless for .env, since such a deployment takes its
+ * environment from the platform; see resolveStorageRoot for the case where it
+ * is not harmless.
+ *
+ * Exported only so the test can start the walk from the bundled path.
+ */
+export function findRepoRoot(start: string): string | null {
+  let dir = start;
+  for (;;) {
+    if (existsSync(path.join(dir, 'pnpm-workspace.yaml'))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return null; // filesystem root, marker never found
+    dir = parent;
+  }
+}
+
+export const REPO_ROOT = findRepoRoot(here);
+
+if (REPO_ROOT !== null) {
+  dotenv.config({ path: path.join(REPO_ROOT, '.env'), quiet: true });
+}
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -50,3 +82,27 @@ export const isTest = env.NODE_ENV === 'test';
  * until the non-owner RLS role exists (CLAUDE.md §7A rule 2, Phase 2).
  */
 export const runtimeDatabaseUrl = env.DATABASE_URL_APP ?? env.DATABASE_URL;
+
+/**
+ * Absolute directory the local driver writes uploads to, resolved once here.
+ *
+ * A relative STORAGE_LOCAL_PATH is relative to the repo root — that is where
+ * the committed ./storage sits. Resolving it lazily on each upload is what let
+ * the wrong base go unnoticed for so long, so it is computed at boot and fails
+ * loudly rather than silently writing somewhere nobody will look.
+ */
+function resolveStorageRoot(): string {
+  const configured = env.STORAGE_LOCAL_PATH;
+  if (path.isAbsolute(configured)) return configured;
+  if (REPO_ROOT === null) {
+    throw new Error(
+      `STORAGE_LOCAL_PATH="${configured}" is relative, and the repo root could not be located ` +
+        `above ${here} (no pnpm-workspace.yaml). Set STORAGE_LOCAL_PATH to an absolute path.`,
+    );
+  }
+  return path.join(REPO_ROOT, configured);
+}
+
+/** Null when the driver is not `local`, where a filesystem root is meaningless. */
+export const STORAGE_ROOT: string | null =
+  env.STORAGE_DRIVER === 'local' ? resolveStorageRoot() : null;

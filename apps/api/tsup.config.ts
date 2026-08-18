@@ -13,7 +13,12 @@ export default defineConfig({
   platform: 'node',
   sourcemap: true,
   clean: true,
-  // Third-party runtime deps stay external and are installed in production;
-  // workspace TypeScript sources are bundled in.
+  // Third-party runtime deps stay external and are installed in production.
   skipNodeModulesBundle: true,
+  // ...but @ff/shared is a workspace package, and pnpm symlinks it INTO
+  // node_modules, so skipNodeModulesBundle would externalise it too. It ships
+  // TypeScript source with extensionless relative imports, which Node cannot
+  // load: the built server died at startup on `packages/shared/src/api`.
+  // Bundle it in, which is what the line above always intended.
+  noExternal: [/^@ff\//],
 });
