@@ -288,6 +288,11 @@ model TenantMasterOverride {
   recordId  BigInt   @map("record_id")
   /// false = hidden from this tenant.
   isActive  Boolean  @default(true) @map("is_active")
+  /// CR-003. When the workspace has customised the shared row, the id of the
+  /// tenant-owned copy that replaced it. NOT a foreign key: the target lives
+  /// in whichever table `tableName` names, so no single reference can express
+  /// it. Set together with isActive = false — a replaced row is always hidden.
+  replacedBy BigInt? @map("replaced_by")
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy BigInt?  @map("created_by")

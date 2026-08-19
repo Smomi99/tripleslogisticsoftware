@@ -14,6 +14,7 @@ import {
 import { CODE_RETRY_LIMIT, codeSortSql, isUniqueViolation, nextCode } from '../lib/codes';
 import { Prisma } from '../generated/prisma/client';
 import { HttpError } from '../lib/http-error';
+import { assertCustomisable, recordReplacement, repointReferences } from '../lib/customise';
 import { assertRowDeletable, deleteOwnedChildren } from '../lib/references';
 import { parseId } from '../lib/request';
 import { withTenant } from '../lib/tenant-client';
@@ -80,6 +81,10 @@ currencyRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (req, res) =
      */
     const conditions: Prisma.Sql[] = [
       Prisma.sql`c.deleted_at IS NULL`,
+      // CR-003: a shared row this workspace has REPLACED is gone from its
+      // list entirely, not merely shown as inactive. Leaving it visible is
+      // exactly the two-Chittagongs confusion customising exists to end.
+      Prisma.sql`o.replaced_by IS NULL`,
       Prisma.sql`(c.tenant_id IS NULL OR c.tenant_id = ${auth.tenantId})`,
     ];
 
@@ -419,3 +424,66 @@ currencyRouter.delete('/:id', requirePermission(`${FEATURE}.DELETE`), async (req
   const payload: ApiSuccess<{ deleted: true }> = { success: true, data: { deleted: true } };
   res.json(payload);
 });
+
+/**
+ * POST /api/tenant/.../:id/customise — CR-003.
+ *
+ * §7A rule 7 forbids editing a shared row, and that stands: this copies it into
+ * a row this workspace owns, moves the workspace's own references onto the
+ * copy, and hides the original here alone. The shared row is never touched, so
+ * every other workspace still sees it exactly as before.
+ *
+ * Repointing the references is the part that matters. Without it the copy would
+ * begin life used by nothing while existing records still pointed at the shared
+ * row — a second currency with the same name, which is the very problem this
+ * is meant to end.
+ */
+currencyRouter.post(
+  '/:id/customise',
+  requirePermission(`${FEATURE}.EDIT`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'currency');
+
+    const copyId = await withTenant(auth.tenantId, async (db) => {
+      const shared = await db.currency.findFirst({
+        where: { id, deletedAt: null },
+        select: { id: true, tenantId: true, currency: true, conversion: true },
+      });
+      await assertCustomisable(
+        db,
+        'currency',
+        id,
+        shared === null ? null : { tenantId: shared.tenantId, name: shared.currency },
+        'Currency not found.',
+      );
+      if (shared === null) throw HttpError.notFound('Currency not found.');
+
+      for (let attempt = 0; attempt < CODE_RETRY_LIMIT; attempt += 1) {
+        const code = await nextCode(db, 'currency', CODE_PREFIX.currency, auth.tenantId);
+        try {
+          const copy = await db.currency.create({
+            data: {
+              tenantId: auth.tenantId,
+              code,
+              currency: shared.currency, conversion: shared.conversion,
+              createdBy: auth.userId,
+              updatedBy: auth.userId,
+            },
+            select: { id: true },
+          });
+
+          await repointReferences(db, 'currency', id, copy.id);
+          await recordReplacement(db, auth.tenantId, 'currency', id, copy.id, auth.userId);
+          return copy.id;
+        } catch (error) {
+          if (!isUniqueViolation(error)) throw error;
+        }
+      }
+      throw new HttpError(500, 'CODE_EXHAUSTED', 'Could not allocate a code. Try again.');
+    });
+
+    const payload: ApiSuccess<{ id: string }> = { success: true, data: { id: copyId.toString() } };
+    res.status(201).json(payload);
+  },
+);

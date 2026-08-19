@@ -11,6 +11,7 @@ import {
 
 import { CODE_RETRY_LIMIT, codeSortSql, isUniqueViolation, nextCode } from '../lib/codes';
 import { HttpError } from '../lib/http-error';
+import { assertCustomisable, recordReplacement, repointReferences } from '../lib/customise';
 import { assertRowDeletable, deleteOwnedChildren } from '../lib/references';
 import { Prisma } from '../generated/prisma/client';
 import { withTenant } from '../lib/tenant-client';
@@ -90,6 +91,10 @@ portRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
      */
     const conditions: Prisma.Sql[] = [
       Prisma.sql`p.deleted_at IS NULL`,
+      // CR-003: a shared row this workspace has REPLACED is gone from its
+      // list entirely, not merely shown as inactive. Leaving it visible is
+      // exactly the two-Chittagongs confusion customising exists to end.
+      Prisma.sql`o.replaced_by IS NULL`,
       Prisma.sql`(p.tenant_id IS NULL OR p.tenant_id = ${auth.tenantId})`,
     ];
 
@@ -385,3 +390,66 @@ function parseId(raw: string | string[] | undefined): bigint {
   }
   return BigInt(raw);
 }
+
+/**
+ * POST /api/tenant/.../:id/customise — CR-003.
+ *
+ * §7A rule 7 forbids editing a shared row, and that stands: this copies it into
+ * a row this workspace owns, moves the workspace's own references onto the
+ * copy, and hides the original here alone. The shared row is never touched, so
+ * every other workspace still sees it exactly as before.
+ *
+ * Repointing the references is the part that matters. Without it the copy would
+ * begin life used by nothing while existing records still pointed at the shared
+ * row — a second port with the same name, which is the very problem this
+ * is meant to end.
+ */
+portRouter.post(
+  '/:id/customise',
+  requirePermission(`${FEATURE}.EDIT`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id);
+
+    const copyId = await withTenant(auth.tenantId, async (db) => {
+      const shared = await db.port.findFirst({
+        where: { id, deletedAt: null },
+        select: { id: true, tenantId: true, name: true, portCode: true, country: true, type: true },
+      });
+      await assertCustomisable(
+        db,
+        'port',
+        id,
+        shared === null ? null : { tenantId: shared.tenantId, name: shared.name },
+        'Port not found.',
+      );
+      if (shared === null) throw HttpError.notFound('Port not found.');
+
+      for (let attempt = 0; attempt < CODE_RETRY_LIMIT; attempt += 1) {
+        const code = await nextCode(db, 'port', CODE_PREFIX.port, auth.tenantId);
+        try {
+          const copy = await db.port.create({
+            data: {
+              tenantId: auth.tenantId,
+              code,
+              name: shared.name, portCode: shared.portCode, country: shared.country, type: shared.type,
+              createdBy: auth.userId,
+              updatedBy: auth.userId,
+            },
+            select: { id: true },
+          });
+
+          await repointReferences(db, 'port', id, copy.id);
+          await recordReplacement(db, auth.tenantId, 'port', id, copy.id, auth.userId);
+          return copy.id;
+        } catch (error) {
+          if (!isUniqueViolation(error)) throw error;
+        }
+      }
+      throw new HttpError(500, 'CODE_EXHAUSTED', 'Could not allocate a code. Try again.');
+    });
+
+    const payload: ApiSuccess<{ id: string }> = { success: true, data: { id: copyId.toString() } };
+    res.status(201).json(payload);
+  },
+);

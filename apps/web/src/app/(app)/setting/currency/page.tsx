@@ -46,6 +46,10 @@ export default function CurrencyPage() {
   // that never was. The server refuses if anything references it.
   const [toDelete, setToDelete] = useState<CurrencyDto | null>(null);
   const [isDeleting, setDeleting] = useState(false);
+  // CR-003. A shared row belongs to every workspace, so it cannot be
+  // edited — this takes a copy that can be.
+  const [toCustomise, setToCustomise] = useState<CurrencyDto | null>(null);
+  const [isCustomising, setCustomising] = useState(false);
 
   const columns: DataTableColumn<CurrencyDto>[] = useMemo(
     () => [
@@ -124,6 +128,22 @@ export default function CurrencyPage() {
       toast.error(error instanceof ApiError ? error.message : 'Could not change the status.');
     } finally {
       setToggling(false);
+    }
+  }
+
+  async function confirmCustomise(): Promise<void> {
+    if (toCustomise === null) return;
+    setCustomising(true);
+    try {
+      await authorizedRequest(`/api/tenant/setting/currencies/${toCustomise.id}/customise`, { method: 'POST' });
+      toast.success('Currency is now yours to edit');
+      setToCustomise(null);
+      await list.reload();
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : 'Could not customise it.');
+      setToCustomise(null);
+    } finally {
+      setCustomising(false);
     }
   }
 
@@ -219,6 +239,11 @@ export default function CurrencyPage() {
                 onClick={() => setToToggle(row)}
               >
                 {row.isActive ? 'Deactivate' : 'Activate'}
+              </Button>
+            )}
+            {can('SETTING.CURRENCY.EDIT') && row.isSystem && (
+              <Button variant="text" size="inline" onClick={() => setToCustomise(row)}>
+                Customise
               </Button>
             )}
             {can('SETTING.CURRENCY.DELETE') && !row.isSystem && (
@@ -317,6 +342,22 @@ export default function CurrencyPage() {
         destructive
         isPending={isDeleting}
         onConfirm={() => void confirmDelete()}
+      />
+
+      <ConfirmDialog
+        open={toCustomise !== null}
+        onOpenChange={(open) => {
+          if (!open) setToCustomise(null);
+        }}
+        title="Make this currency your own?"
+        message={
+          toCustomise === null
+            ? ''
+            : `${toCustomise.currency} is shared with every workspace, so it cannot be edited here. This takes your own copy of it, moves your existing records onto the copy, and hides the shared currency from your list. Nobody else is affected.`
+        }
+        confirmLabel="Customise"
+        isPending={isCustomising}
+        onConfirm={() => void confirmCustomise()}
       />
     </div>
   );

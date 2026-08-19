@@ -54,6 +54,10 @@ export default function PortListPage() {
   // Delete removes one that never was.
   const [toDelete, setToDelete] = useState<PortDto | null>(null);
   const [isDeleting, setDeleting] = useState(false);
+  // CR-003. A shared row belongs to every workspace, so it cannot be
+  // edited — this takes a copy that can be.
+  const [toCustomise, setToCustomise] = useState<PortDto | null>(null);
+  const [isCustomising, setCustomising] = useState(false);
 
   // §8: search is server-side and debounced.
   useEffect(() => {
@@ -158,6 +162,22 @@ export default function PortListPage() {
       );
     } finally {
       setToggling(false);
+    }
+  }
+
+  async function confirmCustomise(): Promise<void> {
+    if (toCustomise === null) return;
+    setCustomising(true);
+    try {
+      await authorizedRequest(`/api/tenant/setting/ports/${toCustomise.id}/customise`, { method: 'POST' });
+      toast.success('Port is now yours to edit');
+      setToCustomise(null);
+      await load();
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : 'Could not customise it.');
+      setToCustomise(null);
+    } finally {
+      setCustomising(false);
     }
   }
 
@@ -269,6 +289,11 @@ export default function PortListPage() {
                 {row.isActive ? 'Deactivate' : 'Activate'}
               </Button>
             )}
+            {can('SETTING.SEA_AIR_PORT.EDIT') && row.isSystem && (
+              <Button variant="text" size="inline" onClick={() => setToCustomise(row)}>
+                Customise
+              </Button>
+            )}
             {/* A shared port belongs to every workspace, so it is never this
                 workspace's to delete (§7A rule 7) — the API refuses too. */}
             {can('SETTING.SEA_AIR_PORT.DELETE') && !row.isSystem && (
@@ -373,6 +398,22 @@ export default function PortListPage() {
         destructive
         isPending={isDeleting}
         onConfirm={() => void confirmDelete()}
+      />
+
+      <ConfirmDialog
+        open={toCustomise !== null}
+        onOpenChange={(open) => {
+          if (!open) setToCustomise(null);
+        }}
+        title="Make this port your own?"
+        message={
+          toCustomise === null
+            ? ''
+            : `${toCustomise.name} is shared with every workspace, so it cannot be edited here. This takes your own copy of it, moves your existing records onto the copy, and hides the shared port from your list. Nobody else is affected.`
+        }
+        confirmLabel="Customise"
+        isPending={isCustomising}
+        onConfirm={() => void confirmCustomise()}
       />
     </div>
   );
