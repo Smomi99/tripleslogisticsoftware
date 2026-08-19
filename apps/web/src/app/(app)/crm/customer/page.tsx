@@ -32,6 +32,10 @@ export default function CustomerPage() {
 
   const [toToggle, setToToggle] = useState<CustomerDto | null>(null);
   const [isToggling, setToggling] = useState(false);
+  // CR-002. Deactivate retires a record that was real; Delete removes one
+  // that never was. The server refuses if anything references it.
+  const [toDelete, setToDelete] = useState<CustomerDto | null>(null);
+  const [isDeleting, setDeleting] = useState(false);
 
   const columns: DataTableColumn<CustomerDto>[] = useMemo(
     () => [
@@ -80,6 +84,23 @@ export default function CustomerPage() {
       toast.error(error instanceof ApiError ? error.message : 'Could not change the status.');
     } finally {
       setToggling(false);
+    }
+  }
+
+  async function confirmDelete(): Promise<void> {
+    if (toDelete === null) return;
+    setDeleting(true);
+    try {
+      await authorizedRequest(`/api/tenant/crm/customers/${toDelete.id}`, { method: 'DELETE' });
+      toast.success('Customer deleted');
+      setToDelete(null);
+      await list.reload();
+    } catch (error) {
+      // The refusal names what still uses it, which is the point.
+      toast.error(error instanceof ApiError ? error.message : 'Could not delete it.');
+      setToDelete(null);
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -174,6 +195,11 @@ export default function CustomerPage() {
                 {row.isActive ? 'Deactivate' : 'Activate'}
               </Button>
             )}
+            {can('CRM.CUSTOMER.DELETE') && (
+              <Button variant="destructive" size="inline" onClick={() => setToDelete(row)}>
+                Delete
+              </Button>
+            )}
           </>
         )}
         empty={
@@ -220,6 +246,23 @@ export default function CustomerPage() {
         destructive={toToggle?.isActive === true}
         isPending={isToggling}
         onConfirm={() => void confirmToggle()}
+      />
+
+      <ConfirmDialog
+        open={toDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setToDelete(null);
+        }}
+        title="Delete this customer?"
+        message={
+          toDelete === null
+            ? ''
+            : `${toDelete.name} will be removed from the list for good. This is for a customer added by mistake — if it has ever been used, deactivate it instead and nothing here will change.`
+        }
+        confirmLabel="Delete"
+        destructive
+        isPending={isDeleting}
+        onConfirm={() => void confirmDelete()}
       />
     </div>
   );

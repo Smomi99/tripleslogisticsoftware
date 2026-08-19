@@ -15,6 +15,7 @@ import {
 
 import { CODE_RETRY_LIMIT, isUniqueViolation, nextCode } from '../lib/codes';
 import { HttpError } from '../lib/http-error';
+import { assertRowDeletable, deleteOwnedChildren } from '../lib/references';
 import { hashPassword } from '../lib/password';
 import { bumpTokenVersion } from '../lib/permissions';
 import { parseId, parseRefId } from '../lib/request';
@@ -338,3 +339,51 @@ userRouter.post(
     res.json(payload);
   },
 );
+
+/**
+ * DELETE /api/tenant/.../:id — CR-002.
+ *
+ * A soft delete: it sets `deleted_at`, so §4 rule 3 holds and every foreign key
+ * survives. Refused when anything still references the row, and refused on a
+ * shared system row — so it only ever removes a user entered by mistake.
+ */
+userRouter.delete('/:id', requirePermission(`${FEATURE}.DELETE`), async (req, res) => {
+  const auth = req.auth!;
+  const id = parseId(req.params.id, 'user');
+
+  // Deleting your own account soft-deletes the row your session resolves
+  // against: the next request cannot find you and you are locked out of the
+  // workspace with no way back in from the UI.
+  if (id === auth.userId) {
+    throw new HttpError(
+      409,
+      'SELF_DELETE',
+      'You cannot delete your own account. Ask another superadmin to do it.',
+    );
+  }
+
+  await withTenant(auth.tenantId, async (db) => {
+    const existing = await db.user.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true, tenantId: true, username: true },
+    });
+    await assertRowDeletable(
+      db,
+      'user',
+      id,
+      existing === null ? null : { tenantId: existing.tenantId, name: existing.username },
+      'User not found.',
+    );
+
+    // Its own contacts, service ports and links go with it.
+    await deleteOwnedChildren(db, 'user', id, auth.userId);
+
+    await db.user.update({
+      where: { id },
+      data: { deletedAt: new Date(), isActive: false, updatedBy: auth.userId },
+    });
+  });
+
+  const payload: ApiSuccess<{ deleted: true }> = { success: true, data: { deleted: true } };
+  res.json(payload);
+});

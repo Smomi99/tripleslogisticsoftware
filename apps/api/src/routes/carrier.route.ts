@@ -22,6 +22,7 @@ import {
 import { type CodeTable, CODE_RETRY_LIMIT, codeSortSql, isUniqueViolation, nextCode } from '../lib/codes';
 import { Prisma } from '../generated/prisma/client';
 import { HttpError } from '../lib/http-error';
+import { assertRowDeletable, deleteOwnedChildren } from '../lib/references';
 import { parseId, parseRefId } from '../lib/request';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
 import { authenticate } from '../middleware/authenticate';
@@ -1182,3 +1183,40 @@ carrierRouter.post(
     res.json(payload);
   },
 );
+
+/**
+ * DELETE /api/tenant/.../:id — CR-002.
+ *
+ * A soft delete: it sets `deleted_at`, so §4 rule 3 holds and every foreign key
+ * survives. Refused when anything still references the row, and refused on a
+ * shared system row — so it only ever removes a carrier entered by mistake.
+ */
+carrierRouter.delete('/:id', requirePermission(`${FEATURE}.DELETE`), async (req, res) => {
+  const auth = req.auth!;
+  const id = parseId(req.params.id, 'carrier');
+
+  await withTenant(auth.tenantId, async (db) => {
+    const existing = await db.carrier.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true, tenantId: true, name: true },
+    });
+    await assertRowDeletable(
+      db,
+      'carrier',
+      id,
+      existing === null ? null : { tenantId: existing.tenantId, name: existing.name },
+      'Carrier not found.',
+    );
+
+    // Its own contacts, service ports and links go with it.
+    await deleteOwnedChildren(db, 'carrier', id, auth.userId);
+
+    await db.carrier.update({
+      where: { id },
+      data: { deletedAt: new Date(), isActive: false, updatedBy: auth.userId },
+    });
+  });
+
+  const payload: ApiSuccess<{ deleted: true }> = { success: true, data: { deleted: true } };
+  res.json(payload);
+});

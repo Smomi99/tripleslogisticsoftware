@@ -25,6 +25,10 @@ export default function EmployeePage() {
 
   const [toToggle, setToToggle] = useState<EmployeeDto | null>(null);
   const [isToggling, setToggling] = useState(false);
+  // CR-002. Deactivate retires a record that was real; Delete removes one
+  // that never was. The server refuses if anything references it.
+  const [toDelete, setToDelete] = useState<EmployeeDto | null>(null);
+  const [isDeleting, setDeleting] = useState(false);
 
   const columns: DataTableColumn<EmployeeDto>[] = useMemo(
     () => [
@@ -72,6 +76,23 @@ export default function EmployeePage() {
       toast.error(error instanceof ApiError ? error.message : 'Could not change the status.');
     } finally {
       setToggling(false);
+    }
+  }
+
+  async function confirmDelete(): Promise<void> {
+    if (toDelete === null) return;
+    setDeleting(true);
+    try {
+      await authorizedRequest(`/api/tenant/crm/employees/${toDelete.id}`, { method: 'DELETE' });
+      toast.success('Employee deleted');
+      setToDelete(null);
+      await list.reload();
+    } catch (error) {
+      // The refusal names what still uses it, which is the point.
+      toast.error(error instanceof ApiError ? error.message : 'Could not delete it.');
+      setToDelete(null);
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -144,6 +165,11 @@ export default function EmployeePage() {
                 {row.isActive ? 'Deactivate' : 'Activate'}
               </Button>
             )}
+            {can('CRM.EMPLOYEE.DELETE') && (
+              <Button variant="destructive" size="inline" onClick={() => setToDelete(row)}>
+                Delete
+              </Button>
+            )}
           </>
         )}
         empty={
@@ -190,6 +216,23 @@ export default function EmployeePage() {
         destructive={toToggle?.isActive === true}
         isPending={isToggling}
         onConfirm={() => void confirmToggle()}
+      />
+
+      <ConfirmDialog
+        open={toDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setToDelete(null);
+        }}
+        title="Delete this employee?"
+        message={
+          toDelete === null
+            ? ''
+            : `${toDelete.name} will be removed from the list for good. This is for a employee added by mistake — if it has ever been used, deactivate it instead and nothing here will change.`
+        }
+        confirmLabel="Delete"
+        destructive
+        isPending={isDeleting}
+        onConfirm={() => void confirmDelete()}
       />
     </div>
   );

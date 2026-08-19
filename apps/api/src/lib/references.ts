@@ -17,6 +17,48 @@ import type { TenantDb } from './tenant-client';
  * under records that still reference it.
  */
 
+
+/**
+ * Children that belong to a row and have no meaning without it.
+ *
+ * These must NOT block a delete, and getting this wrong makes the feature
+ * useless: an agent's own expert areas, a carrier's own service port and a
+ * customer's own contact are not "usage", they are parts of the record. Before
+ * this list existed, almost every real row was undeletable — the very rows a
+ * typo produces are the ones you fill in a contact for and then notice the
+ * spelling.
+ *
+ * `join` marks a pure M:N link with no `deleted_at` of its own. Those are hard
+ * deleted, which §4 rule 3 already allows for join tables — the link carries no
+ * history, and the migration granting ff_app DELETE on them says as much.
+ */
+interface OwnedChild {
+  table: string;
+  column: string;
+  join: boolean;
+}
+
+const OWNED_CHILDREN: Record<string, readonly OwnedChild[]> = {
+  carrier: [
+    { table: 'carrier_pic', column: 'carrier_id', join: false },
+    { table: 'carrier_service_port', column: 'carrier_id', join: false },
+    { table: 'carrier_port_pair', column: 'carrier_id', join: false },
+  ],
+  vendor: [{ table: 'vendor_pic', column: 'vendor_id', join: false }],
+  customer: [{ table: 'customer_pic', column: 'customer_id', join: false }],
+  agent: [
+    { table: 'agent_pic', column: 'agent_id', join: false },
+    { table: 'agent_expert_area', column: 'agent_id', join: true },
+    { table: 'agent_port_coverage', column: 'agent_id', join: true },
+    { table: 'agent_network_member', column: 'agent_id', join: true },
+  ],
+  employee: [
+    { table: 'employee_cv', column: 'employee_id', join: false },
+    { table: 'employee_salary', column: 'employee_id', join: false },
+  ],
+  industry_sector: [{ table: 'commodity_item', column: 'industry_sector_id', join: false }],
+};
+
 export interface BlockingReference {
   table: string;
   column: string;
@@ -112,9 +154,14 @@ export async function findBlockingReferences(
     ORDER BY child_table, child_column
   `;
 
-  if (edges.length === 0) return [];
+  const owned = OWNED_CHILDREN[table] ?? [];
+  const external = edges.filter(
+    (edge) =>
+      !owned.some((o) => o.table === edge.child_table && o.column === edge.child_column),
+  );
+  if (external.length === 0) return [];
 
-  const selects = edges.map(
+  const selects = external.map(
     (edge) =>
       `SELECT ${escapeLiteral(edge.child_table)} AS table_name, ` +
       `${escapeLiteral(edge.child_column)} AS column_name, ` +
@@ -169,4 +216,107 @@ export async function assertDeletable(
     `${subject} is used by ${list}. Deactivate it instead of deleting it.`,
     { blockedBy: described },
   );
+}
+
+
+/**
+ * A child that belongs to the row can still be used by something else.
+ *
+ * commodity_item is the live case: an industry sector owns its items, but an
+ * inquiry names one. Deleting the sector would take the item with it and leave
+ * the inquiry pointing at nothing, so the grandchild has to be checked too.
+ */
+async function assertOwnedChildrenUnused(
+  db: TenantDb,
+  table: string,
+  id: bigint,
+  subject: string,
+): Promise<void> {
+  for (const child of OWNED_CHILDREN[table] ?? []) {
+    if (child.join) continue; // nothing references a pure link row
+
+    const ids = await db.$queryRawUnsafe<{ id: bigint }[]>(
+      `SELECT id FROM ${quoteIdent(child.table)} WHERE ${quoteIdent(child.column)} = $1 AND deleted_at IS NULL`,
+      id,
+    );
+
+    for (const row of ids) {
+      const blockers = await findBlockingReferences(db, child.table, row.id);
+      if (blockers.length > 0) {
+        const described = blockers.map((b) => labelFor(b.table, b.count)).join(', ');
+        throw new HttpError(
+          409,
+          'REFERENCED',
+          `${subject} cannot be deleted: one of its ${TABLE_LABEL[child.table] ?? child.table} ` +
+            `is used by ${described}. Deactivate it instead.`,
+          { blockedBy: [described] },
+        );
+      }
+    }
+  }
+}
+
+/**
+ * Removes the rows that belong to this one, so a deleted parent leaves nothing
+ * dangling behind it on the child screens.
+ *
+ * Soft for anything carrying `deleted_at`; hard for the pure join tables, which
+ * have no history to keep — the same reasoning agent.route.ts already applies
+ * when it rewrites an agent's expert areas.
+ */
+export async function deleteOwnedChildren(
+  db: TenantDb,
+  table: string,
+  id: bigint,
+  userId: bigint,
+): Promise<void> {
+  for (const child of OWNED_CHILDREN[table] ?? []) {
+    if (child.join) {
+      await db.$executeRawUnsafe(
+        `DELETE FROM ${quoteIdent(child.table)} WHERE ${quoteIdent(child.column)} = $1`,
+        id,
+      );
+    } else {
+      await db.$executeRawUnsafe(
+        `UPDATE ${quoteIdent(child.table)} SET deleted_at = now(), is_active = false, updated_by = $2 ` +
+          `WHERE ${quoteIdent(child.column)} = $1 AND deleted_at IS NULL`,
+        id,
+        userId,
+      );
+    }
+  }
+}
+
+/**
+ * The checks every Delete route makes, in the order they matter.
+ *
+ * Shared because the alternative is fifteen copies that drift: the day someone
+ * adds a screen and forgets the system-row check, a shared port disappears for
+ * every workspace on the server.
+ *
+ * `row` is what the caller's own tenant-scoped query returned, so "not found"
+ * already covers another workspace's row — it was never visible.
+ */
+export async function assertRowDeletable(
+  db: TenantDb,
+  table: string,
+  id: bigint,
+  row: { tenantId?: bigint | null; name: string } | null,
+  notFoundMessage: string,
+): Promise<void> {
+  if (row === null) throw HttpError.notFound(notFoundMessage);
+
+  // §7A rule 7: a shared row belongs to every workspace. A tenant may hide it
+  // for itself, never remove it for everyone.
+  if (row.tenantId === null) {
+    throw new HttpError(
+      409,
+      'SYSTEM_ROW',
+      `${row.name} is shared with every workspace, so it is not yours to delete. ` +
+        'Deactivate it to hide it here.',
+    );
+  }
+
+  await assertDeletable(db, table, id, row.name);
+  await assertOwnedChildrenUnused(db, table, id, row.name);
 }

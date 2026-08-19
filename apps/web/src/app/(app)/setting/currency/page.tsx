@@ -42,6 +42,10 @@ export default function CurrencyPage() {
   const [rateFor, setRateFor] = useState<CurrencyDto | null>(null);
   const [toToggle, setToToggle] = useState<CurrencyDto | null>(null);
   const [isToggling, setToggling] = useState(false);
+  // CR-002. Deactivate retires a record that was real; Delete removes one
+  // that never was. The server refuses if anything references it.
+  const [toDelete, setToDelete] = useState<CurrencyDto | null>(null);
+  const [isDeleting, setDeleting] = useState(false);
 
   const columns: DataTableColumn<CurrencyDto>[] = useMemo(
     () => [
@@ -123,6 +127,23 @@ export default function CurrencyPage() {
     }
   }
 
+  async function confirmDelete(): Promise<void> {
+    if (toDelete === null) return;
+    setDeleting(true);
+    try {
+      await authorizedRequest(`/api/tenant/setting/currencies/${toDelete.id}`, { method: 'DELETE' });
+      toast.success('Currency deleted');
+      setToDelete(null);
+      await list.reload();
+    } catch (error) {
+      // The refusal names what still uses it, which is the point.
+      toast.error(error instanceof ApiError ? error.message : 'Could not delete it.');
+      setToDelete(null);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
@@ -200,6 +221,11 @@ export default function CurrencyPage() {
                 {row.isActive ? 'Deactivate' : 'Activate'}
               </Button>
             )}
+            {can('SETTING.CURRENCY.DELETE') && !row.isSystem && (
+              <Button variant="destructive" size="inline" onClick={() => setToDelete(row)}>
+                Delete
+              </Button>
+            )}
           </>
         )}
         empty={
@@ -274,6 +300,23 @@ export default function CurrencyPage() {
         destructive={toToggle?.isActive === true}
         isPending={isToggling}
         onConfirm={() => void confirmToggle()}
+      />
+
+      <ConfirmDialog
+        open={toDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setToDelete(null);
+        }}
+        title="Delete this currency?"
+        message={
+          toDelete === null
+            ? ''
+            : `${toDelete.currency} will be removed from the list for good. This is for a currency added by mistake — if it has ever been used, deactivate it instead and nothing here will change.`
+        }
+        confirmLabel="Delete"
+        destructive
+        isPending={isDeleting}
+        onConfirm={() => void confirmDelete()}
       />
     </div>
   );

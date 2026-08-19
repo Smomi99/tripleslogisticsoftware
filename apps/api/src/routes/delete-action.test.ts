@@ -238,3 +238,75 @@ describe('DELETE /setting/ports/:id', () => {
     expect(row?.deletedAt).toBeNull();
   });
 });
+
+/**
+ * A row's own children must not block its deletion, or the feature is useless:
+ * the rows a typo produces are exactly the ones somebody fills in a contact for
+ * before noticing the spelling. Anything using the row from OUTSIDE still does.
+ */
+describe('owned children', () => {
+  it('does not count a carrier’s own service port as usage, and takes it along', async () => {
+    const carrierType = await owner.carrierType.findFirst({ select: { id: true } });
+    if (carrierType === null) throw new Error('seed the carrier_type lookup first');
+
+    const carrier = await owner.carrier.create({
+      data: {
+        tenantId: tenantA,
+        code: 'DELTEST-OWNED',
+        name: 'Typo Carrier',
+        typeId: carrierType.id,
+      },
+      select: { id: true },
+    });
+    const portId = await makePort(tenantA, 'DELTEST-A6', 'Owned Child Port');
+    const servicePort = await owner.carrierServicePort.create({
+      data: {
+        tenantId: tenantA,
+        code: 'DELTEST-CSP2',
+        carrierId: carrier.id,
+        portId,
+        country: 'Bangladesh',
+      },
+      select: { id: true },
+    });
+
+    const response = await as(tokenA, SLUG_A).del(`/api/tenant/setting/carriers/${carrier.id}`);
+    expect(response.status).toBe(200);
+
+    // And the child went with it rather than being orphaned on its own screen.
+    const child = await owner.carrierServicePort.findUnique({
+      where: { id: servicePort.id },
+      select: { deletedAt: true },
+    });
+    expect(child?.deletedAt).not.toBeNull();
+  });
+
+  it('still refuses when something outside the row uses it', async () => {
+    const id = await makePort(tenantA, 'DELTEST-A7', 'Externally Used Port');
+    const carrierType = await owner.carrierType.findFirst({ select: { id: true } });
+    const carrier = await owner.carrier.create({
+      data: {
+        tenantId: tenantA,
+        code: 'DELTEST-EXT',
+        name: 'Ext Carrier',
+        typeId: carrierType!.id,
+      },
+      select: { id: true },
+    });
+    await owner.carrierServicePort.create({
+      data: {
+        tenantId: tenantA,
+        code: 'DELTEST-CSP3',
+        carrierId: carrier.id,
+        portId: id,
+        country: 'Bangladesh',
+      },
+    });
+
+    // carrier_service_port is the CARRIER's child, not the PORT's — from the
+    // port's side it is still external usage.
+    const response = await as(tokenA, SLUG_A).del(`/api/tenant/setting/ports/${id}`);
+    expect(response.status).toBe(409);
+    expect(response.body.error.code).toBe('REFERENCED');
+  });
+});

@@ -11,7 +11,7 @@ import {
 
 import { CODE_RETRY_LIMIT, codeSortSql, isUniqueViolation, nextCode } from '../lib/codes';
 import { HttpError } from '../lib/http-error';
-import { assertDeletable } from '../lib/references';
+import { assertRowDeletable, deleteOwnedChildren } from '../lib/references';
 import { Prisma } from '../generated/prisma/client';
 import { withTenant } from '../lib/tenant-client';
 import { authenticate } from '../middleware/authenticate';
@@ -359,17 +359,10 @@ portRouter.delete('/:id', requirePermission(`${FEATURE}.DELETE`), async (req, re
       where: { id, deletedAt: null },
       select: { id: true, tenantId: true, name: true },
     });
-    if (existing === null) throw HttpError.notFound('Port not found.');
+    await assertRowDeletable(db, 'port', id, existing, 'Port not found.');
 
-    if (existing.tenantId === null) {
-      throw new HttpError(
-        409,
-        'SYSTEM_ROW',
-        `${existing.name} is a shared port and belongs to every workspace. Deactivate it instead.`,
-      );
-    }
-
-    await assertDeletable(db, 'port', id, existing.name);
+    // Its own contacts, service ports and links go with it.
+    await deleteOwnedChildren(db, 'port', id, auth.userId);
 
     await db.port.update({
       where: { id },

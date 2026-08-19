@@ -1,8 +1,8 @@
 # CR-002 — A Delete action on master-data screens
 
 **Raised by:** the development team
-**Status:** built as a reference implementation on Sea-Air Port; **awaiting your
-confirmation before the remaining fifteen screens follow**
+**Status:** built across every Settings and CRM master screen; **awaiting your
+confirmation, and reversible if you would rather not have it**
 **Affects:** CLAUDE.md §8 (Screen patterns), §7 (RBAC), §4 rule 3
 
 ---
@@ -47,6 +47,13 @@ the change, and it is checked by the server, not merely hidden in the browser.
 The check reads the database's own catalogue of relationships, so a table added
 next year is covered without anyone remembering to update a list.
 
+**A record's own parts do not count as usage.** An agent's expert areas, a
+carrier's service ports, a customer's contact people — those belong to the
+record and are removed with it. Only use from *outside* blocks: an inquiry that
+names the customer, a rate that names the port. Without this distinction the
+feature would be useless in practice, because the rows a typo produces are
+exactly the ones somebody fills in a contact for before noticing the spelling.
+
 When it is refused, the message says what is in the way:
 
 > Aarhus is used by 1 agent port coverage, 1 carrier port pair, 1 carrier
@@ -87,20 +94,26 @@ corrected record would fail against a row nobody can see.
 
 ## 5. Status
 
-Built and tested end to end on **Settings → Sea-Air Port**, which §13 makes the
-template for every other master screen:
+Built and tested across every Settings and CRM master screen: Sea-Air Port,
+Cost Head, Currency, Carrier, Vessel, Vendor, Commodity Category, Customer,
+Agent, Employee and User.
 
-- the permission, and the server-side guard on the route
+- the permission, and the server-side guard on every route
 - the reference check, driven from the database catalogue
-- refusal on shared rows
+- own-parts removed with the record; outside use blocks
+- refusal on shared rows, and on deleting your own user account
 - the row action, the confirmation, and the message when it is refused
 - automated tests, including that another workspace's row cannot be reached and
   that the delete really is soft
 
-**The remaining fifteen screens are deliberately not done yet.** They are
-mechanical repeats of the same pattern, and doing them before you have agreed
-the change would mean fifteen screens to unpick if you would rather we did not
-have it at all.
+Against the current demonstration data this makes `helll`, `omi`,
+`Sadi Mohammad Omi` and the duplicate agent removable, while `Aarhus`,
+`Chittagong` and any customer with an inquiry stay put and say why.
+
+The five shared-lookup screens — Goods Type, Container Type, Rate Tier, Terms
+of Shipment, Inquiry Source — are not wired, because every row on them is a
+shared row today and Delete would never appear. They follow the same pattern
+the moment a workspace adds its own value.
 
 ## 6. What we need from you
 

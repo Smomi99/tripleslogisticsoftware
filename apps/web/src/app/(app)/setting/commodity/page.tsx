@@ -37,6 +37,10 @@ export default function CommodityPage() {
   const [isFormOpen, setFormOpen] = useState(false);
   const [toToggle, setToToggle] = useState<IndustrySectorDto | null>(null);
   const [isToggling, setToggling] = useState(false);
+  // CR-002. Deactivate retires a record that was real; Delete removes one
+  // that never was. The server refuses if anything references it.
+  const [toDelete, setToDelete] = useState<IndustrySectorDto | null>(null);
+  const [isDeleting, setDeleting] = useState(false);
 
   const columns: DataTableColumn<IndustrySectorDto>[] = useMemo(
     () => [
@@ -85,6 +89,23 @@ export default function CommodityPage() {
       toast.error(error instanceof ApiError ? error.message : 'Could not change the status.');
     } finally {
       setToggling(false);
+    }
+  }
+
+  async function confirmDelete(): Promise<void> {
+    if (toDelete === null) return;
+    setDeleting(true);
+    try {
+      await authorizedRequest(`/api/tenant/setting/commodity-categories/${toDelete.id}`, { method: 'DELETE' });
+      toast.success('Commodity category deleted');
+      setToDelete(null);
+      await list.reload();
+    } catch (error) {
+      // The refusal names what still uses it, which is the point.
+      toast.error(error instanceof ApiError ? error.message : 'Could not delete it.');
+      setToDelete(null);
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -163,6 +184,11 @@ export default function CommodityPage() {
                 {row.isActive ? 'Deactivate' : 'Activate'}
               </Button>
             )}
+            {can('SETTING.COMMODITY_CATEGORY.DELETE') && (
+              <Button variant="destructive" size="inline" onClick={() => setToDelete(row)}>
+                Delete
+              </Button>
+            )}
           </>
         )}
         empty={
@@ -232,6 +258,23 @@ export default function CommodityPage() {
         destructive={toToggle?.isActive === true}
         isPending={isToggling}
         onConfirm={() => void confirmToggle()}
+      />
+
+      <ConfirmDialog
+        open={toDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setToDelete(null);
+        }}
+        title="Delete this commodity category?"
+        message={
+          toDelete === null
+            ? ''
+            : `${toDelete.name} will be removed from the list for good. This is for a commodity category added by mistake — if it has ever been used, deactivate it instead and nothing here will change.`
+        }
+        confirmLabel="Delete"
+        destructive
+        isPending={isDeleting}
+        onConfirm={() => void confirmDelete()}
       />
     </div>
   );

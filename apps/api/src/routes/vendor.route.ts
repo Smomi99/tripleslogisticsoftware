@@ -15,6 +15,7 @@ import {
 
 import { CODE_RETRY_LIMIT, isUniqueViolation, nextCode } from '../lib/codes';
 import { HttpError } from '../lib/http-error';
+import { assertRowDeletable, deleteOwnedChildren } from '../lib/references';
 import { parseId, parseRefId } from '../lib/request';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
 import { authenticate } from '../middleware/authenticate';
@@ -440,3 +441,40 @@ vendorRouter.post(
     res.json(payload);
   },
 );
+
+/**
+ * DELETE /api/tenant/.../:id — CR-002.
+ *
+ * A soft delete: it sets `deleted_at`, so §4 rule 3 holds and every foreign key
+ * survives. Refused when anything still references the row, and refused on a
+ * shared system row — so it only ever removes a vendor entered by mistake.
+ */
+vendorRouter.delete('/:id', requirePermission(`${FEATURE}.DELETE`), async (req, res) => {
+  const auth = req.auth!;
+  const id = parseId(req.params.id, 'vendor');
+
+  await withTenant(auth.tenantId, async (db) => {
+    const existing = await db.vendor.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true, tenantId: true, name: true },
+    });
+    await assertRowDeletable(
+      db,
+      'vendor',
+      id,
+      existing === null ? null : { tenantId: existing.tenantId, name: existing.name },
+      'Vendor not found.',
+    );
+
+    // Its own contacts, service ports and links go with it.
+    await deleteOwnedChildren(db, 'vendor', id, auth.userId);
+
+    await db.vendor.update({
+      where: { id },
+      data: { deletedAt: new Date(), isActive: false, updatedBy: auth.userId },
+    });
+  });
+
+  const payload: ApiSuccess<{ deleted: true }> = { success: true, data: { deleted: true } };
+  res.json(payload);
+});

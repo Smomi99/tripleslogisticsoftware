@@ -14,6 +14,7 @@ import {
 import { CODE_RETRY_LIMIT, codeSortSql, isUniqueViolation, nextCode } from '../lib/codes';
 import { Prisma } from '../generated/prisma/client';
 import { HttpError } from '../lib/http-error';
+import { assertRowDeletable, deleteOwnedChildren } from '../lib/references';
 import { parseId } from '../lib/request';
 import { withTenant } from '../lib/tenant-client';
 import { authenticate } from '../middleware/authenticate';
@@ -381,3 +382,40 @@ currencyRouter.post(
     res.json(payload);
   },
 );
+
+/**
+ * DELETE /api/tenant/.../:id — CR-002.
+ *
+ * A soft delete: it sets `deleted_at`, so §4 rule 3 holds and every foreign key
+ * survives. Refused when anything still references the row, and refused on a
+ * shared system row — so it only ever removes a currency entered by mistake.
+ */
+currencyRouter.delete('/:id', requirePermission(`${FEATURE}.DELETE`), async (req, res) => {
+  const auth = req.auth!;
+  const id = parseId(req.params.id, 'currency');
+
+  await withTenant(auth.tenantId, async (db) => {
+    const existing = await db.currency.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true, tenantId: true, currency: true },
+    });
+    await assertRowDeletable(
+      db,
+      'currency',
+      id,
+      existing === null ? null : { tenantId: existing.tenantId, name: existing.currency },
+      'Currency not found.',
+    );
+
+    // Its own contacts, service ports and links go with it.
+    await deleteOwnedChildren(db, 'currency', id, auth.userId);
+
+    await db.currency.update({
+      where: { id },
+      data: { deletedAt: new Date(), isActive: false, updatedBy: auth.userId },
+    });
+  });
+
+  const payload: ApiSuccess<{ deleted: true }> = { success: true, data: { deleted: true } };
+  res.json(payload);
+});
