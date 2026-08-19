@@ -128,9 +128,36 @@ describe('the registry', () => {
     expect(isPermissionKey('NOPE.NOPE.VIEW')).toBe(false);
   });
 
-  it('grants DELETE nowhere — §4 rule 3 forbids hard deletes', () => {
+  /**
+   * CR-002 gave DELETE a job, and the boundary is the whole point of it.
+   * Master data — a carrier typed twice — can be removed; a quotation, a
+   * booking or an invoice never can, because it is business history retired by
+   * its own status. This asserts the boundary rather than the count, so adding
+   * a Settings screen does not break it but adding DELETE to Accounts does.
+   *
+   * It is still not a hard delete anywhere: the routes set `deleted_at`, and
+   * §4 rule 3 holds.
+   */
+  it('grants DELETE to master data only, never to transactional records', () => {
     const withDelete = FEATURES.filter((f) => f.actions.includes('DELETE'));
-    expect(withDelete.map((f) => f.feature)).toEqual([]);
+
+    expect(withDelete.length).toBeGreaterThan(0);
+    const wrongModule = withDelete.filter(
+      (f) => f.module !== 'SETTING' && f.module !== 'CRM',
+    );
+    expect(wrongModule.map((f) => f.feature)).toEqual([]);
+  });
+
+  it('keeps DELETE off every transactional module', () => {
+    const transactional = FEATURES.filter((f) =>
+      ['PURCHASE', 'SALES', 'CUSTOMER_SERVICE', 'OPERATION', 'DOCUMENTATION', 'ACCOUNTS'].includes(
+        f.module,
+      ),
+    );
+    expect(transactional.length).toBeGreaterThan(20);
+    expect(transactional.filter((f) => f.actions.includes('DELETE')).map((f) => f.feature)).toEqual(
+      [],
+    );
   });
 
   it('gives every screen feature a VIEW, since the sidebar keys off it', () => {

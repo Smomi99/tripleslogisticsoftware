@@ -50,6 +50,10 @@ export default function PortListPage() {
   const [isFormOpen, setFormOpen] = useState(false);
   const [toToggle, setToToggle] = useState<PortDto | null>(null);
   const [isToggling, setToggling] = useState(false);
+  // CR-002. Separate from the toggle: Deactivate retires a port that was real,
+  // Delete removes one that never was.
+  const [toDelete, setToDelete] = useState<PortDto | null>(null);
+  const [isDeleting, setDeleting] = useState(false);
 
   // §8: search is server-side and debounced.
   useEffect(() => {
@@ -157,6 +161,24 @@ export default function PortListPage() {
     }
   }
 
+  async function confirmDelete(): Promise<void> {
+    if (toDelete === null) return;
+    setDeleting(true);
+    try {
+      await authorizedRequest(`/api/tenant/setting/ports/${toDelete.id}`, { method: 'DELETE' });
+      toast.success('Port deleted');
+      setToDelete(null);
+      await load();
+    } catch (error) {
+      // A refusal here names what is still using the port, which is the whole
+      // point — the operator needs to know to deactivate it instead.
+      toast.error(error instanceof ApiError ? error.message : 'Could not delete the port.');
+      setToDelete(null);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
@@ -247,6 +269,13 @@ export default function PortListPage() {
                 {row.isActive ? 'Deactivate' : 'Activate'}
               </Button>
             )}
+            {/* A shared port belongs to every workspace, so it is never this
+                workspace's to delete (§7A rule 7) — the API refuses too. */}
+            {can('SETTING.SEA_AIR_PORT.DELETE') && !row.isSystem && (
+              <Button variant="destructive" size="inline" onClick={() => setToDelete(row)}>
+                Delete
+              </Button>
+            )}
           </>
         )}
         empty={
@@ -327,6 +356,23 @@ export default function PortListPage() {
         destructive={toToggle?.isActive === true}
         isPending={isToggling}
         onConfirm={() => void confirmToggle()}
+      />
+
+      <ConfirmDialog
+        open={toDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setToDelete(null);
+        }}
+        title="Delete this port?"
+        message={
+          toDelete === null
+            ? ''
+            : `${toDelete.name} will be removed from the list for good. This is for a port added by mistake — if it has ever been used, deactivate it instead and nothing here will change.`
+        }
+        confirmLabel="Delete"
+        destructive
+        isPending={isDeleting}
+        onConfirm={() => void confirmDelete()}
       />
     </div>
   );

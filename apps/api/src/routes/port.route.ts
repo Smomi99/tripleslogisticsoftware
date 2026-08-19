@@ -11,6 +11,7 @@ import {
 
 import { CODE_RETRY_LIMIT, codeSortSql, isUniqueViolation, nextCode } from '../lib/codes';
 import { HttpError } from '../lib/http-error';
+import { assertDeletable } from '../lib/references';
 import { Prisma } from '../generated/prisma/client';
 import { withTenant } from '../lib/tenant-client';
 import { authenticate } from '../middleware/authenticate';
@@ -337,6 +338,48 @@ portRouter.post(
     res.json(payload);
   },
 );
+
+/**
+ * DELETE /api/tenant/setting/ports/:id
+ *
+ * CR-002. Not a hard delete: this sets `deleted_at`, so §4 rule 3 holds and
+ * every foreign key survives. It exists for the one case Active/Inactive
+ * cannot express — a row that was never real, like a port called "omi".
+ *
+ * Refused when anything references the port, and refused outright on a shared
+ * system row, which §7A rule 7 lets a workspace deactivate for itself but
+ * never edit or delete.
+ */
+portRouter.delete('/:id', requirePermission(`${FEATURE}.DELETE`), async (req, res) => {
+  const auth = req.auth!;
+  const id = parseId(req.params.id);
+
+  await withTenant(auth.tenantId, async (db) => {
+    const existing = await db.port.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true, tenantId: true, name: true },
+    });
+    if (existing === null) throw HttpError.notFound('Port not found.');
+
+    if (existing.tenantId === null) {
+      throw new HttpError(
+        409,
+        'SYSTEM_ROW',
+        `${existing.name} is a shared port and belongs to every workspace. Deactivate it instead.`,
+      );
+    }
+
+    await assertDeletable(db, 'port', id, existing.name);
+
+    await db.port.update({
+      where: { id },
+      data: { deletedAt: new Date(), isActive: false, updatedBy: auth.userId },
+    });
+  });
+
+  const payload: ApiSuccess<{ deleted: true }> = { success: true, data: { deleted: true } };
+  res.json(payload);
+});
 
 /**
  * Express 5 types a route param as string | string[] — a repeated `:id` yields

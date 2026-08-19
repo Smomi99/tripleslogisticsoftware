@@ -347,7 +347,13 @@ model Port {
   updatedByUser User? @relation("PortUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   @@unique([tenantId, code])
-  @@unique([tenantId, portCode])
+  /// The natural key (tenant_id, port_code) is UNIQUE only over live rows, and
+  /// so lives in the migration as a partial index rather than here — Prisma
+  /// cannot express a WHERE clause on a constraint. Without the partial form a
+  /// port deleted by mistake keeps its port_code reserved forever, and adding
+  /// the corrected one fails against a row nobody can see (CR-002).
+  /// The business `code` above stays unique across deleted rows too: a code
+  /// that once meant something must never be handed to a different port.
   @@index([tenantId])
   @@index([country])
   @@index([type])

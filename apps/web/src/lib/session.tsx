@@ -32,7 +32,7 @@ interface SessionValue {
   signIn: (username: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   /** For data calls — refreshes first if the token has expired. */
-  authorizedRequest: <T>(path: string, init?: { method?: 'GET' | 'POST' | 'PATCH' | 'PUT'; body?: unknown }) => Promise<T>;
+  authorizedRequest: <T>(path: string, init?: { method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'; body?: unknown }) => Promise<T>;
   /** Same, but keeps the §9 `meta` a list screen needs for its pager. */
   authorizedList: <T>(path: string) => Promise<ApiResult<T>>;
   /**
@@ -138,7 +138,7 @@ export function SessionProvider({
   const authorizedRequest = useCallback(
     async <T,>(
       path: string,
-      init?: { method?: 'GET' | 'POST' | 'PATCH' | 'PUT'; body?: unknown },
+      init?: { method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE'; body?: unknown },
     ): Promise<T> =>
       withRefresh((token) =>
         apiRequest<T>(path, {

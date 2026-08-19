@@ -50,15 +50,29 @@ export const MODULES = [
 export type Module = (typeof MODULES)[number];
 
 /**
- * The standard master-data set. §8 fixes the Action column at Edit plus an
- * Active/Inactive toggle, so TOGGLE_STATUS stands in for removal.
- *
- * DELETE is defined in ACTIONS because §7 lists it, but it is deliberately
- * assigned to no feature: §4 rule 3 forbids hard deletes, and the ff_app role
- * holds no DELETE privilege on any table. Granting it would promise something
- * the database refuses to do.
+ * The standard set. §8 fixes the Action column at Edit plus an Active/Inactive
+ * toggle, so TOGGLE_STATUS stands in for removal on everything transactional:
+ * a quotation, a booking or an invoice is business history and is retired by
+ * its own status, never removed.
  */
 const MASTER: readonly Action[] = ['VIEW', 'CREATE', 'EDIT', 'TOGGLE_STATUS', 'EXPORT'];
+
+/**
+ * Master data proper — Settings and CRM — which additionally carries DELETE.
+ *
+ * §4 rule 3 forbids hard deletes and that is not in question: DELETE here sets
+ * `deleted_at`, so every foreign key survives and the ff_app role needs only
+ * the UPDATE privilege it already has. What it buys is the one case
+ * TOGGLE_STATUS cannot express — a row that was never real. A carrier typed
+ * twice, a port called "omi". Deactivating those leaves them in the Inactive
+ * filter forever and still competing for attention in a picker.
+ *
+ * The API refuses regardless of this permission when anything references the
+ * row (lib/references.ts), so holding DELETE is necessary and not sufficient.
+ * See docs/CR-002-delete-action.md — this deviates from §8 and is with the
+ * client for confirmation.
+ */
+const MASTER_DELETABLE: readonly Action[] = [...MASTER, 'DELETE'];
 const MASTER_APPROVE: readonly Action[] = [...MASTER, 'APPROVE'];
 /** Statements and reports: nothing to create or toggle. */
 const READ_ONLY: readonly Action[] = ['VIEW', 'EXPORT'];
@@ -196,10 +210,10 @@ export const FEATURES: readonly FeatureDefinition[] = [
   // Workstation and Warehouse are on the §3 menu but have no wireframe (§11).
   // No permission is defined for a screen that cannot be built — an unusable
   // checkbox in the superadmin matrix is worse than an absent one.
-  { module: 'SETTING', feature: 'SETTING.SEA_AIR_PORT', label: 'Sea-Air Port', actions: MASTER },
-  { module: 'SETTING', feature: 'SETTING.COST_HEAD', label: 'Cost Head', actions: MASTER },
-  { module: 'SETTING', feature: 'SETTING.CURRENCY', label: 'Currency', actions: MASTER },
-  { module: 'SETTING', feature: 'SETTING.CARRIER', label: 'Carrier', actions: MASTER },
+  { module: 'SETTING', feature: 'SETTING.SEA_AIR_PORT', label: 'Sea-Air Port', actions: MASTER_DELETABLE },
+  { module: 'SETTING', feature: 'SETTING.COST_HEAD', label: 'Cost Head', actions: MASTER_DELETABLE },
+  { module: 'SETTING', feature: 'SETTING.CURRENCY', label: 'Currency', actions: MASTER_DELETABLE },
+  { module: 'SETTING', feature: 'SETTING.CARRIER', label: 'Carrier', actions: MASTER_DELETABLE },
   // CR-001 §6. Carrier PIC and Service Port are gated by SETTING.CARRIER, but
   // the client asked for Port Pair to be grantable on its own — lane rankings
   // are the pricing team's, and not everyone who maintains carrier contacts
@@ -211,25 +225,25 @@ export const FEATURES: readonly FeatureDefinition[] = [
     actions: ['VIEW', 'CREATE', 'EDIT', 'TOGGLE_STATUS'],
     childScreen: true,
   },
-  { module: 'SETTING', feature: 'SETTING.VESSEL', label: 'Vessel', actions: MASTER },
-  { module: 'SETTING', feature: 'SETTING.VENDOR', label: 'Vendor', actions: MASTER },
-  { module: 'SETTING', feature: 'SETTING.COMMODITY_CATEGORY', label: 'Commodity Category', actions: MASTER },
+  { module: 'SETTING', feature: 'SETTING.VESSEL', label: 'Vessel', actions: MASTER_DELETABLE },
+  { module: 'SETTING', feature: 'SETTING.VENDOR', label: 'Vendor', actions: MASTER_DELETABLE },
+  { module: 'SETTING', feature: 'SETTING.COMMODITY_CATEGORY', label: 'Commodity Category', actions: MASTER_DELETABLE },
 
   // Purchase & Sales lookups (docs/MODULE_PURCHASE_SALES.md §3.1, §6).
   // SETTING.INQUIRY_SOURCE is not in the spec's §6 list, but inquiry_source is
   // a §3.1 lookup with a Settings screen — without a permission its screen
   // could not be gated at all, so it is added on the same shape as the rest.
-  { module: 'SETTING', feature: 'SETTING.GOODS_TYPE', label: 'Goods Type', actions: MASTER },
-  { module: 'SETTING', feature: 'SETTING.CONTAINER_TYPE', label: 'Container Type', actions: MASTER },
-  { module: 'SETTING', feature: 'SETTING.RATE_TIER', label: 'Rate Tier', actions: MASTER },
-  { module: 'SETTING', feature: 'SETTING.TOS', label: 'Terms of Shipment', actions: MASTER },
-  { module: 'SETTING', feature: 'SETTING.INQUIRY_SOURCE', label: 'Inquiry Source', actions: MASTER },
+  { module: 'SETTING', feature: 'SETTING.GOODS_TYPE', label: 'Goods Type', actions: MASTER_DELETABLE },
+  { module: 'SETTING', feature: 'SETTING.CONTAINER_TYPE', label: 'Container Type', actions: MASTER_DELETABLE },
+  { module: 'SETTING', feature: 'SETTING.RATE_TIER', label: 'Rate Tier', actions: MASTER_DELETABLE },
+  { module: 'SETTING', feature: 'SETTING.TOS', label: 'Terms of Shipment', actions: MASTER_DELETABLE },
+  { module: 'SETTING', feature: 'SETTING.INQUIRY_SOURCE', label: 'Inquiry Source', actions: MASTER_DELETABLE },
 
   // -- 8. CRM ----------------------------------------------------------------
-  { module: 'CRM', feature: 'CRM.CUSTOMER', label: 'Customer', actions: MASTER },
-  { module: 'CRM', feature: 'CRM.AGENT', label: 'Agent', actions: MASTER },
-  { module: 'CRM', feature: 'CRM.EMPLOYEE', label: 'Employee', actions: MASTER },
-  { module: 'CRM', feature: 'CRM.USER', label: 'User', actions: MASTER },
+  { module: 'CRM', feature: 'CRM.CUSTOMER', label: 'Customer', actions: MASTER_DELETABLE },
+  { module: 'CRM', feature: 'CRM.AGENT', label: 'Agent', actions: MASTER_DELETABLE },
+  { module: 'CRM', feature: 'CRM.EMPLOYEE', label: 'Employee', actions: MASTER_DELETABLE },
+  { module: 'CRM', feature: 'CRM.USER', label: 'User', actions: MASTER_DELETABLE },
 
   // -- Admin (§7 superadmin screens; not a §3 menu module) --------------------
   { module: 'ADMIN', feature: 'ADMIN.ROLE', label: 'Roles', actions: MASTER },

@@ -32,7 +32,9 @@ export class ApiError extends Error {
 }
 
 export interface RequestOptions {
-  method?: 'GET' | 'POST' | 'PATCH' | 'PUT';
+  // DELETE reaches the CR-002 soft-delete routes. It is still not a hard
+  // delete anywhere — the verb names the user's intent, not the SQL.
+  method?: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
   body?: unknown;
   accessToken?: string | undefined;
   tenantSlug: string;
