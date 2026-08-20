@@ -23,6 +23,7 @@ import {
 import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
 import { Prisma } from '../generated/prisma/client';
 import { HttpError } from '../lib/http-error';
+import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import { parseId, parseRefId } from '../lib/request';
 import {
   assertEditable,
@@ -395,13 +396,15 @@ rateLookupRouter.get(
   requirePermission(`${TIER_FEATURE}.VIEW`),
   async (req, res) => {
     const auth = req.auth!;
-    const rows = await withTenant(auth.tenantId, (db) =>
-      db.containerType.findMany({
-        where: { deletedAt: null, isActive: true },
+    const rows = await withTenant(auth.tenantId, async (db) => {
+      // See carrier.route.ts: a deactivated shared row is an override, not a flag.
+      const inactive = await inactiveMasters(db);
+      return db.containerType.findMany({
+        where: { ...excludeInactive(inactive, 'container_type'), deletedAt: null, isActive: true },
         select: { id: true, name: true, code: true },
         orderBy: { sortOrder: 'asc' },
-      }),
-    );
+      });
+    });
     const payload: ApiSuccess<LookupOption[]> = {
       success: true,
       data: rows.map((r) => ({ id: r.id.toString(), name: `${r.code} — ${r.name}` })),

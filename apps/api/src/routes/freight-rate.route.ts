@@ -20,6 +20,7 @@ import { type RequestHandler, Router } from 'express';
 import { CODE_RETRY_LIMIT, isUniqueViolation, nextCode } from '../lib/codes';
 import { Prisma } from '../generated/prisma/client';
 import { HttpError } from '../lib/http-error';
+import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import { buildRatePdf, buildRateWorkbook, exportFilename } from '../lib/rate-export';
 import { canManageProfit, canSeeBuyPrice, visibleRate, visibleRates } from '../lib/rate-visibility';
 import { parseId, parseRefId } from '../lib/request';
@@ -340,8 +341,15 @@ async function assertReferences(
   // §4 rule 9: Air uses airports and airlines; sea uses seaports. "Enforce
   // server-side — a filtered dropdown is a convenience, not a constraint."
   const wantedPortType = input.mode === 'AIR' ? 'AIRPORT' : 'SEAPORT';
+  // A shared port switched off by this workspace is not "available" either,
+  // and that is stored as an override rather than on the row (§7A rule 7).
+  const inactive = await inactiveMasters(db);
   const ports = await db.port.findMany({
-    where: { id: { in: [polId, podId] }, deletedAt: null, isActive: true },
+    where: {
+      AND: [{ id: { in: [polId, podId] } }, excludeInactive(inactive, 'port')],
+      deletedAt: null,
+      isActive: true,
+    },
     select: { id: true, type: true },
   });
   if (ports.length !== 2) throw HttpError.badRequest('Choose two available ports.');
@@ -413,8 +421,16 @@ async function assertReferences(
   // a Sea FCL rate against an air weight break is meaningless.
   const tierIds = new Map<string, bigint>();
   for (const line of input.lines) tierIds.set(line.tierId, BigInt(line.tierId));
+  const inactiveForTiers = await inactiveMasters(db);
   const tiers = await db.rateTier.findMany({
-    where: { id: { in: [...tierIds.values()] }, deletedAt: null, isActive: true },
+    where: {
+      AND: [
+        { id: { in: [...tierIds.values()] } },
+        excludeInactive(inactiveForTiers, 'rate_tier'),
+      ],
+      deletedAt: null,
+      isActive: true,
+    },
     select: { id: true, mode: true },
   });
   if (tiers.length !== tierIds.size) {
@@ -1215,10 +1231,14 @@ freightRateRouter.get('/rate-options', requireModePermission('VIEW'), async (req
   const mode = req.query['mode'] as RateMode;
 
   const options = await withTenant(auth.tenantId, async (db) => {
+    // Shared rows this workspace switched off must not be offered (§7A rule 7:
+    // deactivating one writes an override, never the row's own is_active).
+    const inactive = await inactiveMasters(db);
     const [ports, carriers, goodsTypes, currencies, vendors, agents, tiers, costHeads] =
       await Promise.all([
         db.port.findMany({
           where: {
+            ...excludeInactive(inactive, 'port'),
             deletedAt: null,
             isActive: true,
             type: mode === 'AIR' ? 'AIRPORT' : 'SEAPORT',
@@ -1227,17 +1247,17 @@ freightRateRouter.get('/rate-options', requireModePermission('VIEW'), async (req
           orderBy: { name: 'asc' },
         }),
         db.carrier.findMany({
-          where: { deletedAt: null, isActive: true },
+          where: { ...excludeInactive(inactive, 'carrier'), deletedAt: null, isActive: true },
           select: { id: true, name: true, type: { select: { name: true } } },
           orderBy: { name: 'asc' },
         }),
         db.goodsType.findMany({
-          where: { deletedAt: null, isActive: true },
+          where: { ...excludeInactive(inactive, 'goods_type'), deletedAt: null, isActive: true },
           select: { id: true, name: true },
           orderBy: { name: 'asc' },
         }),
         db.currency.findMany({
-          where: { deletedAt: null, isActive: true },
+          where: { ...excludeInactive(inactive, 'currency'), deletedAt: null, isActive: true },
           select: { id: true, code: true, currency: true },
           orderBy: { code: 'asc' },
         }),
@@ -1252,7 +1272,7 @@ freightRateRouter.get('/rate-options', requireModePermission('VIEW'), async (req
           orderBy: { name: 'asc' },
         }),
         db.rateTier.findMany({
-          where: { deletedAt: null, isActive: true, mode },
+          where: { ...excludeInactive(inactive, 'rate_tier'), deletedAt: null, isActive: true, mode },
           select: { id: true, code: true, label: true },
           orderBy: { sortOrder: 'asc' },
         }),

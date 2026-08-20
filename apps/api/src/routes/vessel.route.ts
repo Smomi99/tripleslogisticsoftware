@@ -12,6 +12,7 @@ import {
 
 import { CODE_RETRY_LIMIT, isUniqueViolation, nextCode } from '../lib/codes';
 import { HttpError } from '../lib/http-error';
+import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import { assertRowDeletable, deleteOwnedChildren } from '../lib/references';
 import { parseId, parseRefId } from '../lib/request';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
@@ -114,13 +115,15 @@ vesselRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (req, res) => 
 /** GET /api/tenant/setting/vessels/carriers — options for the carrier dropdown. */
 vesselRouter.get('/carriers', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
   const auth = req.auth!;
-  const carriers = await withTenant(auth.tenantId, (db) =>
-    db.carrier.findMany({
-      where: { deletedAt: null, isActive: true },
+  const carriers = await withTenant(auth.tenantId, async (db) => {
+    // See carrier.route.ts: a deactivated shared row is an override, not a flag.
+    const inactive = await inactiveMasters(db);
+    return db.carrier.findMany({
+      where: { ...excludeInactive(inactive, 'carrier'), deletedAt: null, isActive: true },
       select: { id: true, name: true },
       orderBy: { name: 'asc' },
-    }),
-  );
+    });
+  });
 
   const payload: ApiSuccess<LookupOption[]> = {
     success: true,

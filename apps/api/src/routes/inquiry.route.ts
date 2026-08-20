@@ -22,6 +22,7 @@ import { Router } from 'express';
 import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
 import { Prisma } from '../generated/prisma/client';
 import { HttpError } from '../lib/http-error';
+import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import { nextInquiryNo, seriesYearOf } from '../lib/inquiry-no';
 import { canSeeBuyPrice, visibleLine } from '../lib/rate-visibility';
 import { parseId, parseRefId } from '../lib/request';
@@ -185,10 +186,13 @@ inquiryRouter.get('/inquiry-options', requirePermission(`${FEATURE}.VIEW`), asyn
   const auth = req.auth!;
 
   const data = await withTenant(auth.tenantId, async (db) => {
+    // Shared rows this workspace switched off are recorded as overrides, not on
+    // the rows themselves (§7A rule 7), so `isActive` alone still offers them.
+    const inactive = await inactiveMasters(db);
     const [sources, customers, ports, commodities, toss, currencies, salesmen, containers, me] =
       await Promise.all([
         db.inquirySource.findMany({
-          where: { deletedAt: null, isActive: true },
+          where: { ...excludeInactive(inactive, 'inquiry_source'), deletedAt: null, isActive: true },
           select: { id: true, name: true },
           orderBy: { name: 'asc' },
         }),
@@ -198,7 +202,7 @@ inquiryRouter.get('/inquiry-options', requirePermission(`${FEATURE}.VIEW`), asyn
           orderBy: { name: 'asc' },
         }),
         db.port.findMany({
-          where: { deletedAt: null, isActive: true },
+          where: { ...excludeInactive(inactive, 'port'), deletedAt: null, isActive: true },
           select: { id: true, name: true, portCode: true, type: true },
           orderBy: { name: 'asc' },
         }),
@@ -208,12 +212,12 @@ inquiryRouter.get('/inquiry-options', requirePermission(`${FEATURE}.VIEW`), asyn
           orderBy: { name: 'asc' },
         }),
         db.tos.findMany({
-          where: { deletedAt: null, isActive: true },
+          where: { ...excludeInactive(inactive, 'tos'), deletedAt: null, isActive: true },
           select: { id: true, name: true },
           orderBy: { code: 'asc' },
         }),
         db.currency.findMany({
-          where: { deletedAt: null, isActive: true },
+          where: { ...excludeInactive(inactive, 'currency'), deletedAt: null, isActive: true },
           select: { id: true, currency: true },
           orderBy: { code: 'asc' },
         }),
@@ -223,7 +227,7 @@ inquiryRouter.get('/inquiry-options', requirePermission(`${FEATURE}.VIEW`), asyn
           orderBy: { name: 'asc' },
         }),
         db.containerType.findMany({
-          where: { deletedAt: null, isActive: true },
+          where: { ...excludeInactive(inactive, 'container_type'), deletedAt: null, isActive: true },
           select: { id: true, code: true },
           orderBy: { sortOrder: 'asc' },
         }),
@@ -291,8 +295,13 @@ async function assertReferences(
   // An air inquiry runs between airports, a sea one between seaports — the
   // same reasoning as §4 rule 9 for rates, enforced server-side.
   const wanted = input.shipmentType === 'AIR' ? 'AIRPORT' : 'SEAPORT';
+  const inactivePorts = await inactiveMasters(db);
   const ports = await db.port.findMany({
-    where: { id: { in: [polId, podId] }, deletedAt: null, isActive: true },
+    where: {
+      AND: [{ id: { in: [polId, podId] } }, excludeInactive(inactivePorts, 'port')],
+      deletedAt: null,
+      isActive: true,
+    },
     select: { id: true, type: true },
   });
   if (ports.length !== 2) throw HttpError.badRequest('Choose two available ports.');

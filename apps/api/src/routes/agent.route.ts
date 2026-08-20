@@ -16,6 +16,7 @@ import {
 
 import { CODE_RETRY_LIMIT, isUniqueViolation, nextCode } from '../lib/codes';
 import { HttpError } from '../lib/http-error';
+import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import { assertRowDeletable, deleteOwnedChildren } from '../lib/references';
 import { parseId } from '../lib/request';
 import { displayNameFromKey, openFile, putFile, removeFile } from '../lib/storage';
@@ -208,19 +209,22 @@ agentRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
 agentRouter.get('/options', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
   const auth = req.auth!;
   const options = await withTenant(auth.tenantId, async (db) => {
+    // §7A rule 7 again: a shared row switched off here is an override, not a
+    // flag on the row, so `isActive` on its own would still offer it.
+    const inactive = await inactiveMasters(db);
     const [expertAreas, ports, networks] = await Promise.all([
       db.expertArea.findMany({
-        where: { deletedAt: null, isActive: true },
+        where: { ...excludeInactive(inactive, 'expert_area'), deletedAt: null, isActive: true },
         select: { id: true, name: true },
         orderBy: { code: 'asc' },
       }),
       db.port.findMany({
-        where: { deletedAt: null, isActive: true },
+        where: { ...excludeInactive(inactive, 'port'), deletedAt: null, isActive: true },
         select: { id: true, name: true, portCode: true },
         orderBy: { name: 'asc' },
       }),
       db.network.findMany({
-        where: { deletedAt: null, isActive: true },
+        where: { ...excludeInactive(inactive, 'network'), deletedAt: null, isActive: true },
         select: { id: true, name: true },
         orderBy: { code: 'asc' },
       }),
@@ -277,17 +281,41 @@ agentRouter.post('/', requirePermission(`${FEATURE}.CREATE`), async (req, res) =
   const created = await withTenant(auth.tenantId, async (db) => {
     const expertAreaIds = await resolveIds(
       input.expertAreaIds,
-      (ids) => db.expertArea.findMany({ where: { id: { in: ids }, isActive: true, deletedAt: null }, select: { id: true } }),
+      async (ids) =>
+        db.expertArea.findMany({
+          where: {
+            AND: [{ id: { in: ids } }, excludeInactive(await inactiveMasters(db), 'expert_area')],
+            isActive: true,
+            deletedAt: null,
+          },
+          select: { id: true },
+        }),
       'expert areas',
     );
     const portIds = await resolveIds(
       input.portCoverageIds,
-      (ids) => db.port.findMany({ where: { id: { in: ids }, isActive: true, deletedAt: null }, select: { id: true } }),
+      async (ids) =>
+        db.port.findMany({
+          where: {
+            AND: [{ id: { in: ids } }, excludeInactive(await inactiveMasters(db), 'port')],
+            isActive: true,
+            deletedAt: null,
+          },
+          select: { id: true },
+        }),
       'ports',
     );
     const networkIds = await resolveIds(
       input.networkIds,
-      (ids) => db.network.findMany({ where: { id: { in: ids }, isActive: true, deletedAt: null }, select: { id: true } }),
+      async (ids) =>
+        db.network.findMany({
+          where: {
+            AND: [{ id: { in: ids } }, excludeInactive(await inactiveMasters(db), 'network')],
+            isActive: true,
+            deletedAt: null,
+          },
+          select: { id: true },
+        }),
       'networks',
     );
 
@@ -348,17 +376,41 @@ agentRouter.patch('/:id', requirePermission(`${FEATURE}.EDIT`), async (req, res)
 
     const expertAreaIds = await resolveIds(
       input.expertAreaIds,
-      (ids) => db.expertArea.findMany({ where: { id: { in: ids }, isActive: true, deletedAt: null }, select: { id: true } }),
+      async (ids) =>
+        db.expertArea.findMany({
+          where: {
+            AND: [{ id: { in: ids } }, excludeInactive(await inactiveMasters(db), 'expert_area')],
+            isActive: true,
+            deletedAt: null,
+          },
+          select: { id: true },
+        }),
       'expert areas',
     );
     const portIds = await resolveIds(
       input.portCoverageIds,
-      (ids) => db.port.findMany({ where: { id: { in: ids }, isActive: true, deletedAt: null }, select: { id: true } }),
+      async (ids) =>
+        db.port.findMany({
+          where: {
+            AND: [{ id: { in: ids } }, excludeInactive(await inactiveMasters(db), 'port')],
+            isActive: true,
+            deletedAt: null,
+          },
+          select: { id: true },
+        }),
       'ports',
     );
     const networkIds = await resolveIds(
       input.networkIds,
-      (ids) => db.network.findMany({ where: { id: { in: ids }, isActive: true, deletedAt: null }, select: { id: true } }),
+      async (ids) =>
+        db.network.findMany({
+          where: {
+            AND: [{ id: { in: ids } }, excludeInactive(await inactiveMasters(db), 'network')],
+            isActive: true,
+            deletedAt: null,
+          },
+          select: { id: true },
+        }),
       'networks',
     );
 

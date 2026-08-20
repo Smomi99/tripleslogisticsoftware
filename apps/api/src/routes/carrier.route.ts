@@ -22,6 +22,7 @@ import {
 import { type CodeTable, CODE_RETRY_LIMIT, codeSortSql, isUniqueViolation, nextCode } from '../lib/codes';
 import { Prisma } from '../generated/prisma/client';
 import { HttpError } from '../lib/http-error';
+import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import { assertCustomisable, recordReplacement, repointReferences } from '../lib/customise';
 import { assertRowDeletable, deleteOwnedChildren } from '../lib/references';
 import { parseId, parseRefId } from '../lib/request';
@@ -186,13 +187,16 @@ carrierRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (req, res) =>
 /** Options for the carrier-type dropdown. */
 carrierRouter.get('/types', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
   const auth = req.auth!;
-  const types = await withTenant(auth.tenantId, (db) =>
-    db.carrierType.findMany({
-      where: { deletedAt: null, isActive: true },
+  const types = await withTenant(auth.tenantId, async (db) => {
+    // A shared row this workspace switched off lives in an override, not on the
+    // row itself (§7A rule 7) — `isActive` alone would still offer it.
+    const inactive = await inactiveMasters(db);
+    return db.carrierType.findMany({
+      where: { ...excludeInactive(inactive, 'carrier_type'), deletedAt: null, isActive: true },
       select: { id: true, name: true },
       orderBy: { code: 'asc' },
-    }),
-  );
+    });
+  });
   const payload: ApiSuccess<LookupOption[]> = {
     success: true,
     data: types.map((t) => ({ id: t.id.toString(), name: t.name })),

@@ -15,6 +15,7 @@ import {
 
 import { CODE_RETRY_LIMIT, isUniqueViolation, nextCode } from '../lib/codes';
 import { HttpError } from '../lib/http-error';
+import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import { assertRowDeletable, deleteOwnedChildren } from '../lib/references';
 import { parseId, parseRefId } from '../lib/request';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
@@ -135,13 +136,15 @@ vendorRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (req, res) => 
 
 vendorRouter.get('/types', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
   const auth = req.auth!;
-  const types = await withTenant(auth.tenantId, (db) =>
-    db.vendorType.findMany({
-      where: { deletedAt: null, isActive: true },
+  const types = await withTenant(auth.tenantId, async (db) => {
+    // See carrier.route.ts: a deactivated shared row is an override, not a flag.
+    const inactive = await inactiveMasters(db);
+    return db.vendorType.findMany({
+      where: { ...excludeInactive(inactive, 'vendor_type'), deletedAt: null, isActive: true },
       select: { id: true, name: true },
       orderBy: { code: 'asc' },
-    }),
-  );
+    });
+  });
   const payload: ApiSuccess<LookupOption[]> = {
     success: true,
     data: types.map((t) => ({ id: t.id.toString(), name: t.name })),
