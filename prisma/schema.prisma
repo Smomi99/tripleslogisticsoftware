@@ -221,6 +221,7 @@ model Tenant {
   containerTypes        ContainerType[]
   rateTiers             RateTier[]
   toss                  Tos[]
+  modes                 Mode[]
   inquirySources        InquirySource[]
   freightRates          FreightRate[]
   freightRateLines      FreightRateLine[]
@@ -1420,6 +1421,8 @@ model User {
   updatedRateTiers      RateTier[]      @relation("RateTierUpdatedBy")
   createdToss           Tos[]           @relation("TosCreatedBy")
   updatedToss           Tos[]           @relation("TosUpdatedBy")
+  createdModes          Mode[]          @relation("ModeCreatedBy")
+  updatedModes          Mode[]          @relation("ModeUpdatedBy")
   createdInquirySources InquirySource[] @relation("InquirySourceCreatedBy")
   updatedInquirySources InquirySource[] @relation("InquirySourceUpdatedBy")
 
@@ -1729,6 +1732,35 @@ model Tos {
   @@map("tos")
 }
 
+/// spec: mode — the client's "Modes" Settings list, seeded with the eleven
+/// Incoterms 2020 rules (EXW … DDP). Named Modes because that is what the
+/// client calls the screen; the values are Incoterms.
+///
+/// Distinct from `tos`, which records the CY/CFS/Door handover points, and from
+/// `shipment_type`, which is Sea or Air. An inquiry can carry all three.
+model Mode {
+  tenantId  BigInt?   @map("tenant_id")
+  id        BigInt    @id @default(autoincrement())
+  code      String    @db.VarChar(32)
+  name      String    @db.VarChar(200)
+  sortOrder Int       @default(0) @map("sort_order")
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant?   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdByUser User?     @relation("ModeCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User?     @relation("ModeUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  inquiries     Inquiry[]
+
+  @@unique([tenantId, code])
+  @@index([tenantId])
+  @@map("mode")
+}
+
 /// spec: inquiry_source — where the inquiry came from.
 model InquirySource {
   tenantId  BigInt?   @map("tenant_id")
@@ -2034,6 +2066,15 @@ enum InquiryStatus {
 }
 
 /// Which shape a volume row takes — §5.4's grid renders rows by shipment type.
+/// Sea only: whether the cargo fills containers or is consolidated.
+/// Null on an Air inquiry, where the question does not arise.
+enum LoadingType {
+  FCL
+  LCL
+
+  @@map("loading_type")
+}
+
 enum VolumeKind {
   FCL
   LCL
@@ -2114,8 +2155,13 @@ model Inquiry {
   /// joined. A corrected commodity must not rewrite an inquiry already sent.
   hsCode          String?      @map("hs_code") @db.VarChar(50)
   tosId           BigInt?      @map("tos_id")
+  /// The client's "Mode" — an Incoterm. See the Mode model.
+  modeId          BigInt?      @map("mode_id")
+  /// Sea only: FCL or LCL. Drives which columns the volume grid offers.
+  loadingType     LoadingType? @map("loading_type")
 
-  targetPrice Decimal? @map("target_price") @db.Decimal(18, 4)
+  /// Target price moved into inquiry_volume: the client's wireframe asks for
+  /// one per container size, so a 20ft and a 40ft can be quoted apart.
   currencyId  BigInt?  @map("currency_id")
 
   expectedShipmentDate DateTime? @map("expected_shipment_date") @db.Date
@@ -2148,6 +2194,7 @@ model Inquiry {
   pol      Port          @relation("InquiryPol", fields: [polId], references: [id], onDelete: Restrict)
   pod      Port          @relation("InquiryPod", fields: [podId], references: [id], onDelete: Restrict)
   tos      Tos?          @relation(fields: [tosId], references: [id], onDelete: Restrict)
+  mode     Mode?         @relation(fields: [modeId], references: [id], onDelete: Restrict)
   currency Currency?     @relation(fields: [currencyId], references: [id], onDelete: Restrict)
 
   // Tenant-owned targets take the composite tenant-safe FK (§4 rule 10).
@@ -2190,6 +2237,13 @@ model InquiryVolume {
   quantity        Int?
   cbm             Decimal?   @db.Decimal(18, 3)
   weightKg        Decimal?   @map("weight_kg") @db.Decimal(18, 3)
+  /// Per-size target price. The client's wireframe puts Target Price in the
+  /// volume grid, so a 20ft and a 40ft on one inquiry can be quoted apart.
+  targetPrice     Decimal?   @map("target_price") @db.Decimal(18, 4)
+  /// The wireframe's "Container Type :" row — free text per column, by the
+  /// client's choice. Not a lookup, so it is not reportable; that was the
+  /// trade-off they picked over an equipment-type list.
+  containerTypeNote String?  @map("container_type_note") @db.VarChar(200)
 
   isActive  Boolean   @default(true) @map("is_active")
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)

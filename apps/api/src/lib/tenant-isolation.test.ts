@@ -155,7 +155,7 @@ describe('model tier registry', () => {
 
     expect(missingFromRegistry, `tables absent from tenancy.ts: ${missingFromRegistry.join(', ')}`).toEqual([]);
     expect(missingFromDb, `registry names with no table: ${missingFromDb.join(', ')}`).toEqual([]);
-    expect(known.length).toBe(52);
+    expect(known.length).toBe(53);
   });
 
   it('classifies each tier correctly', () => {

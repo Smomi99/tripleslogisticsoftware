@@ -237,6 +237,9 @@ export const FEATURES: readonly FeatureDefinition[] = [
   { module: 'SETTING', feature: 'SETTING.CONTAINER_TYPE', label: 'Container Type', actions: MASTER_DELETABLE },
   { module: 'SETTING', feature: 'SETTING.RATE_TIER', label: 'Rate Tier', actions: MASTER_DELETABLE },
   { module: 'SETTING', feature: 'SETTING.TOS', label: 'Terms of Shipment', actions: MASTER_DELETABLE },
+  // The client's "Modes" screen. The values are Incoterms; the label follows
+  // their wording so the menu matches what they asked for.
+  { module: 'SETTING', feature: 'SETTING.MODE', label: 'Modes', actions: MASTER_DELETABLE },
   { module: 'SETTING', feature: 'SETTING.INQUIRY_SOURCE', label: 'Inquiry Source', actions: MASTER_DELETABLE },
 
   // -- 8. CRM ----------------------------------------------------------------

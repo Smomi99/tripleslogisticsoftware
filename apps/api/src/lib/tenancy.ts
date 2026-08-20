@@ -27,6 +27,7 @@ export const SYSTEM_CAPABLE_MODELS = [
   'ExpertArea',
   'GoodsType',
   'InquirySource',
+  'Mode',
   'Network',
   'Port',
   'RateTier',

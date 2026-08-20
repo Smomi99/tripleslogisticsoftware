@@ -578,14 +578,16 @@ rateLookupRouter.post(
 // ===========================================================================
 
 function registerSimpleLookup(
-  path: 'tos' | 'inquiry-sources',
-  table: 'tos' | 'inquirySource',
+  path: 'tos' | 'inquiry-sources' | 'modes',
+  table: 'tos' | 'inquirySource' | 'mode',
   feature: string,
   noun: string,
   schema: typeof tosInputSchema,
 ): void {
-  const model = (db: Parameters<typeof toggleSystemLookup>[0]): SimpleLookupModel =>
-    (table === 'tos' ? db.tos : db.inquirySource) as unknown as SimpleLookupModel;
+  const model = (db: Parameters<typeof toggleSystemLookup>[0]): SimpleLookupModel => {
+    const chosen = table === 'tos' ? db.tos : table === 'mode' ? db.mode : db.inquirySource;
+    return chosen as unknown as SimpleLookupModel;
+  };
 
   rateLookupRouter.get(`/${path}`, requirePermission(`${feature}.VIEW`), async (req, res) => {
     const auth = req.auth!;
@@ -682,6 +684,9 @@ function registerSimpleLookup(
 }
 
 registerSimpleLookup('tos', 'tos', 'SETTING.TOS', 'Terms of shipment', tosInputSchema);
+// The client calls this screen "Modes"; the values are Incoterms. Same shape as
+// TOS — a code and a name — so it shares the registrar rather than repeating it.
+registerSimpleLookup('modes', 'mode', 'SETTING.MODE', 'Mode', tosInputSchema);
 registerSimpleLookup(
   'inquiry-sources',
   'inquirySource',

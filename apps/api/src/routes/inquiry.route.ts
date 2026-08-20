@@ -91,6 +91,7 @@ const inquiryInclude = {
   pod: { select: { id: true, name: true, portCode: true } },
   commodityItem: { select: { id: true, name: true } },
   tos: { select: { id: true, name: true } },
+  mode: { select: { id: true, name: true } },
   currency: { select: { id: true, currency: true } },
   salesman: { select: { id: true, name: true } },
   volumes: {
@@ -114,6 +115,8 @@ function toDto(inquiry: InquiryWithRelations, today: Date): InquiryDto {
     quantity: volume.quantity,
     cbm: optionalQty(volume.cbm),
     weightKg: optionalQty(volume.weightKg),
+    targetPrice: optionalMoney(volume.targetPrice),
+    containerTypeNote: volume.containerTypeNote,
   }));
 
   return {
@@ -139,7 +142,9 @@ function toDto(inquiry: InquiryWithRelations, today: Date): InquiryDto {
     hsCode: inquiry.hsCode,
     tosId: inquiry.tosId?.toString() ?? null,
     tosName: inquiry.tos?.name ?? null,
-    targetPrice: optionalMoney(inquiry.targetPrice),
+    modeId: inquiry.modeId?.toString() ?? null,
+    modeName: inquiry.mode?.name ?? null,
+    loadingType: inquiry.loadingType,
     currencyId: inquiry.currencyId?.toString() ?? null,
     currencyCode:
       inquiry.currency === null ? null : isoCurrency(inquiry.currency.currency),
@@ -173,6 +178,8 @@ export interface InquiryFormOptions {
   airPorts: LookupOption[];
   commodities: { id: string; name: string; hsCode: string | null }[];
   termsOfShipment: LookupOption[];
+  /** The client's "Modes" list — Incoterms. */
+  modes: LookupOption[];
   currencies: LookupOption[];
   salesmen: LookupOption[];
   containerTypes: LookupOption[];
@@ -189,7 +196,7 @@ inquiryRouter.get('/inquiry-options', requirePermission(`${FEATURE}.VIEW`), asyn
     // Shared rows this workspace switched off are recorded as overrides, not on
     // the rows themselves (§7A rule 7), so `isActive` alone still offers them.
     const inactive = await inactiveMasters(db);
-    const [sources, customers, ports, commodities, toss, currencies, salesmen, containers, me] =
+    const [sources, customers, ports, commodities, modes, toss, currencies, salesmen, containers, me] =
       await Promise.all([
         db.inquirySource.findMany({
           where: { ...excludeInactive(inactive, 'inquiry_source'), deletedAt: null, isActive: true },
@@ -210,6 +217,11 @@ inquiryRouter.get('/inquiry-options', requirePermission(`${FEATURE}.VIEW`), asyn
           where: { deletedAt: null, isActive: true },
           select: { id: true, name: true, hsCode: true },
           orderBy: { name: 'asc' },
+        }),
+        db.mode.findMany({
+          where: { ...excludeInactive(inactive, 'mode'), deletedAt: null, isActive: true },
+          select: { id: true, name: true },
+          orderBy: { code: 'asc' },
         }),
         db.tos.findMany({
           where: { ...excludeInactive(inactive, 'tos'), deletedAt: null, isActive: true },
@@ -249,6 +261,7 @@ inquiryRouter.get('/inquiry-options', requirePermission(`${FEATURE}.VIEW`), asyn
         name: c.name,
         hsCode: c.hsCode,
       })),
+      modes: modes.map((m) => ({ id: m.id.toString(), name: m.name })),
       termsOfShipment: toss.map((t) => ({ id: t.id.toString(), name: t.name })),
       currencies: currencies.map((c) => ({ id: c.id.toString(), name: c.currency })),
       salesmen: salesmen.map((e) => ({ id: e.id.toString(), name: e.name })),
@@ -378,7 +391,11 @@ function volumeRows(
       (v) =>
         (v.quantity !== undefined && v.quantity !== '') ||
         (v.cbm !== undefined && v.cbm !== '') ||
-        (v.weightKg !== undefined && v.weightKg !== ''),
+        (v.weightKg !== undefined && v.weightKg !== '') ||
+        // A column may carry only a price or a note — the quantity can arrive
+        // later, and dropping the row would silently lose what was typed.
+        (v.targetPrice !== undefined && v.targetPrice !== '') ||
+        (v.containerTypeNote !== undefined && v.containerTypeNote !== ''),
     )
     .map((v) => ({
       volumeKind: v.volumeKind,
@@ -389,6 +406,11 @@ function volumeRows(
       quantity: v.quantity === undefined || v.quantity === '' ? null : Number(v.quantity),
       cbm: v.cbm === undefined || v.cbm === '' ? null : v.cbm,
       weightKg: v.weightKg === undefined || v.weightKg === '' ? null : v.weightKg,
+      targetPrice: v.targetPrice === undefined || v.targetPrice === '' ? null : v.targetPrice,
+      containerTypeNote:
+        v.containerTypeNote === undefined || v.containerTypeNote === ''
+          ? null
+          : v.containerTypeNote,
       createdBy: userId,
       updatedBy: userId,
     }));
@@ -458,7 +480,8 @@ async function updateInquiry(
       commodityItemId: refs.commodityItemId,
       hsCode: input.hsCode || null,
       tosId: refs.tosId,
-      targetPrice: input.targetPrice || null,
+      modeId: input.modeId ? BigInt(input.modeId) : null,
+      loadingType: input.loadingType ?? null,
       currencyId: refs.currencyId,
       expectedShipmentDate: input.expectedShipmentDate
         ? new Date(input.expectedShipmentDate)
@@ -506,10 +529,8 @@ inquiryRouter.post('/inquiries', requirePermission(`${FEATURE}.CREATE`), async (
             commodityItemId: refs.commodityItemId,
             hsCode: input.hsCode === undefined || input.hsCode === '' ? null : input.hsCode,
             tosId: refs.tosId,
-            targetPrice:
-              input.targetPrice === undefined || input.targetPrice === ''
-                ? null
-                : input.targetPrice,
+            modeId: input.modeId ? BigInt(input.modeId) : null,
+            loadingType: input.loadingType ?? null,
             currencyId: refs.currencyId,
             expectedShipmentDate:
               input.expectedShipmentDate === undefined || input.expectedShipmentDate === ''

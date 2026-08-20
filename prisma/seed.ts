@@ -114,6 +114,25 @@ const RATE_LOOKUPS = {
     { code: 'DOOR/CY', name: 'Door / CY' },
     { code: 'CY/DOOR', name: 'CY / Door' },
   ],
+  /**
+   * The client's "Modes" list. The values they supplied are the eleven
+   * Incoterms 2020 rules, in their order. EXW…DDP apply to any transport mode;
+   * FAS, FOB, CFR and CIF are sea and inland waterway only — noted in the name
+   * rather than enforced, since the client did not ask for that rule.
+   */
+  mode: [
+    { code: 'EXW', name: 'EXW — Ex Works' },
+    { code: 'FCA', name: 'FCA — Free Carrier' },
+    { code: 'FAS', name: 'FAS — Free Alongside Ship (sea only)' },
+    { code: 'FOB', name: 'FOB — Free On Board (sea only)' },
+    { code: 'CFR', name: 'CFR — Cost and Freight (sea only)' },
+    { code: 'CIF', name: 'CIF — Cost, Insurance and Freight (sea only)' },
+    { code: 'CPT', name: 'CPT — Carriage Paid To' },
+    { code: 'CIP', name: 'CIP — Carriage and Insurance Paid To' },
+    { code: 'DPU', name: 'DPU — Delivered at Place Unloaded' },
+    { code: 'DAP', name: 'DAP — Delivered at Place' },
+    { code: 'DDP', name: 'DDP — Delivered Duty Paid' },
+  ],
   inquirySource: [
     { code: 'CALL', name: 'Direct Call' },
     { code: 'EMAIL', name: 'Email' },
@@ -283,6 +302,7 @@ async function seedRateLookups(): Promise<number> {
   const simple = [
     { rows: RATE_LOOKUPS.goodsType, prefix: CODE_PREFIX.goodsType, model: prisma.goodsType },
     { rows: RATE_LOOKUPS.tos, prefix: CODE_PREFIX.tos, model: prisma.tos },
+    { rows: RATE_LOOKUPS.mode, prefix: CODE_PREFIX.mode, model: prisma.mode },
     { rows: RATE_LOOKUPS.inquirySource, prefix: CODE_PREFIX.inquirySource, model: prisma.inquirySource },
   ];
   for (const table of simple) {

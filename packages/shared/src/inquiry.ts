@@ -124,12 +124,20 @@ const optionalInt = z
  * One row per container type for Sea FCL, a single CBM row for LCL, a single KG
  * row for Air. Empty rows are dropped before submit rather than stored as zeros.
  */
+/** Sea only: FCL fills containers, LCL is consolidated. */
+export const LOADING_TYPES = ['FCL', 'LCL'] as const;
+export type LoadingType = (typeof LOADING_TYPES)[number];
+
 export const inquiryVolumeInputSchema = z.object({
   volumeKind: z.enum(VOLUME_KINDS),
   containerTypeId: optionalIdField,
   quantity: optionalInt,
   cbm: optionalQuantity('Enter a CBM figure.'),
   weightKg: optionalQuantity('Enter a weight in KG.'),
+  /** The client's wireframe puts Target Price inside the grid, per size. */
+  targetPrice: optionalMoney('Enter a target price.'),
+  /** The wireframe's "Container Type :" row. Free text, by the client's choice. */
+  containerTypeNote: z.string().trim().max(200, 'That is too long.').optional(),
 });
 
 export type InquiryVolumeInput = z.input<typeof inquiryVolumeInputSchema>;
@@ -142,6 +150,8 @@ export interface InquiryVolumeDto {
   quantity: number | null;
   cbm: string | null;
   weightKg: string | null;
+  targetPrice: string | null;
+  containerTypeNote: string | null;
 }
 
 // -------------------------------------------------------------------- inquiry
@@ -159,7 +169,13 @@ export const inquiryInputSchema = z
     commodityItemId: optionalIdField,
     hsCode: z.string().trim().max(50, 'HS code is too long.').optional(),
     tosId: optionalIdField,
-    targetPrice: optionalMoney('Enter a target price.'),
+    /** The client's "Mode" — an Incoterm, from the Settings → Modes list. */
+    modeId: optionalIdField,
+    /**
+     * Sea only. Chooses which columns the volume grid offers, and is left unset
+     * on an Air inquiry where the question does not arise.
+     */
+    loadingType: z.enum(LOADING_TYPES).optional(),
     currencyId: optionalIdField,
     expectedShipmentDate: optionalDateField,
     validTo: optionalDateField,
@@ -175,8 +191,17 @@ export const inquiryInputSchema = z
     path: ['podId'],
   })
   .refine(
-    (v) => v.targetPrice === undefined || v.targetPrice === '' || (v.currencyId ?? '') !== '',
-    { message: 'Choose the currency this target price is in.', path: ['currencyId'] },
+    // Target price lives per size now, so the currency is required as soon as
+    // ANY column carries one.
+    (v) =>
+      !(v.volumes ?? []).some((row) => (row.targetPrice ?? '') !== '') ||
+      (v.currencyId ?? '') !== '',
+    { message: 'Choose the currency those target prices are in.', path: ['currencyId'] },
+  )
+  .refine(
+    // A Sea inquiry has to say which; Air must not.
+    (v) => v.shipmentType !== 'SEA' || v.loadingType !== undefined,
+    { message: 'Choose FCL or LCL.', path: ['loadingType'] },
   )
   .refine(
     (v) =>
@@ -212,7 +237,9 @@ export interface InquiryDto {
   hsCode: string | null;
   tosId: string | null;
   tosName: string | null;
-  targetPrice: string | null;
+  modeId: string | null;
+  modeName: string | null;
+  loadingType: LoadingType | null;
   currencyId: string | null;
   currencyCode: string | null;
   expectedShipmentDate: string | null;

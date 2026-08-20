@@ -43,6 +43,7 @@ export const CODE_PREFIX = {
   containerType: 'CNT',
   rateTier: 'RTR',
   tos: 'TOS',
+  mode: 'MOD',
   inquirySource: 'INS',
 
   // §6 CRM

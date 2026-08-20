@@ -80,9 +80,21 @@ export function ViewDrawer({
     ['Commodity', inquiry.commodityName ?? '—'],
     ['HS code', inquiry.hsCode ?? '—'],
     ['Terms of shipment', inquiry.tosName ?? '—'],
+    ['Mode', inquiry.modeName ?? '—'],
+    ['Loading type', inquiry.loadingType ?? '—'],
     [
+      // Target price is per container size now, so it reads out of the grid
+      // rather than off the inquiry: "20STD 1200 · 40HC 2100".
       'Target price',
-      inquiry.targetPrice === null ? '—' : `${inquiry.currencyCode ?? ''} ${inquiry.targetPrice}`,
+      inquiry.volumes.filter((v) => v.targetPrice !== null).length === 0
+        ? '—'
+        : inquiry.volumes
+            .filter((v) => v.targetPrice !== null)
+            .map(
+              (v) =>
+                `${v.containerTypeCode ?? v.volumeKind} ${inquiry.currencyCode ?? ''} ${v.targetPrice}`,
+            )
+            .join(' · '),
     ],
     [
       'Quoted price',

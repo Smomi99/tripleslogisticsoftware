@@ -213,6 +213,7 @@ beforeAll(async () => {
         inquiryDate: new Date('2026-01-01'),
         sourceId,
         shipmentType: 'SEA',
+    loadingType: 'FCL',
         customerId: customerB.id,
         movementType: 'OUTBOUND',
         polId: seaPolId,
@@ -248,6 +249,7 @@ function inquiryBody(over: Record<string, unknown> = {}): Record<string, unknown
     inquiryDate: '2026-03-15',
     sourceId: sourceId.toString(),
     shipmentType: 'SEA',
+    loadingType: 'FCL',
     customerId: customerId.toString(),
     movementType: 'OUTBOUND',
     polId: seaPolId.toString(),
@@ -300,7 +302,6 @@ describe('§5.4 — what the form captures', () => {
     const response = await create(tokenAdmin, {
       placeOfReceipt: 'Dhaka ICD',
       hsCode: '6109.10',
-      targetPrice: '1800.5000',
       currencyId: (await owner.currency.findFirstOrThrow({ select: { id: true } })).id.toString(),
       expectedShipmentDate: '2026-04-01',
       validTo: '2026-03-31',
@@ -308,7 +309,14 @@ describe('§5.4 — what the form captures', () => {
       remarks: 'Needs weekly sailing',
       salesmanId: salesOneEmployeeId.toString(),
       volumes: [
-        { volumeKind: 'FCL', containerTypeId: containerTypeId.toString(), quantity: '3' },
+        {
+          volumeKind: 'FCL',
+          containerTypeId: containerTypeId.toString(),
+          quantity: '3',
+          // Target price and the container note live in the grid now, per size.
+          targetPrice: '1800.5000',
+          containerTypeNote: 'Reefer, -18C',
+        },
         // Blank row: the grid always renders every container type, and empty
         // ones must not become zero-quantity records.
         { volumeKind: 'FCL', containerTypeId: containerTypeId.toString(), quantity: '' },
@@ -319,7 +327,8 @@ describe('§5.4 — what the form captures', () => {
     const data = response.body.data;
     expect(data.placeOfReceipt).toBe('Dhaka ICD');
     expect(data.hsCode).toBe('6109.10');
-    expect(data.targetPrice).toBe('1800.5000');
+    expect(data.volumes[0].targetPrice).toBe('1800.5000');
+    expect(data.volumes[0].containerTypeNote).toBe('Reefer, -18C');
     expect(data.weightKg).toBe('12500.500');
     expect(data.salesmanName).toBe(`Sales one-${SLUG_A}`);
     expect(data.status).toBe('OPEN');
@@ -328,9 +337,26 @@ describe('§5.4 — what the form captures', () => {
   });
 
   it('refuses a target price with no currency', async () => {
-    const response = await create(tokenAdmin, { targetPrice: '1000.0000' });
+    // The price sits in the grid now, so the currency becomes required as soon
+    // as any single column carries one.
+    const response = await create(tokenAdmin, {
+      volumes: [
+        {
+          volumeKind: 'FCL',
+          containerTypeId: containerTypeId.toString(),
+          quantity: '1',
+          targetPrice: '1000.0000',
+        },
+      ],
+    });
     expect(response.status).toBe(400);
     expect(response.body.error.fields.currencyId).toBeDefined();
+  });
+
+  it('refuses a Sea inquiry that does not say FCL or LCL', async () => {
+    const response = await create(tokenAdmin, { shipmentType: 'SEA', loadingType: undefined });
+    expect(response.status).toBe(400);
+    expect(response.body.error.fields.loadingType).toBeDefined();
   });
 
   it('refuses the same port at both ends', async () => {

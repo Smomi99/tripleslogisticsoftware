@@ -42,6 +42,7 @@ interface InquiryOptions {
   airPorts: LookupOption[];
   commodities: { id: string; name: string; hsCode: string | null }[];
   termsOfShipment: LookupOption[];
+  modes: LookupOption[];
   currencies: LookupOption[];
   salesmen: LookupOption[];
   containerTypes: LookupOption[];
@@ -57,6 +58,7 @@ const EMPTY: InquiryOptions = {
   airPorts: [],
   commodities: [],
   termsOfShipment: [],
+  modes: [],
   currencies: [],
   salesmen: [],
   containerTypes: [],
@@ -67,16 +69,47 @@ const EMPTY: InquiryOptions = {
 
 const today = (): string => new Date().toISOString().slice(0, 10);
 
-/** Turns saved volume rows back into the grid's keyed values. */
-function volumesOf(inquiry: InquiryDto | null): Record<string, string> {
+/**
+ * One column of the client's Required-container grid.
+ *
+ * Their wireframe puts four rows under each container size: the quantity, a
+ * free-text container type, a weight and a target price. `amount` is whichever
+ * the column measures — containers for FCL, CBM for LCL, KG for Air.
+ */
+interface VolumeCell {
+  amount: string;
+  note: string;
+  weightKg: string;
+  targetPrice: string;
+}
+
+const EMPTY_CELL: VolumeCell = { amount: '', note: '', weightKg: '', targetPrice: '' };
+
+/** Turns saved volume rows back into the grid's keyed cells. */
+function volumesOf(inquiry: InquiryDto | null): Record<string, VolumeCell> {
   if (inquiry === null) return {};
-  const values: Record<string, string> = {};
+  const values: Record<string, VolumeCell> = {};
   for (const volume of inquiry.volumes) {
-    if (volume.volumeKind === 'AIR') values['air'] = volume.weightKg ?? '';
-    else if (volume.volumeKind === 'LCL') values['lcl'] = volume.cbm ?? '';
-    else if (volume.containerTypeId !== null) {
-      values[`fcl:${volume.containerTypeId}`] = String(volume.quantity ?? '');
-    }
+    const key =
+      volume.volumeKind === 'AIR'
+        ? 'air'
+        : volume.volumeKind === 'LCL'
+          ? 'lcl'
+          : volume.containerTypeId === null
+            ? null
+            : `fcl:${volume.containerTypeId}`;
+    if (key === null) continue;
+    values[key] = {
+      amount:
+        volume.volumeKind === 'AIR'
+          ? (volume.weightKg ?? '')
+          : volume.volumeKind === 'LCL'
+            ? (volume.cbm ?? '')
+            : String(volume.quantity ?? ''),
+      note: volume.containerTypeNote ?? '',
+      weightKg: volume.weightKg ?? '',
+      targetPrice: volume.targetPrice ?? '',
+    };
   }
   return values;
 }
@@ -115,8 +148,11 @@ export function InquiryForm({
   const [hsCode, setHsCode] = useState(inquiry?.hsCode ?? '');
   const [placeOfReceipt, setPlaceOfReceipt] = useState(inquiry?.placeOfReceipt ?? '');
   const [tosId, setTosId] = useState(inquiry?.tosId ?? '');
-  const [volumes, setVolumes] = useState<Record<string, string>>(volumesOf(inquiry));
-  const [targetPrice, setTargetPrice] = useState(inquiry?.targetPrice ?? '');
+  const [modeId, setModeId] = useState(inquiry?.modeId ?? '');
+  const [loadingType, setLoadingType] = useState<'' | 'FCL' | 'LCL'>(
+    inquiry?.loadingType ?? '',
+  );
+  const [volumes, setVolumes] = useState<Record<string, VolumeCell>>(volumesOf(inquiry));
   const [currencyId, setCurrencyId] = useState(inquiry?.currencyId ?? '');
   const [expectedShipmentDate, setExpectedShipmentDate] = useState(
     inquiry?.expectedShipmentDate ?? '',
@@ -190,6 +226,19 @@ export function InquiryForm({
     setPolId('');
     setPodId('');
     setVolumes({});
+    // Air is neither FCL nor LCL, and a Sea inquiry has to be asked afresh.
+    setLoadingType('');
+  }
+
+  /**
+   * Switching FCL to LCL changes which columns exist, so what was typed into
+   * the old ones has nowhere to go. Clearing is honest; carrying four container
+   * counts silently into a single CBM column would not be.
+   */
+  function changeLoadingType(next: '' | 'FCL' | 'LCL'): void {
+    if (next === loadingType) return;
+    setLoadingType(next);
+    setVolumes({});
   }
 
   const customers = useMemo(
@@ -197,34 +246,65 @@ export function InquiryForm({
     [extraCustomers, options.customers],
   );
 
-  /** §5.4: rows appear based on Shipment Type. */
-  const volumeRows = useMemo(() => {
+  /**
+   * The grid's columns, exactly as the client's wireframe draws them: the four
+   * container sizes for Sea FCL, a single LCL(CBM) column for Sea LCL, and
+   * Air(kG) for air. Loading Type is what chooses between the first two — the
+   * arrows on their sketch run from "( FCL , LCL )" to those two groups.
+   */
+  const volumeColumns = useMemo(() => {
     if (shipmentType === 'AIR') {
-      return [{ key: 'air', label: 'Chargeable weight', unit: 'KG', containerTypeId: null }];
+      return [{ key: 'air', label: 'Air (kG)', containerTypeId: null }];
     }
-    return [
-      ...options.containerTypes.map((type) => ({
+    if (loadingType === 'LCL') {
+      return [{ key: 'lcl', label: 'LCL (CBM)', containerTypeId: null }];
+    }
+    if (loadingType === 'FCL') {
+      return options.containerTypes.map((type) => ({
         key: `fcl:${type.id}`,
         label: type.name,
-        unit: 'containers',
         containerTypeId: type.id,
-      })),
-      { key: 'lcl', label: 'LCL', unit: 'CBM', containerTypeId: null },
-    ];
-  }, [options.containerTypes, shipmentType]);
+      }));
+    }
+    // Sea with no loading type chosen yet: nothing to fill in.
+    return [];
+  }, [options.containerTypes, shipmentType, loadingType]);
+
+  function cell(key: string): VolumeCell {
+    return volumes[key] ?? EMPTY_CELL;
+  }
+
+  function setCell(key: string, patch: Partial<VolumeCell>): void {
+    setVolumes({ ...volumes, [key]: { ...cell(key), ...patch } });
+  }
 
   function buildVolumes(): InquiryVolumeInput[] {
     const rows: InquiryVolumeInput[] = [];
-    for (const row of volumeRows) {
-      const value = (volumes[row.key] ?? '').trim();
-      if (value === '') continue;
-      if (row.key === 'air') rows.push({ volumeKind: 'AIR', weightKg: value });
-      else if (row.key === 'lcl') rows.push({ volumeKind: 'LCL', cbm: value });
-      else {
+    for (const column of volumeColumns) {
+      const value = cell(column.key);
+      const amount = value.amount.trim();
+      const note = value.note.trim();
+      const weight = value.weightKg.trim();
+      const price = value.targetPrice.trim();
+      // A column with nothing in any of its four boxes is not a row.
+      if (amount === '' && note === '' && weight === '' && price === '') continue;
+
+      const shared = {
+        containerTypeNote: note,
+        targetPrice: price,
+      };
+      if (column.key === 'air') {
+        // Air measures the column in KG, so the amount IS the weight.
+        rows.push({ volumeKind: 'AIR', weightKg: amount === '' ? weight : amount, ...shared });
+      } else if (column.key === 'lcl') {
+        rows.push({ volumeKind: 'LCL', cbm: amount, weightKg: weight, ...shared });
+      } else {
         rows.push({
           volumeKind: 'FCL',
-          containerTypeId: row.containerTypeId ?? '',
-          quantity: value,
+          containerTypeId: column.containerTypeId ?? '',
+          quantity: amount,
+          weightKg: weight,
+          ...shared,
         });
       }
     }
@@ -258,7 +338,8 @@ export function InquiryForm({
             commodityItemId,
             hsCode,
             tosId,
-            targetPrice,
+            modeId,
+            loadingType: loadingType === '' ? undefined : loadingType,
             currencyId,
             expectedShipmentDate,
             validTo,
@@ -491,42 +572,105 @@ export function InquiryForm({
               ))}
             </Select>
           </Field>
+
+          {/* The client's wireframe puts Mode straight after TOS. */}
+          <Field id="modeId" label="Mode" error={errorFor('modeId')}>
+            <Select id="modeId" value={modeId} onChange={(e) => setModeId(e.target.value)}>
+              <option value="">Select a mode</option>
+              {options.modes.map((mode) => (
+                <option key={mode.id} value={mode.id}>
+                  {mode.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+
+          {/* Sea only: an air shipment is neither FCL nor LCL. */}
+          {shipmentType === 'SEA' && (
+            <Field id="loadingType" label="Loading type" error={errorFor('loadingType')}>
+              <Select
+                id="loadingType"
+                value={loadingType}
+                onChange={(e) => changeLoadingType(e.target.value as '' | 'FCL' | 'LCL')}
+              >
+                <option value="">Select FCL or LCL</option>
+                <option value="FCL">FCL</option>
+                <option value="LCL">LCL</option>
+              </Select>
+            </Field>
+          )}
         </div>
 
-        {/* §5.4: a small grid, not six loose inputs. */}
+        {/* The client's Required-container grid. */}
         <div className="border-t border-line pt-4">
-          <h3 className="text-section text-hull">Volume</h3>
+          <h3 className="text-section text-hull">Required container</h3>
           <p className="mt-0.5 text-cell text-steel">
             {shipmentType === 'AIR'
-              ? 'Chargeable weight for the shipment.'
-              : 'Container counts for FCL, or a CBM figure for LCL. Leave the rest blank.'}
+              ? 'Chargeable weight, and what you are aiming to quote.'
+              : loadingType === ''
+                ? 'Choose FCL or LCL above and the sizes will appear here.'
+                : loadingType === 'FCL'
+                  ? 'Fill in only the sizes this inquiry needs.'
+                  : 'One consolidated column, measured in CBM.'}
           </p>
-          <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-5">
-            {volumeRows.map((row) => (
-              <Field key={row.key} id={`vol-${row.key}`} label={`${row.label} (${row.unit})`}>
-                <Input
-                  id={`vol-${row.key}`}
-                  numeric
-                  inputMode={row.key.startsWith('fcl') ? 'numeric' : 'decimal'}
-                  value={volumes[row.key] ?? ''}
-                  onChange={(e) => setVolumes({ ...volumes, [row.key]: e.target.value })}
-                />
-              </Field>
-            ))}
-          </div>
+
+          {volumeColumns.length > 0 && (
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full min-w-[32rem] border-collapse text-cell">
+                <thead>
+                  <tr>
+                    <th className="w-40 border border-line bg-paper px-2 py-1.5 text-left text-label text-steel">
+                      Required container
+                    </th>
+                    {volumeColumns.map((column) => (
+                      <th
+                        key={column.key}
+                        className="border border-line bg-paper px-2 py-1.5 text-center font-mono text-label text-hull"
+                      >
+                        {column.label}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(
+                    [
+                      { field: 'amount', label: shipmentType === 'AIR' ? 'Weight (kG)' : loadingType === 'LCL' ? 'Volume (CBM)' : 'Quantity', numeric: true },
+                      { field: 'note', label: 'Container type', numeric: false },
+                      { field: 'weightKg', label: 'Weight in Kg', numeric: true },
+                      { field: 'targetPrice', label: 'Target price ($)', numeric: true },
+                    ] as const
+                  )
+                    // Air measures its single column in KG already, so a second
+                    // weight row would be the same number asked for twice.
+                    .filter((row) => !(shipmentType === 'AIR' && row.field === 'weightKg'))
+                    .map((row) => (
+                      <tr key={row.field}>
+                        <th className="border border-line px-2 py-1 text-left text-cell font-normal text-steel">
+                          {row.label}
+                        </th>
+                        {volumeColumns.map((column) => (
+                          <td key={column.key} className="border border-line p-0">
+                            <Input
+                              id={`vol-${column.key}-${row.field}`}
+                              aria-label={`${column.label} ${row.label}`}
+                              numeric={row.numeric}
+                              inputMode={row.numeric ? 'decimal' : 'text'}
+                              className="border-0 text-center"
+                              value={cell(column.key)[row.field]}
+                              onChange={(e) => setCell(column.key, { [row.field]: e.target.value })}
+                            />
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         <div className="grid grid-cols-1 gap-4 border-t border-line pt-4 md:grid-cols-3">
-          <Field id="targetPrice" label="Target price" error={errorFor('targetPrice')}>
-            <Input
-              id="targetPrice"
-              numeric
-              inputMode="decimal"
-              value={targetPrice}
-              onChange={(e) => setTargetPrice(e.target.value)}
-            />
-          </Field>
-
           <Field id="currencyId" label="Currency" error={errorFor('currencyId')}>
             <Select
               id="currencyId"

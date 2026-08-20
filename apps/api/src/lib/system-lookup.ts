@@ -23,6 +23,7 @@ const LOOKUP_TABLES = {
   containerType: 'container_type',
   rateTier: 'rate_tier',
   tos: 'tos',
+  mode: 'mode',
   inquirySource: 'inquiry_source',
 } as const;
 
