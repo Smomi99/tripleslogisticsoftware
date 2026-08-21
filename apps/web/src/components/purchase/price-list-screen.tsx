@@ -7,14 +7,13 @@ import {
   type LookupOption,
   type RateMode,
 } from '@ff/shared';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Input, Select } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/form-layout';
-import { Modal } from '@/components/ui/modal';
 import { MultiSelect } from '@/components/ui/multi-select';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
@@ -62,8 +61,24 @@ export function PriceListScreen({
 
   const [options, setOptions] = useState<ListOptions>(EMPTY);
   const [rates, setRates] = useState<FreightRateDto[]>([]);
-  /** The rate whose local charges are being read. Null closes the breakdown. */
-  const [chargesFor, setChargesFor] = useState<FreightRateDto | null>(null);
+  /** Rates whose local charges are open, expanded in place under their row. */
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  /**
+   * A screen-share toggle, not a permission. Someone who can see buy prices may
+   * still want them off the screen while a customer is looking at it — §4 rule 5
+   * is what actually keeps the figures from anyone who should not have them, and
+   * it strips them from the response before they reach the browser at all.
+   */
+  const [hideBuyPrice, setHideBuyPrice] = useState(false);
+
+  function toggleCharges(id: string): void {
+    setExpanded((open) => {
+      const next = new Set(open);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
   const [meta, setMeta] = useState<ApiMeta>({
     page: 1,
     limit: DEFAULT_PAGE_SIZE,
@@ -307,6 +322,17 @@ export function PriceListScreen({
             ))}
           </Select>
         </div>
+        {options.canSeeBuyPrice && (
+          <label className="flex h-9 items-center gap-2 text-body text-steel">
+            <input
+              type="checkbox"
+              checked={hideBuyPrice}
+              onChange={(e) => setHideBuyPrice(e.target.checked)}
+              className="size-4 accent-harbour"
+            />
+            Hide buying price
+          </label>
+        )}
         <label className="flex h-9 items-center gap-2 text-body text-steel">
           <input
             type="checkbox"
@@ -372,7 +398,8 @@ export function PriceListScreen({
             </thead>
             <tbody>
               {rates.map((rate) => (
-                <tr key={rate.id} className="border-b border-line last:border-0 hover:bg-row-hover">
+                <Fragment key={rate.id}>
+                  <tr className="border-b border-line last:border-0 hover:bg-row-hover">
                   <StickyTd left="0" mono>
                     {rate.code}
                   </StickyTd>
@@ -397,7 +424,7 @@ export function PriceListScreen({
                           <>
                             <div>{line.sellPrice}</div>
                             {/* Absent unless the server sent it (§4 rule 5). */}
-                            {line.buyPrice !== undefined && (
+                            {line.buyPrice !== undefined && !hideBuyPrice && (
                               <div className="text-steel">buy {line.buyPrice}</div>
                             )}
                           </>
@@ -417,7 +444,8 @@ export function PriceListScreen({
                       <Button
                         variant="text"
                         size="inline"
-                        onClick={() => setChargesFor(rate)}
+                        aria-expanded={expanded.has(rate.id)}
+                        onClick={() => toggleCharges(rate.id)}
                       >
                         {rate.localCharges.length === 1
                           ? '1 line'
@@ -441,62 +469,58 @@ export function PriceListScreen({
                     {rate.currencyCode}
                   </td>
                 </tr>
+                {expanded.has(rate.id) && (
+                  /*
+                    Shown in the table rather than in a dialog, at the client's
+                    request: the breakdown stays beside the rate it belongs to,
+                    and two rates can be compared side by side without closing
+                    one to open the other.
+                  */
+                  <tr className="bg-paper">
+                    <td colSpan={10 + options.tiers.length} className="px-2.5 py-3">
+                      <table className="w-full text-cell">
+                        <thead>
+                          <tr className="border-b border-line text-left">
+                            <th className="label-manifest py-1">Cost head</th>
+                            <th className="label-manifest py-1">Side</th>
+                            <th className="label-manifest py-1">Container</th>
+                            <th className="label-manifest py-1 text-right">Amount</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rate.localCharges.map((charge) => (
+                            <tr key={charge.id} className="border-b border-line">
+                              <td className="py-1 text-hull">{charge.costHeadName}</td>
+                              <td className="py-1 text-steel">{charge.side}</td>
+                              <td className="py-1 font-mono text-steel">
+                                {charge.containerTypeCode ?? 'All'}
+                              </td>
+                              <td className="py-1 text-right font-mono tabular-nums text-hull">
+                                {charge.amount} {charge.currencyCode}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr>
+                            <td colSpan={3} className="py-1.5 label-manifest">
+                              Total
+                            </td>
+                            <td className="py-1.5 text-right font-mono tabular-nums text-hull">
+                              {rate.localChargeTotal} {rate.currencyCode}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
               ))}
             </tbody>
           </table>
         </div>
       )}
-
-      {/* The breakdown behind the line count. */}
-      <Modal
-        open={chargesFor !== null}
-        onOpenChange={(open) => {
-          if (!open) setChargesFor(null);
-        }}
-        title="Local charges"
-        description={
-          chargesFor === null
-            ? ''
-            : `${chargesFor.code} · ${chargesFor.polCode} → ${chargesFor.podCode}`
-        }
-      >
-        {chargesFor !== null && (
-          <table className="w-full text-cell">
-            <thead>
-              <tr className="border-b border-line text-left">
-                <th className="label-manifest py-1.5">Cost head</th>
-                <th className="label-manifest py-1.5">Side</th>
-                <th className="label-manifest py-1.5">Container</th>
-                <th className="label-manifest py-1.5 text-right">Amount</th>
-              </tr>
-            </thead>
-            <tbody>
-              {chargesFor.localCharges.map((charge) => (
-                <tr key={charge.id} className="border-b border-line">
-                  <td className="py-1.5 text-hull">{charge.costHeadName}</td>
-                  <td className="py-1.5 text-steel">{charge.side}</td>
-                  <td className="py-1.5 font-mono text-steel">
-                    {charge.containerTypeCode ?? 'All'}
-                  </td>
-                  <td className="py-1.5 text-right font-mono tabular-nums text-hull">
-                    {charge.amount} {charge.currencyCode}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr>
-                <td colSpan={3} className="py-2 text-label uppercase tracking-wide text-steel">
-                  Total
-                </td>
-                <td className="py-2 text-right font-mono tabular-nums text-hull">
-                  {chargesFor.localChargeTotal} {chargesFor.currencyCode}
-                </td>
-              </tr>
-            </tfoot>
-          </table>
-        )}
-      </Modal>
 
       <div className="flex items-center justify-between gap-2">
         <span className="text-cell text-steel">

@@ -2231,7 +2231,8 @@ model Inquiry {
   expectedShipmentDate DateTime? @map("expected_shipment_date") @db.Date
   /// "Inquiry Valid Upto". §4 rule 11 auto-expires an OPEN inquiry past this.
   validTo              DateTime? @map("valid_to") @db.Date
-  weightKg             Decimal?  @map("weight_kg") @db.Decimal(18, 3)
+  /// Weight moved into inquiry_volume: the client's wireframe asks for one
+  /// per container size, so a 20ft and a 40ft can differ.
   remarks              String?   @db.Text
 
   salesmanId BigInt?       @map("salesman_id")

@@ -186,7 +186,6 @@ function toDto(inquiry: InquiryWithRelations, today: Date): InquiryDto {
       inquiry.currency === null ? null : isoCurrency(inquiry.currency.currency),
     expectedShipmentDate: isoDate(inquiry.expectedShipmentDate),
     validTo: isoDate(inquiry.validTo),
-    weightKg: optionalQty(inquiry.weightKg),
     remarks: inquiry.remarks,
     salesmanId: inquiry.salesmanId?.toString() ?? null,
     salesmanName: inquiry.salesman?.name ?? null,
@@ -599,7 +598,6 @@ async function updateInquiry(
         ? new Date(input.expectedShipmentDate)
         : null,
       validTo: input.validTo ? new Date(input.validTo) : null,
-      weightKg: input.weightKg || null,
       remarks: input.remarks || null,
       salesmanId: refs.salesmanId,
       leadId: refs.leadId,
@@ -650,8 +648,6 @@ inquiryRouter.post('/inquiries', requirePermission(`${FEATURE}.CREATE`), async (
                 : new Date(input.expectedShipmentDate),
             validTo:
               input.validTo === undefined || input.validTo === '' ? null : new Date(input.validTo),
-            weightKg:
-              input.weightKg === undefined || input.weightKg === '' ? null : input.weightKg,
             remarks: input.remarks === undefined || input.remarks === '' ? null : input.remarks,
             salesmanId: refs.salesmanId,
             leadId: refs.leadId,

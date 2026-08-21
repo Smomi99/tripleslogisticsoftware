@@ -305,7 +305,6 @@ describe('§5.4 — what the form captures', () => {
       currencyId: (await owner.currency.findFirstOrThrow({ select: { id: true } })).id.toString(),
       expectedShipmentDate: '2026-04-01',
       validTo: '2026-03-31',
-      weightKg: '12500.500',
       remarks: 'Needs weekly sailing',
       salesmanId: salesOneEmployeeId.toString(),
       volumes: [
@@ -316,6 +315,8 @@ describe('§5.4 — what the form captures', () => {
           // Target price and the container note live in the grid now, per size.
           targetPrice: '1800.5000',
           containerTypeNote: 'Reefer, -18C',
+          // Weight is per size now too, not one figure for the inquiry.
+          weightKg: '12500.500',
         },
         // Blank row: the grid always renders every container type, and empty
         // ones must not become zero-quantity records.
@@ -329,7 +330,7 @@ describe('§5.4 — what the form captures', () => {
     expect(data.hsCode).toBe('6109.10');
     expect(data.volumes[0].targetPrice).toBe('1800.5000');
     expect(data.volumes[0].containerTypeNote).toBe('Reefer, -18C');
-    expect(data.weightKg).toBe('12500.500');
+    expect(data.volumes[0].weightKg).toBe('12500.500');
     expect(data.salesmanName).toBe(`Sales one-${SLUG_A}`);
     expect(data.status).toBe('OPEN');
     expect(data.volumes).toHaveLength(1);

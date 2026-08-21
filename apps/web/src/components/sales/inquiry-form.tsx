@@ -168,7 +168,6 @@ export function InquiryForm({
     inquiry?.expectedShipmentDate ?? '',
   );
   const [validTo, setValidTo] = useState(inquiry?.validTo ?? '');
-  const [weightKg, setWeightKg] = useState(inquiry?.weightKg ?? '');
   const [remarks, setRemarks] = useState(inquiry?.remarks ?? '');
   const [salesmanId, setSalesmanId] = useState(inquiry?.salesmanId ?? '');
 
@@ -412,7 +411,6 @@ export function InquiryForm({
             currencyId,
             expectedShipmentDate,
             validTo,
-            weightKg,
             remarks,
             salesmanId,
             leadId,
@@ -802,16 +800,6 @@ export function InquiryForm({
                 </option>
               ))}
             </Select>
-          </Field>
-
-          <Field id="weightKg" label="Weight (KG)" error={errorFor('weightKg')}>
-            <Input
-              id="weightKg"
-              numeric
-              inputMode="decimal"
-              value={weightKg}
-              onChange={(e) => setWeightKg(e.target.value)}
-            />
           </Field>
 
           <Field

@@ -200,7 +200,6 @@ export const inquiryInputSchema = z
     currencyId: optionalIdField,
     expectedShipmentDate: optionalDateField,
     validTo: optionalDateField,
-    weightKg: optionalQuantity('Enter a weight in KG.'),
     remarks: z.string().trim().max(2000, 'Remarks are too long.').optional(),
     salesmanId: optionalIdField,
     /** §9 Q12: the lead this inquiry was raised from, if any. */
@@ -275,7 +274,6 @@ export interface InquiryDto {
   currencyCode: string | null;
   expectedShipmentDate: string | null;
   validTo: string | null;
-  weightKg: string | null;
   remarks: string | null;
   salesmanId: string | null;
   salesmanName: string | null;

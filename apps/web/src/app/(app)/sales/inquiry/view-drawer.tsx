@@ -112,7 +112,16 @@ export function ViewDrawer({
     ],
     ['Expected shipment', inquiry.expectedShipmentDate ?? '—'],
     ['Valid to', inquiry.validTo ?? '—'],
-    ['Weight (kg)', inquiry.weightKg ?? '—'],
+    [
+      // Weight is per container size now, so it reads out of the grid.
+      'Weight (kg)',
+      inquiry.volumes.filter((v) => v.weightKg !== null).length === 0
+        ? '—'
+        : inquiry.volumes
+            .filter((v) => v.weightKg !== null)
+            .map((v) => `${v.containerTypeCode ?? v.volumeKind} ${v.weightKg}`)
+            .join(' · '),
+    ],
     ['Salesman', inquiry.salesmanName ?? '—'],
     ['Follow-ups', String(inquiry.followupCount)],
     ['Remarks', inquiry.remarks ?? '—'],
