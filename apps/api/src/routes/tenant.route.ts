@@ -17,6 +17,7 @@ import { freightRateRouter } from './freight-rate.route';
 import { inquiryRouter } from './inquiry.route';
 import { salesLeadRouter } from './sales-lead.route';
 import { portRouter } from './port.route';
+import { notificationSettingRouter } from './notification-setting.route';
 import { rateLookupRouter } from './rate-lookup.route';
 import { vendorRouter } from './vendor.route';
 import { userRouter } from './user.route';
@@ -45,6 +46,7 @@ tenantRouter.use('/setting/carriers', carrierRouter);
 tenantRouter.use('/crm/vendors', vendorRouter);
 tenantRouter.use('/setting/commodity-categories', commodityRouter);
 // Purchase & Sales lookups (docs/MODULE_PURCHASE_SALES.md §3.1).
+tenantRouter.use('/setting/notifications', notificationSettingRouter);
 tenantRouter.use('/setting', rateLookupRouter);
 
 // Purchase — rate entry for all three modes (MODULE_PURCHASE_SALES §5.1).

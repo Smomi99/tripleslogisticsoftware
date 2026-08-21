@@ -53,6 +53,7 @@ const ROUTES: Record<string, Route> = {
   'SETTING.RATE_TIER': '/setting/rate-tier',
   'SETTING.TOS': '/setting/tos',
   'SETTING.MODE': '/setting/mode',
+  'SETTING.NOTIFICATION': '/setting/notification',
   'SETTING.INQUIRY_SOURCE': '/setting/inquiry-source',
   'CRM.CUSTOMER': '/crm/customer',
   'CRM.VENDOR': '/crm/vendor',

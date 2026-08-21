@@ -6,6 +6,8 @@ import { createApp } from '../app';
 import { env } from '../config/env';
 import { PrismaClient } from '../generated/prisma/client';
 import { signAccessToken } from '../lib/jwt';
+import { notifyInquiry } from '../lib/inquiry-notify';
+import { withTenant } from '../lib/tenant-client';
 
 /**
  * Who an inquiry is sent to.
@@ -48,6 +50,7 @@ function as() {
 async function cleanup(): Promise<void> {
   const scope = `(SELECT id FROM tenant WHERE slug = '${SLUG}')`;
   await owner.$executeRaw`DELETE FROM freight_rate WHERE code LIKE 'IP-RATE-%'`;
+  await owner.$executeRawUnsafe(`DELETE FROM notification_setting WHERE tenant_id IN ${scope}`);
   for (const t of [
     'inquiry_party_contact', 'inquiry_party', 'inquiry_volume', 'inquiry',
     'agent_pic', 'agent', 'carrier_pic', 'carrier', 'customer_pic', 'customer', 'industry_sector', 'port', '"user"',
@@ -312,5 +315,76 @@ describe('the lane check', () => {
     );
     // The rate above is SEA_FCL; the same two ports by air are unrated.
     expect(response.body.data.status).toBe('NONE');
+  });
+});
+
+/**
+ * Who gets told an inquiry needs a price.
+ *
+ * SMTP is not configured on a developer machine, so nothing actually leaves —
+ * which is the point. What is asserted here is the DECISION: whether a message
+ * was called for at all, of which kind, and to how many people. Delivery is
+ * lib/mailer.ts's problem and it is written never to throw.
+ */
+describe('inquiry notifications', () => {
+  const notify = (over: Record<string, unknown>) =>
+    withTenant(tenantId, (db) =>
+      notifyInquiry(db, {
+        inquiryId: 0n,
+        code: 'INQ-TEST',
+        movementType: 'OUTBOUND',
+        polLabel: 'A',
+        podLabel: 'B',
+        customerName: 'C',
+        laneMatched: false,
+        appUrl: null,
+        ...over,
+      } as Parameters<typeof notifyInquiry>[1]),
+    );
+
+  it('sends nothing when the lane already has a live rate', async () => {
+    // The client's rule, and the reason the lane check exists at all.
+    const outbound = await notify({ laneMatched: true });
+    expect(outbound.kind).toBe('none');
+    const inbound = await notify({ laneMatched: true, movementType: 'INBOUND' });
+    expect(inbound.kind).toBe('none');
+  });
+
+  it('writes to the price team on an unrated Outbound lane', async () => {
+    await withTenant(tenantId, (db) =>
+      db.notificationSetting.create({
+        data: { tenantId, priceTeamEmails: 'pricing@ip.test, ops@ip.test' },
+      }),
+    );
+    const result = await notify({});
+    expect(result.kind).toBe('price-team');
+    expect(result.recipients).toBe(2);
+  });
+
+  it('writes to the chosen agent contacts on an unrated Inbound lane', async () => {
+    const created = await raise({
+      movementType: 'INBOUND',
+      partyIds: [agentId.toString()],
+      partyContactIds: [agentPicId.toString()],
+    });
+    expect(created.status).toBe(201);
+
+    const result = await notify({
+      movementType: 'INBOUND',
+      inquiryId: BigInt(created.body.data.id as string),
+    });
+    expect(result.kind).toBe('agents');
+    // The one contact that was ticked, not every contact the agent has.
+    expect(result.recipients).toBe(1);
+  });
+
+  it('is a no-op rather than an error when nobody is configured', async () => {
+    await withTenant(tenantId, (db) =>
+      db.notificationSetting.updateMany({ data: { priceTeamEmails: null } }),
+    );
+    const result = await notify({});
+    expect(result.kind).toBe('price-team');
+    expect(result.recipients).toBe(0);
+    expect(result.sent).toBe(false);
   });
 });

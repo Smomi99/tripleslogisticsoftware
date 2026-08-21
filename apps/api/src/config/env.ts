@@ -103,6 +103,28 @@ const envSchema = z.object({
    * ever serve one company.
    */
   DEFAULT_TENANT_SLUG: optional(z.string().min(1)),
+
+  /**
+   * Outgoing mail. Nothing is sent unless SMTP_HOST, SMTP_USER and SMTP_PASS
+   * are all set — a developer machine has no mail server and must not fail to
+   * boot over it, nor quietly try to reach one.
+   *
+   * SMTP_PASS never appears in a log line or an error message. It is read here
+   * and handed straight to the transport.
+   */
+  SMTP_HOST: optional(z.string().min(1)),
+  SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(587),
+  /** 465 is implicit TLS; 587 upgrades with STARTTLS. */
+  SMTP_SECURE: z
+    .string()
+    .optional()
+    .transform((v) => v === 'true'),
+  SMTP_USER: optional(z.string().min(1)),
+  SMTP_PASS: optional(z.string().min(1)),
+  /** The address recipients see. Defaults to SMTP_USER when unset. */
+  MAIL_FROM: optional(z.string().min(1)),
+  /** Shown in the email so the recipient can find the inquiry. */
+  APP_URL: optional(z.string().url()),
 });
 
 const parsed = envSchema.safeParse(process.env);
@@ -148,6 +170,33 @@ function resolveStorageRoot(): string {
 /** Null when the driver is not `local`, where a filesystem root is meaningless. */
 export const STORAGE_ROOT: string | null =
   env.STORAGE_DRIVER === 'local' ? resolveStorageRoot() : null;
+
+export interface MailConfig {
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  pass: string;
+  from: string;
+}
+
+/**
+ * Null when mail is not configured, which is the normal state on a developer
+ * machine. Callers skip sending rather than throwing: an inquiry that saved
+ * correctly must not report failure because a notification could not go out.
+ */
+export const MAIL_CONFIG: MailConfig | null =
+  env.SMTP_HOST !== undefined && env.SMTP_USER !== undefined && env.SMTP_PASS !== undefined
+    ? {
+        host: env.SMTP_HOST,
+        port: env.SMTP_PORT,
+        // Port 465 is implicit TLS whether or not the flag was set.
+        secure: env.SMTP_SECURE || env.SMTP_PORT === 465,
+        user: env.SMTP_USER,
+        pass: env.SMTP_PASS,
+        from: env.MAIL_FROM ?? env.SMTP_USER,
+      }
+    : null;
 
 export interface S3Config {
   bucket: string;

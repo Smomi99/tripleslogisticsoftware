@@ -258,8 +258,12 @@ export function InquiryForm({
 
   useEffect(() => {
     let cancelled = false;
+    // polId narrows the Inbound list to agents in the ORIGIN country, so the
+    // fetch has to re-run when the port changes, not only the movement.
+    const query = new URLSearchParams({ movement: movementType });
+    if (polId !== '') query.set('polId', polId);
     void authorizedRequest<InquiryPartyOption[]>(
-      `/api/tenant/sales/inquiry-parties?movement=${movementType}`,
+      `/api/tenant/sales/inquiry-parties?${query.toString()}`,
     )
       .then((rows) => {
         if (!cancelled) setPartyOptions(rows);
@@ -270,7 +274,7 @@ export function InquiryForm({
     return () => {
       cancelled = true;
     };
-  }, [authorizedRequest, movementType]);
+  }, [authorizedRequest, movementType, polId]);
 
   /**
    * Ask the price list whether this lane is already rated.

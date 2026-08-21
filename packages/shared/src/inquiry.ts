@@ -418,3 +418,32 @@ export const inquiryRateSelectSchema = z.object({
 });
 
 export type InquiryRateSelectInput = z.input<typeof inquiryRateSelectSchema>;
+
+/**
+ * Settings → Notifications. Who hears about an Outbound lane with no rate.
+ *
+ * Validated as a list rather than one address: people type them separated by
+ * commas, semicolons or newlines, and rejecting the wrong separator would be
+ * pedantry.
+ */
+export const notificationSettingSchema = z.object({
+  priceTeamEmails: z
+    .string()
+    .trim()
+    .max(2000, 'That list is too long.')
+    .refine(
+      (v) =>
+        v === '' ||
+        v
+          .split(/[,;\n]/)
+          .map((a) => a.trim())
+          .filter((a) => a !== '')
+          .every((a) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a)),
+      'One of those is not an email address.',
+    )
+    .default(''),
+});
+
+export interface NotificationSettingDto {
+  priceTeamEmails: string;
+}

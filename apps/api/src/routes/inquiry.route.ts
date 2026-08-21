@@ -26,7 +26,10 @@ import { Router } from 'express';
 
 import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
 import { Prisma } from '../generated/prisma/client';
+import { env } from '../config/env';
 import { HttpError } from '../lib/http-error';
+import { notifyInquiry } from '../lib/inquiry-notify';
+import { logger } from '../lib/logger';
 import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import { nextInquiryNo, seriesYearOf } from '../lib/inquiry-no';
 import { canSeeBuyPrice, visibleLine } from '../lib/rate-visibility';
@@ -675,10 +678,10 @@ inquiryRouter.post('/inquiries', requirePermission(`${FEATURE}.CREATE`), async (
     throw new HttpError(409, 'CODE_GENERATION_FAILED', 'Could not raise the inquiry. Try again.');
   });
 
-  const payload: ApiSuccess<InquiryDto> = {
-    success: true,
-    data: toDto(created, startOfToday()),
-  };
+  const dto = toDto(created, startOfToday());
+  await notifyAfterSave(auth, dto);
+
+  const payload: ApiSuccess<InquiryDto> = { success: true, data: dto };
   res.status(201).json(payload);
 });
 
@@ -707,6 +710,48 @@ inquiryRouter.post('/inquiries', requirePermission(`${FEATURE}.CREATE`), async (
  * Returns which of the three it is, because "expired" and "nothing at all" lead
  * to the same next step but are not the same fact, and the screen says so.
  */
+/**
+ * Tells whoever needs to know that this inquiry wants a price.
+ *
+ * Runs AFTER the transaction, on purpose. A mail server being unreachable must
+ * not roll back an inquiry that saved correctly, so this is deliberately not
+ * awaited inside withTenant and its failures never reach the response.
+ */
+async function notifyAfterSave(
+  auth: { tenantId: bigint; userId: bigint },
+  dto: InquiryDto,
+): Promise<void> {
+  try {
+    await withTenant(auth.tenantId, async (db) => {
+      const today = startOfToday();
+      const live = await db.freightRate.count({
+        where: {
+          deletedAt: null,
+          status: 'PUBLISHED',
+          mode: { in: MODES_FOR[dto.shipmentType] },
+          polId: BigInt(dto.polId),
+          podId: BigInt(dto.podId),
+          validFrom: { lte: today },
+          validTo: { gte: today },
+        },
+      });
+
+      return notifyInquiry(db, {
+        inquiryId: BigInt(dto.id),
+        code: dto.code,
+        movementType: dto.movementType,
+        polLabel: `${dto.polCode} ${dto.polName}`,
+        podLabel: `${dto.podCode} ${dto.podName}`,
+        customerName: dto.customerName,
+        laneMatched: live > 0,
+        appUrl: env.APP_URL ?? null,
+      });
+    });
+  } catch (error) {
+    logger.warn({ err: error, code: dto.code }, 'inquiry notification failed; the inquiry is saved');
+  }
+}
+
 inquiryRouter.get('/lane-check', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
   const auth = req.auth!;
   const polId = req.query['polId'];
@@ -758,8 +803,23 @@ inquiryRouter.get('/lane-check', requirePermission(`${FEATURE}.VIEW`), async (re
 inquiryRouter.get('/inquiry-parties', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
   const auth = req.auth!;
   const inbound = req.query['movement'] !== 'OUTBOUND';
+  const polId = req.query['polId'];
 
   const parties = await withTenant(auth.tenantId, async (db) => {
+    /*
+     * Inbound cargo comes from overseas, so the agent you need is at the
+     * ORIGIN — the client's "country specific agent". Narrowed by the POL's
+     * country when a POL is known, and left wide open when it is not, because
+     * an empty picker is worse than a long one.
+     */
+    let country: string | null = null;
+    if (inbound && typeof polId === 'string' && /^\d+$/.test(polId)) {
+      const pol = await db.port.findFirst({
+        where: { id: BigInt(polId), deletedAt: null },
+        select: { country: true },
+      });
+      country = pol?.country ?? null;
+    }
     const shape = {
       where: { deletedAt: null, isActive: true },
       select: {
@@ -773,7 +833,15 @@ inquiryRouter.get('/inquiry-parties', requirePermission(`${FEATURE}.VIEW`), asyn
       },
       orderBy: { name: 'asc' as const },
     };
-    return inbound ? db.agent.findMany(shape) : db.carrier.findMany(shape);
+    if (!inbound) return db.carrier.findMany(shape);
+    const agents = await db.agent.findMany({
+      ...shape,
+      where: { ...shape.where, ...(country === null ? {} : { country }) },
+    });
+    // Falling back to every agent beats showing none: the country may simply
+    // not have been filled in on the agent records yet.
+    if (agents.length > 0 || country === null) return agents;
+    return db.agent.findMany(shape);
   });
 
   const payload: ApiSuccess<InquiryPartyOption[]> = {
@@ -958,7 +1026,10 @@ inquiryRouter.patch('/inquiries/:id', requirePermission(`${FEATURE}.EDIT`), asyn
     return updateInquiry(db, auth, id, input);
   });
 
-  const payload: ApiSuccess<InquiryDto> = { success: true, data: toDto(updated, startOfToday()) };
+  const dto = toDto(updated, startOfToday());
+  await notifyAfterSave(auth, dto);
+
+  const payload: ApiSuccess<InquiryDto> = { success: true, data: dto };
   res.json(payload);
 });
 

@@ -239,6 +239,8 @@ export const FEATURES: readonly FeatureDefinition[] = [
   // The client's "Modes" screen. The values are Incoterms; the label follows
   // their wording so the menu matches what they asked for.
   { module: 'SETTING', feature: 'SETTING.MODE', label: 'Modes', actions: MASTER_DELETABLE },
+  // One row of configuration, not a list — it is read and written, nothing else.
+  { module: 'SETTING', feature: 'SETTING.NOTIFICATION', label: 'Notifications', actions: ['VIEW', 'EDIT'] },
   { module: 'SETTING', feature: 'SETTING.INQUIRY_SOURCE', label: 'Inquiry Source', actions: MASTER_DELETABLE },
 
   // -- 8. CRM ----------------------------------------------------------------

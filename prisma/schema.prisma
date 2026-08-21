@@ -239,6 +239,7 @@ model Tenant {
   inquiryParties        InquiryParty[]
   inquiryPartyContacts  InquiryPartyContact[]
 
+  notificationSetting NotificationSetting?
   @@index([slug])
   @@index([status])
   @@index([currencyId])
@@ -1568,6 +1569,8 @@ model User {
   createdInquiryParties  InquiryParty[]        @relation("InquiryPartyCreatedBy")
   createdInquiryContacts InquiryPartyContact[] @relation("InquiryPartyContactCreatedBy")
 
+  createdNotificationSettings NotificationSetting[] @relation("NotificationSettingCreatedBy")
+  updatedNotificationSettings NotificationSetting[] @relation("NotificationSettingUpdatedBy")
   @@unique([tenantId, username])
   @@unique([tenantId, email])
   @@unique([tenantId, code])
@@ -2302,6 +2305,31 @@ model Inquiry {
 ///
 /// Separate from inquiry.customer_id, which stays: that is the party the
 /// inquiry is FOR, and this is who it goes to.
+/// Where an inquiry notification goes when there is no agent to ask.
+///
+/// One row per workspace. Kept as its own table rather than columns on tenant
+/// because tenant is platform-owned (§4 rule 2 exempts it from tenant_id) and
+/// this is the workspace's own configuration, editable from Settings.
+model NotificationSetting {
+  tenantId BigInt @map("tenant_id")
+  id       BigInt @id @default(autoincrement())
+  /// Comma-separated. Who to tell when an Outbound lane has no live rate and
+  /// someone has to go and get one from a carrier.
+  priceTeamEmails String? @map("price_team_emails") @db.Text
+
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdByUser User?  @relation("NotificationSettingCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User?  @relation("NotificationSettingUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId])
+  @@map("notification_setting")
+}
+
 model InquiryParty {
   tenantId   BigInt  @map("tenant_id")
   id         BigInt  @id @default(autoincrement())

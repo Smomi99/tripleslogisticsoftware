@@ -75,6 +75,14 @@ services:
       # subdomain, the way §7A rule 5 intends. Set it only to pin the whole
       # server to one workspace.
       DEFAULT_TENANT_SLUG: ${DEFAULT_TENANT_SLUG:-}
+      # Outgoing mail. Blank means notifications are logged, never sent.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      APP_URL: ${APP_URL:-https://${APP_DOMAIN}}
     volumes:
       - uploads:/app/storage
 
