@@ -3,6 +3,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { HttpError } from '../lib/http-error';
 import { verifyAccessToken } from '../lib/jwt';
 import { loadAccount } from '../lib/permissions';
+import { runWithActor } from '../lib/tenancy';
 import { withTenant } from '../lib/tenant-client';
 
 export interface AuthContext {
@@ -84,5 +85,10 @@ export async function authenticate(
     permissions: new Set(claims.permissions),
   };
 
-  next();
+  // next() is called INSIDE the actor context so every handler downstream runs
+  // within it — Express invokes the next handler synchronously from here, which
+  // is what carries the AsyncLocalStorage store forward.
+  runWithActor({ userId }, () => {
+    next();
+  });
 }

@@ -8,6 +8,7 @@ import {
 } from '@ff/shared';
 
 import { env, isProduction } from '../config/env';
+import { recordAudit } from '../lib/audit';
 import { HttpError } from '../lib/http-error';
 import {
   REFRESH_COOKIE,
@@ -79,13 +80,40 @@ authRouter.post('/login', async (req, res) => {
       '$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHR2YWx1ZQ$0000000000000000000000000000000000000000000';
     const passwordOk = await verifyPassword(password, hash);
 
-    if (user === null || !passwordOk || !user.isActive) return null;
+    if (user === null || !passwordOk || !user.isActive) {
+      // Recorded even when the username does not exist: a run of failures
+      // against names that were never accounts is exactly what credential
+      // stuffing looks like, and it is invisible if only real users are logged.
+      // The attempted username is kept; the password never is.
+      await recordAudit({
+        tenantId: tenant.id,
+        action: 'LOGIN_FAILURE',
+        tableName: 'user',
+        recordId: user?.id ?? null,
+        actorId: null,
+        details: {
+          username,
+          reason: user === null ? 'no-such-user' : !passwordOk ? 'bad-password' : 'inactive',
+          ip: req.ip ?? null,
+        },
+      });
+      return null;
+    }
 
     const account = await loadAccount(db, user.id);
     if (account === null) return null;
     const access = await resolvePermissions(db, account);
 
     await db.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+
+    await recordAudit({
+      tenantId: tenant.id,
+      action: 'LOGIN_SUCCESS',
+      tableName: 'user',
+      recordId: user.id,
+      actorId: user.id,
+      details: { username: user.username, ip: req.ip ?? null },
+    });
 
     return { user, access };
   });
@@ -179,7 +207,27 @@ authRouter.post('/refresh', async (req, res) => {
 });
 
 /** POST /api/tenant/auth/logout */
-authRouter.post('/logout', (_req, res) => {
+authRouter.post('/logout', async (req, res) => {
+  // Signing out carries no Authorization header, so the actor comes from the
+  // refresh cookie — best effort. An expired or absent cookie still signs the
+  // caller out; it simply cannot be attributed, and an unattributable logout is
+  // not worth failing the request over.
+  const token: unknown = (req.cookies as Record<string, unknown> | undefined)?.[REFRESH_COOKIE];
+  if (typeof token === 'string' && token.length > 0) {
+    try {
+      const claims = await verifyRefreshToken(token);
+      await recordAudit({
+        tenantId: BigInt(claims.tenantId),
+        action: 'LOGOUT',
+        tableName: 'user',
+        recordId: BigInt(claims.sub),
+        actorId: BigInt(claims.sub),
+      });
+    } catch {
+      // Nothing to attribute. Sign them out anyway.
+    }
+  }
+
   res.clearCookie(REFRESH_COOKIE, refreshCookieOptions);
   const payload: ApiSuccess<{ signedOut: true }> = { success: true, data: { signedOut: true } };
   res.json(payload);

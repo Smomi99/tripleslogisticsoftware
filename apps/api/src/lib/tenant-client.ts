@@ -1,6 +1,6 @@
 import { HttpError } from './http-error';
 import { prisma } from './prisma';
-import { requireTenantId, runWithTenantContext, tierOf } from './tenancy';
+import { currentActorId, requireTenantId, runWithTenantContext, tierOf } from './tenancy';
 
 /**
  * The tenant-scoped database client (CLAUDE.md §7A rule 3).
@@ -183,6 +183,12 @@ export async function withTenant<T>(
 ): Promise<T> {
   return client.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT set_config('app.tenant_id', ${tenantId.toString()}, true)`;
+    // The audit triggers read app.user_id to attribute the change. It comes
+    // from the authenticated session and from nowhere a client can reach —
+    // §7A rule 1 applied to the trail as well as to the tenant. Empty on an
+    // unauthenticated path, which the trigger records as SYSTEM.
+    const actorId = currentActorId();
+    await tx.$executeRaw`SELECT set_config('app.user_id', ${actorId?.toString() ?? ''}, true)`;
     // The await must happen INSIDE the context. A Prisma query is a lazy
     // PrismaPromise: the extension does not run when the call is made, it runs
     // when the promise is first awaited. Returning `fn(tx)` unawaited would let

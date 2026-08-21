@@ -143,6 +143,20 @@ enum AuditAction {
   UPDATE
   DEACTIVATE
   REACTIVATE
+  /// A soft delete (CR-002). Identical to DEACTIVATE in SQL, an entirely
+  /// different event to anyone reading the trail later.
+  DELETE
+  LOGIN_SUCCESS
+  LOGIN_FAILURE
+  LOGOUT
+  /// An agent opening an inquiry. Answers "who saw this commercial detail".
+  VIEW
+  INVITE_ISSUED
+  INVITE_ACCEPTED
+  PASSWORD_RESET_REQUESTED
+  PASSWORD_RESET_COMPLETED
+  QUOTE_SUBMITTED
+  QUOTE_AMENDED
 
   @@map("audit_action")
 }
@@ -1621,7 +1635,10 @@ model AuditLog {
   tenantId  BigInt         @map("tenant_id")
   id        BigInt         @id @default(autoincrement())
   tableName String         @map("table_name") @db.VarChar(63)
-  recordId  BigInt         @map("record_id")
+  /// Null for events that are not about a row — a failed sign-in for a
+  /// username that does not exist has nothing to point at, and recording it is
+  /// the entire point.
+  recordId  BigInt?        @map("record_id")
   action    AuditAction
   /// Resolves which table changed_by refers to. See AuditActorType.
   actorType AuditActorType @default(USER) @map("actor_type")
@@ -1630,7 +1647,10 @@ model AuditLog {
   newValues Json?          @map("new_values")
   createdAt DateTime       @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  /// Cascade, not Restrict — the one deliberate exception to §4 rule 5. A
+  /// deleted tenant is §7B's purge, and its trail is part of what is purged.
+  /// ff_app has no DELETE on tenant, so the application cannot reach this.
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId])
   @@index([tenantId, tableName, recordId])

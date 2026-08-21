@@ -102,6 +102,27 @@ export interface TenantContext {
   tenantId: bigint;
 }
 
+/**
+ * Who is acting, for the audit trail.
+ *
+ * Set once by the authenticate middleware and read by withTenant, so no route
+ * has to pass the actor down to every write. Absent on unauthenticated paths
+ * (a sign-in attempt), where the trail records SYSTEM instead of inventing one.
+ */
+export interface ActorContext {
+  userId: bigint;
+}
+
+const actorStorage = new AsyncLocalStorage<ActorContext>();
+
+export function runWithActor<T>(context: ActorContext, fn: () => T): T {
+  return actorStorage.run(context, fn);
+}
+
+export function currentActorId(): bigint | undefined {
+  return actorStorage.getStore()?.userId;
+}
+
 const storage = new AsyncLocalStorage<TenantContext>();
 
 export function runWithTenantContext<T>(context: TenantContext, fn: () => T): T {
