@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Input, Select } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/form-layout';
+import { Modal } from '@/components/ui/modal';
 import { MultiSelect } from '@/components/ui/multi-select';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
@@ -61,6 +62,8 @@ export function PriceListScreen({
 
   const [options, setOptions] = useState<ListOptions>(EMPTY);
   const [rates, setRates] = useState<FreightRateDto[]>([]);
+  /** The rate whose local charges are being read. Null closes the breakdown. */
+  const [chargesFor, setChargesFor] = useState<FreightRateDto | null>(null);
   const [meta, setMeta] = useState<ApiMeta>({
     page: 1,
     limit: DEFAULT_PAGE_SIZE,
@@ -360,6 +363,7 @@ export function PriceListScreen({
                     {tier.code}
                   </Th>
                 ))}
+                <Th numeric>Local charges</Th>
                 <Th numeric>Transit</Th>
                 <Th numeric>Free days</Th>
                 <Th>Validity</Th>
@@ -401,6 +405,26 @@ export function PriceListScreen({
                       </td>
                     );
                   })}
+                  {/*
+                    The client asked for the line count here, with the
+                    breakdown a click away — the total alone does not say what
+                    it is made of, and the charges are already on the row.
+                  */}
+                  <td className="px-2.5 py-2 text-right text-cell">
+                    {rate.localCharges.length === 0 ? (
+                      <span className="font-mono tabular-nums text-steel">—</span>
+                    ) : (
+                      <Button
+                        variant="text"
+                        size="inline"
+                        onClick={() => setChargesFor(rate)}
+                      >
+                        {rate.localCharges.length === 1
+                          ? '1 line'
+                          : `${rate.localCharges.length} lines`}
+                      </Button>
+                    )}
+                  </td>
                   <td className="px-2.5 py-2 text-right font-mono text-cell tabular-nums text-steel">
                     {rate.transitDays ?? '—'}
                   </td>
@@ -422,6 +446,57 @@ export function PriceListScreen({
           </table>
         </div>
       )}
+
+      {/* The breakdown behind the line count. */}
+      <Modal
+        open={chargesFor !== null}
+        onOpenChange={(open) => {
+          if (!open) setChargesFor(null);
+        }}
+        title="Local charges"
+        description={
+          chargesFor === null
+            ? ''
+            : `${chargesFor.code} · ${chargesFor.polCode} → ${chargesFor.podCode}`
+        }
+      >
+        {chargesFor !== null && (
+          <table className="w-full text-cell">
+            <thead>
+              <tr className="border-b border-line text-left">
+                <th className="label-manifest py-1.5">Cost head</th>
+                <th className="label-manifest py-1.5">Side</th>
+                <th className="label-manifest py-1.5">Container</th>
+                <th className="label-manifest py-1.5 text-right">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {chargesFor.localCharges.map((charge) => (
+                <tr key={charge.id} className="border-b border-line">
+                  <td className="py-1.5 text-hull">{charge.costHeadName}</td>
+                  <td className="py-1.5 text-steel">{charge.side}</td>
+                  <td className="py-1.5 font-mono text-steel">
+                    {charge.containerTypeCode ?? 'All'}
+                  </td>
+                  <td className="py-1.5 text-right font-mono tabular-nums text-hull">
+                    {charge.amount} {charge.currencyCode}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colSpan={3} className="py-2 text-label uppercase tracking-wide text-steel">
+                  Total
+                </td>
+                <td className="py-2 text-right font-mono tabular-nums text-hull">
+                  {chargesFor.localChargeTotal} {chargesFor.currencyCode}
+                </td>
+              </tr>
+            </tfoot>
+          </table>
+        )}
+      </Modal>
 
       <div className="flex items-center justify-between gap-2">
         <span className="text-cell text-steel">

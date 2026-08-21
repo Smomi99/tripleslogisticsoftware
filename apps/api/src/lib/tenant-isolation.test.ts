@@ -155,7 +155,7 @@ describe('model tier registry', () => {
 
     expect(missingFromRegistry, `tables absent from tenancy.ts: ${missingFromRegistry.join(', ')}`).toEqual([]);
     expect(missingFromDb, `registry names with no table: ${missingFromDb.join(', ')}`).toEqual([]);
-    expect(known.length).toBe(53);
+    expect(known.length).toBe(55);
   });
 
   it('classifies each tier correctly', () => {
@@ -381,6 +381,11 @@ describe('layer 2 — Postgres RLS, independent of the extension', () => {
       'agent_expert_area',
       'agent_network_member',
       'agent_port_coverage',
+      // An inquiry's recipients are the same shape: a link with no is_active,
+      // no deleted_at and nothing referencing it, rewritten wholesale each time
+      // the inquiry is saved. Unticking an agent can only mean removing the row.
+      'inquiry_party',
+      'inquiry_party_contact',
       'role_permission',
       'user_permission',
     ];

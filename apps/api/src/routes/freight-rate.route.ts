@@ -138,6 +138,7 @@ const rateInclude = {
       costHead: { select: { id: true, name: true } },
       currency: { select: { id: true, code: true, currency: true } },
       costUnit: { select: { name: true } },
+      containerType: { select: { id: true, code: true } },
     },
     orderBy: { id: 'asc' },
   },
@@ -176,6 +177,8 @@ function toDto(rate: RateWithRelations, today: Date): FreightRateDto {
     costHeadId: charge.costHeadId.toString(),
     costHeadName: charge.costHead.name,
     side: charge.side,
+    containerTypeId: charge.containerType?.id.toString() ?? null,
+    containerTypeCode: charge.containerType?.code ?? null,
     amount: money(charge.amount),
     currencyId: charge.currencyId.toString(),
     currencyCode: isoCurrency(charge.currency.currency),
@@ -481,6 +484,11 @@ async function localChargeRows(
     amount: charge.amount,
     currencyId: BigInt(charge.currencyId),
     costUnitId: unitOf.get(charge.costHeadId) ?? null,
+    // Blank means the charge applies whatever the equipment.
+    containerTypeId:
+      charge.containerTypeId === undefined || charge.containerTypeId === ''
+        ? null
+        : BigInt(charge.containerTypeId),
     remarks: charge.remarks === undefined || charge.remarks === '' ? null : charge.remarks,
     createdBy: userId,
     updatedBy: userId,
@@ -792,6 +800,7 @@ freightRateRouter.patch('/rates/:id', requireModePermission('EDIT'), async (req,
               amount: charge.amount,
               currencyId: charge.currencyId,
               costUnitId: charge.costUnitId,
+              containerTypeId: charge.containerTypeId,
               remarks: charge.remarks,
               updatedBy: auth.userId,
             },
@@ -1217,6 +1226,8 @@ export interface RateFormOptions {
   ports: LookupOption[];
   carriers: LookupOption[];
   goodsTypes: LookupOption[];
+  /** For a local charge that differs by box size. */
+  containerTypes: LookupOption[];
   currencies: LookupOption[];
   vendors: LookupOption[];
   agents: LookupOption[];
@@ -1234,7 +1245,7 @@ freightRateRouter.get('/rate-options', requireModePermission('VIEW'), async (req
     // Shared rows this workspace switched off must not be offered (§7A rule 7:
     // deactivating one writes an override, never the row's own is_active).
     const inactive = await inactiveMasters(db);
-    const [ports, carriers, goodsTypes, currencies, vendors, agents, tiers, costHeads] =
+    const [ports, carriers, containerTypes, goodsTypes, currencies, vendors, agents, tiers, costHeads] =
       await Promise.all([
         db.port.findMany({
           where: {
@@ -1250,6 +1261,11 @@ freightRateRouter.get('/rate-options', requireModePermission('VIEW'), async (req
           where: { ...excludeInactive(inactive, 'carrier'), deletedAt: null, isActive: true },
           select: { id: true, name: true, type: { select: { name: true } } },
           orderBy: { name: 'asc' },
+        }),
+        db.containerType.findMany({
+          where: { ...excludeInactive(inactive, 'container_type'), deletedAt: null, isActive: true },
+          select: { id: true, code: true },
+          orderBy: { sortOrder: 'asc' },
         }),
         db.goodsType.findMany({
           where: { ...excludeInactive(inactive, 'goods_type'), deletedAt: null, isActive: true },
@@ -1292,6 +1308,7 @@ freightRateRouter.get('/rate-options', requireModePermission('VIEW'), async (req
     return {
       ports: ports.map((p) => ({ id: p.id.toString(), name: `${p.portCode} — ${p.name}` })),
       carriers: usableCarriers.map((c) => ({ id: c.id.toString(), name: c.name })),
+      containerTypes: containerTypes.map((c) => ({ id: c.id.toString(), name: c.code })),
       goodsTypes: goodsTypes.map((g) => ({ id: g.id.toString(), name: g.name })),
       // The dropdown has room for the full name; the tables do not.
       currencies: currencies.map((c) => ({ id: c.id.toString(), name: c.currency })),

@@ -3,6 +3,7 @@
 import {
   type CustomerDto,
   type InquiryDto,
+  type InquiryPartyOption,
   type InquiryVolumeInput,
   type LookupOption,
   MOVEMENT_TYPES,
@@ -18,6 +19,7 @@ import { toast } from 'sonner';
 import { CustomerQuickAdd } from '@/components/sales/customer-quick-add';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
+import { MultiSelect } from '@/components/ui/multi-select';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 
@@ -42,7 +44,6 @@ interface InquiryOptions {
   airPorts: LookupOption[];
   commodities: { id: string; name: string; hsCode: string | null }[];
   termsOfShipment: LookupOption[];
-  modes: LookupOption[];
   currencies: LookupOption[];
   salesmen: LookupOption[];
   containerTypes: LookupOption[];
@@ -58,7 +59,6 @@ const EMPTY: InquiryOptions = {
   airPorts: [],
   commodities: [],
   termsOfShipment: [],
-  modes: [],
   currencies: [],
   salesmen: [],
   containerTypes: [],
@@ -148,11 +148,21 @@ export function InquiryForm({
   const [hsCode, setHsCode] = useState(inquiry?.hsCode ?? '');
   const [placeOfReceipt, setPlaceOfReceipt] = useState(inquiry?.placeOfReceipt ?? '');
   const [tosId, setTosId] = useState(inquiry?.tosId ?? '');
-  const [modeId, setModeId] = useState(inquiry?.modeId ?? '');
   const [loadingType, setLoadingType] = useState<'' | 'FCL' | 'LCL'>(
     inquiry?.loadingType ?? '',
   );
   const [volumes, setVolumes] = useState<Record<string, VolumeCell>>(volumesOf(inquiry));
+  // Who the inquiry goes to. Inbound offers agents, Outbound customers.
+  const [partyOptions, setPartyOptions] = useState<InquiryPartyOption[]>([]);
+  const [partyIds, setPartyIds] = useState<string[]>(
+    inquiry?.parties.map((p) => p.partyId) ?? [],
+  );
+  const [partyContactIds, setPartyContactIds] = useState<string[]>(
+    inquiry?.partyContacts.map((c) => c.contactId) ?? [],
+  );
+  const [notifyEmails, setNotifyEmails] = useState(inquiry?.notifyEmails ?? '');
+  /** Once the operator edits the box by hand, stop overwriting what they typed. */
+  const [emailsTouched, setEmailsTouched] = useState(inquiry?.notifyEmails != null);
   const [currencyId, setCurrencyId] = useState(inquiry?.currencyId ?? '');
   const [expectedShipmentDate, setExpectedShipmentDate] = useState(
     inquiry?.expectedShipmentDate ?? '',
@@ -239,6 +249,63 @@ export function InquiryForm({
     if (next === loadingType) return;
     setLoadingType(next);
     setVolumes({});
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    void authorizedRequest<InquiryPartyOption[]>(
+      `/api/tenant/sales/inquiry-parties?movement=${movementType}`,
+    )
+      .then((rows) => {
+        if (!cancelled) setPartyOptions(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setPartyOptions([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authorizedRequest, movementType]);
+
+  /** Contacts belonging to the parties currently ticked. */
+  const contactOptions = useMemo(() => {
+    const chosen = new Set(partyIds);
+    return partyOptions
+      .filter((party) => chosen.has(party.id))
+      .flatMap((party) =>
+        party.contacts.map((contact) => ({
+          id: contact.id,
+          name: `${contact.name} — ${party.name}`,
+          email: contact.email,
+        })),
+      );
+  }, [partyOptions, partyIds]);
+
+  /**
+   * Seed the email box from the ticked contacts, until someone edits it.
+   *
+   * The client asked for it to be editable, which means it can legitimately
+   * disagree with the contacts beside it — so once they have typed, their text
+   * wins and this stops interfering.
+   */
+  useEffect(() => {
+    if (emailsTouched) return;
+    const chosen = new Set(partyContactIds);
+    setNotifyEmails(
+      contactOptions
+        .filter((c) => chosen.has(c.id) && c.email !== null && c.email !== '')
+        .map((c) => c.email)
+        .join(', '),
+    );
+  }, [contactOptions, partyContactIds, emailsTouched]);
+
+  /** Changing the movement swaps agents for customers, so the picks go with it. */
+  function changeMovementType(next: MovementType): void {
+    if (next === movementType) return;
+    setMovementType(next);
+    setPartyIds([]);
+    setPartyContactIds([]);
+    if (!emailsTouched) setNotifyEmails('');
   }
 
   const customers = useMemo(
@@ -332,13 +399,15 @@ export function InquiryForm({
             shipmentType,
             customerId,
             movementType,
+            partyIds,
+            partyContactIds,
+            notifyEmails,
             polId,
             podId,
             placeOfReceipt,
             commodityItemId,
             hsCode,
             tosId,
-            modeId,
             loadingType: loadingType === '' ? undefined : loadingType,
             currencyId,
             expectedShipmentDate,
@@ -461,7 +530,7 @@ export function InquiryForm({
             <Select
               id="movementType"
               value={movementType}
-              onChange={(e) => setMovementType(e.target.value as MovementType)}
+              onChange={(e) => changeMovementType(e.target.value as MovementType)}
             >
               {MOVEMENT_TYPES.map((value) => (
                 <option key={value} value={value}>
@@ -470,6 +539,66 @@ export function InquiryForm({
               ))}
             </Select>
           </Field>
+
+          {/*
+            Who the inquiry is sent to. Inbound offers agents, Outbound
+            customers — the client's rule. Separate from Customer above, which
+            is the party the inquiry is FOR.
+          */}
+          <Field
+            id="partyIds"
+            label={movementType === 'INBOUND' ? 'Agents' : 'Customers to notify'}
+            error={errorFor('partyIds')}
+            wide
+          >
+            <MultiSelect
+              id="partyIds"
+              options={partyOptions.map((p) => ({ id: p.id, name: p.name }))}
+              value={partyIds}
+              onChange={(next) => {
+                setPartyIds(next);
+                // A contact whose party has just been unticked cannot stay.
+                const stillOffered = new Set(
+                  partyOptions
+                    .filter((p) => next.includes(p.id))
+                    .flatMap((p) => p.contacts.map((c) => c.id)),
+                );
+                setPartyContactIds((ids) => ids.filter((id) => stillOffered.has(id)));
+              }}
+              placeholder={movementType === 'INBOUND' ? 'Choose agents' : 'Choose customers'}
+            />
+          </Field>
+
+          {partyIds.length > 0 && (
+            <Field id="partyContactIds" label="Contacts" error={errorFor('partyContactIds')} wide>
+              <MultiSelect
+                id="partyContactIds"
+                options={contactOptions.map((c) => ({ id: c.id, name: c.name }))}
+                value={partyContactIds}
+                onChange={setPartyContactIds}
+                placeholder="Choose contacts"
+              />
+            </Field>
+          )}
+
+          {partyIds.length > 0 && (
+            <Field
+              id="notifyEmails"
+              label="Emails"
+              hint="Filled from the contacts above. Edit it if you need a one-off address."
+              error={errorFor('notifyEmails')}
+              wide
+            >
+              <Input
+                id="notifyEmails"
+                value={notifyEmails}
+                onChange={(e) => {
+                  setEmailsTouched(true);
+                  setNotifyEmails(e.target.value);
+                }}
+              />
+            </Field>
+          )}
 
           <Field id="salesmanId" label="Salesman" error={errorFor('salesmanId')}>
             <Select
@@ -573,17 +702,6 @@ export function InquiryForm({
             </Select>
           </Field>
 
-          {/* The client's wireframe puts Mode straight after TOS. */}
-          <Field id="modeId" label="Mode" error={errorFor('modeId')}>
-            <Select id="modeId" value={modeId} onChange={(e) => setModeId(e.target.value)}>
-              <option value="">Select a mode</option>
-              {options.modes.map((mode) => (
-                <option key={mode.id} value={mode.id}>
-                  {mode.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
 
           {/* Sea only: an air shipment is neither FCL nor LCL. */}
           {shipmentType === 'SEA' && (

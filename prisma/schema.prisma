@@ -236,6 +236,9 @@ model Tenant {
   masterOverrides       TenantMasterOverride[]
   auditLogs             AuditLog[]
 
+  inquiryParties        InquiryParty[]
+  inquiryPartyContacts  InquiryPartyContact[]
+
   @@index([slug])
   @@index([status])
   @@index([currencyId])
@@ -971,6 +974,8 @@ model Customer {
   updatedByUser User?     @relation("CustomerUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
   inquiries     Inquiry[]
 
+  inquiryParties InquiryParty[]
+
   @@unique([tenantId, code])
   @@unique([tenantId, id])
   @@index([tenantId])
@@ -1009,7 +1014,11 @@ model CustomerPic {
   createdByUser User? @relation("CustomerPicCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User? @relation("CustomerPicUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
+  inquiryContacts InquiryPartyContact[]
+
   @@unique([tenantId, code])
+  /// §4 rule 10: a composite foreign key needs this to point at.
+  @@unique([tenantId, id])
   @@index([tenantId])
   @@index([customerId])
   @@index([name])
@@ -1112,6 +1121,8 @@ model Agent {
   createdByUser User? @relation("AgentCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User? @relation("AgentUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
+  inquiryParties InquiryParty[]
+
   @@unique([tenantId, code])
   @@unique([tenantId, id])
   @@index([tenantId])
@@ -1148,7 +1159,11 @@ model AgentPic {
   createdByUser User? @relation("AgentPicCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User? @relation("AgentPicUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
+  inquiryContacts InquiryPartyContact[]
+
   @@unique([tenantId, code])
+  /// §4 rule 10: a composite foreign key needs this to point at.
+  @@unique([tenantId, id])
   @@index([tenantId])
   @@index([agentId])
   @@index([name])
@@ -1548,6 +1563,9 @@ model User {
   updatedUsers                 User[]                 @relation("UserUpdatedBy")
   updatedUserPermissions       UserPermission[]       @relation("UserPermissionUpdatedBy")
 
+  createdInquiryParties  InquiryParty[]        @relation("InquiryPartyCreatedBy")
+  createdInquiryContacts InquiryPartyContact[] @relation("InquiryPartyContactCreatedBy")
+
   @@unique([tenantId, username])
   @@unique([tenantId, email])
   @@unique([tenantId, code])
@@ -1695,6 +1713,8 @@ model ContainerType {
 
   rateTiers      RateTier[]
   inquiryVolumes InquiryVolume[]
+
+  localCharges RateLocalCharge[]
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -2009,6 +2029,10 @@ model RateLocalCharge {
   /// the cost head's unit is later corrected, a rate agreed under the old unit
   /// must not silently change meaning.
   costUnitId BigInt? @map("cost_unit_id")
+  /// Which container size the charge applies to, for charges that differ by
+  /// box — THC on a 20ft is not THC on a 40ft. Null means it applies whatever
+  /// the equipment, which is the normal case for documentation fees.
+  containerTypeId BigInt? @map("container_type_id")
 
   remarks   String?   @db.Text
   isActive  Boolean   @default(true) @map("is_active")
@@ -2023,11 +2047,16 @@ model RateLocalCharge {
   costHead CostHead    @relation(fields: [tenantId, costHeadId], references: [tenantId, id], onDelete: Restrict)
   currency Currency    @relation(fields: [currencyId], references: [id], onDelete: Restrict)
   costUnit CostUnit?   @relation(fields: [costUnitId], references: [id], onDelete: Restrict)
+  containerType ContainerType? @relation(fields: [containerTypeId], references: [id], onDelete: Restrict)
 
   createdByUser User? @relation("RateLocalChargeCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User? @relation("RateLocalChargeUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
-  @@unique([tenantId, rateId, costHeadId, side])
+  /// Container size is part of the key: THC on a 20ft and THC on a 40ft are two
+  /// legitimate lines on one rate, not a duplicate. NULL means "any size", and
+  /// Postgres treats NULLs as distinct — so a partial index in the migration
+  /// keeps a second "any size" line for the same head and side out.
+  @@unique([tenantId, rateId, costHeadId, side, containerTypeId])
   @@index([tenantId])
   @@index([rateId])
   @@index([costHeadId])
@@ -2189,6 +2218,11 @@ model Inquiry {
   modeId          BigInt?      @map("mode_id")
   /// Sea only: FCL or LCL. Drives which columns the volume grid offers.
   loadingType     LoadingType? @map("loading_type")
+  /// Recipients for this inquiry, prefilled from the selected contacts and then
+  /// editable by hand — the client asked for a one-off address to be possible.
+  /// Stored as typed, so it can legitimately disagree with the contacts beside
+  /// it; that is the trade-off they chose over a derived, read-only list.
+  notifyEmails    String?      @map("notify_emails") @db.Text
 
   /// Target price moved into inquiry_volume: the client's wireframe asks for
   /// one per container size, so a 20ft and a 40ft can be quoted apart.
@@ -2239,6 +2273,8 @@ model Inquiry {
   volumes   InquiryVolume[]
   followups InquiryFollowup[]
   rates     InquiryRate[]
+  parties   InquiryParty[]
+  contacts  InquiryPartyContact[]
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -2257,6 +2293,61 @@ model Inquiry {
 }
 
 /// spec §3.3: inquiry_volume — §5.4's "small grid, not six loose inputs".
+/// Who this inquiry is being sent to. Inbound picks agents, Outbound picks
+/// customers — the client's rule — so exactly one of the two columns is set on
+/// each row, enforced by a CHECK in the migration.
+///
+/// Separate from inquiry.customer_id, which stays: that is the party the
+/// inquiry is FOR, and this is who it goes to.
+model InquiryParty {
+  tenantId   BigInt  @map("tenant_id")
+  id         BigInt  @id @default(autoincrement())
+  inquiryId  BigInt  @map("inquiry_id")
+  agentId    BigInt? @map("agent_id")
+  customerId BigInt? @map("customer_id")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy BigInt?  @map("created_by")
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  inquiry  Inquiry   @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict)
+  agent    Agent?    @relation(fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
+  customer Customer? @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict)
+
+  createdByUser User? @relation("InquiryPartyCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, inquiryId, agentId, customerId])
+  @@index([tenantId])
+  @@index([inquiryId])
+  @@map("inquiry_party")
+}
+
+/// The people at those parties. Flat rather than nested under inquiry_party:
+/// the contact's own foreign key already ties it to its agent or customer, and
+/// the screen selects from one combined list.
+model InquiryPartyContact {
+  tenantId      BigInt  @map("tenant_id")
+  id            BigInt  @id @default(autoincrement())
+  inquiryId     BigInt  @map("inquiry_id")
+  agentPicId    BigInt? @map("agent_pic_id")
+  customerPicId BigInt? @map("customer_pic_id")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy BigInt?  @map("created_by")
+
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  inquiry     Inquiry      @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict)
+  agentPic    AgentPic?    @relation(fields: [tenantId, agentPicId], references: [tenantId, id], onDelete: Restrict)
+  customerPic CustomerPic? @relation(fields: [tenantId, customerPicId], references: [tenantId, id], onDelete: Restrict)
+
+  createdByUser User? @relation("InquiryPartyContactCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, inquiryId, agentPicId, customerPicId])
+  @@index([tenantId])
+  @@index([inquiryId])
+  @@map("inquiry_party_contact")
+}
+
 model InquiryVolume {
   tenantId        BigInt     @map("tenant_id")
   id              BigInt     @id @default(autoincrement())

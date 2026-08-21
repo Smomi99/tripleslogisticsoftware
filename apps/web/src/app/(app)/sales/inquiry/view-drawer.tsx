@@ -80,8 +80,18 @@ export function ViewDrawer({
     ['Commodity', inquiry.commodityName ?? '—'],
     ['HS code', inquiry.hsCode ?? '—'],
     ['Terms of shipment', inquiry.tosName ?? '—'],
-    ['Mode', inquiry.modeName ?? '—'],
     ['Loading type', inquiry.loadingType ?? '—'],
+    [
+      inquiry.movementType === 'INBOUND' ? 'Agents' : 'Customers notified',
+      inquiry.parties.length === 0 ? '—' : inquiry.parties.map((p) => p.name).join(', '),
+    ],
+    [
+      'Contacts',
+      inquiry.partyContacts.length === 0
+        ? '—'
+        : inquiry.partyContacts.map((c) => `${c.name} (${c.partyName})`).join(', '),
+    ],
+    ['Emails', inquiry.notifyEmails ?? '—'],
     [
       // Target price is per container size now, so it reads out of the grid
       // rather than off the inquiry: "20STD 1200 · 40HC 2100".

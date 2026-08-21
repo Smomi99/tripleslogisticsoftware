@@ -83,6 +83,11 @@ export type RateLineInput = z.input<typeof rateLineInputSchema>;
 export const localChargeInputSchema = z.object({
   costHeadId: idField,
   side: z.enum(CHARGE_SIDES).default('POL'),
+  /**
+   * Which container size the charge applies to. Blank means it applies whatever
+   * the equipment — the normal case for a documentation fee.
+   */
+  containerTypeId: z.string().regex(/^\d*$/, 'Choose a container type.').optional(),
   amount: moneyField('Enter an amount.'),
   currencyId: idField,
   remarks: z.string().trim().max(2000, 'Remarks are too long.').optional(),
@@ -150,7 +155,10 @@ export const freightRateInputSchema = z
   )
   .refine(
     (v) =>
-      new Set(v.localCharges.map((c) => `${c.costHeadId}:${c.side}`)).size ===
+      // Container size is part of the key: THC on a 20ft and THC on a 40ft are
+      // two legitimate lines, not a duplicate.
+      new Set(v.localCharges.map((c) => `${c.costHeadId}:${c.side}:${c.containerTypeId ?? ''}`))
+        .size ===
       v.localCharges.length,
     { message: 'Each cost head can only appear once per side.', path: ['localCharges'] },
   );
@@ -185,6 +193,8 @@ export interface LocalChargeDto {
   currencyId: string;
   currencyCode: string;
   costUnitName: string | null;
+  containerTypeId: string | null;
+  containerTypeCode: string | null;
   remarks: string | null;
 }
 

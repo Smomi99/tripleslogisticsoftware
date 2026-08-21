@@ -20,6 +20,7 @@ export function LocalChargePanel({
   onOpenChange,
   charges,
   costHeads,
+  containerTypes,
   currencies,
   defaultCurrencyId,
   onChange,
@@ -28,12 +29,14 @@ export function LocalChargePanel({
   onOpenChange: (open: boolean) => void;
   charges: LocalChargeInput[];
   costHeads: LookupOption[];
+  containerTypes: LookupOption[];
   currencies: LookupOption[];
   defaultCurrencyId: string;
   onChange: (next: LocalChargeInput[]) => void;
 }) {
   const [costHeadId, setCostHeadId] = useState('');
   const [side, setSide] = useState<ChargeSide>('POL');
+  const [containerTypeId, setContainerTypeId] = useState('');
   const [amount, setAmount] = useState('');
   const [currencyId, setCurrencyId] = useState(defaultCurrencyId);
   const [error, setError] = useState<string | null>(null);
@@ -47,15 +50,35 @@ export function LocalChargePanel({
       setError('Enter an amount, e.g. 45 or 45.50.');
       return;
     }
-    if (charges.some((c) => c.costHeadId === costHeadId && c.side === side)) {
-      setError('That cost head is already on this side.');
+    // Container size is part of the key: THC on a 20ft and THC on a 40ft are
+    // two legitimate lines, not a duplicate.
+    if (
+      charges.some(
+        (c) =>
+          c.costHeadId === costHeadId &&
+          c.side === side &&
+          (c.containerTypeId ?? '') === containerTypeId,
+      )
+    ) {
+      setError(
+        containerTypeId === ''
+          ? 'That cost head is already on this side.'
+          : 'That cost head is already on this side for that container type.',
+      );
       return;
     }
     onChange([
       ...charges,
-      { costHeadId, side, amount: amount.trim(), currencyId: currencyId || defaultCurrencyId },
+      {
+        costHeadId,
+        side,
+        containerTypeId,
+        amount: amount.trim(),
+        currencyId: currencyId || defaultCurrencyId,
+      },
     ]);
     setCostHeadId('');
+    setContainerTypeId('');
     setAmount('');
     setError(null);
   }
@@ -85,15 +108,24 @@ export function LocalChargePanel({
               <tr className="border-b border-line text-left">
                 <th className="label-manifest py-1.5">Cost head</th>
                 <th className="label-manifest py-1.5">Side</th>
+                <th className="label-manifest py-1.5">Container</th>
                 <th className="label-manifest py-1.5 text-right">Amount</th>
                 <th className="sr-only">Remove</th>
               </tr>
             </thead>
             <tbody>
               {charges.map((charge, index) => (
-                <tr key={`${charge.costHeadId}-${charge.side}`} className="border-b border-line">
+                <tr
+                  key={`${charge.costHeadId}-${charge.side}-${charge.containerTypeId ?? ''}`}
+                  className="border-b border-line"
+                >
                   <td className="py-1.5">{nameOf(charge.costHeadId)}</td>
                   <td className="py-1.5 text-steel">{charge.side}</td>
+                  <td className="py-1.5 font-mono text-steel">
+                    {charge.containerTypeId === undefined || charge.containerTypeId === ''
+                      ? 'All'
+                      : (containerTypes.find((t) => t.id === charge.containerTypeId)?.name ?? '—')}
+                  </td>
                   <td className="py-1.5 text-right font-mono tabular-nums">
                     {charge.amount} {codeOf(charge.currencyId)}
                   </td>
@@ -113,6 +145,22 @@ export function LocalChargePanel({
         )}
 
         <div className="grid grid-cols-1 gap-3 border-t border-line pt-4 md:grid-cols-2">
+          {/* Blank means the charge applies whatever the equipment. */}
+          <Field id="lc-container" label="Container type" hint="Leave blank if it applies to all.">
+            <Select
+              id="lc-container"
+              value={containerTypeId}
+              onChange={(e) => setContainerTypeId(e.target.value)}
+            >
+              <option value="">All container types</option>
+              {containerTypes.map((type) => (
+                <option key={type.id} value={type.id}>
+                  {type.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+
           <Field id="lc-cost-head" label="Cost head" required>
             <Select
               id="lc-cost-head"

@@ -1,4 +1,7 @@
 import {
+  type InquiryPartyContactDto,
+  type InquiryPartyOption,
+  type InquiryPartyDto,
   type ApiSuccess,
   buildMeta,
   type InquiryDto,
@@ -91,7 +94,22 @@ const inquiryInclude = {
   pod: { select: { id: true, name: true, portCode: true } },
   commodityItem: { select: { id: true, name: true } },
   tos: { select: { id: true, name: true } },
-  mode: { select: { id: true, name: true } },
+  parties: {
+    select: {
+      id: true,
+      agent: { select: { id: true, name: true } },
+      customer: { select: { id: true, name: true } },
+    },
+  },
+  contacts: {
+    select: {
+      id: true,
+      agentPic: { select: { id: true, name: true, email: true, agent: { select: { name: true } } } },
+      customerPic: {
+        select: { id: true, name: true, email: true, customer: { select: { name: true } } },
+      },
+    },
+  },
   currency: { select: { id: true, currency: true } },
   salesman: { select: { id: true, name: true } },
   volumes: {
@@ -119,6 +137,26 @@ function toDto(inquiry: InquiryWithRelations, today: Date): InquiryDto {
     containerTypeNote: volume.containerTypeNote,
   }));
 
+  const parties: InquiryPartyDto[] = inquiry.parties.map((row) => {
+    const party = row.agent ?? row.customer;
+    return {
+      id: row.id.toString(),
+      partyId: (party?.id ?? 0n).toString(),
+      name: party?.name ?? '',
+    };
+  });
+
+  const partyContacts: InquiryPartyContactDto[] = inquiry.contacts.map((row) => {
+    const pic = row.agentPic ?? row.customerPic;
+    return {
+      id: row.id.toString(),
+      contactId: (pic?.id ?? 0n).toString(),
+      name: pic?.name ?? '',
+      email: pic?.email ?? null,
+      partyName: row.agentPic?.agent.name ?? row.customerPic?.customer.name ?? '',
+    };
+  });
+
   return {
     id: inquiry.id.toString(),
     code: inquiry.code,
@@ -142,8 +180,6 @@ function toDto(inquiry: InquiryWithRelations, today: Date): InquiryDto {
     hsCode: inquiry.hsCode,
     tosId: inquiry.tosId?.toString() ?? null,
     tosName: inquiry.tos?.name ?? null,
-    modeId: inquiry.modeId?.toString() ?? null,
-    modeName: inquiry.mode?.name ?? null,
     loadingType: inquiry.loadingType,
     currencyId: inquiry.currencyId?.toString() ?? null,
     currencyCode:
@@ -159,6 +195,9 @@ function toDto(inquiry: InquiryWithRelations, today: Date): InquiryDto {
     leadId: inquiry.leadId?.toString() ?? null,
     isActive: inquiry.isActive,
     volumes,
+    parties,
+    partyContacts,
+    notifyEmails: inquiry.notifyEmails,
     followupCount: inquiry._count.followups,
     // §4 rule 11: past its window but still OPEN. Reported rather than written,
     // so the list can flag it before the job next runs.
@@ -423,6 +462,77 @@ function volumeRows(
  * rule 3 forbids the hard delete, and the tenant client refuses deleteMany
  * outright. Rows the new input drops are deactivated, not removed.
  */
+/**
+ * Rewrites who an inquiry goes to.
+ *
+ * Wholesale rather than diffed, the way the volume grid is not: these rows
+ * carry no history of their own — no id anyone quotes, no audit value — so
+ * replacing them is honest and a diff would be ceremony. §4 rule 3 governs
+ * business records, and the migration grants ff_app DELETE here for exactly
+ * this, as it does on the other join tables.
+ *
+ * Inbound writes agents, Outbound writes customers. The ids are validated
+ * against the right table first, so a client sending a customer id on an
+ * Inbound inquiry is refused rather than silently storing nothing.
+ */
+async function writeParties(
+  db: TenantDb,
+  auth: { tenantId: bigint; userId: bigint },
+  inquiryId: bigint,
+  input: ReturnType<typeof inquiryInputSchema.parse>,
+): Promise<void> {
+  const inbound = input.movementType === 'INBOUND';
+  const partyIds = [...new Set(input.partyIds)].map((v) => BigInt(v));
+  const contactIds = [...new Set(input.partyContactIds)].map((v) => BigInt(v));
+
+  if (partyIds.length > 0) {
+    const found = inbound
+      ? await db.agent.findMany({ where: { id: { in: partyIds }, deletedAt: null }, select: { id: true } })
+      : await db.customer.findMany({ where: { id: { in: partyIds }, deletedAt: null }, select: { id: true } });
+    if (found.length !== partyIds.length) {
+      throw HttpError.badRequest(
+        inbound ? 'One of those agents is not available.' : 'One of those customers is not available.',
+      );
+    }
+  }
+
+  if (contactIds.length > 0) {
+    const found = inbound
+      ? await db.agentPic.findMany({ where: { id: { in: contactIds }, deletedAt: null }, select: { id: true } })
+      : await db.customerPic.findMany({ where: { id: { in: contactIds }, deletedAt: null }, select: { id: true } });
+    if (found.length !== contactIds.length) {
+      throw HttpError.badRequest('One of those contacts is not available.');
+    }
+  }
+
+  await db.$executeRaw`DELETE FROM inquiry_party WHERE inquiry_id = ${inquiryId} AND tenant_id = ${auth.tenantId}`;
+  await db.$executeRaw`DELETE FROM inquiry_party_contact WHERE inquiry_id = ${inquiryId} AND tenant_id = ${auth.tenantId}`;
+
+  if (partyIds.length > 0) {
+    await db.inquiryParty.createMany({
+      data: partyIds.map((partyId) => ({
+        tenantId: auth.tenantId,
+        inquiryId,
+        agentId: inbound ? partyId : null,
+        customerId: inbound ? null : partyId,
+        createdBy: auth.userId,
+      })),
+    });
+  }
+
+  if (contactIds.length > 0) {
+    await db.inquiryPartyContact.createMany({
+      data: contactIds.map((contactId) => ({
+        tenantId: auth.tenantId,
+        inquiryId,
+        agentPicId: inbound ? contactId : null,
+        customerPicId: inbound ? null : contactId,
+        createdBy: auth.userId,
+      })),
+    });
+  }
+}
+
 async function updateInquiry(
   db: TenantDb,
   auth: { tenantId: bigint; userId: bigint },
@@ -466,6 +576,8 @@ async function updateInquiry(
     });
   }
 
+  await writeParties(db, auth, id, input);
+
   return db.inquiry.update({
     where: { id },
     data: {
@@ -480,8 +592,8 @@ async function updateInquiry(
       commodityItemId: refs.commodityItemId,
       hsCode: input.hsCode || null,
       tosId: refs.tosId,
-      modeId: input.modeId ? BigInt(input.modeId) : null,
       loadingType: input.loadingType ?? null,
+      notifyEmails: input.notifyEmails || null,
       currencyId: refs.currencyId,
       expectedShipmentDate: input.expectedShipmentDate
         ? new Date(input.expectedShipmentDate)
@@ -510,7 +622,7 @@ inquiryRouter.post('/inquiries', requirePermission(`${FEATURE}.CREATE`), async (
     for (let attempt = 0; attempt < CODE_RETRY_LIMIT; attempt += 1) {
       const code = await nextInquiryNo(db, auth.tenantId, year);
       try {
-        return await db.inquiry.create({
+        const created = await db.inquiry.create({
           data: {
             tenantId: auth.tenantId,
             code,
@@ -529,8 +641,8 @@ inquiryRouter.post('/inquiries', requirePermission(`${FEATURE}.CREATE`), async (
             commodityItemId: refs.commodityItemId,
             hsCode: input.hsCode === undefined || input.hsCode === '' ? null : input.hsCode,
             tosId: refs.tosId,
-            modeId: input.modeId ? BigInt(input.modeId) : null,
             loadingType: input.loadingType ?? null,
+            notifyEmails: input.notifyEmails || null,
             currencyId: refs.currencyId,
             expectedShipmentDate:
               input.expectedShipmentDate === undefined || input.expectedShipmentDate === ''
@@ -547,6 +659,14 @@ inquiryRouter.post('/inquiries', requirePermission(`${FEATURE}.CREATE`), async (
             updatedBy: auth.userId,
             ...(volumes.length > 0 ? { volumes: { createMany: { data: volumes } } } : {}),
           },
+          include: inquiryInclude,
+        });
+
+        // Recipients are written after the row exists, since they reference it.
+        // Same transaction, so a failure here takes the inquiry with it.
+        await writeParties(db, auth, created.id, input);
+        return db.inquiry.findFirstOrThrow({
+          where: { id: created.id },
           include: inquiryInclude,
         });
       } catch (error) {
@@ -567,6 +687,50 @@ inquiryRouter.post('/inquiries', requirePermission(`${FEATURE}.CREATE`), async (
 // ===========================================================================
 // Read one
 // ===========================================================================
+
+/**
+ * GET /api/tenant/sales/inquiry-parties?movement=INBOUND|OUTBOUND
+ *
+ * The parties an inquiry can be sent to, each with its own contacts and their
+ * addresses. One request rather than a fetch per selected party: the set is
+ * small, and it lets the contact list and the email box react the instant a
+ * party is ticked instead of after a round trip.
+ */
+inquiryRouter.get('/inquiry-parties', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
+  const auth = req.auth!;
+  const inbound = req.query['movement'] !== 'OUTBOUND';
+
+  const parties = await withTenant(auth.tenantId, async (db) => {
+    const shape = {
+      where: { deletedAt: null, isActive: true },
+      select: {
+        id: true,
+        name: true,
+        pics: {
+          where: { deletedAt: null, isActive: true },
+          select: { id: true, name: true, email: true },
+          orderBy: { name: 'asc' as const },
+        },
+      },
+      orderBy: { name: 'asc' as const },
+    };
+    return inbound ? db.agent.findMany(shape) : db.customer.findMany(shape);
+  });
+
+  const payload: ApiSuccess<InquiryPartyOption[]> = {
+    success: true,
+    data: parties.map((party) => ({
+      id: party.id.toString(),
+      name: party.name,
+      contacts: party.pics.map((pic) => ({
+        id: pic.id.toString(),
+        name: pic.name,
+        email: pic.email,
+      })),
+    })),
+  };
+  res.json(payload);
+});
 
 inquiryRouter.get('/inquiries/:id', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
   const auth = req.auth!;

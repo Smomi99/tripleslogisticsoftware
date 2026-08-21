@@ -154,6 +154,29 @@ export interface InquiryVolumeDto {
   containerTypeNote: string | null;
 }
 
+/** A selectable party and the people at it, for the recipient block. */
+export interface InquiryPartyOption {
+  id: string;
+  name: string;
+  contacts: { id: string; name: string; email: string | null }[];
+}
+
+/** An agent (Inbound) or a customer (Outbound) this inquiry is sent to. */
+export interface InquiryPartyDto {
+  id: string;
+  partyId: string;
+  name: string;
+}
+
+/** One of their people, with the address that seeds the email list. */
+export interface InquiryPartyContactDto {
+  id: string;
+  contactId: string;
+  name: string;
+  email: string | null;
+  partyName: string;
+}
+
 // -------------------------------------------------------------------- inquiry
 
 export const inquiryInputSchema = z
@@ -169,8 +192,6 @@ export const inquiryInputSchema = z
     commodityItemId: optionalIdField,
     hsCode: z.string().trim().max(50, 'HS code is too long.').optional(),
     tosId: optionalIdField,
-    /** The client's "Mode" — an Incoterm, from the Settings → Modes list. */
-    modeId: optionalIdField,
     /**
      * Sea only. Chooses which columns the volume grid offers, and is left unset
      * on an Air inquiry where the question does not arise.
@@ -185,6 +206,18 @@ export const inquiryInputSchema = z
     /** §9 Q12: the lead this inquiry was raised from, if any. */
     leadId: optionalIdField,
     volumes: z.array(inquiryVolumeInputSchema).default([]),
+    /**
+     * Who this inquiry goes to. Inbound picks agents, Outbound picks customers
+     * — the same list, filled from whichever side the movement names.
+     */
+    partyIds: z.array(z.string().regex(/^\d+$/)).default([]),
+    /** The people at those parties. */
+    partyContactIds: z.array(z.string().regex(/^\d+$/)).default([]),
+    /**
+     * Prefilled from the selected contacts and then editable, by the client's
+     * choice — a one-off recipient has to be possible. Stored as typed.
+     */
+    notifyEmails: z.string().trim().max(4000, 'That list is too long.').optional(),
   })
   .refine((v) => v.polId !== v.podId, {
     message: 'The destination must differ from the origin.',
@@ -237,8 +270,6 @@ export interface InquiryDto {
   hsCode: string | null;
   tosId: string | null;
   tosName: string | null;
-  modeId: string | null;
-  modeName: string | null;
   loadingType: LoadingType | null;
   currencyId: string | null;
   currencyCode: string | null;
@@ -253,6 +284,9 @@ export interface InquiryDto {
   leadId: string | null;
   isActive: boolean;
   volumes: InquiryVolumeDto[];
+  parties: InquiryPartyDto[];
+  partyContacts: InquiryPartyContactDto[];
+  notifyEmails: string | null;
   /** §5.5's "Follow Up(n)" counter. */
   followupCount: number;
   /** True once §4 rule 11's window has passed but the status still says OPEN. */
