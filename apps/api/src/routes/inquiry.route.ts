@@ -1,5 +1,7 @@
 import {
   type InquiryPartyContactDto,
+  type ShipmentType,
+  type LaneCheckDto,
   type InquiryPartyOption,
   type InquiryPartyDto,
   type ApiSuccess,
@@ -98,15 +100,15 @@ const inquiryInclude = {
     select: {
       id: true,
       agent: { select: { id: true, name: true } },
-      customer: { select: { id: true, name: true } },
+      carrier: { select: { id: true, name: true } },
     },
   },
   contacts: {
     select: {
       id: true,
       agentPic: { select: { id: true, name: true, email: true, agent: { select: { name: true } } } },
-      customerPic: {
-        select: { id: true, name: true, email: true, customer: { select: { name: true } } },
+      carrierPic: {
+        select: { id: true, name: true, email: true, carrier: { select: { name: true } } },
       },
     },
   },
@@ -138,7 +140,7 @@ function toDto(inquiry: InquiryWithRelations, today: Date): InquiryDto {
   }));
 
   const parties: InquiryPartyDto[] = inquiry.parties.map((row) => {
-    const party = row.agent ?? row.customer;
+    const party = row.agent ?? row.carrier;
     return {
       id: row.id.toString(),
       partyId: (party?.id ?? 0n).toString(),
@@ -147,13 +149,13 @@ function toDto(inquiry: InquiryWithRelations, today: Date): InquiryDto {
   });
 
   const partyContacts: InquiryPartyContactDto[] = inquiry.contacts.map((row) => {
-    const pic = row.agentPic ?? row.customerPic;
+    const pic = row.agentPic ?? row.carrierPic;
     return {
       id: row.id.toString(),
       contactId: (pic?.id ?? 0n).toString(),
       name: pic?.name ?? '',
       email: pic?.email ?? null,
-      partyName: row.agentPic?.agent.name ?? row.customerPic?.customer.name ?? '',
+      partyName: row.agentPic?.agent.name ?? row.carrierPic?.carrier.name ?? '',
     };
   });
 
@@ -487,10 +489,10 @@ async function writeParties(
   if (partyIds.length > 0) {
     const found = inbound
       ? await db.agent.findMany({ where: { id: { in: partyIds }, deletedAt: null }, select: { id: true } })
-      : await db.customer.findMany({ where: { id: { in: partyIds }, deletedAt: null }, select: { id: true } });
+      : await db.carrier.findMany({ where: { id: { in: partyIds }, deletedAt: null }, select: { id: true } });
     if (found.length !== partyIds.length) {
       throw HttpError.badRequest(
-        inbound ? 'One of those agents is not available.' : 'One of those customers is not available.',
+        inbound ? 'One of those agents is not available.' : 'One of those carriers is not available.',
       );
     }
   }
@@ -498,7 +500,7 @@ async function writeParties(
   if (contactIds.length > 0) {
     const found = inbound
       ? await db.agentPic.findMany({ where: { id: { in: contactIds }, deletedAt: null }, select: { id: true } })
-      : await db.customerPic.findMany({ where: { id: { in: contactIds }, deletedAt: null }, select: { id: true } });
+      : await db.carrierPic.findMany({ where: { id: { in: contactIds }, deletedAt: null }, select: { id: true } });
     if (found.length !== contactIds.length) {
       throw HttpError.badRequest('One of those contacts is not available.');
     }
@@ -513,7 +515,7 @@ async function writeParties(
         tenantId: auth.tenantId,
         inquiryId,
         agentId: inbound ? partyId : null,
-        customerId: inbound ? null : partyId,
+        carrierId: inbound ? null : partyId,
         createdBy: auth.userId,
       })),
     });
@@ -525,7 +527,7 @@ async function writeParties(
         tenantId: auth.tenantId,
         inquiryId,
         agentPicId: inbound ? contactId : null,
-        customerPicId: inbound ? null : contactId,
+        carrierPicId: inbound ? null : contactId,
         createdBy: auth.userId,
       })),
     });
@@ -692,6 +694,67 @@ inquiryRouter.post('/inquiries', requirePermission(`${FEATURE}.CREATE`), async (
  * small, and it lets the contact list and the email box react the instant a
  * party is ticked instead of after a round trip.
  */
+/**
+ * GET /api/tenant/sales/lane-check?polId=&podId=&shipmentType=
+ *
+ * Is there already a buying rate for this lane?
+ *
+ * Same rule the §5.5 Price action uses, so the two screens can never disagree:
+ * PUBLISHED, the right mode for the shipment type, the same POL and POD, and
+ * valid today. A rate whose validity has passed does NOT count as a match —
+ * you cannot quote from it, so the operator still has to go and ask.
+ *
+ * Returns which of the three it is, because "expired" and "nothing at all" lead
+ * to the same next step but are not the same fact, and the screen says so.
+ */
+inquiryRouter.get('/lane-check', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
+  const auth = req.auth!;
+  const polId = req.query['polId'];
+  const podId = req.query['podId'];
+  const shipmentType = req.query['shipmentType'];
+
+  if (typeof polId !== 'string' || !/^\d+$/.test(polId) ||
+      typeof podId !== 'string' || !/^\d+$/.test(podId)) {
+    throw HttpError.badRequest('Choose both ports.');
+  }
+  const type: ShipmentType = shipmentType === 'AIR' ? 'AIR' : 'SEA';
+
+  const result = await withTenant(auth.tenantId, async (db) => {
+    const today = new Date(new Date().toISOString().slice(0, 10));
+    const lane = {
+      deletedAt: null,
+      status: 'PUBLISHED' as const,
+      mode: { in: MODES_FOR[type] },
+      polId: BigInt(polId),
+      podId: BigInt(podId),
+    };
+
+    const live = await db.freightRate.count({
+      where: { ...lane, validFrom: { lte: today }, validTo: { gte: today } },
+    });
+    if (live > 0) return { status: 'MATCHED' as const, count: live, latestValidTo: null };
+
+    // Nothing live. Was there something, and when did it lapse? The newest
+    // expiry is the useful one to show — it says how stale the lane has gone.
+    const lapsed = await db.freightRate.findFirst({
+      where: { ...lane, validTo: { lt: today } },
+      select: { validTo: true },
+      orderBy: { validTo: 'desc' },
+    });
+    if (lapsed !== null) {
+      return {
+        status: 'EXPIRED' as const,
+        count: 0,
+        latestValidTo: lapsed.validTo.toISOString().slice(0, 10),
+      };
+    }
+    return { status: 'NONE' as const, count: 0, latestValidTo: null };
+  });
+
+  const payload: ApiSuccess<LaneCheckDto> = { success: true, data: result };
+  res.json(payload);
+});
+
 inquiryRouter.get('/inquiry-parties', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
   const auth = req.auth!;
   const inbound = req.query['movement'] !== 'OUTBOUND';
@@ -710,7 +773,7 @@ inquiryRouter.get('/inquiry-parties', requirePermission(`${FEATURE}.VIEW`), asyn
       },
       orderBy: { name: 'asc' as const },
     };
-    return inbound ? db.agent.findMany(shape) : db.customer.findMany(shape);
+    return inbound ? db.agent.findMany(shape) : db.carrier.findMany(shape);
   });
 
   const payload: ApiSuccess<InquiryPartyOption[]> = {

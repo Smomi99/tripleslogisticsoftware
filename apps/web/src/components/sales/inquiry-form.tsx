@@ -4,6 +4,7 @@ import {
   type CustomerDto,
   type InquiryDto,
   type InquiryPartyOption,
+  type LaneCheckDto,
   type InquiryVolumeInput,
   type LookupOption,
   MOVEMENT_TYPES,
@@ -161,6 +162,11 @@ export function InquiryForm({
     inquiry?.partyContacts.map((c) => c.contactId) ?? [],
   );
   const [notifyEmails, setNotifyEmails] = useState(inquiry?.notifyEmails ?? '');
+  /**
+   * Whether this lane already has a live buying rate. Null until both ports are
+   * chosen — there is no lane to ask about before that.
+   */
+  const [laneStatus, setLaneStatus] = useState<LaneCheckDto | null>(null);
   /** Once the operator edits the box by hand, stop overwriting what they typed. */
   const [emailsTouched, setEmailsTouched] = useState(inquiry?.notifyEmails != null);
   const [currencyId, setCurrencyId] = useState(inquiry?.currencyId ?? '');
@@ -265,6 +271,33 @@ export function InquiryForm({
       cancelled = true;
     };
   }, [authorizedRequest, movementType]);
+
+  /**
+   * Ask the price list whether this lane is already rated.
+   *
+   * Same rule the Price action uses, so the two screens cannot disagree, and
+   * re-run whenever the lane or the shipment type changes — an air rate on the
+   * same two ports is a different question from a sea one.
+   */
+  useEffect(() => {
+    if (polId === '' || podId === '') {
+      setLaneStatus(null);
+      return;
+    }
+    let cancelled = false;
+    void authorizedRequest<LaneCheckDto>(
+      `/api/tenant/sales/lane-check?polId=${polId}&podId=${podId}&shipmentType=${shipmentType}`,
+    )
+      .then((result) => {
+        if (!cancelled) setLaneStatus(result);
+      })
+      .catch(() => {
+        if (!cancelled) setLaneStatus(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [authorizedRequest, polId, podId, shipmentType]);
 
   /** Contacts belonging to the parties currently ticked. */
   const contactOptions = useMemo(() => {
@@ -538,66 +571,6 @@ export function InquiryForm({
             </Select>
           </Field>
 
-          {/*
-            Who the inquiry is sent to. Inbound offers agents, Outbound
-            customers — the client's rule. Separate from Customer above, which
-            is the party the inquiry is FOR.
-          */}
-          <Field
-            id="partyIds"
-            label={movementType === 'INBOUND' ? 'Agents' : 'Customers to notify'}
-            error={errorFor('partyIds')}
-            wide
-          >
-            <MultiSelect
-              id="partyIds"
-              options={partyOptions.map((p) => ({ id: p.id, name: p.name }))}
-              value={partyIds}
-              onChange={(next) => {
-                setPartyIds(next);
-                // A contact whose party has just been unticked cannot stay.
-                const stillOffered = new Set(
-                  partyOptions
-                    .filter((p) => next.includes(p.id))
-                    .flatMap((p) => p.contacts.map((c) => c.id)),
-                );
-                setPartyContactIds((ids) => ids.filter((id) => stillOffered.has(id)));
-              }}
-              placeholder={movementType === 'INBOUND' ? 'Choose agents' : 'Choose customers'}
-            />
-          </Field>
-
-          {partyIds.length > 0 && (
-            <Field id="partyContactIds" label="Contacts" error={errorFor('partyContactIds')} wide>
-              <MultiSelect
-                id="partyContactIds"
-                options={contactOptions.map((c) => ({ id: c.id, name: c.name }))}
-                value={partyContactIds}
-                onChange={setPartyContactIds}
-                placeholder="Choose contacts"
-              />
-            </Field>
-          )}
-
-          {partyIds.length > 0 && (
-            <Field
-              id="notifyEmails"
-              label="Emails"
-              hint="Filled from the contacts above. Edit it if you need a one-off address."
-              error={errorFor('notifyEmails')}
-              wide
-            >
-              <Input
-                id="notifyEmails"
-                value={notifyEmails}
-                onChange={(e) => {
-                  setEmailsTouched(true);
-                  setNotifyEmails(e.target.value);
-                }}
-              />
-            </Field>
-          )}
-
           <Field id="salesmanId" label="Salesman" error={errorFor('salesmanId')}>
             <Select
               id="salesmanId"
@@ -650,6 +623,89 @@ export function InquiryForm({
               ))}
             </Select>
           </Field>
+
+          {/* The lane check drives everything below. */}
+          {laneStatus !== null && (
+            <div className="md:col-span-2">
+              {laneStatus.status === 'MATCHED' ? (
+                <p className="flex items-center gap-2 rounded-manifest border border-line bg-paper px-3 py-2 text-body text-verified">
+                  <span aria-hidden className="size-1.5 rounded-full bg-verified" />
+                  Matched — this lane already has a live buying rate.
+                </p>
+              ) : (
+                <p className="rounded-manifest border border-line bg-paper px-3 py-2 text-body text-steel">
+                  {laneStatus.status === 'EXPIRED'
+                    ? `No live rate on this lane — the last one expired on ${laneStatus.latestValidTo}. Ask ${movementType === 'INBOUND' ? 'an agent' : 'a carrier'} to quote it.`
+                    : `No rate on this lane yet. Ask ${movementType === 'INBOUND' ? 'an agent' : 'a carrier'} to quote it.`}
+                </p>
+              )}
+            </div>
+          )}
+
+          {laneStatus !== null && laneStatus.status !== 'MATCHED' && (
+            <>
+          {/*
+            Who to chase a rate from. Inbound offers agents, Outbound offers
+            carriers — a customer is who the inquiry is FOR, never who you buy
+            from. Shown only when the lane has no live rate: if one exists there
+            is nothing to chase, and an expired one is no use for quoting.
+          */}
+          <Field
+            id="partyIds"
+            label={movementType === 'INBOUND' ? 'Agents' : 'Carriers'}
+            error={errorFor('partyIds')}
+            wide
+          >
+            <MultiSelect
+              id="partyIds"
+              options={partyOptions.map((p) => ({ id: p.id, name: p.name }))}
+              value={partyIds}
+              onChange={(next) => {
+                setPartyIds(next);
+                // A contact whose party has just been unticked cannot stay.
+                const stillOffered = new Set(
+                  partyOptions
+                    .filter((p) => next.includes(p.id))
+                    .flatMap((p) => p.contacts.map((c) => c.id)),
+                );
+                setPartyContactIds((ids) => ids.filter((id) => stillOffered.has(id)));
+              }}
+              placeholder={movementType === 'INBOUND' ? 'Choose agents' : 'Choose carriers'}
+            />
+          </Field>
+
+          {partyIds.length > 0 && (
+            <Field id="partyContactIds" label="Contacts" error={errorFor('partyContactIds')} wide>
+              <MultiSelect
+                id="partyContactIds"
+                options={contactOptions.map((c) => ({ id: c.id, name: c.name }))}
+                value={partyContactIds}
+                onChange={setPartyContactIds}
+                placeholder="Choose contacts"
+              />
+            </Field>
+          )}
+
+          {partyIds.length > 0 && (
+            <Field
+              id="notifyEmails"
+              label="Emails"
+              hint="Filled from the contacts above. Edit it if you need a one-off address."
+              error={errorFor('notifyEmails')}
+              wide
+            >
+              <Input
+                id="notifyEmails"
+                value={notifyEmails}
+                onChange={(e) => {
+                  setEmailsTouched(true);
+                  setNotifyEmails(e.target.value);
+                }}
+              />
+            </Field>
+          )}
+            </>
+          )}
 
           <Field id="placeOfReceipt" label="Place of receipt" error={errorFor('placeOfReceipt')}>
             <Input

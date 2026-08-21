@@ -154,6 +154,20 @@ export interface InquiryVolumeDto {
   containerTypeNote: string | null;
 }
 
+/**
+ * Whether the workspace already has a buying rate for the chosen lane.
+ *
+ * MATCHED  — a published rate, right mode, valid today. Nothing to chase.
+ * EXPIRED  — the lane has been rated before, but not currently. Chase it.
+ * NONE     — never rated. Chase it.
+ */
+export interface LaneCheckDto {
+  status: 'MATCHED' | 'EXPIRED' | 'NONE';
+  count: number;
+  /** The most recent expiry, when the status is EXPIRED. */
+  latestValidTo: string | null;
+}
+
 /** A selectable party and the people at it, for the recipient block. */
 export interface InquiryPartyOption {
   id: string;

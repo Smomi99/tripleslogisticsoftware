@@ -566,6 +566,7 @@ model Carrier {
   createdByUser User? @relation("CarrierCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User? @relation("CarrierUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
+  inquiryParties InquiryParty[]
   @@unique([tenantId, code])
   @@index([tenantId])
   @@index([typeId])
@@ -602,7 +603,10 @@ model CarrierPic {
   createdByUser User? @relation("CarrierPicCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User? @relation("CarrierPicUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
+  inquiryContacts InquiryPartyContact[]
   @@unique([tenantId, code])
+  /// §4 rule 10: a composite foreign key needs this to point at.
+  @@unique([tenantId, id])
   @@index([tenantId])
   @@index([carrierId])
   @@index([name])
@@ -974,7 +978,6 @@ model Customer {
   updatedByUser User?     @relation("CustomerUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
   inquiries     Inquiry[]
 
-  inquiryParties InquiryParty[]
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -1014,7 +1017,6 @@ model CustomerPic {
   createdByUser User? @relation("CustomerPicCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User? @relation("CustomerPicUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
-  inquiryContacts InquiryPartyContact[]
 
   @@unique([tenantId, code])
   /// §4 rule 10: a composite foreign key needs this to point at.
@@ -2304,20 +2306,22 @@ model InquiryParty {
   tenantId   BigInt  @map("tenant_id")
   id         BigInt  @id @default(autoincrement())
   inquiryId  BigInt  @map("inquiry_id")
-  agentId    BigInt? @map("agent_id")
-  customerId BigInt? @map("customer_id")
+  agentId   BigInt? @map("agent_id")
+  carrierId BigInt? @map("carrier_id")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   createdBy BigInt?  @map("created_by")
 
   tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   inquiry  Inquiry   @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict)
-  agent    Agent?    @relation(fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
-  customer Customer? @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict)
+  agent   Agent?   @relation(fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
+  /// carrier is system-capable, so its tenant_id may be NULL and a composite
+  /// key is impossible. The §4 rule 10 trigger guards it instead.
+  carrier Carrier? @relation(fields: [carrierId], references: [id], onDelete: Restrict)
 
   createdByUser User? @relation("InquiryPartyCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
 
-  @@unique([tenantId, inquiryId, agentId, customerId])
+  @@unique([tenantId, inquiryId, agentId, carrierId])
   @@index([tenantId])
   @@index([inquiryId])
   @@map("inquiry_party")
@@ -2330,20 +2334,20 @@ model InquiryPartyContact {
   tenantId      BigInt  @map("tenant_id")
   id            BigInt  @id @default(autoincrement())
   inquiryId     BigInt  @map("inquiry_id")
-  agentPicId    BigInt? @map("agent_pic_id")
-  customerPicId BigInt? @map("customer_pic_id")
+  agentPicId   BigInt? @map("agent_pic_id")
+  carrierPicId BigInt? @map("carrier_pic_id")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   createdBy BigInt?  @map("created_by")
 
   tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   inquiry     Inquiry      @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict)
-  agentPic    AgentPic?    @relation(fields: [tenantId, agentPicId], references: [tenantId, id], onDelete: Restrict)
-  customerPic CustomerPic? @relation(fields: [tenantId, customerPicId], references: [tenantId, id], onDelete: Restrict)
+  agentPic   AgentPic?   @relation(fields: [tenantId, agentPicId], references: [tenantId, id], onDelete: Restrict)
+  carrierPic CarrierPic? @relation(fields: [tenantId, carrierPicId], references: [tenantId, id], onDelete: Restrict)
 
   createdByUser User? @relation("InquiryPartyContactCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
 
-  @@unique([tenantId, inquiryId, agentPicId, customerPicId])
+  @@unique([tenantId, inquiryId, agentPicId, carrierPicId])
   @@index([tenantId])
   @@index([inquiryId])
   @@map("inquiry_party_contact")
