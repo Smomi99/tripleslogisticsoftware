@@ -42,6 +42,9 @@ export const TENANT_OWNED_MODELS = [
   'AgentNetworkMember',
   'AgentPic',
   'AgentPortCoverage',
+  // The agent portal (docs/AGENT_PORTAL_DESIGN.md). A quote is one forwarder's
+  // buying position and is never shared, the same reasoning as FreightRate.
+  'AgentQuote',
   'AuditLog',
   'CarrierPic',
   'CarrierPortPair',
@@ -75,6 +78,7 @@ export const TENANT_OWNED_MODELS = [
   'SalesLeadFollowup',
   'TenantMasterOverride',
   'User',
+  'UserCredentialToken',
   'UserPermission',
   'Vendor',
   'VendorPic',

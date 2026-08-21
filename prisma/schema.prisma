@@ -250,10 +250,13 @@ model Tenant {
   masterOverrides       TenantMasterOverride[]
   auditLogs             AuditLog[]
 
-  inquiryParties        InquiryParty[]
-  inquiryPartyContacts  InquiryPartyContact[]
+  inquiryParties       InquiryParty[]
+  inquiryPartyContacts InquiryPartyContact[]
 
   notificationSetting NotificationSetting?
+  agentQuotes         AgentQuote[]
+  credentialTokens    UserCredentialToken[]
+
   @@index([slug])
   @@index([status])
   @@index([currencyId])
@@ -300,22 +303,22 @@ model Permission {
 /// (§7A rule 7). Field list is inferred — §7A names the table but not its
 /// columns. See OPEN QUESTION 6.
 model TenantMasterOverride {
-  tenantId  BigInt   @map("tenant_id")
-  id        BigInt   @id @default(autoincrement())
+  tenantId   BigInt   @map("tenant_id")
+  id         BigInt   @id @default(autoincrement())
   /// Which master table the overridden row lives in, e.g. "port".
-  tableName String   @map("table_name") @db.VarChar(63)
-  recordId  BigInt   @map("record_id")
+  tableName  String   @map("table_name") @db.VarChar(63)
+  recordId   BigInt   @map("record_id")
   /// false = hidden from this tenant.
-  isActive  Boolean  @default(true) @map("is_active")
+  isActive   Boolean  @default(true) @map("is_active")
   /// CR-003. When the workspace has customised the shared row, the id of the
   /// tenant-owned copy that replaced it. NOT a foreign key: the target lives
   /// in whichever table `tableName` names, so no single reference can express
   /// it. Set together with isActive = false — a replaced row is always hidden.
-  replacedBy BigInt? @map("replaced_by")
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-  createdBy BigInt?  @map("created_by")
-  updatedBy BigInt?  @map("updated_by")
+  replacedBy BigInt?  @map("replaced_by")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy  BigInt?  @map("created_by")
+  updatedBy  BigInt?  @map("updated_by")
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
 
@@ -417,9 +420,10 @@ model Currency {
   updatedByUser User?     @relation("CurrencyUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
   inquiries     Inquiry[]
 
-  openingCustomers Customer[] @relation("CustomerOpeningCurrency")
-  openingVendors   Vendor[]   @relation("VendorOpeningCurrency")
-  openingAgents    Agent[]    @relation("AgentOpeningCurrency")
+  openingCustomers Customer[]   @relation("CustomerOpeningCurrency")
+  openingVendors   Vendor[]     @relation("VendorOpeningCurrency")
+  openingAgents    Agent[]      @relation("AgentOpeningCurrency")
+  agentQuotes      AgentQuote[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -582,6 +586,7 @@ model Carrier {
   updatedByUser User? @relation("CarrierUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   inquiryParties InquiryParty[]
+
   @@unique([tenantId, code])
   @@index([tenantId])
   @@index([typeId])
@@ -619,6 +624,7 @@ model CarrierPic {
   updatedByUser User? @relation("CarrierPicUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   inquiryContacts InquiryPartyContact[]
+
   @@unique([tenantId, code])
   /// §4 rule 10: a composite foreign key needs this to point at.
   @@unique([tenantId, id])
@@ -634,20 +640,20 @@ model CarrierPic {
 /// Ranking moved off this table to carrier_port_pair (CR-001 §1): a rank at a
 /// port is meaningless without the POD it is cheap to.
 model CarrierServicePort {
-  tenantId         BigInt    @map("tenant_id")
-  id               BigInt    @id @default(autoincrement())
-  code             String    @db.VarChar(32)
-  carrierId        BigInt    @map("carrier_id")
-  portId           BigInt    @map("port_id")
+  tenantId  BigInt    @map("tenant_id")
+  id        BigInt    @id @default(autoincrement())
+  code      String    @db.VarChar(32)
+  carrierId BigInt    @map("carrier_id")
+  portId    BigInt    @map("port_id")
   // Derived from port.country, never typed (CR-001 §2). Kept as a stored column
   // rather than a join so the list screen's search and sort stay on one table.
-  country          String?   @db.VarChar(100)
-  isActive         Boolean   @default(true) @map("is_active")
-  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
-  createdBy        BigInt?   @map("created_by")
-  updatedBy        BigInt?   @map("updated_by")
-  deletedAt        DateTime? @map("deleted_at") @db.Timestamptz(6)
+  country   String?   @db.VarChar(100)
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   carrier Carrier @relation(fields: [carrierId], references: [id], onDelete: Restrict)
@@ -807,10 +813,10 @@ model Vendor {
   /// already stood at when the workspace started using the system. Signed —
   /// positive is owed to us. Not derived from anything, so it is entered once
   /// and then only corrected.
-  openingBalance   Decimal? @map("opening_balance") @db.Decimal(18, 4)
+  openingBalance     Decimal?  @map("opening_balance") @db.Decimal(18, 4)
   /// The currency the opening balance is in. Required whenever a balance is
   /// entered; a figure with no currency cannot be posted to a ledger.
-  openingCurrencyId BigInt? @map("opening_currency_id")
+  openingCurrencyId  BigInt?   @map("opening_currency_id")
   isActive           Boolean   @default(true) @map("is_active")
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -818,9 +824,9 @@ model Vendor {
   updatedBy          BigInt?   @map("updated_by")
   deletedAt          DateTime? @map("deleted_at") @db.Timestamptz(6)
 
-  tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  openingCurrency Currency? @relation("VendorOpeningCurrency", fields: [openingCurrencyId], references: [id], onDelete: Restrict)
-  vendorType VendorType @relation(fields: [vendorTypeId], references: [id], onDelete: Restrict)
+  tenant          Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  openingCurrency Currency?  @relation("VendorOpeningCurrency", fields: [openingCurrencyId], references: [id], onDelete: Restrict)
+  vendorType      VendorType @relation(fields: [vendorTypeId], references: [id], onDelete: Restrict)
 
   pics         VendorPic[]
   freightRates FreightRate[]
@@ -969,10 +975,10 @@ model Customer {
   /// already stood at when the workspace started using the system. Signed —
   /// positive is owed to us. Not derived from anything, so it is entered once
   /// and then only corrected.
-  openingBalance   Decimal? @map("opening_balance") @db.Decimal(18, 4)
+  openingBalance      Decimal?     @map("opening_balance") @db.Decimal(18, 4)
   /// The currency the opening balance is in. Required whenever a balance is
   /// entered; a figure with no currency cannot be posted to a ledger.
-  openingCurrencyId BigInt? @map("opening_currency_id")
+  openingCurrencyId   BigInt?      @map("opening_currency_id")
   isActive            Boolean      @default(true) @map("is_active")
   createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -980,9 +986,9 @@ model Customer {
   updatedBy           BigInt?      @map("updated_by")
   deletedAt           DateTime?    @map("deleted_at") @db.Timestamptz(6)
 
-  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  openingCurrency Currency? @relation("CustomerOpeningCurrency", fields: [openingCurrencyId], references: [id], onDelete: Restrict)
-  industrySector IndustrySector @relation(fields: [tenantId, industrySectorId], references: [tenantId, id], onDelete: Restrict)
+  tenant          Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  openingCurrency Currency?      @relation("CustomerOpeningCurrency", fields: [openingCurrencyId], references: [id], onDelete: Restrict)
+  industrySector  IndustrySector @relation(fields: [tenantId, industrySectorId], references: [tenantId, id], onDelete: Restrict)
 
   pics CustomerPic[]
 
@@ -992,7 +998,6 @@ model Customer {
   createdByUser User?     @relation("CustomerCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User?     @relation("CustomerUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
   inquiries     Inquiry[]
-
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -1031,7 +1036,6 @@ model CustomerPic {
   // next migrate dev, which is how this was found.
   createdByUser User? @relation("CustomerPicCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User? @relation("CustomerPicUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
-
 
   @@unique([tenantId, code])
   /// §4 rule 10: a composite foreign key needs this to point at.
@@ -1100,30 +1104,30 @@ model Network {
 
 /// client: Table_Agent
 model Agent {
-  tenantId      BigInt    @map("tenant_id")
-  id            BigInt    @id @default(autoincrement())
-  code          String    @db.VarChar(32)
-  name          String    @db.VarChar(200)
-  country       String    @db.VarChar(100)
-  address       String?   @db.Text
-  agentType     AgentType @map("agent_type")
+  tenantId          BigInt    @map("tenant_id")
+  id                BigInt    @id @default(autoincrement())
+  code              String    @db.VarChar(32)
+  name              String    @db.VarChar(200)
+  country           String    @db.VarChar(100)
+  address           String?   @db.Text
+  agentType         AgentType @map("agent_type")
   /// Storage key only, never the file itself (§2).
-  agreementFile String?   @map("agreement_file") @db.VarChar(500)
+  agreementFile     String?   @map("agreement_file") @db.VarChar(500)
   /// The client's two opening columns, kept apart rather than netted: an agent
   /// can owe us on one account while we owe them on another, and a single
   /// signed figure would lose which is which.
-  weOwe      Decimal? @map("we_owe") @db.Decimal(18, 4)
-  agentOwe   Decimal? @map("agent_owe") @db.Decimal(18, 4)
+  weOwe             Decimal?  @map("we_owe") @db.Decimal(18, 4)
+  agentOwe          Decimal?  @map("agent_owe") @db.Decimal(18, 4)
   /// Required whenever either figure is entered.
-  openingCurrencyId BigInt? @map("opening_currency_id")
-  isActive      Boolean   @default(true) @map("is_active")
-  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
-  createdBy     BigInt?   @map("created_by")
-  updatedBy     BigInt?   @map("updated_by")
-  deletedAt     DateTime? @map("deleted_at") @db.Timestamptz(6)
+  openingCurrencyId BigInt?   @map("opening_currency_id")
+  isActive          Boolean   @default(true) @map("is_active")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy         BigInt?   @map("created_by")
+  updatedBy         BigInt?   @map("updated_by")
+  deletedAt         DateTime? @map("deleted_at") @db.Timestamptz(6)
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   openingCurrency Currency? @relation("AgentOpeningCurrency", fields: [openingCurrencyId], references: [id], onDelete: Restrict)
 
   pics           AgentPic[]
@@ -1139,6 +1143,8 @@ model Agent {
   updatedByUser User? @relation("AgentUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   inquiryParties InquiryParty[]
+  users          User[]         @relation("AgentUsers")
+  quotes         AgentQuote[]
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -1451,6 +1457,11 @@ model User {
   id           BigInt    @id @default(autoincrement())
   code         String    @db.VarChar(32)
   employeeId   BigInt?   @map("employee_id")
+  /// Set on an EXTERNAL account — an agent's own login. A CHECK constraint
+  /// (user_agent_is_external) makes agent_id together with any of employeeId,
+  /// roleId or isSuperadmin impossible to store, so an agent who is also staff
+  /// is unrepresentable rather than merely disallowed.
+  agentId      BigInt?   @map("agent_id")
   username     String    @db.VarChar(100)
   email        String    @db.VarChar(255)
   passwordHash String    @map("password_hash") @db.VarChar(255)
@@ -1474,6 +1485,7 @@ model User {
   tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   employee Employee? @relation(fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
   role     Role?     @relation(fields: [tenantId, roleId], references: [tenantId, id], onDelete: Restrict)
+  agent    Agent?    @relation("AgentUsers", fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
 
   createdGoodsTypes     GoodsType[]     @relation("GoodsTypeCreatedBy")
   updatedGoodsTypes     GoodsType[]     @relation("GoodsTypeUpdatedBy")
@@ -1585,6 +1597,13 @@ model User {
 
   createdNotificationSettings NotificationSetting[] @relation("NotificationSettingCreatedBy")
   updatedNotificationSettings NotificationSetting[] @relation("NotificationSettingUpdatedBy")
+
+  submittedAgentQuotes   AgentQuote[]          @relation("AgentQuoteSubmittedBy")
+  createdAgentQuotes     AgentQuote[]          @relation("AgentQuoteCreatedBy")
+  updatedAgentQuotes     AgentQuote[]          @relation("AgentQuoteUpdatedBy")
+  credentialTokens       UserCredentialToken[] @relation("UserCredentialTokenUser")
+  issuedCredentialTokens UserCredentialToken[] @relation("UserCredentialTokenCreatedBy")
+
   @@unique([tenantId, username])
   @@unique([tenantId, email])
   @@unique([tenantId, code])
@@ -1592,6 +1611,7 @@ model User {
   @@index([tenantId])
   @@index([employeeId])
   @@index([roleId])
+  @@index([agentId])
   @@map("user")
 }
 
@@ -2053,7 +2073,7 @@ model RateLocalCharge {
   /// Copied from the cost head at entry rather than joined at read time — if
   /// the cost head's unit is later corrected, a rate agreed under the old unit
   /// must not silently change meaning.
-  costUnitId BigInt? @map("cost_unit_id")
+  costUnitId      BigInt? @map("cost_unit_id")
   /// Which container size the charge applies to, for charges that differ by
   /// box — THC on a 20ft is not THC on a 40ft. Null means it applies whatever
   /// the equipment, which is the normal case for documentation fees.
@@ -2067,11 +2087,11 @@ model RateLocalCharge {
   updatedBy BigInt?   @map("updated_by")
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
-  tenant   Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  rate     FreightRate @relation(fields: [tenantId, rateId], references: [tenantId, id], onDelete: Restrict)
-  costHead CostHead    @relation(fields: [tenantId, costHeadId], references: [tenantId, id], onDelete: Restrict)
-  currency Currency    @relation(fields: [currencyId], references: [id], onDelete: Restrict)
-  costUnit CostUnit?   @relation(fields: [costUnitId], references: [id], onDelete: Restrict)
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  rate          FreightRate    @relation(fields: [tenantId, rateId], references: [tenantId, id], onDelete: Restrict)
+  costHead      CostHead       @relation(fields: [tenantId, costHeadId], references: [tenantId, id], onDelete: Restrict)
+  currency      Currency       @relation(fields: [currencyId], references: [id], onDelete: Restrict)
+  costUnit      CostUnit?      @relation(fields: [costUnitId], references: [id], onDelete: Restrict)
   containerType ContainerType? @relation(fields: [containerTypeId], references: [id], onDelete: Restrict)
 
   createdByUser User? @relation("RateLocalChargeCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
@@ -2251,7 +2271,7 @@ model Inquiry {
 
   /// Target price moved into inquiry_volume: the client's wireframe asks for
   /// one per container size, so a 20ft and a 40ft can be quoted apart.
-  currencyId  BigInt?  @map("currency_id")
+  currencyId BigInt? @map("currency_id")
 
   expectedShipmentDate DateTime? @map("expected_shipment_date") @db.Date
   /// "Inquiry Valid Upto". §4 rule 11 auto-expires an OPEN inquiry past this.
@@ -2296,11 +2316,12 @@ model Inquiry {
   createdByUser User? @relation("InquiryCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User? @relation("InquiryUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
-  volumes   InquiryVolume[]
-  followups InquiryFollowup[]
-  rates     InquiryRate[]
-  parties   InquiryParty[]
-  contacts  InquiryPartyContact[]
+  volumes     InquiryVolume[]
+  followups   InquiryFollowup[]
+  rates       InquiryRate[]
+  parties     InquiryParty[]
+  contacts    InquiryPartyContact[]
+  agentQuotes AgentQuote[]
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -2331,16 +2352,16 @@ model Inquiry {
 /// because tenant is platform-owned (§4 rule 2 exempts it from tenant_id) and
 /// this is the workspace's own configuration, editable from Settings.
 model NotificationSetting {
-  tenantId BigInt @map("tenant_id")
-  id       BigInt @id @default(autoincrement())
+  tenantId        BigInt  @map("tenant_id")
+  id              BigInt  @id @default(autoincrement())
   /// Comma-separated. Who to tell when an Outbound lane has no live rate and
   /// someone has to go and get one from a carrier.
   priceTeamEmails String? @map("price_team_emails") @db.Text
 
-  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
-  createdBy BigInt?   @map("created_by")
-  updatedBy BigInt?   @map("updated_by")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?  @map("created_by")
+  updatedBy BigInt?  @map("updated_by")
 
   tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   createdByUser User?  @relation("NotificationSettingCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
@@ -2351,17 +2372,17 @@ model NotificationSetting {
 }
 
 model InquiryParty {
-  tenantId   BigInt  @map("tenant_id")
-  id         BigInt  @id @default(autoincrement())
-  inquiryId  BigInt  @map("inquiry_id")
+  tenantId  BigInt  @map("tenant_id")
+  id        BigInt  @id @default(autoincrement())
+  inquiryId BigInt  @map("inquiry_id")
   agentId   BigInt? @map("agent_id")
   carrierId BigInt? @map("carrier_id")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   createdBy BigInt?  @map("created_by")
 
-  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  inquiry  Inquiry   @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict)
+  tenant  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  inquiry Inquiry  @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict)
   agent   Agent?   @relation(fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
   /// carrier is system-capable, so its tenant_id may be NULL and a composite
   /// key is impossible. The §4 rule 10 trigger guards it instead.
@@ -2379,17 +2400,17 @@ model InquiryParty {
 /// the contact's own foreign key already ties it to its agent or customer, and
 /// the screen selects from one combined list.
 model InquiryPartyContact {
-  tenantId      BigInt  @map("tenant_id")
-  id            BigInt  @id @default(autoincrement())
-  inquiryId     BigInt  @map("inquiry_id")
+  tenantId     BigInt  @map("tenant_id")
+  id           BigInt  @id @default(autoincrement())
+  inquiryId    BigInt  @map("inquiry_id")
   agentPicId   BigInt? @map("agent_pic_id")
   carrierPicId BigInt? @map("carrier_pic_id")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   createdBy BigInt?  @map("created_by")
 
-  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  inquiry     Inquiry      @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict)
+  tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  inquiry    Inquiry     @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict)
   agentPic   AgentPic?   @relation(fields: [tenantId, agentPicId], references: [tenantId, id], onDelete: Restrict)
   carrierPic CarrierPic? @relation(fields: [tenantId, carrierPicId], references: [tenantId, id], onDelete: Restrict)
 
@@ -2402,22 +2423,22 @@ model InquiryPartyContact {
 }
 
 model InquiryVolume {
-  tenantId        BigInt     @map("tenant_id")
-  id              BigInt     @id @default(autoincrement())
-  inquiryId       BigInt     @map("inquiry_id")
-  volumeKind      VolumeKind @map("volume_kind")
+  tenantId          BigInt     @map("tenant_id")
+  id                BigInt     @id @default(autoincrement())
+  inquiryId         BigInt     @map("inquiry_id")
+  volumeKind        VolumeKind @map("volume_kind")
   /// Set for FCL rows, null for the single LCL or Air row.
-  containerTypeId BigInt?    @map("container_type_id")
-  quantity        Int?
-  cbm             Decimal?   @db.Decimal(18, 3)
-  weightKg        Decimal?   @map("weight_kg") @db.Decimal(18, 3)
+  containerTypeId   BigInt?    @map("container_type_id")
+  quantity          Int?
+  cbm               Decimal?   @db.Decimal(18, 3)
+  weightKg          Decimal?   @map("weight_kg") @db.Decimal(18, 3)
   /// Per-size target price. The client's wireframe puts Target Price in the
   /// volume grid, so a 20ft and a 40ft on one inquiry can be quoted apart.
-  targetPrice     Decimal?   @map("target_price") @db.Decimal(18, 4)
+  targetPrice       Decimal?   @map("target_price") @db.Decimal(18, 4)
   /// The wireframe's "Container Type :" row — free text per column, by the
   /// client's choice. Not a lookup, so it is not reportable; that was the
   /// trade-off they picked over an equipment-type list.
-  containerTypeNote String?  @map("container_type_note") @db.VarChar(200)
+  containerTypeNote String?    @map("container_type_note") @db.VarChar(200)
 
   isActive  Boolean   @default(true) @map("is_active")
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -2540,4 +2561,94 @@ model SalesLeadFollowup {
   @@index([leadId])
   @@index([nextFollowupDate])
   @@map("sales_lead_followup")
+}
+
+/// A price an agent came back with, against one inquiry.
+/// client: no wireframe — this is the agent portal (docs/AGENT_PORTAL_DESIGN.md).
+model AgentQuote {
+  tenantId    BigInt           @map("tenant_id")
+  id          BigInt           @id @default(autoincrement())
+  code        String           @db.VarChar(32)
+  inquiryId   BigInt           @map("inquiry_id")
+  agentId     BigInt           @map("agent_id")
+  /// The agent user who submitted it. Null when a staff member recorded a
+  /// quote that arrived by phone on the agent's behalf.
+  submittedBy BigInt?          @map("submitted_by")
+  /// Nullable on purpose: a tiered quote will carry its figures on
+  /// agent_quote_line and leave this null. A CHECK enforces the MVP rule that
+  /// it must be present today, and that CHECK is what gets dropped later —
+  /// not the column type, which would be an ALTER on live commercial data.
+  amount      Decimal?         @db.Decimal(18, 4)
+  currencyId  BigInt           @map("currency_id")
+  validUntil  DateTime?        @map("valid_until") @db.Date
+  transitDays Int?             @map("transit_days")
+  remarks     String?          @db.Text
+  status      AgentQuoteStatus @default(SUBMITTED)
+  isActive    Boolean          @default(true) @map("is_active")
+  createdAt   DateTime         @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy   BigInt?          @map("created_by")
+  updatedBy   BigInt?          @map("updated_by")
+  deletedAt   DateTime?        @map("deleted_at") @db.Timestamptz(6)
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  inquiry  Inquiry  @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict)
+  agent    Agent    @relation(fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
+  /// Plain FK, not composite: currency is system-capable (§7A rule 7) and a
+  /// shared row has tenant_id null. The same-tenant guard is the trigger
+  /// agent_quote_currency_tenant_guard instead.
+  currency Currency @relation(fields: [currencyId], references: [id], onDelete: Restrict)
+
+  submittedByUser User? @relation("AgentQuoteSubmittedBy", fields: [submittedBy], references: [id], onDelete: Restrict)
+  createdByUser   User? @relation("AgentQuoteCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser   User? @relation("AgentQuoteUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([inquiryId])
+  @@index([agentId])
+  @@index([status])
+  @@map("agent_quote")
+}
+
+/// One-time links: an invite to set a first password, or a reset.
+/// The token is never stored — only an argon2 hash of it.
+model UserCredentialToken {
+  tenantId  BigInt                 @map("tenant_id")
+  id        BigInt                 @id @default(autoincrement())
+  userId    BigInt                 @map("user_id")
+  purpose   CredentialTokenPurpose
+  tokenHash String                 @map("token_hash") @db.VarChar(255)
+  expiresAt DateTime               @map("expires_at") @db.Timestamptz(6)
+  /// Set when the link is redeemed. A spent token is kept rather than deleted:
+  /// it is the evidence that a link was used, and when.
+  usedAt    DateTime?              @map("used_at") @db.Timestamptz(6)
+  createdAt DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy BigInt?                @map("created_by")
+
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  user          User   @relation("UserCredentialTokenUser", fields: [tenantId, userId], references: [tenantId, id], onDelete: Restrict)
+  createdByUser User?  @relation("UserCredentialTokenCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+
+  @@index([tenantId])
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("user_credential_token")
+}
+
+enum AgentQuoteStatus {
+  SUBMITTED
+  WITHDRAWN
+  ACCEPTED
+  DECLINED
+
+  @@map("agent_quote_status")
+}
+
+enum CredentialTokenPurpose {
+  INVITE
+  RESET
+
+  @@map("credential_token_purpose")
 }
