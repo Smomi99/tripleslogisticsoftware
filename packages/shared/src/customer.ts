@@ -1,5 +1,11 @@
 import { z } from 'zod';
 
+import {
+  currencyRequiredFor,
+  openingCurrencyField,
+  signedMoneyField,
+} from './opening-balance';
+
 import { listQuerySchema } from './api';
 import { countrySchema } from './countries';
 
@@ -51,6 +57,12 @@ export const customerInputSchema = z.object({
   exAirVolumeKgMonth: volumeSchema,
   imSeaVolumeTeuMonth: volumeSchema,
   imAirVolumeKgMonth: volumeSchema,
+  /** Opening figures for the accounts ledger. Positive is owed to us. */
+  openingBalance: signedMoneyField('Enter an opening balance, or leave it blank.'),
+  openingCurrencyId: openingCurrencyField,
+}).refine((v) => currencyRequiredFor([v.openingBalance], v.openingCurrencyId), {
+  message: 'Choose the currency the opening balance is in.',
+  path: ['openingCurrencyId'],
 });
 
 export type CustomerInput = z.input<typeof customerInputSchema>;
@@ -78,6 +90,9 @@ export interface CustomerDto {
   exAirVolumeKgMonth: string | null;
   imSeaVolumeTeuMonth: string | null;
   imAirVolumeKgMonth: string | null;
+  openingBalance: string | null;
+  openingCurrencyId: string | null;
+  openingCurrencyCode: string | null;
   isActive: boolean;
   picCount: number;
 }

@@ -34,6 +34,7 @@ export function CustomerForm({ customer }: { customer: CustomerDto | null }) {
   const { authorizedRequest } = useSession();
   const router = useRouter();
   const [sectors, setSectors] = useState<LookupOption[]>([]);
+  const [currencies, setCurrencies] = useState<LookupOption[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
 
   const {
@@ -55,6 +56,8 @@ export function CustomerForm({ customer }: { customer: CustomerDto | null }) {
       exAirVolumeKgMonth: '',
       imSeaVolumeTeuMonth: '',
       imAirVolumeKgMonth: '',
+      openingBalance: '',
+      openingCurrencyId: '',
     },
   });
 
@@ -62,6 +65,9 @@ export function CustomerForm({ customer }: { customer: CustomerDto | null }) {
     void authorizedRequest<LookupOption[]>(`${ENDPOINT}/sectors`)
       .then(setSectors)
       .catch(() => setSectors([]));
+      void authorizedRequest<LookupOption[]>('/api/tenant/crm/customers/currencies')
+      .then(setCurrencies)
+      .catch(() => setCurrencies([]));
   }, [authorizedRequest]);
 
   useEffect(() => {
@@ -77,6 +83,8 @@ export function CustomerForm({ customer }: { customer: CustomerDto | null }) {
       exAirVolumeKgMonth: customer.exAirVolumeKgMonth ?? '',
       imSeaVolumeTeuMonth: customer.imSeaVolumeTeuMonth ?? '',
       imAirVolumeKgMonth: customer.imAirVolumeKgMonth ?? '',
+      openingBalance: customer.openingBalance ?? '',
+      openingCurrencyId: customer.openingCurrencyId ?? '',
     });
   }, [customer, reset]);
 
@@ -199,6 +207,22 @@ export function CustomerForm({ customer }: { customer: CustomerDto | null }) {
         error={errors.imAirVolumeKgMonth?.message}
       >
         <Input id="imAirVolumeKgMonth" numeric inputMode="decimal" {...register('imAirVolumeKgMonth')} />
+      </Field>
+
+      {/* Opening figures for the accounts ledger. */}
+      <Field id="openingBalance" label="Opening balance" error={errors.openingBalance?.message}>
+        <Input id="openingBalance" numeric inputMode="decimal" {...register('openingBalance')} />
+      </Field>
+
+      <Field id="openingCurrencyId" label="Currency" error={errors.openingCurrencyId?.message}>
+        <Select id="openingCurrencyId" {...register('openingCurrencyId')}>
+          <option value="">Select a currency</option>
+          {currencies.map((currency) => (
+            <option key={currency.id} value={currency.id}>
+              {currency.name}
+            </option>
+          ))}
+        </Select>
       </Field>
     </FormLayout>
   );

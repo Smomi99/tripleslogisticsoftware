@@ -14,6 +14,7 @@ import {
   type SelectedOption,
 } from '@ff/shared';
 
+import { Prisma } from '../generated/prisma/client';
 import { CODE_RETRY_LIMIT, isUniqueViolation, nextCode } from '../lib/codes';
 import { HttpError } from '../lib/http-error';
 import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
@@ -39,6 +40,14 @@ agentRouter.use(authenticate);
 
 const FEATURE = 'CRM.AGENT';
 
+/** Opening figures are NUMERIC(18,4) (§4 rule 6); blank means "not set". */
+const money = (value: Prisma.Decimal | null): string | null =>
+  value === null ? null : value.toFixed(4);
+const moneyIn = (value: string | undefined): string | null =>
+  value === undefined || value.trim() === '' ? null : value.trim();
+const refIn = (value: string | undefined): bigint | null =>
+  value === undefined || value.trim() === '' ? null : BigInt(value);
+
 const SELECT = {
   id: true,
   code: true,
@@ -47,6 +56,10 @@ const SELECT = {
   address: true,
   agentType: true,
   agreementFile: true,
+  weOwe: true,
+  agentOwe: true,
+  openingCurrencyId: true,
+  openingCurrency: { select: { code: true } },
   isActive: true,
   expertAreas: { select: { expertArea: { select: { id: true, name: true } } } },
   portCoverages: { select: { port: { select: { id: true, name: true, portCode: true } } } },
@@ -62,6 +75,10 @@ type AgentRow = {
   address: string | null;
   agentType: 'GENERAL' | 'EXCLUSIVE';
   agreementFile: string | null;
+  weOwe: Prisma.Decimal | null;
+  agentOwe: Prisma.Decimal | null;
+  openingCurrencyId: bigint | null;
+  openingCurrency: { code: string } | null;
   isActive: boolean;
   expertAreas: { expertArea: { id: bigint; name: string } }[];
   portCoverages: { port: { id: bigint; name: string; portCode: string } }[];
@@ -81,6 +98,10 @@ function toDto(row: AgentRow): AgentDto {
     country: row.country,
     address: row.address,
     agentType: row.agentType,
+    weOwe: money(row.weOwe),
+    agentOwe: money(row.agentOwe),
+    openingCurrencyId: row.openingCurrencyId?.toString() ?? null,
+    openingCurrencyCode: row.openingCurrency?.code ?? null,
     agreementFile: row.agreementFile,
     agreementFileName:
       row.agreementFile === null ? null : displayNameFromKey(row.agreementFile),
@@ -206,6 +227,30 @@ agentRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
 });
 
 /** Everything the three multi-selects need, in one round trip. */
+/**
+ * GET .../currencies — the currency a party's opening balance is entered in.
+ *
+ * Served from this route rather than reused from Settings so it follows THIS
+ * screen's permission: someone who maintains agents should not need
+ * SETTING.CURRENCY.VIEW to fill in an opening balance.
+ */
+agentRouter.get('/currencies', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
+  const auth = req.auth!;
+  const rows = await withTenant(auth.tenantId, async (db) => {
+    const inactive = await inactiveMasters(db);
+    return db.currency.findMany({
+      where: { ...excludeInactive(inactive, 'currency'), deletedAt: null, isActive: true },
+      select: { id: true, code: true, currency: true },
+      orderBy: { code: 'asc' },
+    });
+  });
+  const payload: ApiSuccess<LookupOption[]> = {
+    success: true,
+    data: rows.map((c) => ({ id: c.id.toString(), name: c.currency })),
+  };
+  res.json(payload);
+});
+
 agentRouter.get('/options', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
   const auth = req.auth!;
   const options = await withTenant(auth.tenantId, async (db) => {
@@ -331,6 +376,9 @@ agentRouter.post('/', requirePermission(`${FEATURE}.CREATE`), async (req, res) =
             country: input.country,
             address: input.address || null,
             agentType: input.agentType,
+            weOwe: moneyIn(input.weOwe),
+            agentOwe: moneyIn(input.agentOwe),
+            openingCurrencyId: refIn(input.openingCurrencyId),
             createdBy: auth.userId,
             updatedBy: auth.userId,
           },
@@ -421,6 +469,9 @@ agentRouter.patch('/:id', requirePermission(`${FEATURE}.EDIT`), async (req, res)
         country: input.country,
         address: input.address || null,
         agentType: input.agentType,
+        weOwe: moneyIn(input.weOwe),
+        agentOwe: moneyIn(input.agentOwe),
+        openingCurrencyId: refIn(input.openingCurrencyId),
         updatedBy: auth.userId,
       },
     });

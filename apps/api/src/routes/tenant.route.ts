@@ -42,7 +42,7 @@ tenantRouter.use('/setting/cost-heads', costHeadRouter);
 tenantRouter.use('/setting/currencies', currencyRouter);
 tenantRouter.use('/setting/vessels', vesselRouter);
 tenantRouter.use('/setting/carriers', carrierRouter);
-tenantRouter.use('/setting/vendors', vendorRouter);
+tenantRouter.use('/crm/vendors', vendorRouter);
 tenantRouter.use('/setting/commodity-categories', commodityRouter);
 // Purchase & Sales lookups (docs/MODULE_PURCHASE_SALES.md §3.1).
 tenantRouter.use('/setting', rateLookupRouter);

@@ -32,12 +32,12 @@ export default function VendorPicPage() {
 
   return (
     <ChildScreen<VendorPicDto>
-      parentEndpoint={`/api/tenant/setting/vendors/${vendorId}`}
-      childEndpoint={`/api/tenant/setting/vendors/${vendorId}/pics`}
-      backHref={'/setting/vendor' as Route}
+      parentEndpoint={`/api/tenant/crm/vendors/${vendorId}`}
+      childEndpoint={`/api/tenant/crm/vendors/${vendorId}/pics`}
+      backHref={'/crm/vendor' as Route}
       parentLabel="Vendor"
       title="Contact people"
-      feature="SETTING.VENDOR"
+      feature="CRM.VENDOR"
       columns={columns}
       searchPlaceholder="Search contacts"
       addLabel="+ Add contact"

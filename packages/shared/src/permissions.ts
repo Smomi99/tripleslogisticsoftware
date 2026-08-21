@@ -226,7 +226,6 @@ export const FEATURES: readonly FeatureDefinition[] = [
     childScreen: true,
   },
   { module: 'SETTING', feature: 'SETTING.VESSEL', label: 'Vessel', actions: MASTER_DELETABLE },
-  { module: 'SETTING', feature: 'SETTING.VENDOR', label: 'Vendor', actions: MASTER_DELETABLE },
   { module: 'SETTING', feature: 'SETTING.COMMODITY_CATEGORY', label: 'Commodity Category', actions: MASTER_DELETABLE },
 
   // Purchase & Sales lookups (docs/MODULE_PURCHASE_SALES.md §3.1, §6).
@@ -245,6 +244,10 @@ export const FEATURES: readonly FeatureDefinition[] = [
   // -- 8. CRM ----------------------------------------------------------------
   { module: 'CRM', feature: 'CRM.CUSTOMER', label: 'Customer', actions: MASTER_DELETABLE },
   { module: 'CRM', feature: 'CRM.AGENT', label: 'Agent', actions: MASTER_DELETABLE },
+  // Moved from Setting at the client's request: a vendor is a party you keep
+  // a ledger against, like a customer or an agent, not a configuration value.
+  // The migration renames the permission keys in place so existing grants survive.
+  { module: 'CRM', feature: 'CRM.VENDOR', label: 'Vendor', actions: MASTER_DELETABLE },
   { module: 'CRM', feature: 'CRM.EMPLOYEE', label: 'Employee', actions: MASTER_DELETABLE },
   { module: 'CRM', feature: 'CRM.USER', label: 'User', actions: MASTER_DELETABLE },
 

@@ -38,6 +38,7 @@ interface AgentOptions {
 export function AgentForm({ agent }: { agent: AgentDto | null }) {
   const { authorizedRequest } = useSession();
   const router = useRouter();
+  const [currencies, setCurrencies] = useState<LookupOption[]>([]);
   const [options, setOptions] = useState<AgentOptions>({
     expertAreas: [],
     ports: [],
@@ -61,6 +62,9 @@ export function AgentForm({ agent }: { agent: AgentDto | null }) {
       expertAreaIds: [],
       portCoverageIds: [],
       networkIds: [],
+      weOwe: '',
+      agentOwe: '',
+      openingCurrencyId: '',
     },
   });
 
@@ -68,6 +72,9 @@ export function AgentForm({ agent }: { agent: AgentDto | null }) {
     void authorizedRequest<AgentOptions>(`${ENDPOINT}/options`)
       .then(setOptions)
       .catch(() => setOptions({ expertAreas: [], ports: [], networks: [] }));
+    void authorizedRequest<LookupOption[]>(`${ENDPOINT}/currencies`)
+      .then(setCurrencies)
+      .catch(() => setCurrencies([]));
   }, [authorizedRequest]);
 
   useEffect(() => {
@@ -80,6 +87,9 @@ export function AgentForm({ agent }: { agent: AgentDto | null }) {
       expertAreaIds: agent.expertAreas.map((o) => o.id),
       portCoverageIds: agent.portCoverage.map((o) => o.id),
       networkIds: agent.networks.map((o) => o.id),
+      weOwe: agent.weOwe ?? '',
+      agentOwe: agent.agentOwe ?? '',
+      openingCurrencyId: agent.openingCurrencyId ?? '',
     });
   }, [agent, reset]);
 
@@ -197,6 +207,30 @@ export function AgentForm({ agent }: { agent: AgentDto | null }) {
             />
           )}
         />
+      </Field>
+
+      {/*
+        Opening figures for the accounts ledger. Kept as two columns rather than
+        one signed number because an agent can owe us on one account while we
+        owe them on another, and netting the two loses which is which.
+      */}
+      <Field id="weOwe" label="We owe (Dr)" error={errors.weOwe?.message}>
+        <Input id="weOwe" numeric inputMode="decimal" {...register('weOwe')} />
+      </Field>
+
+      <Field id="agentOwe" label="Agent owe (Cr)" error={errors.agentOwe?.message}>
+        <Input id="agentOwe" numeric inputMode="decimal" {...register('agentOwe')} />
+      </Field>
+
+      <Field id="openingCurrencyId" label="Currency" error={errors.openingCurrencyId?.message}>
+        <Select id="openingCurrencyId" {...register('openingCurrencyId')}>
+          <option value="">Select a currency</option>
+          {currencies.map((currency) => (
+            <option key={currency.id} value={currency.id}>
+              {currency.name}
+            </option>
+          ))}
+        </Select>
       </Field>
     </FormLayout>
   );

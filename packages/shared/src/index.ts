@@ -18,6 +18,7 @@ export * from './customer';
 export * from './employee';
 export * from './freight-rate';
 export * from './inquiry';
+export * from './opening-balance';
 export * from './permissions';
 export * from './port';
 export * from './rate-lookups';

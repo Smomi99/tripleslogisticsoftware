@@ -399,6 +399,10 @@ model Currency {
   updatedByUser User?     @relation("CurrencyUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
   inquiries     Inquiry[]
 
+  openingCustomers Customer[] @relation("CustomerOpeningCurrency")
+  openingVendors   Vendor[]   @relation("VendorOpeningCurrency")
+  openingAgents    Agent[]    @relation("AgentOpeningCurrency")
+
   @@unique([tenantId, code])
   @@index([tenantId])
   @@index([currency])
@@ -777,6 +781,14 @@ model Vendor {
   tinNo              String?   @map("tin_no") @db.VarChar(50)
   /// Client's spec: vat_no (BIN).
   vatNo              String?   @map("vat_no") @db.VarChar(50)
+  /// Opening balance for the accounts ledger: what this party's account
+  /// already stood at when the workspace started using the system. Signed —
+  /// positive is owed to us. Not derived from anything, so it is entered once
+  /// and then only corrected.
+  openingBalance   Decimal? @map("opening_balance") @db.Decimal(18, 4)
+  /// The currency the opening balance is in. Required whenever a balance is
+  /// entered; a figure with no currency cannot be posted to a ledger.
+  openingCurrencyId BigInt? @map("opening_currency_id")
   isActive           Boolean   @default(true) @map("is_active")
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -785,6 +797,7 @@ model Vendor {
   deletedAt          DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  openingCurrency Currency? @relation("VendorOpeningCurrency", fields: [openingCurrencyId], references: [id], onDelete: Restrict)
   vendorType VendorType @relation(fields: [vendorTypeId], references: [id], onDelete: Restrict)
 
   pics         VendorPic[]
@@ -930,6 +943,14 @@ model Customer {
   imSeaVolumeTeuMonth Decimal?     @map("im_sea_volume_teu_month") @db.Decimal(18, 4)
   /// Import air volume, KG per month.
   imAirVolumeKgMonth  Decimal?     @map("im_air_volume_kg_month") @db.Decimal(18, 4)
+  /// Opening balance for the accounts ledger: what this party's account
+  /// already stood at when the workspace started using the system. Signed —
+  /// positive is owed to us. Not derived from anything, so it is entered once
+  /// and then only corrected.
+  openingBalance   Decimal? @map("opening_balance") @db.Decimal(18, 4)
+  /// The currency the opening balance is in. Required whenever a balance is
+  /// entered; a figure with no currency cannot be posted to a ledger.
+  openingCurrencyId BigInt? @map("opening_currency_id")
   isActive            Boolean      @default(true) @map("is_active")
   createdAt           DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -938,6 +959,7 @@ model Customer {
   deletedAt           DateTime?    @map("deleted_at") @db.Timestamptz(6)
 
   tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  openingCurrency Currency? @relation("CustomerOpeningCurrency", fields: [openingCurrencyId], references: [id], onDelete: Restrict)
   industrySector IndustrySector @relation(fields: [tenantId, industrySectorId], references: [tenantId, id], onDelete: Restrict)
 
   pics CustomerPic[]
@@ -1061,6 +1083,13 @@ model Agent {
   agentType     AgentType @map("agent_type")
   /// Storage key only, never the file itself (§2).
   agreementFile String?   @map("agreement_file") @db.VarChar(500)
+  /// The client's two opening columns, kept apart rather than netted: an agent
+  /// can owe us on one account while we owe them on another, and a single
+  /// signed figure would lose which is which.
+  weOwe      Decimal? @map("we_owe") @db.Decimal(18, 4)
+  agentOwe   Decimal? @map("agent_owe") @db.Decimal(18, 4)
+  /// Required whenever either figure is entered.
+  openingCurrencyId BigInt? @map("opening_currency_id")
   isActive      Boolean   @default(true) @map("is_active")
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -1069,6 +1098,7 @@ model Agent {
   deletedAt     DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  openingCurrency Currency? @relation("AgentOpeningCurrency", fields: [openingCurrencyId], references: [id], onDelete: Restrict)
 
   pics           AgentPic[]
   expertAreas    AgentExpertArea[]

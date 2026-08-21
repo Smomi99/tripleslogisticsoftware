@@ -1,5 +1,11 @@
 import { z } from 'zod';
 
+import {
+  currencyRequiredFor,
+  openingCurrencyField,
+  unsignedMoneyField,
+} from './opening-balance';
+
 import { listQuerySchema } from './api';
 import { countrySchema } from './countries';
 
@@ -32,6 +38,16 @@ export const agentInputSchema = z.object({
   expertAreaIds: idListSchema,
   portCoverageIds: idListSchema,
   networkIds: idListSchema,
+  /**
+   * The client's two opening columns, kept apart rather than netted: an agent
+   * can owe us on one account while we owe them on another.
+   */
+  weOwe: unsignedMoneyField('Enter an amount, or leave it blank.'),
+  agentOwe: unsignedMoneyField('Enter an amount, or leave it blank.'),
+  openingCurrencyId: openingCurrencyField,
+}).refine((v) => currencyRequiredFor([v.weOwe, v.agentOwe], v.openingCurrencyId), {
+  message: 'Choose the currency those opening figures are in.',
+  path: ['openingCurrencyId'],
 });
 
 export type AgentInput = z.input<typeof agentInputSchema>;
@@ -58,6 +74,10 @@ export interface AgentDto {
   address: string | null;
   agentType: AgentType;
   /** Storage key only, never the file itself (§2). */
+  weOwe: string | null;
+  agentOwe: string | null;
+  openingCurrencyId: string | null;
+  openingCurrencyCode: string | null;
   agreementFile: string | null;
   agreementFileName: string | null;
   expertAreas: SelectedOption[];

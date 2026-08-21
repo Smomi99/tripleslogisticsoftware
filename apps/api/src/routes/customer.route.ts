@@ -16,6 +16,7 @@ import {
 import { CODE_RETRY_LIMIT, isUniqueViolation, nextCode } from '../lib/codes';
 import { Prisma } from '../generated/prisma/client';
 import { HttpError } from '../lib/http-error';
+import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import { assertRowDeletable, deleteOwnedChildren } from '../lib/references';
 import { parseId, parseRefId } from '../lib/request';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
@@ -28,6 +29,14 @@ export const customerRouter: Router = Router();
 customerRouter.use(authenticate);
 
 const FEATURE = 'CRM.CUSTOMER';
+
+/** Opening figures are NUMERIC(18,4) (§4 rule 6); blank means "not set". */
+const money = (value: Prisma.Decimal | null): string | null =>
+  value === null ? null : value.toFixed(4);
+const moneyIn = (value: string | undefined): string | null =>
+  value === undefined || value.trim() === '' ? null : value.trim();
+const refIn = (value: string | undefined): bigint | null =>
+  value === undefined || value.trim() === '' ? null : BigInt(value);
 
 const SELECT = {
   id: true,
@@ -42,6 +51,9 @@ const SELECT = {
   exAirVolumeKgMonth: true,
   imSeaVolumeTeuMonth: true,
   imAirVolumeKgMonth: true,
+  openingBalance: true,
+  openingCurrencyId: true,
+  openingCurrency: { select: { code: true } },
   isActive: true,
   industrySector: { select: { name: true } },
   _count: { select: { pics: true } },
@@ -60,6 +72,9 @@ type CustomerRow = {
   exAirVolumeKgMonth: Prisma.Decimal | null;
   imSeaVolumeTeuMonth: Prisma.Decimal | null;
   imAirVolumeKgMonth: Prisma.Decimal | null;
+  openingBalance: Prisma.Decimal | null;
+  openingCurrencyId: bigint | null;
+  openingCurrency: { code: string } | null;
   isActive: boolean;
   industrySector: { name: string };
   _count: { pics: number };
@@ -83,6 +98,9 @@ function toDto(row: CustomerRow): CustomerDto {
     exAirVolumeKgMonth: decimal(row.exAirVolumeKgMonth),
     imSeaVolumeTeuMonth: decimal(row.imSeaVolumeTeuMonth),
     imAirVolumeKgMonth: decimal(row.imAirVolumeKgMonth),
+    openingBalance: money(row.openingBalance),
+    openingCurrencyId: row.openingCurrencyId?.toString() ?? null,
+    openingCurrencyCode: row.openingCurrency?.code ?? null,
     isActive: row.isActive,
     picCount: row._count.pics,
   };
@@ -142,6 +160,30 @@ customerRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (req, res) =
 });
 
 /** Options for the commodity-category dropdown. */
+/**
+ * GET .../currencies — the currency a party's opening balance is entered in.
+ *
+ * Served from this route rather than reused from Settings so it follows THIS
+ * screen's permission: someone who maintains customers should not need
+ * SETTING.CURRENCY.VIEW to fill in an opening balance.
+ */
+customerRouter.get('/currencies', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
+  const auth = req.auth!;
+  const rows = await withTenant(auth.tenantId, async (db) => {
+    const inactive = await inactiveMasters(db);
+    return db.currency.findMany({
+      where: { ...excludeInactive(inactive, 'currency'), deletedAt: null, isActive: true },
+      select: { id: true, code: true, currency: true },
+      orderBy: { code: 'asc' },
+    });
+  });
+  const payload: ApiSuccess<LookupOption[]> = {
+    success: true,
+    data: rows.map((c) => ({ id: c.id.toString(), name: c.currency })),
+  };
+  res.json(payload);
+});
+
 customerRouter.get('/sectors', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
   const auth = req.auth!;
   const sectors = await withTenant(auth.tenantId, (db) =>
@@ -212,6 +254,8 @@ customerRouter.post('/', requirePermission(`${FEATURE}.CREATE`), async (req, res
             exAirVolumeKgMonth: volume(input.exAirVolumeKgMonth),
             imSeaVolumeTeuMonth: volume(input.imSeaVolumeTeuMonth),
             imAirVolumeKgMonth: volume(input.imAirVolumeKgMonth),
+            openingBalance: moneyIn(input.openingBalance),
+            openingCurrencyId: refIn(input.openingCurrencyId),
             createdBy: auth.userId,
             updatedBy: auth.userId,
           },
@@ -256,6 +300,8 @@ customerRouter.patch('/:id', requirePermission(`${FEATURE}.EDIT`), async (req, r
         exAirVolumeKgMonth: volume(input.exAirVolumeKgMonth),
         imSeaVolumeTeuMonth: volume(input.imSeaVolumeTeuMonth),
         imAirVolumeKgMonth: volume(input.imAirVolumeKgMonth),
+        openingBalance: moneyIn(input.openingBalance),
+        openingCurrencyId: refIn(input.openingCurrencyId),
         updatedBy: auth.userId,
       },
       select: SELECT,

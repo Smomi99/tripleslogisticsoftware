@@ -13,6 +13,7 @@ import {
   vendorPicInputSchema,
 } from '@ff/shared';
 
+import { Prisma } from '../generated/prisma/client';
 import { CODE_RETRY_LIMIT, isUniqueViolation, nextCode } from '../lib/codes';
 import { HttpError } from '../lib/http-error';
 import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
@@ -33,7 +34,19 @@ export const vendorRouter: Router = Router();
 
 vendorRouter.use(authenticate);
 
-const FEATURE = 'SETTING.VENDOR';
+const FEATURE = 'CRM.VENDOR';
+
+
+/**
+ * Opening figures are NUMERIC(18,4) (§4 rule 6). Blank means "not set", which
+ * is different from zero: a zero opening balance is a real statement.
+ */
+const money = (value: Prisma.Decimal | null): string | null =>
+  value === null ? null : value.toFixed(4);
+const moneyIn = (value: string | undefined): string | null =>
+  value === undefined || value.trim() === '' ? null : value.trim();
+const refIn = (value: string | undefined): bigint | null =>
+  value === undefined || value.trim() === '' ? null : BigInt(value);
 
 const VENDOR_SELECT = {
   id: true,
@@ -46,6 +59,9 @@ const VENDOR_SELECT = {
   bankDetails: true,
   tinNo: true,
   vatNo: true,
+  openingBalance: true,
+  openingCurrencyId: true,
+  openingCurrency: { select: { code: true } },
   isActive: true,
   vendorType: { select: { name: true } },
   _count: { select: { pics: true } },
@@ -62,6 +78,9 @@ interface VendorRow {
   bankDetails: string | null;
   tinNo: string | null;
   vatNo: string | null;
+  openingBalance: Prisma.Decimal | null;
+  openingCurrencyId: bigint | null;
+  openingCurrency: { code: string } | null;
   isActive: boolean;
   vendorType: { name: string };
   _count: { pics: number };
@@ -80,6 +99,9 @@ function toDto(row: VendorRow): VendorDto {
     bankDetails: row.bankDetails,
     tinNo: row.tinNo,
     vatNo: row.vatNo,
+    openingBalance: money(row.openingBalance),
+    openingCurrencyId: row.openingCurrencyId?.toString() ?? null,
+    openingCurrencyCode: row.openingCurrency?.code ?? null,
     isActive: row.isActive,
     picCount: row._count.pics,
   };
@@ -134,6 +156,30 @@ vendorRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (req, res) => 
   res.json(payload);
 });
 
+/**
+ * GET .../currencies — the currency a party's opening balance is entered in.
+ *
+ * Served from this route rather than reused from Settings so it follows THIS
+ * screen's permission: someone who maintains vendors should not need
+ * SETTING.CURRENCY.VIEW to fill in an opening balance.
+ */
+vendorRouter.get('/currencies', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
+  const auth = req.auth!;
+  const rows = await withTenant(auth.tenantId, async (db) => {
+    const inactive = await inactiveMasters(db);
+    return db.currency.findMany({
+      where: { ...excludeInactive(inactive, 'currency'), deletedAt: null, isActive: true },
+      select: { id: true, code: true, currency: true },
+      orderBy: { code: 'asc' },
+    });
+  });
+  const payload: ApiSuccess<LookupOption[]> = {
+    success: true,
+    data: rows.map((c) => ({ id: c.id.toString(), name: c.currency })),
+  };
+  res.json(payload);
+});
+
 vendorRouter.get('/types', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
   const auth = req.auth!;
   const types = await withTenant(auth.tenantId, async (db) => {
@@ -175,6 +221,8 @@ vendorRouter.post('/', requirePermission(`${FEATURE}.CREATE`), async (req, res) 
             bankDetails: input.bankDetails || null,
             tinNo: input.tinNo || null,
             vatNo: input.vatNo || null,
+            openingBalance: moneyIn(input.openingBalance),
+            openingCurrencyId: refIn(input.openingCurrencyId),
             createdBy: auth.userId,
             updatedBy: auth.userId,
           },
@@ -221,6 +269,8 @@ vendorRouter.patch('/:id', requirePermission(`${FEATURE}.EDIT`), async (req, res
         bankDetails: input.bankDetails || null,
         tinNo: input.tinNo || null,
         vatNo: input.vatNo || null,
+        openingBalance: moneyIn(input.openingBalance),
+        openingCurrencyId: refIn(input.openingCurrencyId),
         updatedBy: auth.userId,
       },
       select: VENDOR_SELECT,

@@ -248,17 +248,17 @@ describe('two workspaces, one shared carrier', () => {
 describe('vendor and its contacts', () => {
   it('does not list another workspace vendor', async () => {
     const A = as(tokenA, SLUG_A);
-    const list = await A.get('/api/tenant/setting/vendors?limit=100');
+    const list = await A.get('/api/tenant/crm/vendors?limit=100');
     const names = list.body.data.map((r: { name: string }) => r.name);
     expect(names).not.toContain('Beta Vendor');
   });
 
   it('cannot reach another workspace vendor children', async () => {
     const A = as(tokenA, SLUG_A);
-    expect((await A.get(`/api/tenant/setting/vendors/${vendorB}/pics`)).status).toBe(404);
-    expect((await A.get(`/api/tenant/setting/vendors/${vendorB}/summary`)).status).toBe(404);
+    expect((await A.get(`/api/tenant/crm/vendors/${vendorB}/pics`)).status).toBe(404);
+    expect((await A.get(`/api/tenant/crm/vendors/${vendorB}/summary`)).status).toBe(404);
     expect(
-      (await A.post(`/api/tenant/setting/vendors/${vendorB}/pics`).send({ name: 'X' })).status,
+      (await A.post(`/api/tenant/crm/vendors/${vendorB}/pics`).send({ name: 'X' })).status,
     ).toBe(404);
   });
 });
@@ -278,7 +278,7 @@ describe('commodity category and its items', () => {
 describe('§7 — every route is permission guarded', () => {
   const paths = [
     '/api/tenant/setting/carriers',
-    '/api/tenant/setting/vendors',
+    '/api/tenant/crm/vendors',
     '/api/tenant/setting/commodity-categories',
   ];
 

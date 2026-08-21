@@ -26,13 +26,14 @@ import { useSession } from '@/lib/session';
 import { useMasterList } from '@/lib/use-master-list';
 
 /** Settings → Vendor (CLAUDE.md §5 Table_Vendor). Tenant-owned throughout. */
-const ENDPOINT = '/api/tenant/setting/vendors';
+const ENDPOINT = '/api/tenant/crm/vendors';
 
 export default function VendorPage() {
   const { authorizedRequest, can } = useSession();
   const list = useMasterList<VendorDto, VendorSortField>(ENDPOINT, 'name');
 
   const [types, setTypes] = useState<LookupOption[]>([]);
+  const [currencies, setCurrencies] = useState<LookupOption[]>([]);
   const [editing, setEditing] = useState<VendorDto | null>(null);
   const [isFormOpen, setFormOpen] = useState(false);
   const [toToggle, setToToggle] = useState<VendorDto | null>(null);
@@ -46,6 +47,9 @@ export default function VendorPage() {
     void authorizedRequest<LookupOption[]>(`${ENDPOINT}/types`)
       .then(setTypes)
       .catch(() => setTypes([]));
+    void authorizedRequest<LookupOption[]>(`${ENDPOINT}/currencies`)
+      .then(setCurrencies)
+      .catch(() => setCurrencies([]));
   }, [authorizedRequest]);
 
   const columns: DataTableColumn<VendorDto>[] = useMemo(
@@ -106,7 +110,7 @@ export default function VendorPage() {
     if (toDelete === null) return;
     setDeleting(true);
     try {
-      await authorizedRequest(`/api/tenant/setting/vendors/${toDelete.id}`, { method: 'DELETE' });
+      await authorizedRequest(`/api/tenant/crm/vendors/${toDelete.id}`, { method: 'DELETE' });
       toast.success('Vendor deleted');
       setToDelete(null);
       await list.reload();
@@ -125,7 +129,7 @@ export default function VendorPage() {
         title="Vendor"
         description="Suppliers this workspace buys from — coloaders, transporters, agents."
         action={
-          can('SETTING.VENDOR.CREATE') ? (
+          can('CRM.VENDOR.CREATE') ? (
             <Button
               onClick={() => {
                 setEditing(null);
@@ -183,12 +187,12 @@ export default function VendorPage() {
         isPending={list.isPending}
         actions={(row) => (
           <>
-            {can('SETTING.VENDOR.VIEW') && (
+            {can('CRM.VENDOR.VIEW') && (
               <Button variant="text" size="inline" asChild>
-                <Link href={`/setting/vendor/${row.id}/pic`}>Contacts</Link>
+                <Link href={`/crm/vendor/${row.id}/pic`}>Contacts</Link>
               </Button>
             )}
-            {can('SETTING.VENDOR.EDIT') && (
+            {can('CRM.VENDOR.EDIT') && (
               <Button
                 variant="text"
                 size="inline"
@@ -200,7 +204,7 @@ export default function VendorPage() {
                 Edit
               </Button>
             )}
-            {can('SETTING.VENDOR.TOGGLE_STATUS') && (
+            {can('CRM.VENDOR.TOGGLE_STATUS') && (
               <Button
                 variant={row.isActive ? 'destructive' : 'text'}
                 size="inline"
@@ -209,7 +213,7 @@ export default function VendorPage() {
                 {row.isActive ? 'Deactivate' : 'Activate'}
               </Button>
             )}
-            {can('SETTING.VENDOR.DELETE') && (
+            {can('CRM.VENDOR.DELETE') && (
               <Button variant="destructive" size="inline" onClick={() => setToDelete(row)}>
                 Delete
               </Button>
@@ -232,7 +236,7 @@ export default function VendorPage() {
               title="No vendors yet"
               description="Add your first vendor so purchases and payables have someone to bill against."
               action={
-                can('SETTING.VENDOR.CREATE') ? (
+                can('CRM.VENDOR.CREATE') ? (
                   <Button
                     onClick={() => {
                       setEditing(null);
@@ -259,6 +263,7 @@ export default function VendorPage() {
         <VendorForm
           vendor={editing}
           types={types}
+          currencies={currencies}
           onSubmit={submit}
           onCancel={() => {
             setFormOpen(false);
@@ -309,11 +314,13 @@ export default function VendorPage() {
 function VendorForm({
   vendor,
   types,
+  currencies,
   onSubmit,
   onCancel,
 }: {
   vendor: VendorDto | null;
   types: LookupOption[];
+  currencies: LookupOption[];
   onSubmit: (values: VendorInput) => Promise<void>;
   onCancel: () => void;
 }) {
@@ -334,6 +341,8 @@ function VendorForm({
       bankDetails: '',
       tinNo: '',
       vatNo: '',
+      openingBalance: '',
+      openingCurrencyId: '',
     },
   });
 
@@ -347,6 +356,8 @@ function VendorForm({
       bankDetails: vendor?.bankDetails ?? '',
       tinNo: vendor?.tinNo ?? '',
       vatNo: vendor?.vatNo ?? '',
+      openingBalance: vendor?.openingBalance ?? '',
+      openingCurrencyId: vendor?.openingCurrencyId ?? '',
     });
     setFormError(null);
   }, [vendor, types, reset]);
@@ -407,6 +418,30 @@ function VendorForm({
       <Field id="vatNo" label="VAT / BIN" error={errors.vatNo?.message}>
         <Input id="vatNo" numeric {...register('vatNo')} />
       </Field>
+      {/* Opening figures for the accounts ledger. */}
+      <Field
+        id="openingBalance"
+        label="Opening balance"
+        error={errors.openingBalance?.message}
+      >
+        <Input id="openingBalance" numeric inputMode="decimal" {...register('openingBalance')} />
+      </Field>
+
+      <Field
+        id="openingCurrencyId"
+        label="Currency"
+        error={errors.openingCurrencyId?.message}
+      >
+        <Select id="openingCurrencyId" {...register('openingCurrencyId')}>
+          <option value="">Select a currency</option>
+          {currencies.map((currency) => (
+            <option key={currency.id} value={currency.id}>
+              {currency.name}
+            </option>
+          ))}
+        </Select>
+      </Field>
+
       <Field id="bankDetails" label="Bank details" error={errors.bankDetails?.message} wide>
         <Input id="bankDetails" {...register('bankDetails')} />
       </Field>

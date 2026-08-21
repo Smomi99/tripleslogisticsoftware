@@ -1,5 +1,11 @@
 import { z } from 'zod';
 
+import {
+  currencyRequiredFor,
+  openingCurrencyField,
+  signedMoneyField,
+} from './opening-balance';
+
 import { listQuerySchema } from './api';
 import { countrySchema } from './countries';
 
@@ -24,6 +30,12 @@ export const vendorInputSchema = z.object({
   tinNo: z.string().trim().max(50, 'TIN is too long.').optional(),
   /** The client writes vat_no (BIN) — Bangladesh Business Identification Number. */
   vatNo: z.string().trim().max(50, 'VAT/BIN is too long.').optional(),
+  /** Opening figures for the accounts ledger. Positive is owed to us. */
+  openingBalance: signedMoneyField('Enter an opening balance, or leave it blank.'),
+  openingCurrencyId: openingCurrencyField,
+}).refine((v) => currencyRequiredFor([v.openingBalance], v.openingCurrencyId), {
+  message: 'Choose the currency the opening balance is in.',
+  path: ['openingCurrencyId'],
 });
 
 export type VendorInput = z.input<typeof vendorInputSchema>;
@@ -48,6 +60,9 @@ export interface VendorDto {
   bankDetails: string | null;
   tinNo: string | null;
   vatNo: string | null;
+  openingBalance: string | null;
+  openingCurrencyId: string | null;
+  openingCurrencyCode: string | null;
   isActive: boolean;
   picCount: number;
 }
