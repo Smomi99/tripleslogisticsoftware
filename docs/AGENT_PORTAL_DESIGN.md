@@ -1,204 +1,301 @@
-# Agent Portal — architecture and security design
+# Agent Portal — final architecture
 
-**Status:** design only. No code, no migrations, no data touched.
-**Read with:** CLAUDE.md §7 (RBAC), §7A (multi-tenancy), §4 rules 3, 5 and 10.
-
-This document exists because the agent portal is the first time an outsider is
-given a login to this system. Everything before it has been staff-only, and the
-tenant boundary was the only boundary that mattered. A portal adds a second one
-*inside* each workspace, and the two must hold independently.
+**Status:** design, awaiting approval. No code, no migrations, no data touched.
+**Supersedes:** the open-questions draft of this file (see git history).
+**Read with:** CLAUDE.md §7 (RBAC), §7A (multi-tenancy), §4 rules 3, 5, 7 and 10.
 
 ---
 
-## 0. What I found in the code (corrections first)
+## 0. Decisions, now locked
 
-I told you last session that `user.employee_id` is required. **That was wrong.**
-It is nullable in both the schema and the database, and your seeded superadmin
-already has no employee:
+| # | Decision |
+|---|---|
+| 1 | **One login per forwarder.** An agent account belongs to exactly one tenant. Multi-forwarder access is a separate future design. |
+| 2 | **Customer name and target price are hidden** from agents. They receive only what is needed to price the lane. |
+| 3 | **MVP quote is a single price.** The model must extend to tiers and local charges later without redesign. |
+| 4 | **Superadmin only** may invite or create agent accounts. |
+| 5 | **Explicit selection is the authorization boundary.** `inquiry_party` decides visibility; covering the lane is not enough. |
+| 6 | **Audit trail first**, tested, before any external login exists. |
 
-| username | employee_id | is_superadmin |
-|---|---|---|
-| clerk1 | set | no |
-| rahimu | set | no |
-| superadmin | **null** | yes |
+### Correction carried forward
 
-What is required is the *staff creation form* — `userInputSchema.employeeId` is
-`z.string().regex(/^\d+$/)`. So the constraint lives in the application, not the
-database, and agent accounts need **no destructive change** to `user`. That
-makes the account model below considerably cheaper and safer than I implied.
-
-Other findings the design leans on:
-
-- **RLS is a single GUC.** `app_current_tenant()` reads
-  `current_setting('app.tenant_id')`, set transaction-locally by `withTenant`.
-  Every tenant-owned policy is `tenant_id = app_current_tenant()`.
-- **The access token already caches permissions** and is invalidated by
-  `token_version`. `authenticate` re-checks active/role/version per request.
-- **Buy price is stripped in the response**, not hidden in React
-  (`lib/rate-visibility.ts`). That enforcement point is the right shape and the
-  portal will not weaken it.
-- **There is no self-service password reset.** `user.route.ts` has an
-  admin-initiated reset only. An external user has no admin to ask.
-- **`audit_log` is empty — nothing writes to it.** See §8; this is a
-  prerequisite, not a nice-to-have.
+`user.employee_id` is **nullable** in schema and database — I said otherwise two
+sessions ago. Your seeded superadmin already has none. Agent accounts therefore
+need no destructive change to `user`.
 
 ---
 
-## 1. Account model
+## Phase 0 — Audit trail
 
-### Decision: extend `user`, do not create a parallel table
+`audit_log` exists, has RLS, and has **never been written to**. Three things are
+wrong with it as it stands for this purpose.
 
-```
-user
-  id, tenant_id, code, username, email, password_hash
-  employee_id  BIGINT NULL   -- staff: set. agent: always NULL.
-  agent_id     BIGINT NULL   -- agent: set. staff: always NULL.   ← NEW
-  role_id      BIGINT NULL   -- agent: always NULL.
-  is_superadmin BOOLEAN      -- agent: always false.
-```
-
-**Why not a separate `agent_user` table?** Because it would need its own login
-route, its own token shape, its own active/`token_version` checks, and its own
-logout. Two implementations of authentication is how one of them drifts, and the
-one that drifts is the one that leaks. One table, one auth path, one place to
-deactivate an account.
-
-**What makes that safe is a database constraint, not discipline:**
+### 0.1 Schema deltas
 
 ```sql
-ALTER TABLE "user" ADD CONSTRAINT user_agent_is_external CHECK (
-  agent_id IS NULL
-  OR (employee_id IS NULL AND role_id IS NULL AND is_superadmin = false)
+-- An audit trail the application can rewrite is not an audit trail.
+REVOKE UPDATE ON TABLE audit_log FROM ff_app;
+-- (DELETE was never granted; INSERT and SELECT remain.)
+
+-- Events that are not about a row — a failed login has no record to point at.
+ALTER TABLE audit_log ALTER COLUMN record_id DROP NOT NULL;
+
+-- The existing enum covers data changes only.
+ALTER TYPE audit_action ADD VALUE 'DELETE';           -- soft delete (CR-002)
+ALTER TYPE audit_action ADD VALUE 'LOGIN_SUCCESS';
+ALTER TYPE audit_action ADD VALUE 'LOGIN_FAILURE';
+ALTER TYPE audit_action ADD VALUE 'LOGOUT';
+ALTER TYPE audit_action ADD VALUE 'VIEW';             -- agent read of an inquiry
+ALTER TYPE audit_action ADD VALUE 'INVITE_ISSUED';
+ALTER TYPE audit_action ADD VALUE 'INVITE_ACCEPTED';
+ALTER TYPE audit_action ADD VALUE 'PASSWORD_RESET_REQUESTED';
+ALTER TYPE audit_action ADD VALUE 'PASSWORD_RESET_COMPLETED';
+ALTER TYPE audit_action ADD VALUE 'QUOTE_SUBMITTED';
+ALTER TYPE audit_action ADD VALUE 'QUOTE_AMENDED';
+```
+
+`actor_type` already has `USER | PLATFORM_USER | SYSTEM`. An agent **is** a
+`USER` whose `agent_id` is set — no new actor type, because two ways of saying
+the same thing eventually disagree. Queries that want agent activity join to
+`user.agent_id`.
+
+`ALTER TYPE … ADD VALUE` cannot run inside a transaction block in older
+Postgres; on 16 it can, but the migration will add values in their own statement
+either way.
+
+### 0.2 Two mechanisms, because there are two kinds of event
+
+**Data changes** — a Prisma client extension hook in `tenant-client.ts`, beside
+the tenant injection. It covers every `create`, `update`, `updateMany` and the
+soft-delete updates, for every model, which is what §4 rule 7 asks for and what
+no route can forget.
+
+Four things it must get right:
+
+- **No recursion.** Operations on `auditLog` are skipped.
+- **The actor.** `withTenant` currently carries only `tenantId` in
+  AsyncLocalStorage. It gains `userId`, so the hook knows who acted without
+  every call site passing it.
+- **Old values cost a read.** Capturing `old_values` on an update means a SELECT
+  before the write. That is a real cost and it is accepted: an audit row that
+  says only "something changed" is not worth storing.
+- **Bulk updates.** `updateMany` records one row per affected id, not one row
+  for the batch — otherwise "who changed this record" has no answer.
+
+**Events** — an explicit `recordAudit()` for things that are not writes: logins,
+logouts, an agent opening an inquiry. Called from the route.
+
+### 0.3 Event catalogue
+
+| Event | actor | table_name / record_id | Captured |
+|---|---|---|---|
+| Any create/update/soft-delete | USER | the model and row | old and new values |
+| `LOGIN_SUCCESS` / `LOGOUT` | USER | `user` / user id | — |
+| `LOGIN_FAILURE` | SYSTEM | `user` / id when the username resolved, else NULL | attempted username, IP |
+| `VIEW` (agent opens an inquiry) | USER | `inquiry` / inquiry id | — |
+| `INVITE_ISSUED` / `INVITE_ACCEPTED` | USER | `user` / invited user | issuing superadmin |
+| `PASSWORD_RESET_REQUESTED` / `_COMPLETED` | USER | `user` / user id | — |
+| `QUOTE_SUBMITTED` / `QUOTE_AMENDED` | USER | `agent_quote` / quote id | amount, currency, validity |
+| Agent account activated / deactivated | USER | `user` / user id | old and new `is_active` |
+
+**Never recorded:** password hashes, invite or reset tokens, buy prices. An
+audit trail that copies the secrets is a second place to steal them from.
+
+### 0.4 Phase 0 exit criteria
+
+- Every create/update/deactivate writes exactly one audit row, proven by a test.
+- `ff_app` cannot UPDATE or DELETE an audit row — proven by SQL, expecting a
+  privilege error.
+- The existing 407 tests still pass.
+
+---
+
+## Phase 1 — Agent account schema
+
+### 1.1 `user` gains one column and one constraint
+
+```sql
+ALTER TABLE "user" ADD COLUMN "agent_id" BIGINT;
+
+-- §4 rule 10: agent is tenant-owned, so the key is composite.
+ALTER TABLE "user" ADD CONSTRAINT "user_agent_fkey"
+  FOREIGN KEY ("tenant_id", "agent_id") REFERENCES "agent"("tenant_id", "id")
+  ON DELETE RESTRICT ON UPDATE CASCADE;
+
+CREATE INDEX "user_agent_id_idx" ON "user" ("agent_id");
+
+-- The load-bearing line of the whole design.
+ALTER TABLE "user" ADD CONSTRAINT "user_agent_is_external" CHECK (
+  "agent_id" IS NULL
+  OR ("employee_id" IS NULL AND "role_id" IS NULL AND "is_superadmin" = false)
 );
 ```
 
-This is the single most important line in the design. It makes "an agent account
-that is also a superadmin" **unrepresentable**, rather than merely something no
-code path currently does. A future bug, a bad import, a careless SQL fix — none
-of them can produce that row.
+That CHECK makes an agent-who-is-also-a-superadmin **unrepresentable**. Not
+"prevented by the service layer" — impossible to store, by any code path, import
+or hand-written SQL.
 
-Discriminator: `agent_id IS NOT NULL`. No separate `kind` column, because two
-sources of truth for the same fact eventually disagree.
+### 1.2 `agent_quote` — MVP shape, extensible
 
-### Consequence to handle (compatibility)
+```sql
+CREATE TABLE "agent_quote" (
+  "tenant_id"    BIGINT NOT NULL,
+  "id"           BIGSERIAL PRIMARY KEY,
+  "code"         VARCHAR(32) NOT NULL,          -- §4 rule 2
+  "inquiry_id"   BIGINT NOT NULL,
+  "agent_id"     BIGINT NOT NULL,
+  "submitted_by" BIGINT,                        -- the agent user
+  "amount"       DECIMAL(18,4),                 -- nullable ON PURPOSE, see below
+  "currency_id"  BIGINT NOT NULL,
+  "valid_until"  DATE,
+  "transit_days" INTEGER,
+  "remarks"      TEXT,
+  "status"       agent_quote_status NOT NULL DEFAULT 'SUBMITTED',
+  "is_active"    BOOLEAN NOT NULL DEFAULT true,
+  "created_at", "updated_at", "created_by", "updated_by", "deleted_at"
+);
+-- status: SUBMITTED | WITHDRAWN | ACCEPTED | DECLINED
+```
 
-`user.route.ts` lists users for CRM → User. It must gain `agentId: null` in its
-`where`, or agent accounts appear in the staff user list. This is a required
-change, not optional — see §9.
+**`amount` is nullable so that decision 3 stays extensible.** When tiered quotes
+arrive, an `agent_quote_line` child table is added and a tiered quote carries
+lines with `amount` NULL on the parent. A `NOT NULL` today would force either a
+fake headline figure or an ALTER on a table with live commercial data. A CHECK
+enforces the MVP rule instead:
+
+```sql
+CHECK ("amount" IS NOT NULL)   -- dropped when agent_quote_line lands
+```
+
+One live quote per agent per inquiry:
+
+```sql
+CREATE UNIQUE INDEX "agent_quote_one_live_per_agent"
+  ON "agent_quote" ("tenant_id", "inquiry_id", "agent_id")
+  WHERE "deleted_at" IS NULL AND "status" <> 'WITHDRAWN';
+```
+
+Composite FKs to `inquiry` and `agent`; plain FK plus the §4 rule 10 trigger to
+`currency`, which is system-capable.
+
+### 1.3 `user_credential_token`
+
+```sql
+CREATE TABLE "user_credential_token" (
+  "tenant_id"  BIGINT NOT NULL,
+  "id"         BIGSERIAL PRIMARY KEY,
+  "user_id"    BIGINT NOT NULL,
+  "purpose"    credential_token_purpose NOT NULL,   -- INVITE | RESET
+  "token_hash" VARCHAR(255) NOT NULL,               -- argon2. Never the token.
+  "expires_at" TIMESTAMPTZ(6) NOT NULL,
+  "used_at"    TIMESTAMPTZ(6),
+  "created_at" TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "created_by" BIGINT
+);
+
+-- One live token per user per purpose: requesting a second reset invalidates
+-- the first, so a stolen older link stops working.
+CREATE UNIQUE INDEX "user_credential_token_live"
+  ON "user_credential_token" ("tenant_id", "user_id", "purpose")
+  WHERE "used_at" IS NULL;
+```
+
+Expiry: **invite 7 days, reset 1 hour.** An invite is expected to sit in an
+inbox; a reset is expected to be used immediately.
 
 ---
 
-## 2. Authentication
+## Phase 2 — Authentication and session
 
-### Token
+### 2.1 `agentId` comes from the database, never from the token
 
-Add one claim: `agentId: string | null`. `authenticate` puts it on
-`req.auth.agentId`. Everything else — 15-minute access token, httpOnly refresh
-cookie, `token_version`, the per-request active check — is reused unchanged.
+`loadAccount` already runs on every request and already reads the `user` row. It
+gains `agentId`, and `req.auth.agentId` is set **from that read**.
 
-### Keeping agents out of staff routes
+The claim is also placed in the access token so the web app can route without an
+extra call, but **the server never trusts it**. If claim and database disagree
+the request is rejected — that is a tampered or stale token, and neither should
+proceed. This is §7A rule 1 applied to the second boundary: a client that can
+name its own agent id can read another agent's inquiries.
 
-**Do not add `requireStaff` to forty route files.** A guard you must remember to
-add is a guard you will one day forget, and the forgotten one is the hole. Mount
-it once:
-
-```
-tenantRouter.use(authenticate)
-tenantRouter.use(staffOnly)        ← rejects any token carrying agentId
-tenantRouter.use('/setting', ...)  ← every existing router, unchanged
-...
-
-portalRouter.use(authenticate)
-portalRouter.use(agentOnly)        ← rejects any token WITHOUT agentId
-portalRouter.use('/inquiries', ...)
-```
-
-Two mutually exclusive gates at two mount points. A new staff route added next
-year is behind `staffOnly` by construction, because it is mounted under a router
-that already carries it. §11 includes a test that walks the route table and
-asserts every path is behind exactly one of them.
-
-### Activation and reset
-
-Neither exists today, and an external user cannot phone your office for a
-password. One new table serves both:
+### 2.2 Two login endpoints, each with a narrow query
 
 ```
-user_credential_token
-  id, tenant_id, user_id, purpose ENUM('INVITE','RESET'),
-  token_hash VARCHAR(255),   -- argon2 of the token. NEVER the token itself.
-  expires_at TIMESTAMPTZ, used_at TIMESTAMPTZ NULL,
-  created_at, created_by
+POST /api/tenant/auth/login    WHERE agent_id IS NULL       (staff)
+POST /api/portal/auth/login    WHERE agent_id IS NOT NULL   (agents)
 ```
 
-- **Invite:** staff invites an *agent PIC* (a person with an email, which
-  `agent_pic` already holds). A single-use token is emailed; the agent sets
-  their own password. The forwarder never types a password on the agent's
-  behalf — a password your staff chose is a password your staff knows.
-- **Reset:** self-service. Same table, `purpose = 'RESET'`, short expiry.
-- **Both are stored hashed.** A leaked database backup must not hand over live
-  invite links.
-- **Uniform responses.** "If that address has an account, a link is on its way"
-  — whether or not it does. Otherwise the reset form is an account-enumeration
-  oracle against your agent list.
-- Accepting an invite or completing a reset bumps `token_version`, which kills
-  every session already open on that account.
+Separate endpoints rather than one that branches: a stolen agent credential is
+useless at the staff endpoint even if some later check regresses. Both keep the
+existing constant-time behaviour of hashing a dummy password when the user is
+not found, so neither is an account-enumeration oracle.
 
-### Session and logout
+### 2.3 Two mutually exclusive mounts
 
-Unchanged mechanism. Two portal-specific notes:
+```
+tenantRouter.use(authenticate);
+tenantRouter.use(staffOnly);     // rejects any session with agentId set
+tenantRouter.use('/setting', …); // every existing router, unchanged
 
-- The portal must be served **same-origin** with the API (Caddy already
-  path-routes `/api`), because the refresh cookie is `SameSite=Lax`. A portal on
-  its own subdomain would sign agents in and then silently stop refreshing —
-  the same trap documented in `docs/DEPLOY_VPS.md` §1.
-- Deactivating an agent (`is_active = false`) or the agent record itself takes
-  effect on the next request, not the next login, because `authenticate`
-  re-reads the account every time.
+portalRouter.use(authenticate);
+portalRouter.use(agentOnly);     // rejects any session without agentId
+portalRouter.use('/inquiries', …);
+```
+
+A guard you must remember to add is one you will forget, and the forgotten one
+is the hole. One line above forty routers means a route added next year is
+behind `staffOnly` by construction. Phase 6 enumerates the route table and
+asserts every path sits behind exactly one gate.
+
+### 2.4 Activation, reset, logout
+
+```
+Superadmin picks an agent PIC (agent_pic already holds name + email)
+        │  creates user{agent_id, employee_id NULL, role_id NULL, is_superadmin false}
+        │  is_active = false until the invite is accepted
+        ▼
+INVITE token generated, hashed, stored; the raw token goes only into the email
+        ▼
+Agent opens the link, sets their own password
+        │  is_active = true · used_at set · token_version bumped
+        ▼
+Agent signs in at /portal
+```
+
+The forwarder never chooses the agent's password: a password your staff typed is
+a password your staff knows.
+
+**Reset** is self-service — an external user has no admin to phone. Same table,
+1-hour expiry, and the response is identical whether or not the address exists.
+
+**Logout** clears the cookie. Accepting an invite, completing a reset, or
+deactivating the account bumps `token_version`, which kills every open session
+on the next request.
+
+### 2.5 Cookie separation
+
+The portal refresh cookie is **`ff_portal_refresh`, scoped to `/api/portal`**,
+distinct from the staff cookie. Two reasons: a staff session and an agent
+session can coexist in one browser without overwriting each other, and the
+portal cookie is never sent to a staff endpoint.
+
+The portal must be served **same-origin** with the API — the cookie is
+`SameSite=Lax`, and a portal on its own subdomain would sign agents in and then
+silently stop refreshing. Caddy already path-routes `/api`.
+
+### 2.6 Rate limiting
+
+Portal login and reset get a per-IP and per-account limit with lockout after
+repeated failures. The staff login is behind your own network and has not needed
+it; a public portal is a different exposure.
 
 ---
 
-## 3. Permissions
+## Phase 3 — Row Level Security
 
-### Decision: agents are not in the §7 permission matrix at all
+The layer that must hold when the application layer is wrong.
 
-Agent capability is **derived from `agentId IS NOT NULL`**, not granted by role
-or by `user_permission` rows.
-
-**Why:** the §7 matrix is a staff-facing screen. If agent capability were
-expressed there, a superadmin could tick `PURCHASE.PRICE_LIST_FCL.VIEW` for an
-agent account and hand a competitor's partner your entire buying position with
-one checkbox. Keeping agents out of the matrix makes that over-grant
-unrepresentable rather than merely discouraged. It also keeps §7's resolution
-order (superadmin → role → ALLOW/DENY) exactly as it is today.
-
-### What an agent may do
-
-| | Allowed |
-|---|---|
-| **View** | Inquiries where their agent row is a selected party (§6); their own agent and contact records; their own submitted quotes; the lookup data needed to render a form (ports, container types, currencies, units) |
-| **Create** | A quote against an inquiry they can see |
-| **Update** | Their own quote while the inquiry is still open; their own password and profile |
-| **Delete** | Nothing. Ever. |
-
-### What an agent may never do — enumerated deliberately
-
-Purchase rates and the price list · other agents · customers · vendors ·
-carriers · employees · users · roles and permissions · settings of any kind ·
-inquiries they were not selected for · another agent's quotes · exports ·
-anything under `/api/tenant/*`.
-
-Staff and admin permissions are **completely unchanged**. Nothing in §7 or §7B
-is edited by this work.
-
----
-
-## 4. Row Level Security
-
-This is the layer that must hold when the application layer is wrong. The
-assumption throughout is: *a route forgot its filter — what stops the leak?*
-
-### A second GUC
+### 3.1 A second GUC
 
 ```sql
 CREATE FUNCTION app_current_agent() RETURNS BIGINT
@@ -206,16 +303,11 @@ CREATE FUNCTION app_current_agent() RETURNS BIGINT
   AS $$ SELECT NULLIF(current_setting('app.agent_id', true), '')::bigint $$;
 ```
 
-`withTenant` gains a sibling, `withAgent(tenantId, agentId, fn)`, which sets
-**both** GUCs transaction-locally in the same way. Staff sessions never set
-`app.agent_id`, so it reads NULL for them.
+`withAgent(tenantId, agentId, fn)` sets **both** GUCs transaction-locally, the
+same way `withTenant` sets one. Staff sessions never set `app.agent_id`, so it
+reads NULL for them.
 
-**`app.agent_id` is taken from the authenticated user's `agent_id` column and
-from nowhere else** — never a header, a query parameter or a body field. This is
-§7A rule 1 applied to the second boundary: a client that can name its own agent
-id can read another agent's inquiries.
-
-### Step 1 — every existing policy becomes staff-only
+### 3.2 Existing policies become staff-only
 
 ```sql
 -- before
@@ -224,21 +316,34 @@ USING (tenant_id = app_current_tenant())
 USING (tenant_id = app_current_tenant() AND app_current_agent() IS NULL)
 ```
 
-Applied to every tenant-owned table an agent has no business reading — which is
-almost all of them, `freight_rate` and `rate_local_charge` emphatically included.
+Applied to **every** tenant-owned and system-capable table except the small
+agent-visible set in 3.3 — `freight_rate`, `rate_line`, `rate_local_charge`,
+`customer`, `vendor`, `employee`, `user`, `audit_log` and the rest.
 
-**This is backward compatible by construction.** A staff session leaves
-`app.agent_id` unset, so `app_current_agent() IS NULL` is true and the predicate
-reduces to exactly what it is today. The existing 407 tests should pass without
-modification; if any fails, the change is wrong.
+**This is backward compatible by construction.** A staff session leaves the GUC
+unset, so the added clause is true and the predicate reduces to exactly what it
+is today. If any of the 407 existing tests fails after this, the change is wrong
+somewhere and we stop — that is the agreed gate.
 
-The default for an agent session is therefore **deny everything**. Access is
-then opened one table at a time, deliberately.
+The default for an agent session is therefore **deny everything**, and access is
+opened one table at a time below.
 
-### Step 2 — the narrow openings
+### 3.3 The openings, and one subtlety that will bite if ignored
+
+**RLS applies inside a policy's own subqueries.** The `EXISTS` below runs as
+`ff_app` and is itself filtered by `inquiry_party`'s policies. If
+`inquiry_party` denied agents, the `EXISTS` would find nothing and every inquiry
+would be invisible — the feature would fail closed and look like a bug. So
+`inquiry_party` must be opened *first*, and to the agent's own rows only.
 
 ```sql
--- An inquiry is visible to an agent only if that agent was selected on it.
+-- 1. The agent may see the rows that say they were selected.
+CREATE POLICY agent_read ON inquiry_party FOR SELECT
+  USING (tenant_id = app_current_tenant()
+         AND app_current_agent() IS NOT NULL
+         AND agent_id = app_current_agent());
+
+-- 2. Decision 5: explicit selection IS the authorization boundary.
 CREATE POLICY agent_read ON inquiry FOR SELECT
   USING (
     tenant_id = app_current_tenant()
@@ -251,288 +356,193 @@ CREATE POLICY agent_read ON inquiry FOR SELECT
     )
   );
 
--- Children reachable only through a visible parent.
+-- 3. Children inherit the parent's rule rather than restating it — the inner
+--    SELECT is itself filtered by policy 2, so there is one place to get right.
 CREATE POLICY agent_read ON inquiry_volume FOR SELECT
-  USING (
-    tenant_id = app_current_tenant()
-    AND app_current_agent() IS NOT NULL
-    AND EXISTS (SELECT 1 FROM inquiry i WHERE i.id = inquiry_volume.inquiry_id)
-  );
+  USING (tenant_id = app_current_tenant()
+         AND app_current_agent() IS NOT NULL
+         AND EXISTS (SELECT 1 FROM inquiry i WHERE i.id = inquiry_volume.inquiry_id));
+
+-- 4. Their own record and their own people.
+CREATE POLICY agent_read ON agent FOR SELECT
+  USING (tenant_id = app_current_tenant() AND id = app_current_agent());
+CREATE POLICY agent_read ON agent_pic FOR SELECT
+  USING (tenant_id = app_current_tenant() AND agent_id = app_current_agent());
+
+-- 5. Their own quotes, read and write.
+CREATE POLICY agent_rw ON agent_quote FOR ALL
+  USING      (tenant_id = app_current_tenant() AND agent_id = app_current_agent())
+  WITH CHECK (tenant_id = app_current_tenant() AND agent_id = app_current_agent());
 ```
 
-That inner `SELECT 1 FROM inquiry` is itself filtered by the inquiry policy, so
-the child inherits the parent's rule rather than restating it — one place to get
-right instead of five.
+**Reference data**, read-only, because a lane cannot be rendered without it and
+none of it is confidential: `port`, `container_type`, `currency`,
+`commodity_item`, `tos`. Deliberately short — every extra table is surface.
 
-Same shape for `agent` and `agent_pic` (`id = app_current_agent()` / belongs to
-it), and for the new `agent_quote` (`agent_id = app_current_agent()`).
+**Not opened, and worth stating explicitly:** `customer`, `freight_rate`,
+`rate_line`, `rate_local_charge`, `inquiry_rate`, `user`, `employee`, `vendor`,
+`carrier`, `audit_log`, every setting table.
 
-Shared reference data — `port`, `container_type`, `currency`, `cost_unit` — gets
-a read-only agent policy. An agent needs to render a lane, and none of it is
-confidential.
+### 3.4 Decision 2 needs a column guard, not just a table guard
 
-### How each attack is stopped
+`customer` is closed, so the customer *name* cannot be reached. But
+`inquiry.customer_id` and the (now removed) target price live **on the inquiry
+row itself**, which the agent can read.
 
-**Agent A reading Agent B's inquiry.** The `EXISTS` requires an `inquiry_party`
-row naming *A*. B's inquiries have rows naming B. `SELECT * FROM inquiry` with
-no WHERE clause returns A's rows only. A route that forgets its filter leaks
-nothing.
+RLS is row-level, not column-level. Two options, and I recommend both:
 
-**An agent reading confidential rates.** `freight_rate` has no agent policy at
-all, and its staff policy requires `app_current_agent() IS NULL`. An agent
-session reads **zero rows** from it — not filtered columns, no rows. The buy
-price cannot leak because the record cannot be reached. This is the answer to
-"confidential rates must never be exposed": it is a database fact, not an API
-behaviour.
+- **API:** the portal returns an `AgentInquiryDto` that simply has no
+  `customerId`, `customerName` or price fields — omission is a type-level fact,
+  the same trick `visibleLine` uses for buy price (§4 rule 5).
+- **Database:** a `column_privileges` REVOKE of `customer_id` on `inquiry` from
+  `ff_app` is *not* possible without breaking staff queries on the same role.
+  So the second layer is instead a **view**, `agent_inquiry_v`, exposing only
+  the permitted columns, with the portal reading the view and `ff_app` holding
+  no SELECT on the base table for agent sessions.
 
-**Cross-forwarder access.** Both predicates apply. `tenant_id =
-app_current_tenant()` is untouched, and `app.agent_id` derives from a `user` row
-that was itself found under the tenant scope. An agent of forwarder X whose
-session somehow carried forwarder Y's tenant id would still fail the `user`
-lookup that produces the agent id.
-
-**The application layer being wrong.** Assumed throughout. Every statement above
-holds with the API removed entirely — they are testable by opening `psql` as
-`ff_app`, setting the two GUCs by hand, and selecting. §11 includes exactly that
-test, because a test that goes through the API only proves the API.
+I have marked this as the one place where the two layers are not fully
+independent. **Decision needed — see §7 item A.**
 
 ---
 
-## 5. Agent ↔ forwarder relationship
-
-`agent` is already tenant-owned (`tenant_id NOT NULL`), so **an agent row
-belongs to exactly one forwarder.** Nothing in the schema changes.
-
-It follows that if one real-world company partners with two forwarders on this
-platform, they are two `agent` rows in two tenants and therefore **two logins**.
-
-**My recommendation: keep it that way.** A single account spanning forwarders
-would mean a session whose `app.tenant_id` can change, and every policy in the
-system assumes that value is fixed for the life of a transaction. Supporting it
-would be a rewrite of the tenancy model to serve a convenience. Two logins is a
-mild annoyance for the agent; one switchable session is a new class of bug in
-the boundary that protects your clients from each other.
-
-This is **decision 1** in §12 — it is a business call, and I have only made the
-engineering case.
-
-New relationships required: `user.agent_id → agent.id`. That is all. Because
-`agent` is tenant-owned and `user` is tenant-owned, this is a §4 rule 10
-composite key: `FOREIGN KEY (tenant_id, agent_id) REFERENCES agent(tenant_id, id)`.
-
----
-
-## 6. Inquiry flow, end to end
+## Phase 4 — Agent API authorization
 
 ```
-1. Staff raise an inquiry, choose POL and POD
-        │
-2. Lane check  ──► live purchased rate exists?
-        │
-        ├─ YES ──► "Matched". No agent block. No email. No portal visibility.
-        │           Nothing is being asked of anyone, so nobody is told.
-        │
-        └─ NO  ──► agent/carrier block appears
-                    │
-3. Inbound: staff pick agents (filtered to the POL country) and their contacts
-                    │
-4. Save ──► inquiry_party + inquiry_party_contact rows written
-        │
-5. Email to the chosen PICs                      ← EXISTS TODAY, unchanged
-        │
-6. Portal visibility: the SAME inquiry_party rows │ ← NEW
-   are what the RLS policy in §4 keys on
-        │
-7. Agent signs in, sees the inquiry, submits a quote (agent_quote)
-        │
-8. Staff see quotes beside the inquiry and accept one
+POST   /api/portal/auth/login | refresh | logout
+POST   /api/portal/auth/accept-invite | request-reset | reset
+GET    /api/portal/me
+GET    /api/portal/inquiries              list — RLS filters; route filters too
+GET    /api/portal/inquiries/:id          writes a VIEW audit row
+POST   /api/portal/inquiries/:id/quote    creates agent_quote
+PATCH  /api/portal/quotes/:id             amend while the inquiry is open
 ```
 
-**Step 2's "no notification on a matched lane" is preserved, and preserved for
-free.** When the lane matches, the party block never appears, so no
-`inquiry_party` rows are written — which means no email *and* no portal
-visibility, from the same fact. It needs no special case, and it cannot drift
-apart later.
+Every route runs `withAgent(...)`, so RLS is active for the whole transaction.
+Routes also filter explicitly — belt and braces, on the principle that either
+layer alone should be sufficient.
 
-Step 5 is untouched code. Step 6 reuses the rows step 4 already writes.
+`AgentInquiryDto`: code, dates, POL/POD, movement, shipment and loading type,
+commodity, TOS, volumes, remarks, and the agent's own quote. **No customer, no
+prices, no rates, no other agent's quote.**
 
-**Open question (decision 2):** what does an agent see *on* the inquiry?
-Customer name and target price are commercially sensitive — telling an overseas
-agent which of your customers is shipping, and what you hope to pay, is a
-negotiating position handed over. I recommend the portal shows lane, volumes,
-commodity, dates and remarks, and **withholds customer identity and target
-price** unless you say otherwise.
+A quote may be amended only while its inquiry is `OPEN`. Once `QUOTED`, `WON` or
+`LOST`, the portal is read-only for that inquiry — the same reasoning that stops
+staff editing a WON inquiry.
 
 ---
 
-## 7. Rate visibility
+## Phase 5 — Portal UI
 
-| Data | Agent sees |
-|---|---|
-| `freight_rate`, `rate_line`, `rate_local_charge` | **Nothing.** No rows, at the RLS layer. |
-| Buy price / margin | Not reachable — the parent row is invisible. |
-| Their own `agent_quote` rows | Yes. |
-| Another agent's quotes | No — RLS predicate `agent_id = app_current_agent()`. |
-| Whether a lane is already rated | No. They are only asked when it is not. |
+A separate route group in the Next app — `/portal/*` — with its own shell: no
+staff sidebar, no module navigation, a sign-in page, an inquiry list, an inquiry
+detail with the quote form, and an account page. Its own session provider using
+the portal cookie, so the two never share state.
 
-Two layers, as requested:
-
-- **Database:** no agent policy on the rate tables. Zero rows.
-- **API:** the portal router never mounts the rate routers at all, and
-  `agentOnly` rejects an agent token on `/api/tenant/*` where they live.
-
-Either layer alone would be sufficient. Both are present because the question
-"could a bug expose a competitor's buying rates" should have two independent
-answers.
+Visually it stays inside §12's design system; it is the same product seen from
+outside.
 
 ---
 
-## 8. Audit and security
+## Phase 6 — Security testing
 
-### `audit_log` is a prerequisite, not a follow-up
+### 6.1 The database-level tests you asked for
 
-The table exists, the model exists, and **nothing has ever written to it**
-(`SELECT count(*) FROM audit_log` = 0). CLAUDE.md §4 rule 7 requires a Prisma
-middleware for every create/update/deactivate; it was never built.
+These connect **as `ff_app`** and set the GUCs by hand. They do not go through
+the API at all — a test through the API only proves the API.
 
-Shipping an external portal on top of a system with no audit trail means that
-when an agent says "I never saw that inquiry", or you suspect an account is
-compromised, there is nothing to consult. **Phase 0 of §10 is building it**, and
-I would not ship the portal without it.
+```sql
+-- Agent A cannot read Agent B's inquiries
+SELECT set_config('app.tenant_id', '<T>', true),
+       set_config('app.agent_id',  '<A>', true);
+SELECT count(*) FROM inquiry;                    -- expect: only A's
+SELECT count(*) FROM inquiry WHERE id = <B_inquiry>;  -- expect: 0
 
-### Actions to audit
+-- Explicit selection is required: remove A's inquiry_party row, re-select
+DELETE FROM inquiry_party WHERE …;               -- as owner, in the fixture
+SELECT count(*) FROM inquiry WHERE id = <was_visible>;  -- expect: 0
 
-| Event | Why |
-|---|---|
-| Agent login — success **and** failure | Failures are the signal of a credential-stuffing attempt |
-| Invite issued, accepted, expired | Who let this outsider in, and when |
-| Password reset requested and completed | The classic account-takeover path |
-| Inquiry viewed by an agent | Answers "who saw this commercial detail" |
-| Quote submitted or amended | It is a commercial commitment |
-| Agent account activated, deactivated, deleted | Access changes |
-| Staff impersonating a tenant user | §7B already requires this and it is also unbuilt |
+-- Agents cannot read rates at all
+SELECT count(*) FROM freight_rate;               -- expect: 0
+SELECT count(*) FROM rate_local_charge;          -- expect: 0
+SELECT count(*) FROM inquiry_rate;               -- expect: 0
 
-### Risks and what stops each
+-- Cross-tenant, with an agent id from another workspace
+SELECT set_config('app.tenant_id', '<T2>', true),
+       set_config('app.agent_id',  '<A_of_T1>', true);
+SELECT count(*) FROM inquiry;                    -- expect: 0
 
-| Risk | Mitigation |
-|---|---|
-| Agent escalates to staff | CHECK constraint makes the row unrepresentable; no role; `staffOnly` at the mount point |
-| Agent A reads Agent B's data | RLS `EXISTS` on `inquiry_party`; holds with the API removed |
-| Agent reads confidential rates | No agent policy on rate tables — zero rows |
-| Cross-forwarder leak | Existing `tenant_id` predicates, plus `app.agent_id` derived from a tenant-scoped row |
-| A new staff route added without a guard | Single mount point + a test that enumerates the route table |
-| Token still valid after deactivation | Per-request active check and `token_version`, both already built |
-| Invite/reset token stolen from the database | Hashed at rest, single-use, short expiry |
-| Account enumeration via the reset form | Uniform response regardless of whether the address exists |
-| Agent brute-forces a login | Rate limit per IP and per account on the portal login; lockout after N failures |
-| Notification email leaks detail | The body already carries code, lane and movement — no prices, no customer contact |
-| Agent id spoofed in a request | Never read from the request; taken from the authenticated user row |
+-- An agent cannot become staff
+UPDATE "user" SET is_superadmin = true WHERE agent_id IS NOT NULL;
+                                                 -- expect: CHECK violation
+INSERT INTO "user" (…, agent_id, role_id) VALUES (…);
+                                                 -- expect: CHECK violation
 
-### Residual risks I am not solving here
+-- Staff behaviour is unchanged: same queries with app.agent_id unset
+SELECT set_config('app.agent_id', '', true);
+SELECT count(*) FROM freight_rate;               -- expect: the tenant's rates
+```
 
-- **No 2FA for agent accounts.** Worth considering later; out of scope now.
-- **Session fixation across the two portals** is prevented by the exclusive
-  mounts, but the *cookie* is shared. Recommend a distinct cookie name and path
-  for portal refresh tokens so a staff session and an agent session cannot
-  co-exist confusingly in one browser.
+### 6.2 API-level tests
 
----
+- Agent A requests B's inquiry by id → **404, not 403**. A 403 confirms the row
+  exists, which is itself a leak.
+- Agent A cannot POST a quote against B's inquiry.
+- An agent token is refused on **every** route under `/api/tenant/*`, enumerated
+  from the Express router so a route added later is covered automatically.
+- A staff token is refused on every `/api/portal/*` route.
+- An expired or used invite token is refused; a used reset token is refused.
+- Reset for an unknown address returns the same body and status as for a known
+  one.
 
-## 9. Migration and backward compatibility
+### 6.3 Regression gate
 
-**Everything proposed is additive.** No column is dropped, no table is removed,
-no data is rewritten.
-
-| Change | Effect on existing data |
-|---|---|
-| `user.agent_id` nullable + CHECK | Your 3 users have `agent_id NULL` and satisfy the constraint unchanged |
-| `agent_quote`, `user_credential_token` | New, empty |
-| `app_current_agent()` | New function; nothing calls it for staff |
-| Existing policies gain `AND app_current_agent() IS NULL` | **No behavioural change for staff** — the GUC is unset, so the clause is true |
-| Agent policies | Only reachable when `app.agent_id` is set, which only a portal session does |
-| `user.route.ts` gains `agentId: null` to its filter | Keeps agent accounts out of the staff user list |
-
-Your **6 inquiries, 4 rates, 3 users, 2 vendors and 4 agents are untouched.**
-
-**Rollback:** drop the agent policies, drop the `AND app_current_agent() IS NULL`
-clauses, unmount the portal router. Nothing existing depends on any of it.
-
-The one change with behavioural risk is tightening the existing policies. It is
-mechanical and its correctness is verifiable: the current test suite must pass
-unchanged. If it does not, the clause is wrong somewhere and we stop.
+**The existing 407 tests must pass unchanged after Phase 3.** They are the
+backward-compatibility proof. If one fails, we stop and investigate before
+proceeding — as agreed.
 
 ---
 
-## 10. Phased implementation plan
+## Migration plan
 
-| Phase | Scope | Done when |
+Every change is **additive**. No column dropped, no table removed, no row
+rewritten.
+
+| Step | Change | Effect on your data |
 |---|---|---|
-| **0** | `audit_log` middleware in the tenant client extension (§4 rule 7) | Every create/update/deactivate writes a row; a test proves it |
-| **1** | Schema: `user.agent_id` + CHECK, `agent_quote`, `user_credential_token`. No behaviour change | Migration applied; all 407 existing tests pass untouched |
-| **2** | RLS: `app_current_agent()`, `withAgent`, tighten existing policies, add agent policies | Existing tests pass unchanged **and** the raw-SQL isolation tests in §11 pass |
-| **3** | Auth: `agentId` claim, `staffOnly` / `agentOnly` mounts, portal login, invite and reset | An agent token is refused on every `/api/tenant/*` route |
-| **4** | Portal API: inquiry list, inquiry detail, submit and amend a quote | Endpoints exist and are covered by the isolation tests |
-| **5** | Portal UI: separate shell, sign-in, inquiry list, quote form | An agent can complete the §6 flow in a browser |
-| **6** | Staff side: invite an agent PIC, see and accept quotes on the inquiry | Staff can run the whole loop |
-| **7** | Rate limiting, deployment config, docs | Portal live behind Caddy on the VPS |
+| 0a | `REVOKE UPDATE ON audit_log`; `record_id` nullable; new enum values | None — the table is empty |
+| 0b | Audit middleware | New rows only, from the moment it lands |
+| 1a | `user.agent_id` + FK + CHECK | Your 3 users have NULL and satisfy the CHECK |
+| 1b | `agent_quote`, `user_credential_token` | New, empty |
+| 3a | Existing policies gain `AND app_current_agent() IS NULL` | **No behavioural change** — staff never set the GUC |
+| 3b | Agent policies | Unreachable without an agent session |
+| 4 | `user.route.ts` filters `agentId: null` | Keeps agent accounts out of the staff user list |
 
-Phases 1 and 2 are the ones to do slowly. Everything after them is ordinary
-feature work; those two are the boundary itself.
+Untouched: **6 inquiries, 4 rates, 3 users, 4 agents, 2 vendors, 2 customers**,
+and every existing screen.
 
-### Tests that must exist before phase 5
-
-**Cross-agent isolation (raw SQL, no API):**
-- Set `app.tenant_id` and `app.agent_id` to Agent A; `SELECT * FROM inquiry`
-  returns only A's; `SELECT count(*) FROM freight_rate` returns 0.
-- Same for `inquiry_volume`, `inquiry_party`, `agent_quote`.
-
-**Cross-agent isolation (API):**
-- Agent A requests B's inquiry by id → 404, not 403 (a 403 confirms it exists).
-- Agent A cannot submit a quote against B's inquiry.
-
-**Cross-tenant:**
-- An agent of tenant X, token forged with tenant Y's id, is rejected.
-- Two tenants each with an agent: neither sees the other's inquiries.
-
-**Privilege separation:**
-- An agent token is refused on every route under `/api/tenant/*` — enumerated
-  from the router, so a route added later is covered automatically.
-- A staff token is refused on every portal route.
-- `INSERT`/`UPDATE` making an agent account a superadmin violates the CHECK.
-
-**Regression:**
-- The full existing suite passes unchanged after phase 2. This is the
-  backward-compatibility proof and it is non-negotiable.
+**Rollback:** drop the agent policies, drop the added clauses, unmount the portal
+router. Phase 0 is worth keeping regardless.
 
 ---
 
-## 11. Decisions I need from you
+## §7 — What I still need from you
 
-1. **One login per forwarder, or one login across forwarders?**
-   I recommend one per forwarder (§5). Multi-forwarder accounts would mean a
-   session whose tenant can change, which every existing policy assumes cannot
-   happen.
+**A. The Decision 2 second layer.** Hiding customer and price in the DTO is
+certain. A database-level guarantee needs a view (`agent_inquiry_v`) because RLS
+cannot restrict columns and `ff_app` is one role serving both audiences.
+The view is perhaps half a day and makes the guarantee independent of the API.
+**Do you want it, or is the DTO sufficient for now?** I recommend the view — it
+is the same argument as the rate tables, and decision 2 says this data is
+sensitive.
 
-2. **What may an agent see on an inquiry?**
-   I recommend withholding **customer identity** and **target price**, and
-   showing lane, volumes, commodity, dates and remarks. Telling an overseas
-   agent who is shipping and what you hope to pay is a negotiating position
-   given away.
+**B. Failed-login audit for unknown usernames.** Recording them means writing a
+row for traffic that may be pure noise from the internet. Recording only known
+usernames means credential-stuffing against guessed names is invisible.
+I recommend recording both, with the attempted username in `new_values`.
 
-3. **What is a quote?**
-   The simple version is one price, a currency and a validity date. The full
-   version mirrors a purchase rate — per-container tiers plus local charges —
-   and could be accepted straight into the price list. The second is more
-   useful and roughly three times the work.
+**C. Notification on quote submission.** When an agent submits a quote, should
+the software email your staff? Not in your list, and easy to add now while the
+mailer is fresh. I recommend yes, to the price team address already configured.
 
-4. **Who may invite an agent?**
-   Superadmin only, or anyone holding `CRM.AGENT.EDIT`? Inviting an outsider is
-   a security action; I lean to superadmin only at first.
-
-5. **Should an agent see inquiries on lanes they cover but were not selected
-   for?** I recommend **no** — selection is the consent, and "all inquiries on
-   lanes I cover" is a much wider door than it first appears.
-
-6. **Do you want the audit trail (phase 0) built first?**
-   I strongly recommend yes. It is the difference between investigating an
-   incident and guessing about one.
+Everything else is settled. On your word I start at **Phase 0** and stop at each
+phase gate for the regression check.
