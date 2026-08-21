@@ -17,6 +17,7 @@ import { freightRateRouter } from './freight-rate.route';
 import { inquiryRouter } from './inquiry.route';
 import { salesLeadRouter } from './sales-lead.route';
 import { portRouter } from './port.route';
+import { portalUserRouter } from './portal-user.route';
 import { notificationSettingRouter } from './notification-setting.route';
 import { rateLookupRouter } from './rate-lookup.route';
 import { vendorRouter } from './vendor.route';
@@ -59,6 +60,9 @@ tenantRouter.use('/sales', salesLeadRouter);
 // CRM.
 tenantRouter.use('/crm/customers', customerRouter);
 tenantRouter.use('/crm/agents', agentRouter);
+// Portal access for an agent's contacts. Mounted after agentRouter so only the
+// rarer portal-user calls fall through both; superadmin-only inside.
+tenantRouter.use('/crm/agents', portalUserRouter);
 tenantRouter.use('/crm/employees', employeeRouter);
 tenantRouter.use('/crm/users', userRouter);
 

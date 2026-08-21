@@ -61,7 +61,10 @@ authRouter.post('/login', async (req, res) => {
 
   const result = await withTenant(tenant.id, async (db) => {
     const user = await db.user.findFirst({
-      where: { username, deletedAt: null },
+      // agentId: null is part of the WHERE, not a check applied afterwards: an
+      // agent credential cannot return a row here at all, so a stolen one is
+      // useless at the staff door even if some later guard regresses.
+      where: { username, agentId: null, deletedAt: null },
       select: {
         id: true,
         username: true,

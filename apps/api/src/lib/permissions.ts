@@ -26,6 +26,12 @@ export interface AccountRow {
   tokenVersion: number;
   roleId: bigint | null;
   roleIsActive: boolean | null;
+  /**
+   * Set on an external account — an agent's own login. This is the ONLY
+   * authoritative source for it: the same value travels in the token so the web
+   * app can route, but authenticate compares the two and rejects a mismatch.
+   */
+  agentId: bigint | null;
 }
 
 /**
@@ -41,6 +47,7 @@ export async function loadAccount(db: TenantDb, userId: bigint): Promise<Account
       isSuperadmin: true,
       tokenVersion: true,
       roleId: true,
+      agentId: true,
       role: { select: { isActive: true, deletedAt: true } },
     },
   });
@@ -53,6 +60,7 @@ export async function loadAccount(db: TenantDb, userId: bigint): Promise<Account
     isSuperadmin: user.isSuperadmin,
     tokenVersion: user.tokenVersion,
     roleId: user.roleId,
+    agentId: user.agentId,
     roleIsActive:
       user.role === null ? null : user.role.isActive && user.role.deletedAt === null,
   };

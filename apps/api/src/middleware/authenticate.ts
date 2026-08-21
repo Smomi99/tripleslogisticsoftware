@@ -1,4 +1,4 @@
-import type { NextFunction, Request, Response } from 'express';
+import type { NextFunction, Request, RequestHandler, Response } from 'express';
 
 import { HttpError } from '../lib/http-error';
 import { verifyAccessToken } from '../lib/jwt';
@@ -11,6 +11,11 @@ export interface AuthContext {
   tenantId: bigint;
   isSuperadmin: boolean;
   permissions: ReadonlySet<string>;
+  /**
+   * Set on an agent portal session, null on a staff one. Read from the user
+   * row on every request — never from the token. See `authenticateAs`.
+   */
+  agentId: bigint | null;
 }
 
 declare global {
@@ -41,6 +46,7 @@ function bearerToken(req: Request): string {
  * a token cannot know them:
  *   - the user is still active, and their role is still active (§7 rule 5)
  *   - the token has not been superseded by a permission change (token_version)
+ *   - whether this account is staff or an agent
  *
  * That is one indexed lookup, not a re-resolution of the whole permission set —
  * the expensive part stays cached.
@@ -49,46 +55,80 @@ function bearerToken(req: Request): string {
  * resolved to a different workspace than the token was issued for, the request
  * is rejected rather than reconciled: silently preferring one would let a
  * crafted Host header probe for another company's data.
+ *
+ * **There is no unqualified `authenticate`.** Every caller picks a side, and a
+ * session of the wrong kind is refused before any handler runs. A guard you
+ * have to remember to add is one you will eventually forget, and the forgotten
+ * one is the hole; making the choice part of authenticating means a router
+ * added next year cannot accidentally be open to both.
  */
-export async function authenticate(
-  req: Request,
-  _res: Response,
-  next: NextFunction,
-): Promise<void> {
-  const claims = await verifyAccessToken(bearerToken(req));
-  const tenantId = BigInt(claims.tenantId);
+function authenticateAs(kind: 'STAFF' | 'AGENT'): RequestHandler {
+  return async function guard(
+    req: Request,
+    _res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    const claims = await verifyAccessToken(bearerToken(req));
+    const tenantId = BigInt(claims.tenantId);
 
-  if (req.tenant !== undefined && req.tenant.id !== tenantId) {
-    throw HttpError.forbidden('This session belongs to a different workspace.');
-  }
+    if (req.tenant !== undefined && req.tenant.id !== tenantId) {
+      throw HttpError.forbidden('This session belongs to a different workspace.');
+    }
 
-  const userId = BigInt(claims.sub);
+    const userId = BigInt(claims.sub);
 
-  const account = await withTenant(tenantId, (db) => loadAccount(db, userId));
+    const account = await withTenant(tenantId, (db) => loadAccount(db, userId));
 
-  if (account === null || !account.isActive) {
-    throw HttpError.unauthorized('This account is no longer active.');
-  }
-  if (account.tokenVersion !== claims.tokenVersion) {
-    // Permissions changed since this token was issued — force a refresh.
-    throw HttpError.unauthorized('Your access has changed. Sign in again.');
-  }
-  // §7 rule 5: an inactive role removes access even while the user is active.
-  if (!account.isSuperadmin && account.roleId !== null && account.roleIsActive !== true) {
-    throw HttpError.forbidden('Your role has been deactivated.');
-  }
+    if (account === null || !account.isActive) {
+      throw HttpError.unauthorized('This account is no longer active.');
+    }
+    if (account.tokenVersion !== claims.tokenVersion) {
+      // Permissions changed since this token was issued — force a refresh.
+      throw HttpError.unauthorized('Your access has changed. Sign in again.');
+    }
+    // §7 rule 5: an inactive role removes access even while the user is active.
+    if (!account.isSuperadmin && account.roleId !== null && account.roleIsActive !== true) {
+      throw HttpError.forbidden('Your role has been deactivated.');
+    }
 
-  req.auth = {
-    userId,
-    tenantId,
-    isSuperadmin: account.isSuperadmin,
-    permissions: new Set(claims.permissions),
+    // The database is the authority. The claim exists so the web app can route
+    // without an extra call; if the two disagree the token is tampered with or
+    // stale, and neither is a request worth serving.
+    const claimedAgentId = claims.agentId ?? null;
+    const actualAgentId = account.agentId === null ? null : account.agentId.toString();
+    if (claimedAgentId !== actualAgentId) {
+      throw HttpError.unauthorized('Your access has changed. Sign in again.');
+    }
+
+    if (kind === 'STAFF' && account.agentId !== null) {
+      throw HttpError.forbidden('This area is for staff accounts.');
+    }
+    if (kind === 'AGENT' && account.agentId === null) {
+      throw HttpError.forbidden('This area is for agent accounts.');
+    }
+
+    req.auth = {
+      userId,
+      tenantId,
+      isSuperadmin: account.isSuperadmin,
+      permissions: new Set(claims.permissions),
+      agentId: account.agentId,
+    };
+
+    // next() is called INSIDE the actor context so every handler downstream runs
+    // within it — Express invokes the next handler synchronously from here, which
+    // is what carries the AsyncLocalStorage store forward.
+    runWithActor({ userId }, () => {
+      next();
+    });
   };
-
-  // next() is called INSIDE the actor context so every handler downstream runs
-  // within it — Express invokes the next handler synchronously from here, which
-  // is what carries the AsyncLocalStorage store forward.
-  runWithActor({ userId }, () => {
-    next();
-  });
 }
+
+/**
+ * Staff sessions only. Every existing router already calls this, so an agent
+ * credential is refused at all forty of them without one line being added.
+ */
+export const authenticate: RequestHandler = authenticateAs('STAFF');
+
+/** Agent portal sessions only. Staff tokens are refused here just as firmly. */
+export const authenticatePortal: RequestHandler = authenticateAs('AGENT');

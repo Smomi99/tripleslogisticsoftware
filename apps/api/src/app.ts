@@ -8,6 +8,7 @@ import { env } from './config/env';
 import { logger } from './lib/logger';
 import { errorHandler, notFoundHandler } from './middleware/error-handler';
 import { healthRouter } from './routes/health.route';
+import { portalRouter } from './routes/portal.route';
 import { tenantRouter } from './routes/tenant.route';
 
 export function createApp(): Express {
@@ -36,6 +37,11 @@ export function createApp(): Express {
 
   // Everything tenant-scoped goes under here, behind tenant resolution.
   app.use('/api/tenant', tenantRouter);
+
+  // The agent portal. Same origin as the app on purpose (§2.5): its refresh
+  // cookie is SameSite=Lax and scoped to /api/portal/auth, so a portal on its
+  // own host would sign agents in and then silently stop refreshing.
+  app.use('/api/portal', portalRouter);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

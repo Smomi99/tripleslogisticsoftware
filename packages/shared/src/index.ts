@@ -21,6 +21,7 @@ export * from './inquiry';
 export * from './opening-balance';
 export * from './permissions';
 export * from './port';
+export * from './portal';
 export * from './rate-lookups';
 export * from './role';
 export * from './sales-lead';
