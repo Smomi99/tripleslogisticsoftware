@@ -11,12 +11,13 @@ import { S3_CONFIG } from '../config/env';
 import { HttpError } from './http-error';
 
 /**
- * The S3-compatible half of the §2 storage contract.
+ * The S3-compatible half of the §2 storage contract, with Cloudflare R2 as the
+ * intended production target.
  *
- * Written against plain S3 rather than one vendor's SDK, because the free
- * option (Cloudflare R2) and the paid ones (AWS S3, Backblaze B2, MinIO) all
- * speak the same API — the same reasoning §7B applies to payment gateways.
- * Point S3_ENDPOINT at the provider and nothing else changes.
+ * Written against plain S3 rather than one vendor's SDK, because R2 and the
+ * alternatives (AWS S3, Backblaze B2, MinIO) all speak the same API — the same
+ * reasoning §7B applies to payment gateways. Point S3_ENDPOINT at the provider
+ * and nothing else changes.
  *
  * Object keys are identical to the local driver's, so a deployment can move
  * from disk to a bucket without rewriting a single row: the database stores
@@ -42,10 +43,28 @@ function s3(): S3Client {
       // R2 and MinIO need an explicit endpoint; real AWS derives it from the
       // region, so this stays undefined there.
       ...(S3_CONFIG.endpoint !== undefined ? { endpoint: S3_CONFIG.endpoint } : {}),
+      // Virtual-hosted style by default, which R2 accepts. MinIO and some
+      // self-hosted gateways only understand path style.
+      ...(S3_CONFIG.forcePathStyle ? { forcePathStyle: true } : {}),
       credentials: {
         accessKeyId: S3_CONFIG.accessKeyId,
         secretAccessKey: S3_CONFIG.secretAccessKey,
       },
+      /*
+       * These two are what make the SDK talk to R2 at all.
+       *
+       * From v3.729 the AWS SDK defaults both to WHEN_SUPPORTED, so it adds a
+       * CRC32 trailer to every upload and asks for aws-chunked transfer
+       * encoding. R2 does not implement that trailer, and answers a perfectly
+       * ordinary PutObject with a 501 or a 400 — on the first file an operator
+       * ever attaches, in production, months after this was written.
+       *
+       * WHEN_REQUIRED sends a checksum only where the API demands one. The
+       * upload is still integrity-checked: SigV4 signs a SHA-256 of the body,
+       * which is a stronger guarantee than the CRC32 being dropped here.
+       */
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+      responseChecksumValidation: 'WHEN_REQUIRED',
     });
   }
   return client;

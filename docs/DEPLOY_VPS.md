@@ -202,6 +202,101 @@ turns on subdomain routing, and it is the reason you bought a server.
 
 ---
 
+## 6b. Object storage — Cloudflare R2
+
+Uploaded files are agency agreements and employee service contracts. They are
+low in volume and high in consequence: nobody notices one is missing until it is
+needed in a dispute.
+
+They do **not** live on the server. A Docker volume survives a restart, but not
+a rebuild onto a new host, and it is not in the nightly database dump — so a
+restore would bring back every row and none of the paper behind it. R2 is a
+separate durable store with no egress charge, and the API speaks plain S3 to it.
+
+### Create the bucket
+
+1. Cloudflare dashboard → **R2** → **Create bucket**, e.g. `ff-erp-files`.
+   Leave it **private**. The API streams files to signed-in staff, so the bucket
+   never needs public access and should never be given any.
+2. **Manage R2 API Tokens** → **Create API token**:
+   - Permission: **Object Read & Write**
+   - Specify bucket: the one you just made, and only that one
+   - No TTL, or one you will remember to rotate
+3. Copy the **Access Key ID**, the **Secret Access Key** and the
+   **S3 endpoint** — `https://<account-id>.r2.cloudflarestorage.com`. The secret
+   is shown once.
+
+### Configure
+
+In `.env.production`:
+
+```
+STORAGE_DRIVER="s3"
+S3_BUCKET="ff-erp-files"
+S3_REGION="auto"
+S3_ENDPOINT="https://<account-id>.r2.cloudflarestorage.com"
+S3_ACCESS_KEY_ID="..."
+S3_SECRET_ACCESS_KEY="..."
+```
+
+`S3_REGION` is the literal string `auto`. R2 has one region and does not accept
+`us-east-1` or anything else; the error when you get this wrong reads like a
+credentials problem, which sends you looking in the wrong place.
+
+### Prove it works before you need it
+
+```bash
+$COMPOSE run --rm tools pnpm --filter @ff/api storage:check
+```
+
+This writes a small object, reads it back, compares the bytes and deletes it —
+the same code path an upload takes. A `HeadBucket` would not do: it passes with
+a read-only token that cannot store anything.
+
+Run it as part of every deploy. A bucket is the one dependency whose
+misconfiguration is invisible until an operator attaches a file, which may be
+weeks later.
+
+### If files are already on the server
+
+Only relevant if you ran with `STORAGE_DRIVER=local` first. The keys are
+identical in both drivers — the database stores a key, never a path — so
+copying the objects across is the whole migration:
+
+```bash
+docker run --rm -v ff-erp_uploads:/data -e RCLONE_CONFIG_R2_TYPE=s3   -e RCLONE_CONFIG_R2_PROVIDER=Cloudflare   -e RCLONE_CONFIG_R2_ACCESS_KEY_ID="$S3_ACCESS_KEY_ID"   -e RCLONE_CONFIG_R2_SECRET_ACCESS_KEY="$S3_SECRET_ACCESS_KEY"   -e RCLONE_CONFIG_R2_ENDPOINT="$S3_ENDPOINT"   rclone/rclone copy /data R2:ff-erp-files --progress
+```
+
+Then flip `STORAGE_DRIVER` to `s3`, restart, and run `storage:check`. Keep the
+volume until you have opened a few files through the UI.
+
+### Working on uploads locally
+
+R2 has no emulator, and pointing a laptop at the real bucket puts test files
+beside real agreements. `docker-compose.yml` runs MinIO for this — the same S3
+API, on your machine:
+
+```bash
+docker compose --profile storage up -d minio minio-init
+```
+
+Then in `.env`:
+
+```
+STORAGE_DRIVER="s3"
+S3_BUCKET="ff-erp-files"
+S3_REGION="auto"
+S3_ENDPOINT="http://localhost:9000"
+S3_FORCE_PATH_STYLE="true"
+S3_ACCESS_KEY_ID="ff_minio"
+S3_SECRET_ACCESS_KEY="ff_minio_dev"
+```
+
+`S3_FORCE_PATH_STYLE` is for MinIO only. R2 and AWS address buckets as a
+subdomain and do not want it.
+
+---
+
 ## 7. First boot — order matters
 
 The API refuses to start until `ff_app` can log in, and `ff_app` does not exist

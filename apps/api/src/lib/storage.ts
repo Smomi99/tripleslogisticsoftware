@@ -164,14 +164,29 @@ export async function openFile(
   }
 }
 
-/** Best-effort removal — a missing file is not an error worth surfacing. */
-export async function removeFile(key: string): Promise<void> {
+/**
+ * Best-effort removal — a missing file is not an error worth surfacing.
+ *
+ * Takes the tenant for the same reason openFile does. Deleting is the more
+ * dangerous of the two: reading another workspace's object leaks it, deleting
+ * one destroys it, and there is no undo in a bucket. Today every caller passes
+ * a key it read from a row inside its own tenant scope, so the check should
+ * never fire — which is exactly when a guard is cheap and worth having.
+ */
+export async function removeFile(tenantId: bigint, key: string): Promise<void> {
+  if (!key.startsWith(`${tenantId}/`)) return;
+
   if (env.STORAGE_DRIVER !== 'local') {
     await s3Remove(key);
     return;
   }
+
+  const root = localRoot();
+  const resolved = path.resolve(root, key);
+  if (!resolved.startsWith(path.resolve(root) + path.sep)) return;
+
   try {
-    await unlink(path.resolve(localRoot(), key));
+    await unlink(resolved);
   } catch {
     // Already gone.
   }

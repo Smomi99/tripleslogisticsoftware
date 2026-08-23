@@ -85,6 +85,9 @@ const envSchema = z.object({
   S3_BUCKET: optional(z.string().min(1)),
   S3_REGION: z.string().min(1).default('auto'),
   S3_ENDPOINT: optional(z.string().url()),
+  // MinIO and some self-hosted gateways only understand path-style addressing.
+  // R2 and AWS do not need it.
+  S3_FORCE_PATH_STYLE: z.coerce.boolean().default(false),
   S3_ACCESS_KEY_ID: optional(z.string().min(1)),
   S3_SECRET_ACCESS_KEY: optional(z.string().min(1)),
 
@@ -232,6 +235,7 @@ export interface S3Config {
   bucket: string;
   region: string;
   endpoint: string | undefined;
+  forcePathStyle: boolean;
   accessKeyId: string;
   secretAccessKey: string;
 }
@@ -243,12 +247,26 @@ export interface S3Config {
  * bucket must not survive until the first operator tries to attach an agency
  * agreement and gets a 500.
  */
-function resolveS3Config(): S3Config {
+export interface S3Env {
+  S3_BUCKET?: string | undefined;
+  S3_REGION: string;
+  S3_ENDPOINT?: string | undefined;
+  S3_FORCE_PATH_STYLE: boolean;
+  S3_ACCESS_KEY_ID?: string | undefined;
+  S3_SECRET_ACCESS_KEY?: string | undefined;
+}
+
+/**
+ * Exported for the same reason resolveMailConfig is: this decides whether the
+ * bucket is usable, and the failure it prevents — a half-configured store that
+ * boots happily and 500s on the first upload weeks later — is worth pinning.
+ */
+export function resolveS3Config(source: S3Env = env): S3Config {
   const missing = (
     [
-      ['S3_BUCKET', env.S3_BUCKET],
-      ['S3_ACCESS_KEY_ID', env.S3_ACCESS_KEY_ID],
-      ['S3_SECRET_ACCESS_KEY', env.S3_SECRET_ACCESS_KEY],
+      ['S3_BUCKET', source.S3_BUCKET],
+      ['S3_ACCESS_KEY_ID', source.S3_ACCESS_KEY_ID],
+      ['S3_SECRET_ACCESS_KEY', source.S3_SECRET_ACCESS_KEY],
     ] as const
   )
     .filter(([, value]) => value === undefined)
@@ -261,11 +279,12 @@ function resolveS3Config(): S3Config {
   }
 
   return {
-    bucket: env.S3_BUCKET as string,
-    region: env.S3_REGION,
-    endpoint: env.S3_ENDPOINT,
-    accessKeyId: env.S3_ACCESS_KEY_ID as string,
-    secretAccessKey: env.S3_SECRET_ACCESS_KEY as string,
+    bucket: source.S3_BUCKET as string,
+    region: source.S3_REGION,
+    endpoint: source.S3_ENDPOINT,
+    forcePathStyle: source.S3_FORCE_PATH_STYLE,
+    accessKeyId: source.S3_ACCESS_KEY_ID as string,
+    secretAccessKey: source.S3_SECRET_ACCESS_KEY as string,
   };
 }
 

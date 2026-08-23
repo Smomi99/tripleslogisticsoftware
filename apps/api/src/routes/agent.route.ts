@@ -547,7 +547,7 @@ agentRouter.post(
       // Replaced files are removed after the row points at the new one, so a
       // failure here never leaves the record referencing a deleted file.
       if (existing.agreementFile !== null) {
-        await removeFile(existing.agreementFile);
+        await removeFile(auth.tenantId, existing.agreementFile);
       }
       return stored;
     });

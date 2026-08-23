@@ -69,8 +69,21 @@ services:
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?set JWT_ACCESS_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?set JWT_REFRESH_SECRET}
       WEB_ORIGIN: https://${APP_DOMAIN:?set APP_DOMAIN}
-      STORAGE_DRIVER: local
+      # Object storage. Cloudflare R2 is the intended production store: a
+      # container volume survives a restart but not a rebuild onto a new host,
+      # and an agency agreement is the kind of file nobody notices is missing
+      # until they need it in a dispute.
+      #
+      # STORAGE_DRIVER=local still works and keeps files in the `uploads`
+      # volume below; set it deliberately if you want that.
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-s3}
       STORAGE_LOCAL_PATH: /app/storage
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_REGION: ${S3_REGION:-auto}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-false}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
       # Unset on a VPS: wildcard DNS means the workspace comes from the
       # subdomain, the way §7A rule 5 intends. Set it only to pin the whole
       # server to one workspace.
@@ -123,7 +136,14 @@ services:
       DATABASE_URL_APP: postgresql://ff_app:${FF_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-ff_erp}?schema=public
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      STORAGE_DRIVER: ${STORAGE_DRIVER:-s3}
       STORAGE_LOCAL_PATH: /app/storage
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_REGION: ${S3_REGION:-auto}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_FORCE_PATH_STYLE: ${S3_FORCE_PATH_STYLE:-false}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
       SEED_SUPERADMIN_PASSWORD: ${SEED_SUPERADMIN_PASSWORD:-}
       SEED_DEV_TENANT: ${SEED_DEV_TENANT:-false}
     volumes:

@@ -11,6 +11,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "rates:expire": "tsx src/scripts/expire-rates.mts",
+    "storage:check": "tsx src/scripts/storage-check.mts",
     "vercel-build": "cd ../.. && pnpm db:generate"
   },
   "dependencies": {

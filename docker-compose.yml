@@ -41,5 +41,53 @@ services:
       MP_SMTP_AUTH_ACCEPT_ANY: 1
       MP_SMTP_AUTH_ALLOW_INSECURE: 1
 
+  # An S3-compatible bucket on your own machine.
+  #
+  # Production stores files in Cloudflare R2. R2 has no local emulator, and
+  # pointing a developer at the real bucket means test uploads land in the same
+  # place as an operator's signed agency agreements. MinIO speaks the same S3
+  # API, so the driver exercised here is the driver that runs in production —
+  # not a mock of it.
+  #
+  # Off by default; it is only needed when working on file upload:
+  #   docker compose --profile storage up -d minio
+  #   pnpm --filter @ff/api storage:check
+  #
+  # Console at http://localhost:9001 (ff_minio / ff_minio_dev).
+  minio:
+    image: minio/minio:latest
+    container_name: ff-erp-minio
+    profiles: ['storage']
+    restart: unless-stopped
+    command: server /data --console-address ':9001'
+    environment:
+      MINIO_ROOT_USER: ff_minio
+      MINIO_ROOT_PASSWORD: ff_minio_dev
+    ports:
+      - '9000:9000' # the S3 API
+      - '9001:9001' # the console
+    volumes:
+      - ff-erp-minio:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Creates the bucket and exits. MinIO does not make one for you, and a
+  # missing bucket is the failure storage:check is meant to catch, not cause.
+  minio-init:
+    image: minio/mc:latest
+    profiles: ['storage']
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ff_minio ff_minio_dev &&
+      mc mb --ignore-existing local/ff-erp-files &&
+      echo 'bucket ff-erp-files ready'"
+
 volumes:
   ff-erp-pgdata:
+  ff-erp-minio:

@@ -289,7 +289,7 @@ employeeRouter.post(
         data: { serviceContractFile: saved.key, updatedBy: auth.userId },
       });
       if (existing.serviceContractFile !== null) {
-        await removeFile(existing.serviceContractFile);
+        await removeFile(auth.tenantId, existing.serviceContractFile);
       }
       return saved;
     });

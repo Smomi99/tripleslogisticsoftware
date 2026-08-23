@@ -96,6 +96,12 @@ into the next request that borrows the connection (§7A rule 2).
 ## 3. Object storage — Cloudflare R2
 
 1. Cloudflare dashboard → R2 → create a bucket, e.g. `ff-erp-files`.
+> **Verify it before trusting it.** With the four `S3_*` values set, run
+> `pnpm --filter @ff/api storage:check`. It writes an object, reads it back,
+> compares the bytes and deletes it — the same path an upload takes. A
+> misconfigured bucket is otherwise invisible until the first file someone
+> attaches.
+
 2. Create an **R2 API token** with Object Read & Write on that bucket. You get
    an access key id and a secret.
 3. The endpoint is `https://<account-id>.r2.cloudflarestorage.com`.
