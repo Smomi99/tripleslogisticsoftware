@@ -53,6 +53,7 @@ export const CODE_PREFIX = {
   network: 'NET',
   agent: 'AGT',
   agentPic: 'AGP',
+  agentQuote: 'AQ',
   employee: 'EMP',
 
   // Purchase (docs/MODULE_PURCHASE_SALES.md §3.2). The spec writes RATE-000001

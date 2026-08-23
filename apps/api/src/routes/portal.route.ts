@@ -2,6 +2,7 @@ import { Router } from 'express';
 
 import { resolveTenant } from '../middleware/resolve-tenant';
 import { portalAuthRouter } from './portal-auth.route';
+import { portalInquiryRouter, portalQuoteRouter } from './portal-inquiry.route';
 
 /**
  * The agent portal (docs/AGENT_PORTAL_DESIGN.md).
@@ -12,9 +13,10 @@ import { portalAuthRouter } from './portal-auth.route';
  * an agent one. Neither is a guard someone has to remember to add — you cannot
  * authenticate at all without choosing a side.
  *
- * Business routes land in Phase 4. Today this is sign-in only.
  */
 export const portalRouter: Router = Router();
 
 portalRouter.use(resolveTenant);
 portalRouter.use('/auth', portalAuthRouter);
+portalRouter.use('/inquiries', portalInquiryRouter);
+portalRouter.use('/quotes', portalQuoteRouter);

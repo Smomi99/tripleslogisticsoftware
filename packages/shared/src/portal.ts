@@ -106,3 +106,100 @@ export interface PortalUserDto {
   lastLoginAt: string | null;
   createdAt: string;
 }
+
+/**
+ * An inquiry as the agent sees it (§4).
+ *
+ * The absences are the specification. There is no customerId, no customerName,
+ * no targetPrice and no field that could carry one — omission is a type-level
+ * fact, so no careless spread or `select: *` can reintroduce them, and the
+ * database backs the same boundary with agent_inquiry_v.
+ */
+export interface AgentInquiryDto {
+  id: string;
+  code: string;
+  inquiryDate: string;
+  shipmentType: string;
+  movementType: string;
+  loadingType: string | null;
+  polName: string | null;
+  polCode: string | null;
+  polCountry: string | null;
+  podName: string | null;
+  podCode: string | null;
+  podCountry: string | null;
+  placeOfReceipt: string | null;
+  commodityName: string | null;
+  hsCode: string | null;
+  tosName: string | null;
+  /** The Incoterm. Decides what the price is expected to include. */
+  modeName: string | null;
+  expectedShipmentDate: string | null;
+  validTo: string | null;
+  remarks: string | null;
+  status: string;
+  volumes: AgentInquiryVolumeDto[];
+  /** This agent's own quote, if they have given one. Never another agent's. */
+  quote: AgentQuoteDto | null;
+}
+
+export interface AgentInquiryVolumeDto {
+  id: string;
+  volumeKind: string;
+  containerTypeName: string | null;
+  containerTypeNote: string | null;
+  quantity: number | null;
+  cbm: string | null;
+  weightKg: string | null;
+}
+
+export interface AgentQuoteDto {
+  id: string;
+  code: string;
+  amount: string;
+  currencyId: string;
+  currencyCode: string | null;
+  validUntil: string | null;
+  transitDays: number | null;
+  remarks: string | null;
+  status: string;
+  submittedAt: string;
+  updatedAt: string;
+}
+
+/**
+ * What an agent submits. One price, per decision 3.
+ *
+ * Amount is a string on the wire: §4 rule 6 keeps money in NUMERIC(18,4), and
+ * a JSON number is a float that would round 1234.5678 on the way in.
+ */
+export const agentQuoteInputSchema = z.object({
+  amount: z
+    .string()
+    .trim()
+    .regex(/^\d+(\.\d{1,4})?$/, 'Enter a price, for example 1450 or 1450.50')
+    .refine((v) => Number(v) > 0, 'The price must be more than zero.'),
+  currencyId: z.string().regex(/^\d+$/, 'Choose a currency.'),
+  validUntil: z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use a date like 2026-09-30.')
+    .optional()
+    .or(z.literal('')),
+  transitDays: z
+    .union([z.number().int().min(0, 'Transit days cannot be negative.'), z.literal('')])
+    .optional(),
+  remarks: z.string().trim().max(2000, 'That is too long.').optional().or(z.literal('')),
+});
+
+export type AgentQuoteInput = z.infer<typeof agentQuoteInputSchema>;
+
+/** The portal list is small; page size is fixed rather than chosen. */
+export const agentInquiryListQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
+  search: z.string().trim().max(200).optional(),
+  /** Only inquiries this agent has not yet quoted. */
+  pending: z.enum(['true', 'false']).optional(),
+});
+
+export type AgentInquiryListQuery = z.infer<typeof agentInquiryListQuerySchema>;
