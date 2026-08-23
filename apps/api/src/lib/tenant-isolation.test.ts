@@ -143,9 +143,13 @@ describe('model tier registry', () => {
     const toSnake = (s: string): string =>
       s.replace(/[A-Z]/g, (c, i: number) => (i === 0 ? c.toLowerCase() : `_${c.toLowerCase()}`));
 
+    // BASE TABLE only: a view is not a model and has no tenancy tier. Views
+    // are not waved through, though — the test below pins every one of them.
     const rows = await owner.$queryRaw<{ table_name: string }[]>`
       SELECT table_name FROM information_schema.tables
-      WHERE table_schema = 'public' AND table_name <> '_prisma_migrations'
+      WHERE table_schema = 'public'
+        AND table_type = 'BASE TABLE'
+        AND table_name <> '_prisma_migrations'
     `;
     const inDb = new Set(rows.map((r) => r.table_name));
     const mapped = new Set(known.map(toSnake));
@@ -156,6 +160,29 @@ describe('model tier registry', () => {
     expect(missingFromRegistry, `tables absent from tenancy.ts: ${missingFromRegistry.join(', ')}`).toEqual([]);
     expect(missingFromDb, `registry names with no table: ${missingFromDb.join(', ')}`).toEqual([]);
     expect(known.length).toBe(58);
+  });
+
+  it('applies the caller row level security to every view', async () => {
+    // A view runs with its OWNER's privileges unless security_invoker is set,
+    // and the owner here is the table owner, who bypasses RLS entirely. A view
+    // added without it would hand every caller every row in the workspace —
+    // silently, and only over the columns someone thought were safe.
+    const views = await owner.$queryRaw<{ viewname: string; invoker: string | null }[]>`
+      SELECT c.relname AS viewname,
+             (SELECT option_value FROM pg_options_to_table(c.reloptions)
+               WHERE option_name = 'security_invoker') AS invoker
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE n.nspname = 'public' AND c.relkind = 'v'
+       ORDER BY c.relname`;
+
+    expect(views.map((v) => v.viewname)).toEqual([
+      'agent_inquiry_v',
+      'agent_inquiry_volume_v',
+    ]);
+    for (const view of views) {
+      expect(view.invoker, view.viewname).toBe('true');
+    }
   });
 
   it('classifies each tier correctly', () => {

@@ -189,10 +189,44 @@ export async function withTenant<T>(
     // unauthenticated path, which the trigger records as SYSTEM.
     const actorId = currentActorId();
     await tx.$executeRaw`SELECT set_config('app.user_id', ${actorId?.toString() ?? ''}, true)`;
+    // Cleared, not merely left alone. Every RLS policy written before the agent
+    // portal now reads `AND app_current_agent() IS NULL`, so "staff sessions
+    // never set it" is the assumption the entire backward-compatibility
+    // argument rests on. Setting it explicitly makes that a fact about this
+    // function rather than a property of connection pooling.
+    await tx.$executeRaw`SELECT set_config('app.agent_id', '', true)`;
     // The await must happen INSIDE the context. A Prisma query is a lazy
     // PrismaPromise: the extension does not run when the call is made, it runs
     // when the promise is first awaited. Returning `fn(tx)` unawaited would let
     // that happen after this frame has exited, with no tenant in scope.
+    return runWithTenantContext({ tenantId }, async () => await fn(tx as TenantDb));
+  });
+}
+
+/**
+ * Opens a transaction scoped to one tenant AND one agent.
+ *
+ * Every policy that existed before the agent portal is now staff-only, so a
+ * transaction opened this way starts from deny-everything and can reach only
+ * what Phase 3 explicitly opened: the inquiries this agent was selected for,
+ * their own record, contacts and quotes, and a short list of reference tables.
+ *
+ * Used ONLY for portal business queries. Authentication itself still runs
+ * through withTenant, because loadAccount reads the user table — which agents
+ * cannot see, and should not be able to.
+ */
+export async function withAgent<T>(
+  tenantId: bigint,
+  agentId: bigint,
+  fn: (db: TenantDb) => Promise<T>,
+): Promise<T> {
+  return client.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.tenant_id', ${tenantId.toString()}, true)`;
+    const actorId = currentActorId();
+    await tx.$executeRaw`SELECT set_config('app.user_id', ${actorId?.toString() ?? ''}, true)`;
+    // The agent id comes from the session, which read it from the user row —
+    // never from a request body or a token claim. §7A rule 1, second boundary.
+    await tx.$executeRaw`SELECT set_config('app.agent_id', ${agentId.toString()}, true)`;
     return runWithTenantContext({ tenantId }, async () => await fn(tx as TenantDb));
   });
 }
