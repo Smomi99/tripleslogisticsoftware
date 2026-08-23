@@ -2,6 +2,9 @@
 
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
+  type UserType,
+  USER_TYPE_ARTICLE,
+  USER_TYPE_LABEL,
   type LookupOption,
   type UserFormInput,
   userFormSchema,
@@ -12,7 +15,7 @@ import {
 } from '@ff/shared';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { type FieldErrors, useForm, type UseFormRegister } from 'react-hook-form';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -37,6 +40,8 @@ const ENDPOINT = '/api/tenant/crm/users';
 interface UserOptions {
   employees: LookupOption[];
   agents: LookupOption[];
+  customers: LookupOption[];
+  vendors: LookupOption[];
   roles: LookupOption[];
 }
 
@@ -44,7 +49,13 @@ export default function UserPage() {
   const { authorizedRequest, can, user: currentUser } = useSession();
   const list = useMasterList<UserDto, UserSortField>(ENDPOINT, 'username');
 
-  const [options, setOptions] = useState<UserOptions>({ employees: [], agents: [], roles: [] });
+  const [options, setOptions] = useState<UserOptions>({
+    employees: [],
+    agents: [],
+    customers: [],
+    vendors: [],
+    roles: [],
+  });
   const [editing, setEditing] = useState<UserDto | null>(null);
   const [isFormOpen, setFormOpen] = useState(false);
   const [resetFor, setResetFor] = useState<UserDto | null>(null);
@@ -58,13 +69,34 @@ export default function UserPage() {
   useEffect(() => {
     void authorizedRequest<UserOptions>(`${ENDPOINT}/options`)
       .then(setOptions)
-      .catch(() => setOptions({ employees: [], agents: [], roles: [] }));
+      .catch(() =>
+        setOptions({ employees: [], agents: [], customers: [], vendors: [], roles: [] }),
+      );
   }, [authorizedRequest]);
 
   const columns: DataTableColumn<UserDto>[] = useMemo(
     () => [
       { id: 'username', header: 'Username', sortable: true, numeric: true, cell: (r) => r.username },
-      { id: 'employee', header: 'Employee', cell: (r) => r.employeeName ?? '—' },
+      {
+        // Whoever this login belongs to, whatever kind it is. An account named
+        // "dhaka-apparels" tells you nothing on its own; the company does.
+        id: 'belongsTo',
+        header: 'Belongs to',
+        cell: (r) => {
+          const name = r.employeeName ?? r.agentName ?? r.customerName ?? r.vendorName;
+          if (name === null || name === undefined) return <span className="text-steel">—</span>;
+          return (
+            <span className="flex flex-col">
+              <span>{name}</span>
+              {r.userType !== 'EMPLOYEE' ? (
+                <span className="text-[11px] uppercase tracking-[0.06em] text-steel">
+                  {USER_TYPE_LABEL[r.userType]}
+                </span>
+              ) : null}
+            </span>
+          );
+        },
+      },
       { id: 'email', header: 'Email', sortable: true, cell: (r) => r.email },
       {
         id: 'role',
@@ -131,7 +163,7 @@ export default function UserPage() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="User"
-        description="Sign-in accounts, each linked to an employee and given a role."
+        description="Sign-in accounts for your staff and for the companies you work with."
         action={
           can('CRM.USER.CREATE') ? (
             <Button
@@ -360,6 +392,8 @@ function UserForm({
       userType: 'EMPLOYEE',
       employeeId: '',
       agentId: '',
+      customerId: '',
+      vendorId: '',
       username: '',
       email: '',
       roleId: '',
@@ -373,6 +407,8 @@ function UserForm({
       userType: user?.userType ?? 'EMPLOYEE',
       employeeId: user?.employeeId ?? '',
       agentId: user?.agentId ?? '',
+      customerId: user?.customerId ?? '',
+      vendorId: user?.vendorId ?? '',
       username: user?.username ?? '',
       email: user?.email ?? '',
       roleId: user?.roleId ?? '',
@@ -393,10 +429,16 @@ function UserForm({
       email: values.email,
       isSuperadmin: values.isSuperadmin,
     };
-    // Only the link that applies is sent, so an agent account can never carry a
-    // stale employee id from a type the operator changed their mind about.
-    if (values.userType === 'AGENT') body['agentId'] = values.agentId;
-    else body['employeeId'] = values.employeeId;
+    // Only the link that applies is sent, so an account can never carry a stale
+    // id from a type the operator changed their mind about.
+    const type = values.userType ?? 'EMPLOYEE';
+    const link: Record<UserType, { field: string; value: string | undefined }> = {
+      EMPLOYEE: { field: 'employeeId', value: values.employeeId },
+      AGENT: { field: 'agentId', value: values.agentId },
+      CUSTOMER: { field: 'customerId', value: values.customerId },
+      VENDOR: { field: 'vendorId', value: values.vendorId },
+    };
+    body[link[type].field] = link[type].value;
     if (values.roleId !== undefined && values.roleId !== '') body['roleId'] = values.roleId;
     if (!isEdit) body['password'] = values.password ?? '';
 
@@ -425,35 +467,20 @@ function UserForm({
       error={formError ?? undefined}
     >
       {/*
-        Who the login belongs to. An agent is an outside company: one login,
-        shared by its contacts, reaching only the Agent Inquiry screen. Customer
-        and Vendor will join this list on the same shape.
+        Who the login belongs to. The last three are outside companies: one
+        login each, shared by all of that company's contacts. Only an agent has
+        a screen to reach so far — the Agent Inquiry list.
       */}
       <Field id="userType" label="User type" required error={errors.userType?.message}>
         <Select id="userType" {...register('userType')}>
           <option value="EMPLOYEE">Employee — a member of your staff</option>
           <option value="AGENT">Agent — one shared login for an agent company</option>
+          <option value="CUSTOMER">Customer — one shared login for a customer</option>
+          <option value="VENDOR">Vendor — one shared login for a vendor</option>
         </Select>
       </Field>
 
-      {userType === 'AGENT' ? (
-        <Field
-          id="agentId"
-          label="Agent"
-          required
-          hint="One login per agent. All of their contacts sign in with it."
-          error={errors.agentId?.message}
-        >
-          <Select id="agentId" {...register('agentId')}>
-            <option value="">Choose an agent</option>
-            {options.agents.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </Select>
-        </Field>
-      ) : (
+      {userType === 'EMPLOYEE' ? (
         <Field id="employeeId" label="Employee" required error={errors.employeeId?.message}>
           <Select id="employeeId" {...register('employeeId')}>
             <option value="">Choose an employee</option>
@@ -464,6 +491,13 @@ function UserForm({
             ))}
           </Select>
         </Field>
+      ) : (
+        <CompanyField
+          userType={userType ?? 'AGENT'}
+          options={options}
+          register={register}
+          errors={errors}
+        />
       )}
 
       <Field
@@ -579,5 +613,58 @@ function PasswordForm({
         <Input id="newPassword" type="password" autoComplete="new-password" autoFocus {...register('password')} />
       </Field>
     </FormLayout>
+  );
+}
+
+/**
+ * The company an external login belongs to.
+ *
+ * One field for agent, customer and vendor: they differ only in which list they
+ * read and what the label says, and three near-identical blocks is how the
+ * fourth kind gets added slightly wrong.
+ */
+function CompanyField({
+  userType,
+  options,
+  register,
+  errors,
+}: {
+  userType: Exclude<UserType, 'EMPLOYEE'>;
+  options: UserOptions;
+  register: UseFormRegister<UserFormInput>;
+  errors: FieldErrors<UserFormInput>;
+}) {
+  const spec = {
+    AGENT: { id: 'agentId', list: options.agents },
+    CUSTOMER: { id: 'customerId', list: options.customers },
+    VENDOR: { id: 'vendorId', list: options.vendors },
+  }[userType];
+  const field = spec.id as 'agentId' | 'customerId' | 'vendorId';
+  const label = USER_TYPE_LABEL[userType];
+  const noun = label.toLowerCase();
+  const article = USER_TYPE_ARTICLE[userType];
+
+  return (
+    <Field
+      id={spec.id}
+      label={label}
+      required
+      hint={`One login per ${noun}. All of their contacts sign in with it.`}
+      error={errors[field]?.message}
+    >
+      <Select id={spec.id} {...register(field)}>
+        <option value="">
+          Choose {article} {noun}
+        </option>
+        {spec.list.map((o) => (
+          <option key={o.id} value={o.id}>
+            {o.name}
+          </option>
+        ))}
+      </Select>
+      {spec.list.length === 0 && (
+        <p className="text-cell text-steel">Every active {noun} already has a login.</p>
+      )}
+    </Field>
   );
 }

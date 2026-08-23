@@ -12,10 +12,15 @@ export interface AuthContext {
   isSuperadmin: boolean;
   permissions: ReadonlySet<string>;
   /**
-   * Set on an agent portal session, null on a staff one. Read from the user
-   * row on every request — never from the token. See `authenticateAs`.
+   * Set on an agent session, null otherwise. Read from the user row on every
+   * request — never from the token. See `authenticateAs`.
    */
   agentId: bigint | null;
+  /**
+   * True for any login belonging to an outside company: an agent, a customer
+   * or a vendor. STAFF routers refuse all of them.
+   */
+  isExternal: boolean;
 }
 
 declare global {
@@ -106,7 +111,10 @@ function authenticateAs(kind: 'STAFF' | 'AGENT' | 'ANY'): RequestHandler {
       throw HttpError.unauthorized('Your access has changed. Sign in again.');
     }
 
-    if (kind === 'STAFF' && account.agentId !== null) {
+    // Any external link, not just an agent. Until this existed, "no agent id"
+    // meant "is staff" — so a customer login would have been a staff login the
+    // day the column was added.
+    if (kind === 'STAFF' && account.isExternal) {
       throw HttpError.forbidden('This area is for staff accounts.');
     }
     if (kind === 'AGENT' && account.agentId === null) {
@@ -119,6 +127,7 @@ function authenticateAs(kind: 'STAFF' | 'AGENT' | 'ANY'): RequestHandler {
       isSuperadmin: account.isSuperadmin,
       permissions: new Set(claims.permissions),
       agentId: account.agentId,
+      isExternal: account.isExternal,
     };
 
     // next() is called INSIDE the actor context so every handler downstream runs

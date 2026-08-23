@@ -28,8 +28,26 @@ const passwordSchema = z
  * the Agent Inquiry screen. Customer and Vendor will join this list on the same
  * shape when their screens exist.
  */
-export const USER_TYPES = ['EMPLOYEE', 'AGENT'] as const;
+export const USER_TYPES = ['EMPLOYEE', 'AGENT', 'CUSTOMER', 'VENDOR'] as const;
 export type UserType = (typeof USER_TYPES)[number];
+
+/**
+ * How each kind is named to the operator, with the article that reads correctly
+ * in front of it. "Choose a agent" shipped once; it does not get to twice.
+ */
+export const USER_TYPE_LABEL: Record<UserType, string> = {
+  EMPLOYEE: 'Employee',
+  AGENT: 'Agent',
+  CUSTOMER: 'Customer',
+  VENDOR: 'Vendor',
+};
+
+export const USER_TYPE_ARTICLE: Record<UserType, string> = {
+  EMPLOYEE: 'an',
+  AGENT: 'an',
+  CUSTOMER: 'a',
+  VENDOR: 'a',
+};
 
 /**
  * An id from a `<select>`, where "not chosen" arrives as an empty string.
@@ -52,6 +70,10 @@ export const userInputSchema = z
     employeeId: optionalId('Choose an employee.'),
     /** Required for AGENT, absent for EMPLOYEE. */
     agentId: optionalId('Choose an agent.'),
+    /** Required for CUSTOMER. */
+    customerId: optionalId('Choose a customer.'),
+    /** Required for VENDOR. */
+    vendorId: optionalId('Choose a vendor.'),
   username: z
     .string()
     .trim()
@@ -71,12 +93,25 @@ export const userInputSchema = z
     message: 'Choose an agent.',
     path: ['agentId'],
   })
+  .refine((v) => v.userType !== 'CUSTOMER' || (v.customerId ?? '') !== '', {
+    message: 'Choose a customer.',
+    path: ['customerId'],
+  })
+  .refine((v) => v.userType !== 'VENDOR' || (v.vendorId ?? '') !== '', {
+    message: 'Choose a vendor.',
+    path: ['vendorId'],
+  })
   // The database CHECK refuses this outright; saying so here means the operator
   // hears it from the form rather than as a constraint violation.
-  .refine((v) => v.userType !== 'AGENT' || v.isSuperadmin !== true, {
-    message: 'An agent account cannot be a superadmin.',
+  .refine((v) => v.userType === 'EMPLOYEE' || v.isSuperadmin !== true, {
+    message: 'An account for an outside company cannot be a superadmin.',
     path: ['isSuperadmin'],
   });
+
+/** True for the user types that belong to an outside company. */
+export function isExternalUserType(type: UserType): boolean {
+  return type !== 'EMPLOYEE';
+}
 
 export type UserInput = z.input<typeof userInputSchema>;
 
@@ -128,9 +163,13 @@ export interface UserDto {
   userType: UserType;
   employeeId: string | null;
   employeeName: string | null;
-  /** Set on an agent account: the company this login belongs to. */
+  /** Set on an external account: the company this login belongs to. */
   agentId: string | null;
   agentName: string | null;
+  customerId: string | null;
+  customerName: string | null;
+  vendorId: string | null;
+  vendorName: string | null;
   roleId: string | null;
   roleName: string | null;
   isSuperadmin: boolean;

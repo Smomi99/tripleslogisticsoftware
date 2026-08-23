@@ -37,6 +37,12 @@ export interface AuthenticatedUser {
    */
   agentId: string | null;
   agentName: string | null;
+  /**
+   * True when this login belongs to an outside company — agent, customer or
+   * vendor. The web mirrors the API's rule with it: an external account reaches
+   * no staff screen whatever its role happens to hold.
+   */
+  isExternal: boolean;
   roleName: string | null;
   /** Resolved permission keys. Empty for a superadmin, who bypasses the check. */
   permissions: string[];

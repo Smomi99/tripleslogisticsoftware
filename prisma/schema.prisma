@@ -838,6 +838,8 @@ model Vendor {
   createdByUser User? @relation("VendorCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User? @relation("VendorUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
+  users User[] @relation("VendorUsers")
+
   @@unique([tenantId, code])
   @@unique([tenantId, id])
   @@index([tenantId])
@@ -999,6 +1001,8 @@ model Customer {
   createdByUser User?     @relation("CustomerCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User?     @relation("CustomerUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
   inquiries     Inquiry[]
+
+  users User[] @relation("CustomerUsers")
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -1452,17 +1456,28 @@ model RolePermission {
 }
 
 /// The auth account. §6 lists User under CRM with no wireframe; §7 gives its
-/// fields. Linked to an employee record.
+/// fields. Linked either to an employee record (staff) or to one outside
+/// company — an agent, a customer or a vendor.
 model User {
   tenantId     BigInt    @map("tenant_id")
   id           BigInt    @id @default(autoincrement())
   code         String    @db.VarChar(32)
   employeeId   BigInt?   @map("employee_id")
-  /// Set on an EXTERNAL account — an agent's own login. A CHECK constraint
-  /// (user_agent_is_external) makes agent_id together with any of employeeId,
-  /// roleId or isSuperadmin impossible to store, so an agent who is also staff
-  /// is unrepresentable rather than merely disallowed.
+  /// The outside company this login belongs to, if any. At most ONE of the
+  /// three is ever set, and any of them means the account is not staff.
+  ///
+  /// The CHECK constraint user_external_is_not_staff makes both rules
+  /// unrepresentable rather than merely disallowed: two links at once has no
+  /// answer to "whose data is this?", and an external account can carry
+  /// neither an employee record nor isSuperadmin — superadmin bypasses §7
+  /// entirely, which is exactly why an outsider must never hold it.
+  ///
+  /// A role IS allowed: that is how an agent is granted AGENT.INQUIRY. The
+  /// permission a role grants still cannot widen an external session past its
+  /// own module, because the kind check in authenticateAs sits above it.
   agentId      BigInt?   @map("agent_id")
+  customerId   BigInt?   @map("customer_id")
+  vendorId     BigInt?   @map("vendor_id")
   username     String    @db.VarChar(100)
   email        String    @db.VarChar(255)
   passwordHash String    @map("password_hash") @db.VarChar(255)
@@ -1487,6 +1502,8 @@ model User {
   employee Employee? @relation(fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
   role     Role?     @relation(fields: [tenantId, roleId], references: [tenantId, id], onDelete: Restrict)
   agent    Agent?    @relation("AgentUsers", fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
+  customer Customer? @relation("CustomerUsers", fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict)
+  vendor   Vendor?   @relation("VendorUsers", fields: [tenantId, vendorId], references: [tenantId, id], onDelete: Restrict)
 
   createdGoodsTypes     GoodsType[]     @relation("GoodsTypeCreatedBy")
   updatedGoodsTypes     GoodsType[]     @relation("GoodsTypeUpdatedBy")
@@ -1611,6 +1628,8 @@ model User {
   @@index([employeeId])
   @@index([roleId])
   @@index([agentId])
+  @@index([customerId])
+  @@index([vendorId])
   @@map("user")
 }
 

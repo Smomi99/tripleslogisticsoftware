@@ -19,6 +19,12 @@ export interface ResolvedAccess {
   tokenVersion: number;
   /** Set on an agent account, so a refreshed token keeps the claim. */
   agentId: bigint | null;
+  /**
+   * True when this login belongs to an outside company — an agent, a customer
+   * or a vendor. The session gate reads this rather than checking three
+   * columns, so adding a fourth kind later cannot leave a router behind.
+   */
+  isExternal: boolean;
 }
 
 export interface AccountRow {
@@ -28,6 +34,8 @@ export interface AccountRow {
   tokenVersion: number;
   roleId: bigint | null;
   roleIsActive: boolean | null;
+  /** Any external link at all. See ResolvedAccess.isExternal. */
+  isExternal: boolean;
   /**
    * Set on an external account — an agent's own login. This is the ONLY
    * authoritative source for it: the same value travels in the token so the web
@@ -50,6 +58,8 @@ export async function loadAccount(db: TenantDb, userId: bigint): Promise<Account
       tokenVersion: true,
       roleId: true,
       agentId: true,
+      customerId: true,
+      vendorId: true,
       role: { select: { isActive: true, deletedAt: true } },
     },
   });
@@ -63,6 +73,8 @@ export async function loadAccount(db: TenantDb, userId: bigint): Promise<Account
     tokenVersion: user.tokenVersion,
     roleId: user.roleId,
     agentId: user.agentId,
+    isExternal:
+      user.agentId !== null || user.customerId !== null || user.vendorId !== null,
     roleIsActive:
       user.role === null ? null : user.role.isActive && user.role.deletedAt === null,
   };
@@ -83,6 +95,7 @@ export async function resolvePermissions(
     // Carried so a refreshed token keeps the claim; authenticate compares it
     // against the row and rejects a mismatch.
     agentId: account.agentId,
+    isExternal: account.isExternal,
   };
 
   // Step 5 — an inactive user gets nothing, superadmin or not.

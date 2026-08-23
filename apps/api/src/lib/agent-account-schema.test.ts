@@ -223,7 +223,7 @@ describe('an agent account cannot also be a staff account', () => {
     // prevents it" — Postgres will not store the row.
     await expect(
       owner.user.create({ data: userRow(tenantA, 'super', { agentId: agentA, isSuperadmin: true }) }),
-    ).rejects.toThrow(/user_agent_is_external/);
+    ).rejects.toThrow(/user_external_is_not_staff/);
   });
 
   it('allows an agent user to hold a role, because that is how access is granted', async () => {
@@ -254,7 +254,7 @@ describe('an agent account cannot also be a staff account', () => {
   it('refuses an agent user tied to an employee record', async () => {
     await expect(
       owner.user.create({ data: userRow(tenantA, 'emp', { agentId: agentA, employeeId: employeeA }) }),
-    ).rejects.toThrow(/user_agent_is_external/);
+    ).rejects.toThrow(/user_external_is_not_staff/);
   });
 
   it('refuses promoting an existing agent user afterwards', async () => {
@@ -266,7 +266,7 @@ describe('an agent account cannot also be a staff account', () => {
     });
     await expect(
       owner.user.update({ where: { id: user.id }, data: { isSuperadmin: true } }),
-    ).rejects.toThrow(/user_agent_is_external/);
+    ).rejects.toThrow(/user_external_is_not_staff/);
   });
 
   it('refuses a blanket promotion of every agent account at once', async () => {
@@ -276,7 +276,7 @@ describe('an agent account cannot also be a staff account', () => {
     // the whole statement fails.
     await expect(
       owner.$executeRawUnsafe(`UPDATE "user" SET is_superadmin = true WHERE agent_id IS NOT NULL`),
-    ).rejects.toThrow(/user_agent_is_external/);
+    ).rejects.toThrow(/user_external_is_not_staff/);
   });
 
   it('still refuses to attach every agent account to an employee record', async () => {
@@ -286,7 +286,7 @@ describe('an agent account cannot also be a staff account', () => {
       owner.$executeRawUnsafe(
         `UPDATE "user" SET employee_id = ${employeeA} WHERE agent_id IS NOT NULL AND tenant_id = ${tenantA}`,
       ),
-    ).rejects.toThrow(/user_agent_is_external/);
+    ).rejects.toThrow(/user_external_is_not_staff/);
   });
 
   it('allows only one login per agent company', async () => {

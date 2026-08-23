@@ -72,10 +72,14 @@ authRouter.post('/login', async (req, res) => {
         passwordHash: true,
         isActive: true,
         agentId: true,
+        customerId: true,
+        vendorId: true,
         employee: { select: { name: true } },
-        // An agent account has no employee record, so the agent's own name is
-        // what the top bar has to show.
+        // An external account has no employee record, so the company's own name
+        // is what the top bar has to show.
         agent: { select: { name: true, isActive: true, deletedAt: true } },
+        customer: { select: { name: true, isActive: true, deletedAt: true } },
+        vendor: { select: { name: true, isActive: true, deletedAt: true } },
         role: { select: { name: true } },
       },
     });
@@ -87,11 +91,12 @@ authRouter.post('/login', async (req, res) => {
       '$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHR2YWx1ZQ$0000000000000000000000000000000000000000000';
     const passwordOk = await verifyPassword(password, hash);
 
-    // An agent whose company was deactivated loses access with it, or removing
-    // an agent from the CRM would leave their login working.
+    // A company that was deactivated takes its login with it, or removing a
+    // company from the CRM would leave its account working.
+    const company = user?.agent ?? user?.customer ?? user?.vendor ?? null;
     const agentUsable =
-      user?.agentId == null ||
-      (user.agent != null && user.agent.isActive && user.agent.deletedAt === null);
+      (user?.agentId == null && user?.customerId == null && user?.vendorId == null) ||
+      (company != null && company.isActive && company.deletedAt === null);
 
     if (user === null || !passwordOk || !user.isActive || !agentUsable) {
       // Recorded even when the username does not exist: a run of failures
@@ -166,10 +171,16 @@ authRouter.post('/login', async (req, res) => {
         id: user.id.toString(),
         username: user.username,
         email: user.email,
-        name: user.employee?.name ?? user.agent?.name ?? null,
+        name:
+          user.employee?.name ??
+          user.agent?.name ??
+          user.customer?.name ??
+          user.vendor?.name ??
+          null,
         isSuperadmin: access.isSuperadmin,
         agentId: user.agentId?.toString() ?? null,
         agentName: user.agent?.name ?? null,
+        isExternal: access.isExternal,
         roleName: user.role?.name ?? null,
         permissions,
       },
@@ -268,6 +279,8 @@ authRouter.get('/me', authenticateAny, async (req, res) => {
         agentId: true,
         employee: { select: { name: true } },
         agent: { select: { name: true } },
+        customer: { select: { name: true } },
+        vendor: { select: { name: true } },
         role: { select: { name: true } },
       },
     }),
@@ -281,10 +294,12 @@ authRouter.get('/me', authenticateAny, async (req, res) => {
       id: user.id.toString(),
       username: user.username,
       email: user.email,
-      name: user.employee?.name ?? user.agent?.name ?? null,
+      name:
+        user.employee?.name ?? user.agent?.name ?? user.customer?.name ?? user.vendor?.name ?? null,
       isSuperadmin: auth.isSuperadmin,
       agentId: user.agentId?.toString() ?? null,
       agentName: user.agent?.name ?? null,
+      isExternal: auth.isExternal,
       roleName: user.role?.name ?? null,
       permissions: [...auth.permissions],
     },

@@ -45,12 +45,16 @@ const SELECT = {
   email: true,
   employeeId: true,
   agentId: true,
+  customerId: true,
+  vendorId: true,
   roleId: true,
   isSuperadmin: true,
   isActive: true,
   lastLoginAt: true,
   employee: { select: { name: true } },
   agent: { select: { name: true } },
+  customer: { select: { name: true } },
+  vendor: { select: { name: true } },
   role: { select: { name: true } },
 } as const;
 
@@ -61,12 +65,16 @@ type UserRow = {
   email: string;
   employeeId: bigint | null;
   agentId: bigint | null;
+  customerId: bigint | null;
+  vendorId: bigint | null;
   roleId: bigint | null;
   isSuperadmin: boolean;
   isActive: boolean;
   lastLoginAt: Date | null;
   employee: { name: string } | null;
   agent: { name: string } | null;
+  customer: { name: string } | null;
+  vendor: { name: string } | null;
   role: { name: string } | null;
 };
 
@@ -77,11 +85,23 @@ function toDto(row: UserRow): UserDto {
     username: row.username,
     email: row.email,
     // The link decides the type: there is no separate column, and no way for
-    // the two to disagree.
-    userType: row.agentId === null ? 'EMPLOYEE' : 'AGENT',
+    // the two to disagree. The CHECK allows at most one, so the order of these
+    // tests cannot matter.
+    userType:
+      row.agentId !== null
+        ? 'AGENT'
+        : row.customerId !== null
+          ? 'CUSTOMER'
+          : row.vendorId !== null
+            ? 'VENDOR'
+            : 'EMPLOYEE',
     employeeId: row.employeeId?.toString() ?? null,
     agentId: row.agentId?.toString() ?? null,
     agentName: row.agent?.name ?? null,
+    customerId: row.customerId?.toString() ?? null,
+    customerName: row.customer?.name ?? null,
+    vendorId: row.vendorId?.toString() ?? null,
+    vendorName: row.vendor?.name ?? null,
     employeeName: row.employee?.name ?? null,
     roleId: row.roleId?.toString() ?? null,
     roleName: row.role?.name ?? null,
@@ -100,35 +120,82 @@ async function assertEmployeeVisible(db: TenantDb, id: bigint): Promise<void> {
 }
 
 /**
- * The agent must exist, be active, and not already have a login.
+ * The company must exist, be active, and not already have a login.
  *
- * One login per agent company is the client's rule. A partial unique index
- * enforces it, so this check exists to say WHY rather than to be the guarantee
- * — a plain constraint violation would read as a bug rather than as a rule.
+ * One login per company is the client's rule for all three kinds. Partial
+ * unique indexes enforce it, so this exists to say WHY rather than to be the
+ * guarantee — a bare constraint violation reads as a bug rather than as a rule.
  */
-async function assertAgentVisible(
+async function assertLinkFree(
   db: TenantDb,
-  id: bigint,
+  links: { agentId: bigint | null; customerId: bigint | null; vendorId: bigint | null },
   excludeUserId?: bigint,
 ): Promise<void> {
-  const agent = await db.agent.findFirst({
-    where: { id, deletedAt: null, isActive: true },
-    select: { id: true, name: true },
-  });
-  if (agent === null) throw HttpError.badRequest('That agent is not available.');
+  const kinds = [
+    { label: 'agent', id: links.agentId, find: db.agent, column: 'agentId' as const },
+    { label: 'customer', id: links.customerId, find: db.customer, column: 'customerId' as const },
+    { label: 'vendor', id: links.vendorId, find: db.vendor, column: 'vendorId' as const },
+  ];
 
-  const existing = await db.user.findFirst({
-    where: {
-      agentId: id,
-      deletedAt: null,
-      ...(excludeUserId === undefined ? {} : { id: { not: excludeUserId } }),
-    },
-    select: { username: true },
-  });
-  if (existing !== null) {
-    throw HttpError.conflict(
-      `${agent.name} already has a login (${existing.username}). Each agent has one, shared by their contacts.`,
-    );
+  for (const kind of kinds) {
+    if (kind.id === null) continue;
+
+    const company = (await (
+      kind.find as unknown as {
+        findFirst: (a: unknown) => Promise<{ name: string } | null>;
+      }
+    ).findFirst({
+      where: { id: kind.id, deletedAt: null, isActive: true },
+      select: { name: true },
+    })) as { name: string } | null;
+    if (company === null) throw HttpError.badRequest(`That ${kind.label} is not available.`);
+
+    const existing = await db.user.findFirst({
+      where: {
+        [kind.column]: kind.id,
+        deletedAt: null,
+        ...(excludeUserId === undefined ? {} : { id: { not: excludeUserId } }),
+      },
+      select: { username: true },
+    });
+    if (existing !== null) {
+      throw HttpError.conflict(
+        `${company.name} already has a login (${existing.username}). Each ${kind.label} has one, shared by their contacts.`,
+      );
+    }
+  }
+}
+
+/**
+ * Which link a user row carries, from the type the form chose.
+ *
+ * Exactly one is non-null, and the database CHECK says the same thing — this is
+ * where the form's answer becomes that row. Sending the others as null matters:
+ * changing a user's type must clear the link it used to have, or the row would
+ * claim two companies and the CHECK would refuse the write.
+ */
+function resolveLinks(input: {
+  userType: 'EMPLOYEE' | 'AGENT' | 'CUSTOMER' | 'VENDOR';
+  employeeId?: string | undefined;
+  agentId?: string | undefined;
+  customerId?: string | undefined;
+  vendorId?: string | undefined;
+}): {
+  employeeId: bigint | null;
+  agentId: bigint | null;
+  customerId: bigint | null;
+  vendorId: bigint | null;
+} {
+  const empty = { employeeId: null, agentId: null, customerId: null, vendorId: null };
+  switch (input.userType) {
+    case 'AGENT':
+      return { ...empty, agentId: parseRefId(input.agentId ?? '', 'agent') };
+    case 'CUSTOMER':
+      return { ...empty, customerId: parseRefId(input.customerId ?? '', 'customer') };
+    case 'VENDOR':
+      return { ...empty, vendorId: parseRefId(input.vendorId ?? '', 'vendor') };
+    default:
+      return { ...empty, employeeId: parseRefId(input.employeeId ?? '', 'employee') };
   }
 }
 
@@ -185,7 +252,7 @@ userRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
 userRouter.get('/options', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
   const auth = req.auth!;
   const options = await withTenant(auth.tenantId, async (db) => {
-    const [employees, agents, roles] = await Promise.all([
+    const [employees, agents, customers, vendors, roles] = await Promise.all([
       db.employee.findMany({
         where: { deletedAt: null, isActive: true },
         select: { id: true, name: true },
@@ -194,6 +261,16 @@ userRouter.get('/options', requirePermission(`${FEATURE}.VIEW`), async (req, res
       // Only agents that do not already have one: the rule is one login per
       // agent, so offering a company that has one is offering a dead end.
       db.agent.findMany({
+        where: { deletedAt: null, isActive: true, users: { none: { deletedAt: null } } },
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      }),
+      db.customer.findMany({
+        where: { deletedAt: null, isActive: true, users: { none: { deletedAt: null } } },
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      }),
+      db.vendor.findMany({
         where: { deletedAt: null, isActive: true, users: { none: { deletedAt: null } } },
         select: { id: true, name: true },
         orderBy: { name: 'asc' },
@@ -207,6 +284,8 @@ userRouter.get('/options', requirePermission(`${FEATURE}.VIEW`), async (req, res
     return {
       employees: employees.map((e) => ({ id: e.id.toString(), name: e.name })),
       agents: agents.map((a) => ({ id: a.id.toString(), name: a.name })),
+      customers: customers.map((c) => ({ id: c.id.toString(), name: c.name })),
+      vendors: vendors.map((v) => ({ id: v.id.toString(), name: v.name })),
       roles: roles.map((r) => ({ id: r.id.toString(), name: r.name })),
     };
   });
@@ -214,6 +293,8 @@ userRouter.get('/options', requirePermission(`${FEATURE}.VIEW`), async (req, res
   const payload: ApiSuccess<{
     employees: LookupOption[];
     agents: LookupOption[];
+    customers: LookupOption[];
+    vendors: LookupOption[];
     roles: LookupOption[];
   }> = {
     success: true,
@@ -226,16 +307,15 @@ userRouter.post('/', requirePermission(`${FEATURE}.CREATE`), async (req, res) =>
   const auth = req.auth!;
   const input = userCreateSchema.parse(req.body);
   const username = normalizeUsername(input.username);
-  const isAgent = input.userType === 'AGENT';
   // The schema already refuses the wrong combination; `?? ''` keeps the types
   // honest and makes parseRefId produce the same message either way.
-  const employeeId = isAgent ? null : parseRefId(input.employeeId ?? '', 'employee');
-  const agentId = isAgent ? parseRefId(input.agentId ?? '', 'agent') : null;
+  const links = resolveLinks(input);
+  const { employeeId, agentId, customerId, vendorId } = links;
   const roleId = input.roleId === undefined ? null : parseRefId(input.roleId, 'role');
 
   const created = await withTenant(auth.tenantId, async (db) => {
     if (employeeId !== null) await assertEmployeeVisible(db, employeeId);
-    if (agentId !== null) await assertAgentVisible(db, agentId);
+    await assertLinkFree(db, links);
     if (roleId !== null) await assertRoleVisible(db, roleId);
 
     // §4 rule 9: username and email are unique per tenant, not globally — two
@@ -266,6 +346,8 @@ userRouter.post('/', requirePermission(`${FEATURE}.CREATE`), async (req, res) =>
             passwordHash,
             employeeId,
             agentId,
+            customerId,
+            vendorId,
             roleId,
             isSuperadmin: input.isSuperadmin ?? false,
             createdBy: auth.userId,
@@ -290,22 +372,28 @@ userRouter.patch('/:id', requirePermission(`${FEATURE}.EDIT`), async (req, res) 
   const id = parseId(req.params.id, 'user');
   const input = userInputSchema.parse(req.body);
   const username = normalizeUsername(input.username);
-  const isAgent = input.userType === 'AGENT';
   // The schema already refuses the wrong combination; `?? ''` keeps the types
   // honest and makes parseRefId produce the same message either way.
-  const employeeId = isAgent ? null : parseRefId(input.employeeId ?? '', 'employee');
-  const agentId = isAgent ? parseRefId(input.agentId ?? '', 'agent') : null;
+  const links = resolveLinks(input);
+  const { employeeId, agentId, customerId, vendorId } = links;
   const roleId = input.roleId === undefined ? null : parseRefId(input.roleId, 'role');
 
   const updated = await withTenant(auth.tenantId, async (db) => {
     const existing = await db.user.findFirst({
       where: { id, deletedAt: null },
-      select: { id: true, roleId: true, agentId: true, isSuperadmin: true },
+      select: {
+        id: true,
+        roleId: true,
+        agentId: true,
+        customerId: true,
+        vendorId: true,
+        isSuperadmin: true,
+      },
     });
     if (existing === null) throw HttpError.notFound('User not found.');
 
     if (employeeId !== null) await assertEmployeeVisible(db, employeeId);
-    if (agentId !== null) await assertAgentVisible(db, agentId, id);
+    await assertLinkFree(db, links, id);
     if (roleId !== null) await assertRoleVisible(db, roleId);
 
     const clash = await db.user.findFirst({
@@ -327,6 +415,8 @@ userRouter.patch('/:id', requirePermission(`${FEATURE}.EDIT`), async (req, res) 
         email: input.email,
         employeeId,
         agentId,
+        customerId,
+        vendorId,
         roleId,
         isSuperadmin: input.isSuperadmin ?? false,
         updatedBy: auth.userId,
@@ -342,6 +432,8 @@ userRouter.patch('/:id', requirePermission(`${FEATURE}.EDIT`), async (req, res) 
     const accessChanged =
       existing.roleId !== roleId ||
       existing.agentId !== agentId ||
+      existing.customerId !== customerId ||
+      existing.vendorId !== vendorId ||
       existing.isSuperadmin !== (input.isSuperadmin ?? false);
     if (accessChanged) await bumpTokenVersion(db, [id]);
 

@@ -8,6 +8,35 @@ import { useSession } from '@/lib/session';
 export default function HomePage() {
   const { user, can } = useSession();
 
+  // An outside company sees none of this. The panel below reports role and
+  // permission counts, which mean nothing to them, and the description names a
+  // build phase, which is our business and not theirs.
+  if (user?.isExternal === true) {
+    const isAgent = user.agentId !== null;
+    return (
+      <div className="flex flex-col gap-5">
+        <PageHeader
+          title={`Welcome, ${user.name ?? user.username}`}
+          description={
+            isAgent
+              ? 'Rate requests sent to you appear under Agent Inquiry.'
+              : 'Your account is ready. Nothing has been shared with you yet.'
+          }
+        />
+        {isAgent && can('AGENT.INQUIRY.VIEW') && (
+          <div className="rounded-manifest border border-line bg-surface p-5 shadow-manifest">
+            <Link
+              href="/agent/inquiry"
+              className="text-body text-harbour underline-offset-2 hover:text-harbour-ink hover:underline"
+            >
+              Open Agent Inquiry →
+            </Link>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-5">
       <PageHeader

@@ -72,6 +72,9 @@ let readOnlyAgentToken: string;
 let balticToken: string;
 /** Staff who have been granted the agent permissions by mistake. */
 let confusedStaffToken: string;
+/** Customer and vendor logins, which have no module of their own yet. */
+let customerToken: string;
+let vendorToken: string;
 
 async function cleanup(): Promise<void> {
   const scope = `(SELECT id FROM tenant WHERE slug = '${SLUG}')`;
@@ -94,6 +97,8 @@ async function cleanup(): Promise<void> {
     'role',
     'agent_pic',
     'agent',
+    'vendor',
+    'vendor_type',
     'customer',
     'industry_sector',
     'port',
@@ -300,7 +305,64 @@ beforeAll(async () => {
     data: { tenantId, rateId: rate.id, tierId: tier.id, buyPrice: 900, profitType: 'FLAT', profitValue: 100 },
   });
 
+  // Customer and vendor logins, each carrying the all-permissions role. They
+  // have no screens at all yet, so every route must refuse them.
+  const customerCompany = await owner.customer.create({
+    data: {
+      tenantId,
+      code: 'SEC-CUS2',
+      name: 'Sec Customer Co',
+      country: 'Bangladesh',
+      customerType: 'EXPORTER',
+      businessArea: 'BOTH',
+      industrySectorId: (
+        await owner.industrySector.findFirstOrThrow({ where: { tenantId }, select: { id: true } })
+      ).id,
+    },
+    select: { id: true },
+  });
+  const vendorType = await owner.vendorType.create({
+    data: { tenantId, code: 'SEC-VT', name: 'Sec Vendor Type' },
+    select: { id: true },
+  });
+  const vendorCompany = await owner.vendor.create({
+    data: {
+      tenantId,
+      code: 'SEC-VEN',
+      name: 'Sec Vendor Co',
+      country: 'Bangladesh',
+      vendorTypeId: vendorType.id,
+    },
+    select: { id: true },
+  });
+  await owner.user.create({
+    data: {
+      tenantId,
+      code: 'USR-cus',
+      username: 'cus-user',
+      email: 'cus-user@sec.test',
+      passwordHash: await hashPassword(PASSWORD),
+      customerId: customerCompany.id,
+      roleId: everything,
+      isActive: true,
+    },
+  });
+  await owner.user.create({
+    data: {
+      tenantId,
+      code: 'USR-ven',
+      username: 'ven-user',
+      email: 'ven-user@sec.test',
+      passwordHash: await hashPassword(PASSWORD),
+      vendorId: vendorCompany.id,
+      roleId: everything,
+      isActive: true,
+    },
+  });
+
   godAgentToken = await signIn('god-agent');
+  customerToken = await signIn('cus-user');
+  vendorToken = await signIn('ven-user');
   readOnlyAgentToken = await signIn('ro-agent');
   balticToken = await signIn('baltic-agent');
   confusedStaffToken = await signIn('confused-staff');
@@ -552,5 +614,115 @@ describe('the Add User form schema', () => {
       isSuperadmin: true,
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe('customer and vendor logins', () => {
+  it('exist and can sign in', () => {
+    // The client asked for these "as employee, nothing more": the account is
+    // real, it just has nowhere to go yet.
+    expect(customerToken.length).toBeGreaterThan(20);
+    expect(vendorToken.length).toBeGreaterThan(20);
+  });
+
+  it('reach no staff route, even holding every permission', async () => {
+    // The reason the session gate had to change with them. Until it did, "no
+    // agent id" meant "is staff" — so a customer login would have BEEN a staff
+    // login the day the column was added.
+    for (const [label, token] of [
+      ['customer', customerToken],
+      ['vendor', vendorToken],
+    ] as const) {
+      for (const path of [
+        '/api/tenant/crm/customers',
+        '/api/tenant/crm/vendors',
+        '/api/tenant/crm/users',
+        '/api/tenant/setting/ports',
+        '/api/tenant/sales/inquiries',
+        '/api/tenant/purchase/rates?mode=SEA_FCL',
+        '/api/tenant/admin/roles',
+      ]) {
+        expect((await get(path, token)).status, `${label} at ${path}`).toBe(403);
+      }
+    }
+  });
+
+  it('reach the agent module no more than a staff user does', async () => {
+    // Being external is not the same as being an agent. Only an agent link
+    // opens Agent Inquiry.
+    for (const token of [customerToken, vendorToken]) {
+      expect((await get('/api/tenant/agent/inquiries', token)).status).toBe(403);
+    }
+  });
+
+  it('can still ask who they are', async () => {
+    // /auth/me is the one endpoint serving every kind, or the browser could not
+    // restore a session on page load.
+    const res = await get('/api/tenant/auth/me', customerToken).expect(200);
+    expect(res.body.data.isExternal).toBe(true);
+    expect(res.body.data.agentId).toBeNull();
+    expect(res.body.data.name).toBe('Sec Customer Co');
+  });
+});
+
+describe('one company, one login', () => {
+  it('refuses a second login for the same customer', async () => {
+    const customer = await owner.customer.findFirstOrThrow({
+      where: { tenantId, code: 'SEC-CUS2' },
+      select: { id: true },
+    });
+    await expect(
+      owner.user.create({
+        data: {
+          tenantId,
+          code: 'USR-cus2',
+          username: 'cus-user-2',
+          email: 'cus2@sec.test',
+          passwordHash: 'x',
+          customerId: customer.id,
+        },
+      }),
+    ).rejects.toThrow(/user_one_login_per_customer|Unique constraint/i);
+  });
+
+  it('refuses a login that is two companies at once', async () => {
+    const customer = await owner.customer.findFirstOrThrow({
+      where: { tenantId, code: 'SEC-CUS' },
+      select: { id: true },
+    });
+    // No answer to "whose data is this?", so the row cannot exist.
+    await expect(
+      owner.user.create({
+        data: {
+          tenantId,
+          code: 'USR-both',
+          username: 'both',
+          email: 'both@sec.test',
+          passwordHash: 'x',
+          agentId: baltic,
+          customerId: customer.id,
+        },
+      }),
+    ).rejects.toThrow(/user_external_is_not_staff/);
+  });
+
+  it('refuses an external login that is also superadmin', async () => {
+    const vendor = await owner.vendor.findFirstOrThrow({
+      where: { tenantId, code: 'SEC-VEN' },
+      select: { id: true },
+    });
+    await expect(
+      owner.user.create({
+        data: {
+          tenantId,
+          code: 'USR-sup',
+          username: 'sup',
+          email: 'sup@sec.test',
+          passwordHash: 'x',
+          vendorId: vendor.id,
+          isSuperadmin: true,
+        },
+      }),
+    ).rejects.toThrow(/user_external_is_not_staff/);
   });
 });
