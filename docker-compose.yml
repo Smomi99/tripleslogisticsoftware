@@ -19,5 +19,27 @@ services:
       timeout: 5s
       retries: 10
 
+  # A mail server that never delivers anything.
+  #
+  # Everything the product sends — an inquiry to an agent, a portal invite, a
+  # password reset, a quote notification — lands in a web inbox at
+  # http://localhost:8025 instead of a real mailbox. That is the only honest way
+  # to check the wording and the links without emailing an actual agent, and it
+  # means a developer can never accidentally send a customer a test message.
+  #
+  # No credentials: Mailpit accepts anything on 1025, which is why the API's
+  # SMTP_USER and SMTP_PASS are optional.
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: ff-erp-mailpit
+    restart: unless-stopped
+    ports:
+      - '1025:1025' # SMTP, for the API
+      - '8025:8025' # the inbox, for you
+    environment:
+      MP_MAX_MESSAGES: 500
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+
 volumes:
   ff-erp-pgdata:

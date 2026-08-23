@@ -460,3 +460,62 @@ Not hosting problems — gaps in the product that hosting makes visible:
 
 None of these block a first client. All of them get harder to add the more data
 accumulates.
+
+---
+
+## Appendix — reading the emails on your own machine
+
+The product sends four kinds of message: an inquiry to an agent, a rate request
+to the price team, a portal invite, and a password reset. None of them can be
+checked by reading the code, because what matters is the wording, the link, and
+whether it arrives at all.
+
+`docker-compose.yml` runs **Mailpit** for this. It speaks SMTP and delivers
+nothing — every message is caught and shown in a web inbox instead.
+
+```bash
+docker compose up -d mailpit          # SMTP on 1025, inbox on 8025
+```
+
+Then in `.env`:
+
+```
+SMTP_HOST="localhost"
+SMTP_PORT=1025
+SMTP_SECURE=false
+MAIL_FROM="pricing@localhost.test"
+APP_URL="http://localhost:3000"
+```
+
+No `SMTP_USER` or `SMTP_PASS`: Mailpit wants none, and the API treats
+credentials as optional so a catcher can be pointed at. Restart the API and open
+**http://localhost:8025**.
+
+Nothing leaves the machine, which is the point — you can send yourself fifty
+invites without an agent ever seeing one.
+
+### Making each message appear
+
+| Message | How to trigger it |
+|---|---|
+| Portal invite | CRM → Agent → open one → **Portal access** → invite a contact that has an email address |
+| Password reset | The portal's **Forgotten your password?**, or the agent's own Account page |
+| Rate needed | Save an **Outbound** inquiry on a lane with no live purchased rate |
+| Quotation received | An agent submits a quote in the portal (needs the price team address set in Settings → Notifications) |
+
+The invite and reset links in the caught mail are real. Click one and it works.
+
+### When nothing arrives
+
+`SMTP_HOST` unset is a deliberate no-op, not a failure — the API logs
+`mail skipped: SMTP is not configured` and carries on, because a notification
+must never fail the thing it is about. Look for that line first. `mail skipped:
+no recipients` means the message was built but nobody was addressed: an agent
+contact with no email, or an empty price team address in Settings →
+Notifications.
+
+### Sending for real
+
+Swap in the Zoho block from `.env.example`. `SMTP_PASS` is an **app-specific
+password**, never the mailbox password — it can be revoked on its own, and it is
+the one secret in that file another system also holds.

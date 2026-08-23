@@ -18,8 +18,9 @@ import { logger } from './logger';
  * over it either. MAIL_CONFIG is null there and every send becomes a no-op that
  * says so in the log.
  *
- * The password is read once from the environment and handed to the transport.
- * It is never logged, never returned, and never included in an error message.
+ * The password, when there is one, is read once from the environment and handed
+ * to the transport. It is never logged, never returned, and never included in
+ * an error message.
  */
 
 let transport: Transporter | null = null;
@@ -31,7 +32,9 @@ function transporter(): Transporter | null {
       host: MAIL_CONFIG.host,
       port: MAIL_CONFIG.port,
       secure: MAIL_CONFIG.secure,
-      auth: { user: MAIL_CONFIG.user, pass: MAIL_CONFIG.pass },
+      // Omitted entirely when there are no credentials — passing auth: null
+      // would still make nodemailer attempt AUTH, which a catcher refuses.
+      ...(MAIL_CONFIG.auth !== null ? { auth: MAIL_CONFIG.auth } : {}),
     });
   }
   return transport;

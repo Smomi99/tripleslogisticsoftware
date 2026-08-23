@@ -175,8 +175,13 @@ export interface MailConfig {
   host: string;
   port: number;
   secure: boolean;
-  user: string;
-  pass: string;
+  /**
+   * Null when the server takes mail without credentials. A local catcher
+   * (Mailpit) and an internal relay both do; Zoho does not, and offering it no
+   * credentials makes it refuse — which is a loud, correct failure rather than
+   * a silent one.
+   */
+  auth: { user: string; pass: string } | null;
   from: string;
 }
 
@@ -185,18 +190,43 @@ export interface MailConfig {
  * machine. Callers skip sending rather than throwing: an inquiry that saved
  * correctly must not report failure because a notification could not go out.
  */
-export const MAIL_CONFIG: MailConfig | null =
-  env.SMTP_HOST !== undefined && env.SMTP_USER !== undefined && env.SMTP_PASS !== undefined
-    ? {
-        host: env.SMTP_HOST,
-        port: env.SMTP_PORT,
-        // Port 465 is implicit TLS whether or not the flag was set.
-        secure: env.SMTP_SECURE || env.SMTP_PORT === 465,
-        user: env.SMTP_USER,
-        pass: env.SMTP_PASS,
-        from: env.MAIL_FROM ?? env.SMTP_USER,
-      }
-    : null;
+export interface MailEnv {
+  SMTP_HOST?: string | undefined;
+  SMTP_PORT: number;
+  SMTP_SECURE: boolean;
+  SMTP_USER?: string | undefined;
+  SMTP_PASS?: string | undefined;
+  MAIL_FROM?: string | undefined;
+}
+
+/**
+ * Decides whether mail is configured, and how.
+ *
+ * A pure function rather than an expression, so the rule can be tested without
+ * reloading the module under six different environments — it is the rule that
+ * decides whether anything is sent at all.
+ *
+ * A host and a sender are the minimum. Credentials are NOT: requiring them
+ * meant a local SMTP catcher could not be pointed at, so "does mail work?"
+ * could only be answered by sending real mail to a real person.
+ */
+export function resolveMailConfig(source: MailEnv): MailConfig | null {
+  const from = source.MAIL_FROM ?? source.SMTP_USER;
+  if (source.SMTP_HOST === undefined || from === undefined) return null;
+  return {
+    host: source.SMTP_HOST,
+    port: source.SMTP_PORT,
+    // Port 465 is implicit TLS whether or not the flag was set.
+    secure: source.SMTP_SECURE || source.SMTP_PORT === 465,
+    auth:
+      source.SMTP_USER !== undefined && source.SMTP_PASS !== undefined
+        ? { user: source.SMTP_USER, pass: source.SMTP_PASS }
+        : null,
+    from,
+  };
+}
+
+export const MAIL_CONFIG: MailConfig | null = resolveMailConfig(env);
 
 export interface S3Config {
   bucket: string;
