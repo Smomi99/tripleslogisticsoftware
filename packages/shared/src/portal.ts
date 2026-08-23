@@ -227,3 +227,42 @@ export interface PortalCurrencyOption {
   /** What the dropdown shows, e.g. "USD — US Dollar". */
   label: string;
 }
+
+/**
+ * An agent's quote, as the FORWARDER sees it (staff side).
+ *
+ * Wider than AgentQuoteDto: staff see which agent it came from, who at that
+ * agent submitted it, and every amendment. The agent sees only their own
+ * current figure.
+ */
+export interface StaffAgentQuoteDto {
+  id: string;
+  code: string;
+  agentId: string;
+  agentName: string;
+  /** The person at the agent who sent it, when a portal user did. */
+  submittedByName: string | null;
+  amount: string;
+  currencyCode: string | null;
+  validUntil: string | null;
+  transitDays: number | null;
+  remarks: string | null;
+  status: string;
+  submittedAt: string;
+  updatedAt: string;
+  /** Newest first. Empty when the quote has never been amended. */
+  history: AgentQuoteChangeDto[];
+}
+
+/**
+ * One recorded change to a quote, taken from the audit trail rather than a
+ * bespoke history table — the trigger already captures both sides of every
+ * write, so a second copy would be a second thing to keep correct.
+ */
+export interface AgentQuoteChangeDto {
+  at: string;
+  /** SUBMITTED for the first version, AMENDED after that. */
+  kind: 'SUBMITTED' | 'AMENDED';
+  /** Only the fields that actually moved. */
+  changes: { field: string; from: string | null; to: string | null }[];
+}

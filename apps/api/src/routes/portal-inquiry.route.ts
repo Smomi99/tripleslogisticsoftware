@@ -18,7 +18,7 @@ import { HttpError } from '../lib/http-error';
 import { notifyQuoteSubmitted } from '../lib/quote-notify';
 import { parseId } from '../lib/request';
 import { Prisma } from '../generated/prisma/client';
-import { type TenantDb, withAgent } from '../lib/tenant-client';
+import { type TenantDb, withAgent, withTenant } from '../lib/tenant-client';
 import { authenticatePortal } from '../middleware/authenticate';
 
 /**
@@ -352,7 +352,23 @@ portalInquiryRouter.post('/:id/quote', async (req, res) => {
     }
 
     for (let attempt = 0; attempt < CODE_RETRY_LIMIT; attempt += 1) {
-      const code = await nextCode(db, 'agentQuote', CODE_PREFIX.agentQuote, auth.tenantId);
+      /*
+       * Allocated with TENANT scope, not agent scope, and that distinction is
+       * the whole bug this replaced.
+       *
+       * nextCode reads MAX(code) for the workspace. Run inside withAgent, row
+       * level security hides every other agent's quotes from that read — so the
+       * maximum an agent can see is always their own, and every agent computes
+       * AQ-001. The first agent to quote a workspace succeeds; the second one
+       * collides on a row it is not allowed to know exists, for ever.
+       *
+       * Not a race, which is what the retry loop was built for: a systematic
+       * collision that no number of retries would clear. The agent still never
+       * sees another agent's code — only the server does, for one query.
+       */
+      const code = await withTenant(auth.tenantId, (scoped) =>
+        nextCode(scoped, 'agentQuote', CODE_PREFIX.agentQuote, auth.tenantId),
+      );
       try {
         const quote = (await db.agentQuote.create({
           data: {
@@ -448,12 +464,17 @@ portalQuoteRouter.patch('/:id', async (req, res) => {
       data: {
         amount: new Prisma.Decimal(input.amount),
         currencyId: BigInt(input.currencyId),
-        validUntil:
-          input.validUntil === undefined || input.validUntil === ''
-            ? null
-            : new Date(input.validUntil),
-        transitDays: typeof input.transitDays === 'number' ? input.transitDays : null,
-        remarks: input.remarks === undefined || input.remarks === '' ? null : input.remarks,
+        // An omitted field is left alone; an empty one is cleared. The form
+        // always sends all of them, so this only matters to a caller that does
+        // not — and silently wiping an agent's remarks because a request did
+        // not mention them is not a PATCH, it is a PUT wearing its badge.
+        ...(input.validUntil === undefined
+          ? {}
+          : { validUntil: input.validUntil === '' ? null : new Date(input.validUntil) }),
+        ...(input.transitDays === undefined
+          ? {}
+          : { transitDays: typeof input.transitDays === 'number' ? input.transitDays : null }),
+        ...(input.remarks === undefined ? {} : { remarks: input.remarks === '' ? null : input.remarks }),
         updatedBy: auth.userId,
       },
       select: QUOTE_SELECT,

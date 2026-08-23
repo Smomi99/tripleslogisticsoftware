@@ -96,9 +96,19 @@ export function isUniqueViolation(error: unknown, column?: string): boolean {
     return false;
   }
   if (column === undefined) return true;
+
   const meta = (error as { meta?: { target?: unknown } }).meta;
   const target = meta?.target;
-  return Array.isArray(target) ? target.includes(column) : String(target).includes(column);
+  if (Array.isArray(target)) return target.includes(column);
+  if (typeof target === 'string') return target.includes(column);
+
+  // Prisma 7's driver adapters frequently report the target as "not available",
+  // and String(undefined) matched nothing — so every retry guarded by a column
+  // name silently stopped retrying and surfaced a 500 instead. The constraint
+  // name is still in the message, and it carries the column: a unique index on
+  // `code` is named <table>_tenant_id_code_key.
+  const message = `${(error as { message?: string }).message ?? ''}`;
+  return new RegExp(`_${column}_key|\b${column}\b`).test(message);
 }
 
 /**

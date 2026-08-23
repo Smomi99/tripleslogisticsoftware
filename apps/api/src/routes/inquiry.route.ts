@@ -21,10 +21,13 @@ import {
   OUTCOME_STATUSES,
   type InquiryVolumeDto,
   type LookupOption,
+  type StaffAgentQuoteDto,
 } from '@ff/shared';
 import { Router } from 'express';
 
+import { quoteHistory } from '../lib/agent-quote-history';
 import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
+import { isoCurrency } from '../lib/currency-label';
 import { Prisma } from '../generated/prisma/client';
 import { env } from '../config/env';
 import { HttpError } from '../lib/http-error';
@@ -127,7 +130,6 @@ const inquiryInclude = {
 
 type InquiryWithRelations = Prisma.InquiryGetPayload<{ include: typeof inquiryInclude }>;
 
-const isoCurrency = (value: string): string => (value.split('—')[0] ?? value).trim();
 
 function toDto(inquiry: InquiryWithRelations, today: Date): InquiryDto {
   const volumes: InquiryVolumeDto[] = inquiry.volumes.map((volume) => ({
@@ -858,6 +860,91 @@ inquiryRouter.get('/inquiry-parties', requirePermission(`${FEATURE}.VIEW`), asyn
   };
   res.json(payload);
 });
+
+/**
+ * GET /api/tenant/sales/inquiries/:id/agent-quotes
+ *
+ * What the agents came back with. The mirror of the portal's submit route —
+ * without it a quote lands in the database and nobody at the forwarder can see
+ * it, which is the state this endpoint was written to fix.
+ *
+ * Each quote carries its amendment history, read from the audit trail. An agent
+ * who drops their price from 1450 to 1399 the day before a decision is telling
+ * you something, and "what did they change" should not require a DBA.
+ */
+inquiryRouter.get(
+  '/inquiries/:id/agent-quotes',
+  requirePermission(`${FEATURE}.VIEW`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'inquiry');
+
+    const quotes = await withTenant(auth.tenantId, async (db) => {
+      // The same visibility rule the inquiry itself obeys: a salesman who
+      // cannot see the inquiry cannot see what was quoted against it.
+      const scope = await scopeClause(db, auth, 'OWN');
+      const maySeeAll = auth.isSuperadmin || auth.permissions.has(`${FEATURE}.VIEW_ALL`);
+      const inquiry = await db.inquiry.findFirst({
+        where: { id, deletedAt: null, ...(maySeeAll ? {} : scope) },
+        select: { id: true },
+      });
+      if (inquiry === null) return null;
+
+      const rows = await db.agentQuote.findMany({
+        where: { inquiryId: id, deletedAt: null },
+        select: {
+          id: true,
+          code: true,
+          agentId: true,
+          amount: true,
+          validUntil: true,
+          transitDays: true,
+          remarks: true,
+          status: true,
+          createdAt: true,
+          updatedAt: true,
+          agent: { select: { name: true } },
+          currency: { select: { currency: true } },
+          submittedByUser: { select: { username: true, email: true } },
+        },
+        orderBy: [{ status: 'asc' }, { amount: 'asc' }],
+      });
+
+      // Currency ids in the audit snapshots mean nothing on screen; this turns
+      // them back into USD, BDT and so on.
+      const currencies = await db.currency.findMany({ select: { id: true, currency: true } });
+      const currencyNames = new Map(currencies.map((c) => [c.id.toString(), c.currency]));
+
+      const history = await quoteHistory(
+        db,
+        rows.map((r) => r.id),
+        { currencyNames },
+      );
+
+      return rows.map<StaffAgentQuoteDto>((row) => ({
+        id: row.id.toString(),
+        code: row.code,
+        agentId: row.agentId.toString(),
+        agentName: row.agent?.name ?? '—',
+        submittedByName: row.submittedByUser?.username ?? null,
+        amount: row.amount?.toString() ?? '0',
+        currencyCode: row.currency === null ? null : isoCurrency(row.currency.currency),
+        validUntil: row.validUntil?.toISOString().slice(0, 10) ?? null,
+        transitDays: row.transitDays,
+        remarks: row.remarks,
+        status: row.status,
+        submittedAt: row.createdAt.toISOString(),
+        updatedAt: row.updatedAt.toISOString(),
+        history: history.get(row.id.toString()) ?? [],
+      }));
+    });
+
+    if (quotes === null) throw HttpError.notFound('Inquiry not found.');
+
+    const payload: ApiSuccess<StaffAgentQuoteDto[]> = { success: true, data: quotes };
+    res.json(payload);
+  },
+);
 
 inquiryRouter.get('/inquiries/:id', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
   const auth = req.auth!;
