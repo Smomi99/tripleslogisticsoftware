@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { EmptyState } from '@/components/ui/empty-state';
 import { Status } from '@/components/ui/status';
-import { usePortalSession } from '@/lib/portal-session';
+import { useSession } from '@/lib/session';
 
 /**
  * "1450.5" -> "1450.50".
@@ -23,14 +23,19 @@ function money(amount: string): string {
 }
 
 /**
- * The inquiries this agent was sent (§5).
+ * Agent Inquiry — the inquiries this agent was asked to price.
  *
  * Every row is one the forwarder chose to show them. There is no browse, no
  * search across the workspace and no "open inquiries near you" — being selected
  * is the whole of the authorization model, and the screen should read that way.
+ *
+ * It lives inside the ordinary app shell because an agent is an ordinary user
+ * now: same sign-in, same session, a role that carries AGENT.INQUIRY and
+ * nothing else. The sidebar shows them this group alone because §7 layer 3
+ * already hides a module the user holds no VIEW on.
  */
 export default function PortalInquiryListPage() {
-  const { list } = usePortalSession();
+  const { authorizedList: list } = useSession();
   const [inquiries, setInquiries] = useState<AgentInquiryDto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pendingOnly, setPendingOnly] = useState(false);
@@ -39,7 +44,7 @@ export default function PortalInquiryListPage() {
     setError(null);
     try {
       const result = await list<AgentInquiryDto[]>(
-        `/api/portal/inquiries${pendingOnly ? '?pending=true' : ''}`,
+        `/api/tenant/agent/inquiries${pendingOnly ? '?pending=true' : ''}`,
       );
       setInquiries(result.data);
     } catch {
@@ -130,7 +135,7 @@ export default function PortalInquiryListPage() {
                   </td>
                   <td className="px-3 py-2 text-right">
                     <Link
-                      href={`/portal/inquiries/${inquiry.id}`}
+                      href={`/agent/inquiry/${inquiry.id}`}
                       className="text-cell text-harbour hover:underline"
                     >
                       {inquiry.quote === null ? 'Quote' : 'Open'}

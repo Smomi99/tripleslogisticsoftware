@@ -18,6 +18,10 @@ export const MODULE_LABEL: Record<Module, string> = {
   CRM: 'CRM',
   ADMIN: 'Admin',
   REPORT: 'Report',
+  // Everything an agent account can reach. A staff user holds no AGENT
+  // permission, so the group never renders for them — the same §7 layer-3 rule
+  // that hides Accounts from a warehouse clerk.
+  AGENT: 'Agent',
 };
 
 /**
@@ -41,6 +45,7 @@ const ROUTES: Record<string, Route> = {
   // The list, not the capture form: §8 makes the list the screen a feature
   // opens on, with New reached from its Add button.
   'SALES.INQUIRY': '/sales/inquiry',
+  'AGENT.INQUIRY': '/agent/inquiry',
   'SALES.NEW_SALES_LEAD': '/sales/sales-lead',
   'SETTING.SEA_AIR_PORT': '/setting/port',
   'SETTING.COST_HEAD': '/setting/cost-head',
@@ -91,4 +96,23 @@ export function buildNav(): NavGroup[] {
       viewPermission: `${f.feature}.VIEW`,
     })),
   })).filter((group) => group.items.length > 0);
+}
+
+/**
+ * The VIEW permission a path needs, or null when it needs none.
+ *
+ * The same map the sidebar is built from, read backwards. Hiding a menu item is
+ * §7 layer 3; this is the other half of layer 4 — typing the URL of a screen
+ * you cannot open should say so, not render an empty table that looks broken.
+ *
+ * Longest prefix wins, so a child screen (/crm/agent/1/pic) inherits the
+ * permission of its parent (/crm/agent) without being listed separately.
+ */
+export function viewPermissionForPath(pathname: string): string | null {
+  let best: { route: string; feature: string } | null = null;
+  for (const [feature, route] of Object.entries(ROUTES)) {
+    if (pathname !== route && !pathname.startsWith(`${route}/`)) continue;
+    if (best === null || route.length > best.route.length) best = { route, feature };
+  }
+  return best === null ? null : `${best.feature}.VIEW`;
 }

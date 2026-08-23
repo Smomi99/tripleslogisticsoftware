@@ -37,7 +37,6 @@ let currencyB: bigint;
 async function cleanup(): Promise<void> {
   const scope = `(SELECT id FROM tenant WHERE slug IN ('${SLUG_A}', '${SLUG_B}'))`;
   for (const table of [
-    'user_credential_token',
     'agent_quote',
     'inquiry_volume',
     'inquiry',
@@ -227,10 +226,29 @@ describe('an agent account cannot also be a staff account', () => {
     ).rejects.toThrow(/user_agent_is_external/);
   });
 
-  it('refuses an agent user that holds a staff role', async () => {
-    await expect(
-      owner.user.create({ data: userRow(tenantA, 'roled', { agentId: agentA, roleId: roleA }) }),
-    ).rejects.toThrow(/user_agent_is_external/);
+  it('allows an agent user to hold a role, because that is how access is granted', async () => {
+    // The first design banned this outright: an agent had no §7 permissions and
+    // what they could reach was decided by which router they hit. A role IS the
+    // grant now, so the ban moved off role_id and onto the two that matter.
+    // Its own agent: agentA already has a login, and one per company is the
+    // rule the index below enforces.
+    const other = await owner.agent.create({
+      data: {
+        tenantId: tenantA,
+        code: 'AGT-A2',
+        name: 'Alpha Agent Two',
+        country: 'Denmark',
+        agentType: 'GENERAL',
+      },
+      select: { id: true },
+    });
+    const user = await owner.user.create({
+      data: userRow(tenantA, 'roled', { agentId: other.id, roleId: roleA }),
+      select: { agentId: true, roleId: true, isSuperadmin: true },
+    });
+    expect(user.agentId).toBe(other.id);
+    expect(user.roleId).toBe(roleA);
+    expect(user.isSuperadmin).toBe(false);
   });
 
   it('refuses an agent user tied to an employee record', async () => {
@@ -261,12 +279,22 @@ describe('an agent account cannot also be a staff account', () => {
     ).rejects.toThrow(/user_agent_is_external/);
   });
 
-  it('refuses to attach a role to every agent account at once', async () => {
+  it('still refuses to attach every agent account to an employee record', async () => {
+    // The denial that survived, and the one that matters: an agent must never
+    // be tied to a member of staff.
     await expect(
       owner.$executeRawUnsafe(
-        `UPDATE "user" SET role_id = ${roleA} WHERE agent_id IS NOT NULL AND tenant_id = ${tenantA}`,
+        `UPDATE "user" SET employee_id = ${employeeA} WHERE agent_id IS NOT NULL AND tenant_id = ${tenantA}`,
       ),
     ).rejects.toThrow(/user_agent_is_external/);
+  });
+
+  it('allows only one login per agent company', async () => {
+    // The client's rule, and a fact about the database rather than a promise
+    // the Add User screen makes.
+    await expect(
+      owner.user.create({ data: userRow(tenantA, 'second', { agentId: agentA }) }),
+    ).rejects.toThrow(/user_one_login_per_agent|Unique constraint/i);
   });
 
   it('leaves staff accounts alone', async () => {
@@ -357,79 +385,12 @@ describe('agent_quote', () => {
   });
 });
 
-describe('user_credential_token', () => {
-  const token = (userId: bigint, extra: Record<string, unknown> = {}) => ({
-    tenantId: tenantA,
-    userId,
-    purpose: 'INVITE' as const,
-    tokenHash: 'argon2-hash-of-the-link',
-    expiresAt: new Date(Date.now() + 7 * 24 * 3600 * 1000),
-    ...extra,
-  });
-
-  let agentUser: bigint;
-
-  beforeAll(async () => {
-    agentUser = (
-      await owner.user.findFirstOrThrow({
-        where: { tenantId: tenantA, agentId: agentA },
-        select: { id: true },
-      })
-    ).id;
-  });
-
-  it('issues an invite', async () => {
-    const row = await owner.userCredentialToken.create({
-      data: token(agentUser),
-      select: { usedAt: true, purpose: true },
-    });
-    expect(row.usedAt).toBeNull();
-    expect(row.purpose).toBe('INVITE');
-  });
-
-  it('allows only one live token per purpose', async () => {
-    // Asking for a second link kills the first, so an older link intercepted
-    // in transit stops working.
-    await expect(
-      owner.userCredentialToken.create({ data: token(agentUser) }),
-    ).rejects.toThrow(/user_credential_token_live|Unique constraint/i);
-  });
-
-  it('allows a different purpose alongside it', async () => {
-    const reset = await owner.userCredentialToken.create({
-      data: token(agentUser, {
-        purpose: 'RESET',
-        expiresAt: new Date(Date.now() + 3600 * 1000),
-      }),
-      select: { id: true },
-    });
-    expect(reset.id).toBeGreaterThan(0n);
-  });
-
-  it('frees the slot once the link is redeemed', async () => {
-    await owner.userCredentialToken.updateMany({
-      where: { tenantId: tenantA, userId: agentUser, purpose: 'INVITE' },
-      data: { usedAt: new Date() },
-    });
-    const reissued = await owner.userCredentialToken.create({
-      data: token(agentUser),
-      select: { id: true },
-    });
-    expect(reissued.id).toBeGreaterThan(0n);
-
-    // The spent one is kept, not deleted: it is the evidence a link was used.
-    const spent = await owner.userCredentialToken.count({
-      where: { tenantId: tenantA, userId: agentUser, usedAt: { not: null } },
-    });
-    expect(spent).toBe(1);
-  });
-});
 
 describe('the new tables are governed like every other one', () => {
   it('never lets the application delete a quote or a token', async () => {
     const grants = await owner.$queryRaw<{ table_name: string; privilege_type: string }[]>`
       SELECT table_name, privilege_type FROM information_schema.table_privileges
-      WHERE grantee = 'ff_app' AND table_name IN ('agent_quote', 'user_credential_token')
+      WHERE grantee = 'ff_app' AND table_name = 'agent_quote'
       ORDER BY table_name, privilege_type`;
     const byTable = new Map<string, string[]>();
     for (const g of grants) {
@@ -437,29 +398,14 @@ describe('the new tables are governed like every other one', () => {
     }
     // §4 rule 3 is soft delete only, and a spent token is evidence.
     expect(byTable.get('agent_quote')).toEqual(['INSERT', 'SELECT', 'UPDATE']);
-    expect(byTable.get('user_credential_token')).toEqual(['INSERT', 'SELECT', 'UPDATE']);
   });
 
   it('has row level security switched on', async () => {
     const rows = await owner.$queryRaw<{ relname: string; relrowsecurity: boolean }[]>`
       SELECT relname, relrowsecurity FROM pg_class
-      WHERE relname IN ('agent_quote', 'user_credential_token')`;
-    expect(rows).toHaveLength(2);
+      WHERE relname = 'agent_quote'`;
+    expect(rows).toHaveLength(1);
     for (const row of rows) expect(row.relrowsecurity).toBe(true);
   });
 
-  it('keeps the invite token itself out of the audit trail', async () => {
-    // The hash is not the token, but it is still the closest thing to one, and
-    // the trail is the place nobody thinks to lock down.
-    const rows = await owner.auditLog.findMany({
-      where: { tenantId: tenantA, tableName: 'user_credential_token' },
-      select: { newValues: true },
-    });
-    expect(rows.length).toBeGreaterThan(0);
-    for (const row of rows) {
-      const values = row.newValues as Record<string, unknown>;
-      expect(values['token_hash']).toBeUndefined();
-      expect(values['purpose']).toBeDefined();
-    }
-  });
 });

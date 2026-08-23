@@ -257,7 +257,6 @@ model Tenant {
 
   notificationSetting NotificationSetting?
   agentQuotes         AgentQuote[]
-  credentialTokens    UserCredentialToken[]
 
   @@index([slug])
   @@index([status])
@@ -1603,8 +1602,6 @@ model User {
   submittedAgentQuotes   AgentQuote[]          @relation("AgentQuoteSubmittedBy")
   createdAgentQuotes     AgentQuote[]          @relation("AgentQuoteCreatedBy")
   updatedAgentQuotes     AgentQuote[]          @relation("AgentQuoteUpdatedBy")
-  credentialTokens       UserCredentialToken[] @relation("UserCredentialTokenUser")
-  issuedCredentialTokens UserCredentialToken[] @relation("UserCredentialTokenCreatedBy")
 
   @@unique([tenantId, username])
   @@unique([tenantId, email])
@@ -2614,30 +2611,6 @@ model AgentQuote {
   @@map("agent_quote")
 }
 
-/// One-time links: an invite to set a first password, or a reset.
-/// The token is never stored — only an argon2 hash of it.
-model UserCredentialToken {
-  tenantId  BigInt                 @map("tenant_id")
-  id        BigInt                 @id @default(autoincrement())
-  userId    BigInt                 @map("user_id")
-  purpose   CredentialTokenPurpose
-  tokenHash String                 @map("token_hash") @db.VarChar(255)
-  expiresAt DateTime               @map("expires_at") @db.Timestamptz(6)
-  /// Set when the link is redeemed. A spent token is kept rather than deleted:
-  /// it is the evidence that a link was used, and when.
-  usedAt    DateTime?              @map("used_at") @db.Timestamptz(6)
-  createdAt DateTime               @default(now()) @map("created_at") @db.Timestamptz(6)
-  createdBy BigInt?                @map("created_by")
-
-  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  user          User   @relation("UserCredentialTokenUser", fields: [tenantId, userId], references: [tenantId, id], onDelete: Restrict)
-  createdByUser User?  @relation("UserCredentialTokenCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
-
-  @@index([tenantId])
-  @@index([userId])
-  @@index([expiresAt])
-  @@map("user_credential_token")
-}
 
 enum AgentQuoteStatus {
   SUBMITTED
@@ -2648,9 +2621,3 @@ enum AgentQuoteStatus {
   @@map("agent_quote_status")
 }
 
-enum CredentialTokenPurpose {
-  INVITE
-  RESET
-
-  @@map("credential_token_purpose")
-}

@@ -61,6 +61,7 @@ const ACTION_LABEL: Record<Action, string> = {
   FOLLOWUP: 'Follow up',
   ATTACH_PRICE: 'Attach price',
   CONVERT_QUOTE: 'Quote',
+  QUOTE: 'Quote',
   SET_OUTCOME: 'Won / lost',
 };
 

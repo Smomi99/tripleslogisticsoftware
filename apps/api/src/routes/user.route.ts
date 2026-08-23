@@ -44,11 +44,13 @@ const SELECT = {
   username: true,
   email: true,
   employeeId: true,
+  agentId: true,
   roleId: true,
   isSuperadmin: true,
   isActive: true,
   lastLoginAt: true,
   employee: { select: { name: true } },
+  agent: { select: { name: true } },
   role: { select: { name: true } },
 } as const;
 
@@ -58,11 +60,13 @@ type UserRow = {
   username: string;
   email: string;
   employeeId: bigint | null;
+  agentId: bigint | null;
   roleId: bigint | null;
   isSuperadmin: boolean;
   isActive: boolean;
   lastLoginAt: Date | null;
   employee: { name: string } | null;
+  agent: { name: string } | null;
   role: { name: string } | null;
 };
 
@@ -72,7 +76,12 @@ function toDto(row: UserRow): UserDto {
     code: row.code,
     username: row.username,
     email: row.email,
+    // The link decides the type: there is no separate column, and no way for
+    // the two to disagree.
+    userType: row.agentId === null ? 'EMPLOYEE' : 'AGENT',
     employeeId: row.employeeId?.toString() ?? null,
+    agentId: row.agentId?.toString() ?? null,
+    agentName: row.agent?.name ?? null,
     employeeName: row.employee?.name ?? null,
     roleId: row.roleId?.toString() ?? null,
     roleName: row.role?.name ?? null,
@@ -88,6 +97,39 @@ async function assertEmployeeVisible(db: TenantDb, id: bigint): Promise<void> {
     select: { id: true },
   });
   if (employee === null) throw HttpError.badRequest('That employee is not available.');
+}
+
+/**
+ * The agent must exist, be active, and not already have a login.
+ *
+ * One login per agent company is the client's rule. A partial unique index
+ * enforces it, so this check exists to say WHY rather than to be the guarantee
+ * — a plain constraint violation would read as a bug rather than as a rule.
+ */
+async function assertAgentVisible(
+  db: TenantDb,
+  id: bigint,
+  excludeUserId?: bigint,
+): Promise<void> {
+  const agent = await db.agent.findFirst({
+    where: { id, deletedAt: null, isActive: true },
+    select: { id: true, name: true },
+  });
+  if (agent === null) throw HttpError.badRequest('That agent is not available.');
+
+  const existing = await db.user.findFirst({
+    where: {
+      agentId: id,
+      deletedAt: null,
+      ...(excludeUserId === undefined ? {} : { id: { not: excludeUserId } }),
+    },
+    select: { username: true },
+  });
+  if (existing !== null) {
+    throw HttpError.conflict(
+      `${agent.name} already has a login (${existing.username}). Each agent has one, shared by their contacts.`,
+    );
+  }
 }
 
 async function assertRoleVisible(db: TenantDb, id: bigint): Promise<void> {
@@ -143,9 +185,16 @@ userRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
 userRouter.get('/options', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
   const auth = req.auth!;
   const options = await withTenant(auth.tenantId, async (db) => {
-    const [employees, roles] = await Promise.all([
+    const [employees, agents, roles] = await Promise.all([
       db.employee.findMany({
         where: { deletedAt: null, isActive: true },
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      }),
+      // Only agents that do not already have one: the rule is one login per
+      // agent, so offering a company that has one is offering a dead end.
+      db.agent.findMany({
+        where: { deletedAt: null, isActive: true, users: { none: { deletedAt: null } } },
         select: { id: true, name: true },
         orderBy: { name: 'asc' },
       }),
@@ -157,11 +206,16 @@ userRouter.get('/options', requirePermission(`${FEATURE}.VIEW`), async (req, res
     ]);
     return {
       employees: employees.map((e) => ({ id: e.id.toString(), name: e.name })),
+      agents: agents.map((a) => ({ id: a.id.toString(), name: a.name })),
       roles: roles.map((r) => ({ id: r.id.toString(), name: r.name })),
     };
   });
 
-  const payload: ApiSuccess<{ employees: LookupOption[]; roles: LookupOption[] }> = {
+  const payload: ApiSuccess<{
+    employees: LookupOption[];
+    agents: LookupOption[];
+    roles: LookupOption[];
+  }> = {
     success: true,
     data: options,
   };
@@ -172,11 +226,16 @@ userRouter.post('/', requirePermission(`${FEATURE}.CREATE`), async (req, res) =>
   const auth = req.auth!;
   const input = userCreateSchema.parse(req.body);
   const username = normalizeUsername(input.username);
-  const employeeId = parseRefId(input.employeeId, 'employee');
+  const isAgent = input.userType === 'AGENT';
+  // The schema already refuses the wrong combination; `?? ''` keeps the types
+  // honest and makes parseRefId produce the same message either way.
+  const employeeId = isAgent ? null : parseRefId(input.employeeId ?? '', 'employee');
+  const agentId = isAgent ? parseRefId(input.agentId ?? '', 'agent') : null;
   const roleId = input.roleId === undefined ? null : parseRefId(input.roleId, 'role');
 
   const created = await withTenant(auth.tenantId, async (db) => {
-    await assertEmployeeVisible(db, employeeId);
+    if (employeeId !== null) await assertEmployeeVisible(db, employeeId);
+    if (agentId !== null) await assertAgentVisible(db, agentId);
     if (roleId !== null) await assertRoleVisible(db, roleId);
 
     // §4 rule 9: username and email are unique per tenant, not globally — two
@@ -206,6 +265,7 @@ userRouter.post('/', requirePermission(`${FEATURE}.CREATE`), async (req, res) =>
             email: input.email,
             passwordHash,
             employeeId,
+            agentId,
             roleId,
             isSuperadmin: input.isSuperadmin ?? false,
             createdBy: auth.userId,
@@ -230,17 +290,22 @@ userRouter.patch('/:id', requirePermission(`${FEATURE}.EDIT`), async (req, res) 
   const id = parseId(req.params.id, 'user');
   const input = userInputSchema.parse(req.body);
   const username = normalizeUsername(input.username);
-  const employeeId = parseRefId(input.employeeId, 'employee');
+  const isAgent = input.userType === 'AGENT';
+  // The schema already refuses the wrong combination; `?? ''` keeps the types
+  // honest and makes parseRefId produce the same message either way.
+  const employeeId = isAgent ? null : parseRefId(input.employeeId ?? '', 'employee');
+  const agentId = isAgent ? parseRefId(input.agentId ?? '', 'agent') : null;
   const roleId = input.roleId === undefined ? null : parseRefId(input.roleId, 'role');
 
   const updated = await withTenant(auth.tenantId, async (db) => {
     const existing = await db.user.findFirst({
       where: { id, deletedAt: null },
-      select: { id: true, roleId: true, isSuperadmin: true },
+      select: { id: true, roleId: true, agentId: true, isSuperadmin: true },
     });
     if (existing === null) throw HttpError.notFound('User not found.');
 
-    await assertEmployeeVisible(db, employeeId);
+    if (employeeId !== null) await assertEmployeeVisible(db, employeeId);
+    if (agentId !== null) await assertAgentVisible(db, agentId, id);
     if (roleId !== null) await assertRoleVisible(db, roleId);
 
     const clash = await db.user.findFirst({
@@ -261,6 +326,7 @@ userRouter.patch('/:id', requirePermission(`${FEATURE}.EDIT`), async (req, res) 
         username,
         email: input.email,
         employeeId,
+        agentId,
         roleId,
         isSuperadmin: input.isSuperadmin ?? false,
         updatedBy: auth.userId,
@@ -270,8 +336,13 @@ userRouter.patch('/:id', requirePermission(`${FEATURE}.EDIT`), async (req, res) 
 
     // §7 rule 4: if what this user may reach changed, every token already
     // issued to them must stop working now rather than in fifteen minutes.
+    // Changing which agent a login belongs to changes what it can see just as
+    // surely as changing its role, and the session claim would otherwise
+    // disagree with the row on the next request.
     const accessChanged =
-      existing.roleId !== roleId || existing.isSuperadmin !== (input.isSuperadmin ?? false);
+      existing.roleId !== roleId ||
+      existing.agentId !== agentId ||
+      existing.isSuperadmin !== (input.isSuperadmin ?? false);
     if (accessChanged) await bumpTokenVersion(db, [id]);
 
     return row;

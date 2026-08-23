@@ -61,8 +61,14 @@ function bearerToken(req: Request): string {
  * have to remember to add is one you will eventually forget, and the forgotten
  * one is the hole; making the choice part of authenticating means a router
  * added next year cannot accidentally be open to both.
+ *
+ * This survives agents becoming ordinary users. They now sign in at the same
+ * door as staff and hold a role like anyone else — but a role is a list someone
+ * ticked, and ticking CRM.CUSTOMER.VIEW onto an agent's role must not show them
+ * your customers. The kind check is structural and sits above the permission
+ * check, so a misconfigured role widens nothing.
  */
-function authenticateAs(kind: 'STAFF' | 'AGENT'): RequestHandler {
+function authenticateAs(kind: 'STAFF' | 'AGENT' | 'ANY'): RequestHandler {
   return async function guard(
     req: Request,
     _res: Response,
@@ -130,5 +136,22 @@ function authenticateAs(kind: 'STAFF' | 'AGENT'): RequestHandler {
  */
 export const authenticate: RequestHandler = authenticateAs('STAFF');
 
-/** Agent portal sessions only. Staff tokens are refused here just as firmly. */
-export const authenticatePortal: RequestHandler = authenticateAs('AGENT');
+/**
+ * Agent sessions only — the Agent Inquiry router and nothing else.
+ *
+ * Staff tokens are refused here just as firmly, so a staff member cannot read
+ * the screen through an agent's row level security and see a workspace that is
+ * not the one they think they are in.
+ */
+export const authenticateAgent: RequestHandler = authenticateAs('AGENT');
+
+/**
+ * Either kind — the deliberate exception, and the list is one endpoint long.
+ *
+ * `/auth/me` answers "who am I?" and returns nothing but the caller's own
+ * identity and their own permission set. Both kinds of user need it to restore
+ * a session on page load, and neither learns anything about the other from it.
+ *
+ * Anything that returns business data must pick a side instead.
+ */
+export const authenticateAny: RequestHandler = authenticateAs('ANY');

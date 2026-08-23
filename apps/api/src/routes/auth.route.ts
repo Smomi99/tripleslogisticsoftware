@@ -19,7 +19,7 @@ import {
 import { verifyPassword } from '../lib/password';
 import { loadAccount, resolvePermissions } from '../lib/permissions';
 import { withTenant } from '../lib/tenant-client';
-import { authenticate } from '../middleware/authenticate';
+import { authenticateAny } from '../middleware/authenticate';
 
 export const authRouter: Router = Router();
 
@@ -61,17 +61,21 @@ authRouter.post('/login', async (req, res) => {
 
   const result = await withTenant(tenant.id, async (db) => {
     const user = await db.user.findFirst({
-      // agentId: null is part of the WHERE, not a check applied afterwards: an
-      // agent credential cannot return a row here at all, so a stolen one is
-      // useless at the staff door even if some later guard regresses.
-      where: { username, agentId: null, deletedAt: null },
+      // One door for everyone now: an agent signs in here like a member of
+      // staff. What separates them is what happens next — the session carries
+      // their agent id, and every staff router refuses a session that has one.
+      where: { username, deletedAt: null },
       select: {
         id: true,
         username: true,
         email: true,
         passwordHash: true,
         isActive: true,
+        agentId: true,
         employee: { select: { name: true } },
+        // An agent account has no employee record, so the agent's own name is
+        // what the top bar has to show.
+        agent: { select: { name: true, isActive: true, deletedAt: true } },
         role: { select: { name: true } },
       },
     });
@@ -83,7 +87,13 @@ authRouter.post('/login', async (req, res) => {
       '$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHR2YWx1ZQ$0000000000000000000000000000000000000000000';
     const passwordOk = await verifyPassword(password, hash);
 
-    if (user === null || !passwordOk || !user.isActive) {
+    // An agent whose company was deactivated loses access with it, or removing
+    // an agent from the CRM would leave their login working.
+    const agentUsable =
+      user?.agentId == null ||
+      (user.agent != null && user.agent.isActive && user.agent.deletedAt === null);
+
+    if (user === null || !passwordOk || !user.isActive || !agentUsable) {
       // Recorded even when the username does not exist: a run of failures
       // against names that were never accounts is exactly what credential
       // stuffing looks like, and it is invisible if only real users are logged.
@@ -134,11 +144,13 @@ authRouter.post('/login', async (req, res) => {
     isSuperadmin: access.isSuperadmin,
     permissions,
     tokenVersion: access.tokenVersion,
+    agentId: user.agentId?.toString() ?? null,
   });
   const refreshToken = await signRefreshToken({
     sub: user.id.toString(),
     tenantId: tenant.id.toString(),
     tokenVersion: access.tokenVersion,
+    agentId: user.agentId?.toString() ?? null,
   });
 
   res.cookie(REFRESH_COOKIE, refreshToken, {
@@ -154,8 +166,10 @@ authRouter.post('/login', async (req, res) => {
         id: user.id.toString(),
         username: user.username,
         email: user.email,
-        name: user.employee?.name ?? null,
+        name: user.employee?.name ?? user.agent?.name ?? null,
         isSuperadmin: access.isSuperadmin,
+        agentId: user.agentId?.toString() ?? null,
+        agentName: user.agent?.name ?? null,
         roleName: user.role?.name ?? null,
         permissions,
       },
@@ -200,6 +214,9 @@ authRouter.post('/refresh', async (req, res) => {
     isSuperadmin: access.isSuperadmin,
     permissions: [...access.permissions],
     tokenVersion: access.tokenVersion,
+    // Carried through, or the next request would see the claim disagree with
+    // the row and be rejected as a tampered token.
+    agentId: access.agentId?.toString() ?? null,
   });
 
   const payload: ApiSuccess<{ accessToken: string }> = {
@@ -237,7 +254,7 @@ authRouter.post('/logout', async (req, res) => {
 });
 
 /** GET /api/tenant/auth/me — who the caller is, and what they may reach. */
-authRouter.get('/me', authenticate, async (req, res) => {
+authRouter.get('/me', authenticateAny, async (req, res) => {
   const auth = req.auth;
   if (auth === undefined) throw HttpError.unauthorized();
 
@@ -248,7 +265,9 @@ authRouter.get('/me', authenticate, async (req, res) => {
         id: true,
         username: true,
         email: true,
+        agentId: true,
         employee: { select: { name: true } },
+        agent: { select: { name: true } },
         role: { select: { name: true } },
       },
     }),
@@ -262,8 +281,10 @@ authRouter.get('/me', authenticate, async (req, res) => {
       id: user.id.toString(),
       username: user.username,
       email: user.email,
-      name: user.employee?.name ?? null,
+      name: user.employee?.name ?? user.agent?.name ?? null,
       isSuperadmin: auth.isSuperadmin,
+      agentId: user.agentId?.toString() ?? null,
+      agentName: user.agent?.name ?? null,
       roleName: user.role?.name ?? null,
       permissions: [...auth.permissions],
     },

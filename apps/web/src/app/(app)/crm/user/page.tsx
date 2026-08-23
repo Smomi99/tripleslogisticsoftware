@@ -36,6 +36,7 @@ const ENDPOINT = '/api/tenant/crm/users';
 
 interface UserOptions {
   employees: LookupOption[];
+  agents: LookupOption[];
   roles: LookupOption[];
 }
 
@@ -43,7 +44,7 @@ export default function UserPage() {
   const { authorizedRequest, can, user: currentUser } = useSession();
   const list = useMasterList<UserDto, UserSortField>(ENDPOINT, 'username');
 
-  const [options, setOptions] = useState<UserOptions>({ employees: [], roles: [] });
+  const [options, setOptions] = useState<UserOptions>({ employees: [], agents: [], roles: [] });
   const [editing, setEditing] = useState<UserDto | null>(null);
   const [isFormOpen, setFormOpen] = useState(false);
   const [resetFor, setResetFor] = useState<UserDto | null>(null);
@@ -57,7 +58,7 @@ export default function UserPage() {
   useEffect(() => {
     void authorizedRequest<UserOptions>(`${ENDPOINT}/options`)
       .then(setOptions)
-      .catch(() => setOptions({ employees: [], roles: [] }));
+      .catch(() => setOptions({ employees: [], agents: [], roles: [] }));
   }, [authorizedRequest]);
 
   const columns: DataTableColumn<UserDto>[] = useMemo(
@@ -350,12 +351,15 @@ function UserForm({
     register,
     handleSubmit,
     reset,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<UserFormInput>({
     // One schema for both modes; the API still requires a password on create.
     resolver: zodResolver(userFormSchema),
     defaultValues: {
+      userType: 'EMPLOYEE',
       employeeId: '',
+      agentId: '',
       username: '',
       email: '',
       roleId: '',
@@ -366,7 +370,9 @@ function UserForm({
 
   useEffect(() => {
     reset({
-      employeeId: user?.employeeId ?? options.employees[0]?.id ?? '',
+      userType: user?.userType ?? 'EMPLOYEE',
+      employeeId: user?.employeeId ?? '',
+      agentId: user?.agentId ?? '',
       username: user?.username ?? '',
       email: user?.email ?? '',
       roleId: user?.roleId ?? '',
@@ -376,14 +382,21 @@ function UserForm({
     setFormError(null);
   }, [user, options, reset]);
 
+  // Which link the form asks for, and which one is sent.
+  const userType = watch('userType');
+
   const submit = handleSubmit(async (values) => {
     setFormError(null);
     const body: Record<string, unknown> = {
-      employeeId: values.employeeId,
+      userType: values.userType,
       username: values.username,
       email: values.email,
       isSuperadmin: values.isSuperadmin,
     };
+    // Only the link that applies is sent, so an agent account can never carry a
+    // stale employee id from a type the operator changed their mind about.
+    if (values.userType === 'AGENT') body['agentId'] = values.agentId;
+    else body['employeeId'] = values.employeeId;
     if (values.roleId !== undefined && values.roleId !== '') body['roleId'] = values.roleId;
     if (!isEdit) body['password'] = values.password ?? '';
 
@@ -411,16 +424,47 @@ function UserForm({
       submitLabel={isEdit ? 'Save changes' : 'Add user'}
       error={formError ?? undefined}
     >
-      <Field id="employeeId" label="Employee" required error={errors.employeeId?.message}>
-        <Select id="employeeId" {...register('employeeId')}>
-          <option value="">Choose an employee</option>
-          {options.employees.map((e) => (
-            <option key={e.id} value={e.id}>
-              {e.name}
-            </option>
-          ))}
+      {/*
+        Who the login belongs to. An agent is an outside company: one login,
+        shared by its contacts, reaching only the Agent Inquiry screen. Customer
+        and Vendor will join this list on the same shape.
+      */}
+      <Field id="userType" label="User type" required error={errors.userType?.message}>
+        <Select id="userType" {...register('userType')}>
+          <option value="EMPLOYEE">Employee — a member of your staff</option>
+          <option value="AGENT">Agent — one shared login for an agent company</option>
         </Select>
       </Field>
+
+      {userType === 'AGENT' ? (
+        <Field
+          id="agentId"
+          label="Agent"
+          required
+          hint="One login per agent. All of their contacts sign in with it."
+          error={errors.agentId?.message}
+        >
+          <Select id="agentId" {...register('agentId')}>
+            <option value="">Choose an agent</option>
+            {options.agents.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      ) : (
+        <Field id="employeeId" label="Employee" required error={errors.employeeId?.message}>
+          <Select id="employeeId" {...register('employeeId')}>
+            <option value="">Choose an employee</option>
+            {options.employees.map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      )}
 
       <Field
         id="username"

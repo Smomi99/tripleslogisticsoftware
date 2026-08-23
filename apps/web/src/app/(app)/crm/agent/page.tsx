@@ -20,7 +20,7 @@ import { useMasterList } from '@/lib/use-master-list';
 const ENDPOINT = '/api/tenant/crm/agents';
 
 export default function AgentPage() {
-  const { authorizedRequest, can, user } = useSession();
+  const { authorizedRequest, can } = useSession();
   const list = useMasterList<AgentDto, AgentSortField>(ENDPOINT, 'name');
 
   const [toToggle, setToToggle] = useState<AgentDto | null>(null);
@@ -179,14 +179,6 @@ export default function AgentPage() {
             {can('CRM.AGENT.VIEW') && (
               <Button variant="text" size="inline" asChild>
                 <Link href={`/crm/agent/${row.id}/pic`}>PIC</Link>
-              </Button>
-            )}
-            {/* Superadmin only, and not a §7 key: giving an outside company a
-                way into the workspace is a different kind of decision from
-                editing a record. See require-superadmin.ts. */}
-            {user?.isSuperadmin === true && (
-              <Button variant="text" size="inline" asChild>
-                <Link href={`/crm/agent/${row.id}/portal`}>Portal</Link>
               </Button>
             )}
             {can('CRM.AGENT.EDIT') && (

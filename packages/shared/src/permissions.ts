@@ -30,6 +30,10 @@ export const ACTIONS = [
   'ATTACH_PRICE',
   'CONVERT_QUOTE',
   'SET_OUTCOME',
+  // The agent side of an inquiry: sending a price back, and changing it while
+  // the inquiry is still open. Separate from CREATE/EDIT because it is not the
+  // inquiry being written — it is an answer to one.
+  'QUOTE',
 ] as const;
 
 export type Action = (typeof ACTIONS)[number];
@@ -45,6 +49,15 @@ export const MODULES = [
   'CRM',
   'ADMIN',
   'REPORT',
+  /**
+   * Screens for people who are not staff.
+   *
+   * An agent is a user of this workspace like any other — created on Add User,
+   * given a role, holding permissions — but everything they may reach lives
+   * here, so what an outside company can see is one line of this file rather
+   * than an audit of forty routers.
+   */
+  'AGENT',
 ] as const;
 
 export type Module = (typeof MODULES)[number];
@@ -169,6 +182,10 @@ export const FEATURES: readonly FeatureDefinition[] = [
   // one feature — §6 writes it as a single SALES.INQUIRY. Capturing an inquiry
   // and working it are the same permission; what differs is the action.
   { module: 'SALES', feature: 'SALES.INQUIRY', label: 'Inquiry', actions: INQUIRY },
+  // The only feature an agent account is ever granted. VIEW shows the
+  // inquiries they were selected for; QUOTE lets them answer one, so a
+  // forwarder can give read-only access to a junior at the agent.
+  { module: 'AGENT', feature: 'AGENT.INQUIRY', label: 'Agent Inquiry', actions: ['VIEW', 'QUOTE'] },
   // Still no wireframe for either lead screen (CLAUDE.md §3, §11). The
   // permissions exist so the sales_lead skeleton can be gated the day a field
   // list arrives; the screens themselves are unbuilt.

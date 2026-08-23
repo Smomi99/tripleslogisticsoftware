@@ -50,10 +50,11 @@ async function cleanup(): Promise<void> {
     'inquiry_party',
     'inquiry_volume',
     'inquiry',
-    'user_credential_token',
     'agent_pic',
     'agent',
     '"user"',
+    'role_permission',
+    'role',
     'customer',
     'industry_sector',
     'port',
@@ -66,6 +67,40 @@ async function cleanup(): Promise<void> {
 
 const staff = (path: string) =>
   request(app).get(path).set('Authorization', `Bearer ${staffToken}`).set('X-Tenant-Slug', SLUG);
+
+/**
+ * Gives an agent user the role that grants Agent Inquiry.
+ *
+ * An agent is an ordinary user now: the routes are behind
+ * requirePermission('AGENT.INQUIRY.*'), so without a role they reach nothing —
+ * which is the point, and which these fixtures have to honour like any other
+ * user would.
+ */
+async function grantAgentRole(
+  owner: { $queryRawUnsafe: (sql: string) => Promise<unknown>; [k: string]: unknown },
+  tenantId: bigint,
+  userIds: bigint[],
+  code: string,
+): Promise<void> {
+  const db = owner as unknown as {
+    role: { create: (a: unknown) => Promise<{ id: bigint }> };
+    permission: { findMany: (a: unknown) => Promise<{ id: bigint }[]> };
+    rolePermission: { createMany: (a: unknown) => Promise<unknown> };
+    user: { updateMany: (a: unknown) => Promise<unknown> };
+  };
+  const role = await db.role.create({
+    data: { tenantId, code, name: `${code} agent role` },
+    select: { id: true },
+  });
+  const permissions = await db.permission.findMany({
+    where: { key: { in: ['AGENT.INQUIRY.VIEW', 'AGENT.INQUIRY.QUOTE'] } },
+    select: { id: true },
+  });
+  await db.rolePermission.createMany({
+    data: permissions.map((p) => ({ tenantId, roleId: role.id, permissionId: p.id })),
+  });
+  await db.user.updateMany({ where: { id: { in: userIds } }, data: { roleId: role.id } });
+}
 
 beforeAll(async () => {
   await cleanup();
@@ -95,6 +130,12 @@ beforeAll(async () => {
   };
   nordic = await makeAgent('AQV-N', 'Nordic Forwarding', 'nordic@aqv.test');
   baltic = await makeAgent('AQV-B', 'Baltic Lines', 'baltic@aqv.test');
+
+  const agentUsers = await owner.user.findMany({
+    where: { tenantId, agentId: { not: null } },
+    select: { id: true },
+  });
+  await grantAgentRole(owner as never, tenantId, agentUsers.map((u) => u.id), 'AQV-ROLE');
 
   const admin = await owner.user.create({
     data: {
@@ -169,7 +210,7 @@ beforeAll(async () => {
   }
 
   const login = await request(app)
-    .post('/api/portal/auth/login')
+    .post('/api/tenant/auth/login')
     .set('X-Tenant-Slug', SLUG)
     .send({ username: 'nordic@aqv.test', password: PASSWORD })
     .expect(200);
@@ -184,7 +225,7 @@ afterAll(async () => {
 describe('a quote an agent submits', () => {
   it('is visible to staff on the inquiry', async () => {
     await request(app)
-      .post(`/api/portal/inquiries/${inquiryId}/quote`)
+      .post(`/api/tenant/agent/inquiries/${inquiryId}/quote`)
       .set('Authorization', `Bearer ${nordicToken}`)
       .set('X-Tenant-Slug', SLUG)
       .send({
@@ -224,7 +265,7 @@ describe('an amendment', () => {
     ).id;
 
     await request(app)
-      .patch(`/api/portal/quotes/${quoteId}`)
+      .patch(`/api/tenant/agent/quotes/${quoteId}`)
       .set('Authorization', `Bearer ${nordicToken}`)
       .set('X-Tenant-Slug', SLUG)
       .send({ amount: '1399', currencyId: currencyId.toString(), transitDays: 19 })
@@ -256,12 +297,12 @@ describe('an amendment', () => {
 describe('who may see it', () => {
   it('shows every agent quote to staff, not just one', async () => {
     const login = await request(app)
-      .post('/api/portal/auth/login')
+      .post('/api/tenant/auth/login')
       .set('X-Tenant-Slug', SLUG)
       .send({ username: 'baltic@aqv.test', password: PASSWORD })
       .expect(200);
     await request(app)
-      .post(`/api/portal/inquiries/${inquiryId}/quote`)
+      .post(`/api/tenant/agent/inquiries/${inquiryId}/quote`)
       .set('Authorization', `Bearer ${login.body.data.accessToken}`)
       .set('X-Tenant-Slug', SLUG)
       .send({ amount: '1502', currencyId: currencyId.toString() })
@@ -288,7 +329,7 @@ describe('who may see it', () => {
 
   it('does not leak another agent quote through the portal', async () => {
     const res = await request(app)
-      .get(`/api/portal/inquiries/${inquiryId}`)
+      .get(`/api/tenant/agent/inquiries/${inquiryId}`)
       .set('Authorization', `Bearer ${nordicToken}`)
       .set('X-Tenant-Slug', SLUG)
       .expect(200);
@@ -336,7 +377,7 @@ describe('answering an agent', () => {
   it('stops the agent amending an answered quote', async () => {
     const quoteId = await quoteOf(nordic);
     await request(app)
-      .patch(`/api/portal/quotes/${quoteId}`)
+      .patch(`/api/tenant/agent/quotes/${quoteId}`)
       .set('Authorization', `Bearer ${nordicToken}`)
       .set('X-Tenant-Slug', SLUG)
       .send({ amount: '1', currencyId: currencyId.toString() })

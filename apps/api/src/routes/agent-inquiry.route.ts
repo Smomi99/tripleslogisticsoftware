@@ -9,6 +9,7 @@ import {
   type ApiSuccess,
   buildMeta,
   CODE_PREFIX,
+  type PortalCurrencyOption,
 } from '@ff/shared';
 
 import { recordAudit } from '../lib/audit';
@@ -19,24 +20,29 @@ import { notifyQuoteSubmitted } from '../lib/quote-notify';
 import { parseId } from '../lib/request';
 import { Prisma } from '../generated/prisma/client';
 import { type TenantDb, withAgent, withTenant } from '../lib/tenant-client';
-import { authenticatePortal } from '../middleware/authenticate';
+import { authenticateAgent } from '../middleware/authenticate';
+import { requirePermission } from '../middleware/require-permission';
 
 /**
- * What an agent can actually do (docs/AGENT_PORTAL_DESIGN.md §4).
+ * Agent Inquiry — the one screen an agent account can reach.
+ *
+ * An agent is an ordinary user of this workspace: created on Add User, given a
+ * role, holding permissions. What makes them different is that their role only
+ * ever carries AGENT.INQUIRY, and `authenticateAgent` refuses their session on
+ * every other router — so a misconfigured role cannot widen what they see.
  *
  * Every route opens its transaction with `withAgent`, so RLS is active for the
- * whole of it and an agent's reach is decided by Phase 3's policies rather than
- * by the correctness of the queries below. The queries filter explicitly as
- * well — belt and braces, on the principle that either layer alone should be
- * enough.
+ * whole of it and an agent's reach is decided by the policies rather than by
+ * the correctness of the queries below. The queries filter explicitly as well —
+ * belt and braces, on the principle that either layer alone should be enough.
  *
  * Inquiries are read from `agent_inquiry_v`, never from `inquiry`. The base
  * table carries customer_id on the row itself; the view has no such column, so
  * there is nothing for a careless `SELECT *` to leak.
  */
-export const portalInquiryRouter: Router = Router();
+export const agentInquiryRouter: Router = Router();
 
-portalInquiryRouter.use(authenticatePortal);
+agentInquiryRouter.use(authenticateAgent);
 
 const PAGE_SIZE = 25;
 
@@ -207,7 +213,7 @@ async function volumesFor(db: TenantDb, inquiryIds: bigint[]) {
 }
 
 /** GET /api/portal/inquiries */
-portalInquiryRouter.get('/', async (req, res) => {
+agentInquiryRouter.get('/', requirePermission('AGENT.INQUIRY.VIEW'), async (req, res) => {
   const auth = req.auth!;
   const agentId = auth.agentId;
   if (agentId === null) throw HttpError.forbidden('This area is for agent accounts.');
@@ -266,7 +272,7 @@ portalInquiryRouter.get('/', async (req, res) => {
 });
 
 /** GET /api/portal/inquiries/:id */
-portalInquiryRouter.get('/:id', async (req, res) => {
+agentInquiryRouter.get('/:id', requirePermission('AGENT.INQUIRY.VIEW'), async (req, res) => {
   const auth = req.auth!;
   const agentId = auth.agentId;
   if (agentId === null) throw HttpError.forbidden('This area is for agent accounts.');
@@ -327,7 +333,7 @@ function assertQuotable(status: string): void {
 }
 
 /** POST /api/portal/inquiries/:id/quote */
-portalInquiryRouter.post('/:id/quote', async (req, res) => {
+agentInquiryRouter.post('/:id/quote', requirePermission('AGENT.INQUIRY.QUOTE'), async (req, res) => {
   const auth = req.auth!;
   const agentId = auth.agentId;
   if (agentId === null) throw HttpError.forbidden('This area is for agent accounts.');
@@ -426,12 +432,12 @@ portalInquiryRouter.post('/:id/quote', async (req, res) => {
   res.status(201).json(payload);
 });
 
-/** PATCH /api/portal/quotes/:id — amend while the inquiry is still open. */
-export const portalQuoteRouter: Router = Router();
+/** PATCH /api/tenant/agent/quotes/:id — amend while the inquiry is open. */
+export const agentQuoteRouter: Router = Router();
 
-portalQuoteRouter.use(authenticatePortal);
+agentQuoteRouter.use(authenticateAgent);
 
-portalQuoteRouter.patch('/:id', async (req, res) => {
+agentQuoteRouter.patch('/:id', requirePermission('AGENT.INQUIRY.QUOTE'), async (req, res) => {
   const auth = req.auth!;
   const agentId = auth.agentId;
   if (agentId === null) throw HttpError.forbidden('This area is for agent accounts.');
@@ -493,5 +499,42 @@ portalQuoteRouter.patch('/:id', async (req, res) => {
   });
 
   const payload: ApiSuccess<AgentQuoteDto> = { success: true, data: quoteToDto(updated) };
+  res.json(payload);
+});
+
+/**
+ * GET /api/tenant/agent/currencies
+ *
+ * The only reference data an agent can enumerate, and it lives beside the
+ * routes that use it so the list stays one screenful.
+ *
+ * Three columns. `conversion`, `tenantRate` and the rate history say something
+ * about the forwarder's margins and are none of an agent's business, so they
+ * are not selected rather than selected and dropped.
+ */
+export const agentReferenceRouter: Router = Router();
+
+agentReferenceRouter.use(authenticateAgent);
+
+agentReferenceRouter.get('/', requirePermission('AGENT.INQUIRY.VIEW'), async (req, res) => {
+  const auth = req.auth!;
+  if (auth.agentId === null) throw HttpError.forbidden('This area is for agent accounts.');
+
+  const rows = await withAgent(auth.tenantId, auth.agentId, (db) =>
+    db.currency.findMany({
+      where: { isActive: true, deletedAt: null },
+      select: { id: true, currency: true },
+      orderBy: { currency: 'asc' },
+    }),
+  );
+
+  const payload: ApiSuccess<PortalCurrencyOption[]> = {
+    success: true,
+    data: rows.map((row) => ({
+      id: row.id.toString(),
+      code: isoCurrency(row.currency),
+      label: row.currency,
+    })),
+  };
   res.json(payload);
 });

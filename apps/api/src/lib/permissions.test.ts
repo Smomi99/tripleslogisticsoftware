@@ -181,8 +181,8 @@ describe('§7 resolution order', () => {
     expect(access.isSuperadmin).toBe(true);
     // The set is empty; hasPermission short-circuits on the flag instead.
     expect(access.permissions.size).toBe(0);
-    expect(hasPermission({ ...access, userId: id, tokenVersion: 0 }, 'ACCOUNTS.BALANCE_SHEET.VIEW')).toBe(true);
-    expect(hasPermission({ ...access, userId: id, tokenVersion: 0 }, 'ANYTHING.AT.ALL')).toBe(true);
+    expect(hasPermission({ ...access, userId: id, tokenVersion: 0, agentId: null }, 'ACCOUNTS.BALANCE_SHEET.VIEW')).toBe(true);
+    expect(hasPermission({ ...access, userId: id, tokenVersion: 0, agentId: null }, 'ANYTHING.AT.ALL')).toBe(true);
   });
 
   it('step 2 — starts from the union of the role permissions', async () => {
@@ -252,7 +252,7 @@ describe('§7 resolution order', () => {
 
     const access = await resolve(id);
     expect(access.isSuperadmin).toBe(true);
-    expect(hasPermission({ ...access, userId: id, tokenVersion: 0 }, VIEW)).toBe(true);
+    expect(hasPermission({ ...access, userId: id, tokenVersion: 0, agentId: null }, VIEW)).toBe(true);
   });
 
   it('step 5 — an inactive user holds nothing, superadmin or not', async () => {

@@ -6,6 +6,11 @@ import { HttpError } from '../lib/http-error';
 import { resolveTenant } from '../middleware/resolve-tenant';
 import { adminRouter } from './admin.route';
 import { agentRouter } from './agent.route';
+import {
+  agentInquiryRouter,
+  agentQuoteRouter,
+  agentReferenceRouter,
+} from './agent-inquiry.route';
 import { authRouter } from './auth.route';
 import { carrierRouter } from './carrier.route';
 import { commodityRouter } from './commodity.route';
@@ -17,7 +22,6 @@ import { freightRateRouter } from './freight-rate.route';
 import { inquiryRouter } from './inquiry.route';
 import { salesLeadRouter } from './sales-lead.route';
 import { portRouter } from './port.route';
-import { portalUserRouter } from './portal-user.route';
 import { notificationSettingRouter } from './notification-setting.route';
 import { rateLookupRouter } from './rate-lookup.route';
 import { vendorRouter } from './vendor.route';
@@ -60,11 +64,15 @@ tenantRouter.use('/sales', salesLeadRouter);
 // CRM.
 tenantRouter.use('/crm/customers', customerRouter);
 tenantRouter.use('/crm/agents', agentRouter);
-// Portal access for an agent's contacts. Mounted after agentRouter so only the
-// rarer portal-user calls fall through both; superadmin-only inside.
-tenantRouter.use('/crm/agents', portalUserRouter);
 tenantRouter.use('/crm/employees', employeeRouter);
 tenantRouter.use('/crm/users', userRouter);
+
+// The one module an agent account can reach. Its routers authenticate with
+// authenticateAgent, which refuses a staff session — the mirror of every
+// router above, all of which refuse an agent one.
+tenantRouter.use('/agent/inquiries', agentInquiryRouter);
+tenantRouter.use('/agent/quotes', agentQuoteRouter);
+tenantRouter.use('/agent/currencies', agentReferenceRouter);
 
 // §7 superadmin screens.
 tenantRouter.use('/admin', adminRouter);

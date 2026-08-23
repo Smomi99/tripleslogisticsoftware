@@ -117,14 +117,6 @@ const PUBLIC_PATHS = new Set([
   'post /api/tenant/auth/login',
   'post /api/tenant/auth/refresh',
   'post /api/tenant/auth/logout',
-  'post /api/portal/auth/login',
-  'post /api/portal/auth/refresh',
-  'post /api/portal/auth/logout',
-  // The invite and reset flows: whoever uses these has no password yet, or has
-  // forgotten it. That is the entire point.
-  'post /api/portal/auth/accept-invite',
-  'post /api/portal/auth/request-reset',
-  'post /api/portal/auth/complete-reset',
   // Which workspace the host resolved to. Carries no tenant data beyond an id
   // and a status, and the app shell needs it before sign-in.
   'get /api/tenant/context',
@@ -220,7 +212,7 @@ describe('the route table', () => {
     expect(found.length).toBeGreaterThan(100);
     const templates = [...new Set(found.map((e) => e.template))].sort();
     expect(templates).toContain('/api/tenant/setting/ports');
-    expect(templates).toContain('/api/portal/inquiries');
+    expect(templates).toContain('/api/tenant/agent/inquiries');
   });
 
   it('names every publicly reachable path', () => {
@@ -250,16 +242,31 @@ describe('nothing is reachable without a session', () => {
   });
 });
 
+/** The one module an agent account may reach. */
+const AGENT_PREFIX = '/api/tenant/agent/';
+
+/**
+ * Routes that deliberately serve BOTH kinds of user, and the list is one long.
+ *
+ * `/auth/me` returns the caller's own identity and their own permission set and
+ * nothing else, so neither kind learns anything about the other. Anything that
+ * returns business data has to pick a side.
+ */
+const BOTH_KINDS = new Set(['get /api/tenant/auth/me']);
+
 describe('an agent credential opens no staff route', () => {
-  it('is refused by every route under /api/tenant', async () => {
-    // The guard is folded into authenticate itself, so this holds for all of
-    // them without a line being added to any router. This test is what proves
-    // that claim rather than restating it.
+  it('is refused by every route under /api/tenant except its own module', async () => {
+    // Agents now sign in at the same door as staff and hold a role like anyone
+    // else — so this is the test that matters most. A role is a list somebody
+    // ticked; ticking CRM.CUSTOMER.VIEW onto an agent's role must not show them
+    // your customers, and the kind check above the permission check is why it
+    // cannot.
     const reachable: string[] = [];
     let checked = 0;
     for (const endpoint of endpoints()) {
       if (!endpoint.template.startsWith('/api/tenant')) continue;
-      if (PUBLIC_PATHS.has(key(endpoint))) continue;
+      if (endpoint.template.startsWith(AGENT_PREFIX)) continue;
+      if (PUBLIC_PATHS.has(key(endpoint)) || BOTH_KINDS.has(key(endpoint))) continue;
       checked += 1;
       const res = await send(endpoint, agentToken);
       if (res.status !== 403) reachable.push(`${key(endpoint)} -> ${res.status}`);
@@ -273,24 +280,23 @@ describe('an agent credential opens no staff route', () => {
   });
 });
 
-describe('a staff credential opens no portal route', () => {
-  it('is refused by every route under /api/portal', async () => {
-    // The other direction matters too. A staff member reading the portal as an
-    // agent would see it through that agent's row level security, which is a
+describe('a staff credential opens no agent route', () => {
+  it('is refused by every route under /api/tenant/agent', async () => {
+    // The other direction matters too. A staff member reading Agent Inquiry
+    // would see it through that agent's row level security, which is a
     // confusing and untestable state to allow.
     const reachable: string[] = [];
     let checked = 0;
     for (const endpoint of endpoints()) {
-      if (!endpoint.template.startsWith('/api/portal')) continue;
-      if (PUBLIC_PATHS.has(key(endpoint))) continue;
+      if (!endpoint.template.startsWith(AGENT_PREFIX)) continue;
       checked += 1;
       const res = await send(endpoint, staffToken);
       if (res.status !== 403) reachable.push(`${key(endpoint)} -> ${res.status}`);
     }
-    expect(checked).toBeGreaterThan(4);
+    expect(checked).toBeGreaterThan(3);
     expect(
       reachable,
-      `portal routes a staff token was not refused by:\n${reachable.join('\n')}`,
+      `agent routes a staff token was not refused by:` + reachable.join(', '),
     ).toEqual([]);
   });
 });

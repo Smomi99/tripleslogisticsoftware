@@ -17,6 +17,8 @@ export interface ResolvedAccess {
   /** Empty for a superadmin — step 1 short-circuits before this matters. */
   permissions: Set<string>;
   tokenVersion: number;
+  /** Set on an agent account, so a refreshed token keeps the claim. */
+  agentId: bigint | null;
 }
 
 export interface AccountRow {
@@ -78,6 +80,9 @@ export async function resolvePermissions(
     isSuperadmin: false,
     permissions: new Set<string>(),
     tokenVersion: account.tokenVersion,
+    // Carried so a refreshed token keeps the claim; authenticate compares it
+    // against the row and rejects a mismatch.
+    agentId: account.agentId,
   };
 
   // Step 5 — an inactive user gets nothing, superadmin or not.

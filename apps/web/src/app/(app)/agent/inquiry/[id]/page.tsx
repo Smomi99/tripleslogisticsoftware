@@ -17,7 +17,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
 import { ApiError } from '@/lib/api-client';
-import { usePortalSession } from '@/lib/portal-session';
+import { useSession } from '@/lib/session';
 
 /**
  * One inquiry, and the form that answers it (§5).
@@ -46,7 +46,7 @@ function Detail({ label, value, mono }: { label: string; value: string | null; m
 
 export default function PortalInquiryDetailPage() {
   const params = useParams<{ id: string }>();
-  const { request, list } = usePortalSession();
+  const { authorizedRequest: request, authorizedList: list } = useSession();
   const [inquiry, setInquiry] = useState<AgentInquiryDto | null>(null);
   const [currencies, setCurrencies] = useState<PortalCurrencyOption[]>([]);
   const [notFound, setNotFound] = useState(false);
@@ -64,7 +64,7 @@ export default function PortalInquiryDetailPage() {
 
   const load = useCallback(async () => {
     try {
-      const data = await request<AgentInquiryDto>(`/api/portal/inquiries/${params.id}`);
+      const data = await request<AgentInquiryDto>(`/api/tenant/agent/inquiries/${params.id}`);
       setInquiry(data);
       reset({
         amount: data.quote?.amount ?? '',
@@ -90,7 +90,7 @@ export default function PortalInquiryDetailPage() {
     void (async () => {
       try {
         // Currencies are one of the few reference tables an agent may read.
-        const result = await list<PortalCurrencyOption[]>('/api/portal/currencies');
+        const result = await list<PortalCurrencyOption[]>('/api/tenant/agent/currencies');
         setCurrencies(result.data);
       } catch {
         // A quote can still be typed; the select simply has fewer options.
@@ -114,11 +114,11 @@ export default function PortalInquiryDetailPage() {
       const existing = inquiry?.quote ?? null;
       const saved =
         existing === null
-          ? await request<AgentQuoteDto>(`/api/portal/inquiries/${params.id}/quote`, {
+          ? await request<AgentQuoteDto>(`/api/tenant/agent/inquiries/${params.id}/quote`, {
               method: 'POST',
               body,
             })
-          : await request<AgentQuoteDto>(`/api/portal/quotes/${existing.id}`, {
+          : await request<AgentQuoteDto>(`/api/tenant/agent/quotes/${existing.id}`, {
               method: 'PATCH',
               body,
             });
@@ -142,7 +142,7 @@ export default function PortalInquiryDetailPage() {
           This inquiry is not one your forwarder has sent you, or it has been withdrawn.
         </p>
         <Button asChild variant="secondary">
-          <Link href="/portal">Back to inquiries</Link>
+          <Link href="/agent/inquiry">Back to inquiries</Link>
         </Button>
       </div>
     );
@@ -168,7 +168,7 @@ export default function PortalInquiryDetailPage() {
       <div className="flex flex-col gap-1">
         {/* Required on every child screen (§8), and doubly so here: this is the
             only way back for someone who arrived from an email link. */}
-        <Link href="/portal" className="text-cell text-harbour hover:underline">
+        <Link href="/agent/inquiry" className="text-cell text-harbour hover:underline">
           ← Back to inquiries
         </Link>
         <h1 className="font-mono text-page-title tabular-nums text-hull">{inquiry.code}</h1>

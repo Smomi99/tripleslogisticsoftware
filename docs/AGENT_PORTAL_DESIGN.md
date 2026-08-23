@@ -1,5 +1,24 @@
 # Agent Portal — final architecture
 
+> **SUPERSEDED IN PART, 2026-08-24.** The client reviewed the built portal and
+> asked for a simpler shape. What follows still describes the security model
+> accurately — it is the reason the change was cheap — but three decisions in it
+> were reversed:
+>
+> | This document says | What is built now |
+> |---|---|
+> | One login per agent CONTACT, created by emailed invite | One login per agent COMPANY, created on CRM → User like an employee. Its contacts share it. |
+> | A separate portal at `/portal`, its own shell and cookie | The same app and the same `/login`. An agent's sidebar holds one group, **Agent**, with one screen, **Agent Inquiry**. |
+> | Agents hold no §7 permissions; routers decide their reach | Agents hold a role like any user. `AGENT.INQUIRY` with VIEW and QUOTE is the grant. |
+>
+> Everything else survived unchanged and is still the load-bearing part: the RLS
+> policies (§3), `agent_inquiry_v` and `agent_inquiry_volume_v` (§3.4), the audit
+> trail (Phase 0), and `authenticateAgent`, which still refuses an agent session
+> on every staff router — now doubly important, because a role is a list somebody
+> ticked and ticking the wrong box must not widen what an outsider sees.
+>
+> The invite flow, `user_credential_token`, and the `/portal` routes are gone.
+
 **Status:** design, awaiting approval. No code, no migrations, no data touched.
 **Supersedes:** the open-questions draft of this file (see git history).
 **Read with:** CLAUDE.md §7 (RBAC), §7A (multi-tenancy), §4 rules 3, 5, 7 and 10.

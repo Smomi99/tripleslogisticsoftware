@@ -28,6 +28,15 @@ export interface AuthenticatedUser {
   email: string;
   name: string | null;
   isSuperadmin: boolean;
+  /**
+   * Set when this account belongs to an agent rather than to staff.
+   *
+   * The web app uses it to label the top bar with the agent's own company —
+   * never to decide what may be reached. That is the API's job, and it reads
+   * the value from the user row rather than from anything the client holds.
+   */
+  agentId: string | null;
+  agentName: string | null;
   roleName: string | null;
   /** Resolved permission keys. Empty for a superadmin, who bypasses the check. */
   permissions: string[];

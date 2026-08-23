@@ -78,7 +78,6 @@ export const TENANT_OWNED_MODELS = [
   'SalesLeadFollowup',
   'TenantMasterOverride',
   'User',
-  'UserCredentialToken',
   'UserPermission',
   'Vendor',
   'VendorPic',

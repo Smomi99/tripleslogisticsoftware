@@ -58,6 +58,8 @@ async function cleanup(): Promise<void> {
     // Users reference agents, so they have to go first — the portal added a
     // foreign key that did not exist when these teardowns were written.
     '"user"',
+    'role_permission',
+    'role',
     'agent_pic',
     'agent',
     'customer',
@@ -76,11 +78,45 @@ function get(path: string, token: string) {
 
 async function agentToken(username: string): Promise<string> {
   const res = await request(app)
-    .post('/api/portal/auth/login')
+    .post('/api/tenant/auth/login')
     .set('X-Tenant-Slug', SLUG)
     .send({ username, password: PASSWORD })
     .expect(200);
   return res.body.data.accessToken as string;
+}
+
+/**
+ * Gives an agent user the role that grants Agent Inquiry.
+ *
+ * An agent is an ordinary user now: the routes are behind
+ * requirePermission('AGENT.INQUIRY.*'), so without a role they reach nothing —
+ * which is the point, and which these fixtures have to honour like any other
+ * user would.
+ */
+async function grantAgentRole(
+  owner: { $queryRawUnsafe: (sql: string) => Promise<unknown>; [k: string]: unknown },
+  tenantId: bigint,
+  userIds: bigint[],
+  code: string,
+): Promise<void> {
+  const db = owner as unknown as {
+    role: { create: (a: unknown) => Promise<{ id: bigint }> };
+    permission: { findMany: (a: unknown) => Promise<{ id: bigint }[]> };
+    rolePermission: { createMany: (a: unknown) => Promise<unknown> };
+    user: { updateMany: (a: unknown) => Promise<unknown> };
+  };
+  const role = await db.role.create({
+    data: { tenantId, code, name: `${code} agent role` },
+    select: { id: true },
+  });
+  const permissions = await db.permission.findMany({
+    where: { key: { in: ['AGENT.INQUIRY.VIEW', 'AGENT.INQUIRY.QUOTE'] } },
+    select: { id: true },
+  });
+  await db.rolePermission.createMany({
+    data: permissions.map((p) => ({ tenantId, roleId: role.id, permissionId: p.id })),
+  });
+  await db.user.updateMany({ where: { id: { in: userIds } }, data: { roleId: role.id } });
 }
 
 beforeAll(async () => {
@@ -115,6 +151,12 @@ beforeAll(async () => {
   };
   nordic = await makeAgent('PIQ-N', 'Nordic Forwarding', 'nordic@agent.test');
   baltic = await makeAgent('PIQ-B', 'Baltic Lines', 'baltic@agent.test');
+
+  const agentUsers = await owner.user.findMany({
+    where: { tenantId, agentId: { not: null } },
+    select: { id: true },
+  });
+  await grantAgentRole(owner as never, tenantId, agentUsers.map((u) => u.id), 'PIQ-ROLE');
 
   const staff = await owner.user.create({
     data: {
@@ -232,19 +274,19 @@ afterAll(async () => {
 
 describe('the inquiry list', () => {
   it('shows only what this agent was sent', async () => {
-    const res = await get('/api/portal/inquiries', nordicToken).expect(200);
+    const res = await get('/api/tenant/agent/inquiries', nordicToken).expect(200);
     const codes = (res.body.data as { code: string }[]).map((i) => i.code);
     expect(codes.sort()).toEqual(['INQ-2026-PIQ001', 'INQ-2026-PIQ004']);
   });
 
   it('shows a different agent something different', async () => {
-    const res = await get('/api/portal/inquiries', balticToken).expect(200);
+    const res = await get('/api/tenant/agent/inquiries', balticToken).expect(200);
     const codes = (res.body.data as { code: string }[]).map((i) => i.code);
     expect(codes).toEqual(['INQ-2026-PIQ002']);
   });
 
   it('carries no customer and no target price, at all', async () => {
-    const res = await get('/api/portal/inquiries', nordicToken).expect(200);
+    const res = await get('/api/tenant/agent/inquiries', nordicToken).expect(200);
     const body = JSON.stringify(res.body);
     // Not "the field is null" — the name never enters the response, and
     // neither does the figure the customer was willing to pay.
@@ -263,7 +305,7 @@ describe('the inquiry list', () => {
   });
 
   it('renders the lane an agent needs to price it', async () => {
-    const res = await get('/api/portal/inquiries', nordicToken).expect(200);
+    const res = await get('/api/tenant/agent/inquiries', nordicToken).expect(200);
     const inquiry = (res.body.data as Record<string, unknown>[]).find(
       (i) => i['code'] === 'INQ-2026-PIQ001',
     )!;
@@ -278,13 +320,13 @@ describe('the inquiry list', () => {
   });
 
   it('refuses a staff token', async () => {
-    await get('/api/portal/inquiries', staffToken).expect(403);
+    await get('/api/tenant/agent/inquiries', staffToken).expect(403);
   });
 });
 
 describe('opening one inquiry', () => {
   it('returns the detail and records that it was read', async () => {
-    await get(`/api/portal/inquiries/${sharedInquiry}`, nordicToken).expect(200);
+    await get(`/api/tenant/agent/inquiries/${sharedInquiry}`, nordicToken).expect(200);
 
     const viewed = await owner.auditLog.findMany({
       where: { tenantId, action: 'VIEW', tableName: 'inquiry' },
@@ -299,11 +341,11 @@ describe('opening one inquiry', () => {
   it('answers 404 for an inquiry belonging to another agent', async () => {
     // 404 rather than 403: a 403 would confirm the inquiry exists, which is
     // itself something this agent is not entitled to know.
-    await get(`/api/portal/inquiries/${balticInquiry}`, nordicToken).expect(404);
+    await get(`/api/tenant/agent/inquiries/${balticInquiry}`, nordicToken).expect(404);
   });
 
   it('answers 404 for an inquiry nobody was sent', async () => {
-    await get(`/api/portal/inquiries/${unsentInquiry}`, nordicToken).expect(404);
+    await get(`/api/tenant/agent/inquiries/${unsentInquiry}`, nordicToken).expect(404);
   });
 });
 
@@ -327,7 +369,7 @@ describe('submitting a quote', () => {
 
   it('accepts one, and tells the price team', async () => {
     sent.length = 0;
-    const res = await post(`/api/portal/inquiries/${sharedInquiry}/quote`, nordicToken, quote())
+    const res = await post(`/api/tenant/agent/inquiries/${sharedInquiry}/quote`, nordicToken, quote())
       .expect(201);
     expect(res.body.data.amount).toBe('1450.5');
     expect(res.body.data.status).toBe('SUBMITTED');
@@ -351,22 +393,22 @@ describe('submitting a quote', () => {
   });
 
   it('shows the quote back on the inquiry', async () => {
-    const res = await get(`/api/portal/inquiries/${sharedInquiry}`, nordicToken).expect(200);
+    const res = await get(`/api/tenant/agent/inquiries/${sharedInquiry}`, nordicToken).expect(200);
     expect(res.body.data.quote.amount).toBe('1450.5');
     expect(res.body.data.quote.currencyCode).toBeTruthy();
   });
 
   it('refuses a second quote on the same inquiry', async () => {
-    await post(`/api/portal/inquiries/${sharedInquiry}/quote`, nordicToken, quote()).expect(409);
+    await post(`/api/tenant/agent/inquiries/${sharedInquiry}/quote`, nordicToken, quote()).expect(409);
   });
 
   it('refuses to quote another agent inquiry', async () => {
-    await post(`/api/portal/inquiries/${balticInquiry}/quote`, nordicToken, quote()).expect(404);
+    await post(`/api/tenant/agent/inquiries/${balticInquiry}/quote`, nordicToken, quote()).expect(404);
   });
 
   it('refuses to quote an inquiry that has been won', async () => {
     const res = await post(
-      `/api/portal/inquiries/${closedInquiry}/quote`,
+      `/api/tenant/agent/inquiries/${closedInquiry}/quote`,
       nordicToken,
       quote(),
     ).expect(409);
@@ -374,7 +416,7 @@ describe('submitting a quote', () => {
   });
 
   it('refuses a price of zero', async () => {
-    await post(`/api/portal/inquiries/${unsentInquiry}/quote`, nordicToken, quote({ amount: '0' }))
+    await post(`/api/tenant/agent/inquiries/${unsentInquiry}/quote`, nordicToken, quote({ amount: '0' }))
       .expect(400);
   });
 
@@ -403,7 +445,7 @@ describe('amending a quote', () => {
       where: { tenantId, inquiryId: sharedInquiry },
       select: { id: true },
     });
-    const res = await patch(`/api/portal/quotes/${quote.id}`, nordicToken, {
+    const res = await patch(`/api/tenant/agent/quotes/${quote.id}`, nordicToken, {
       amount: '1399',
       currencyId: currencyId.toString(),
     }).expect(200);
@@ -421,7 +463,7 @@ describe('amending a quote', () => {
       where: { tenantId, inquiryId: sharedInquiry },
       select: { id: true },
     });
-    await patch(`/api/portal/quotes/${quote.id}`, balticToken, {
+    await patch(`/api/tenant/agent/quotes/${quote.id}`, balticToken, {
       amount: '1',
       currencyId: currencyId.toString(),
     }).expect(404);
@@ -434,7 +476,7 @@ describe('amending a quote', () => {
     });
     await owner.inquiry.update({ where: { id: sharedInquiry }, data: { status: 'QUOTED' } });
 
-    const res = await patch(`/api/portal/quotes/${quote.id}`, nordicToken, {
+    const res = await patch(`/api/tenant/agent/quotes/${quote.id}`, nordicToken, {
       amount: '1000',
       currencyId: currencyId.toString(),
     }).expect(409);
