@@ -251,6 +251,24 @@ describe('an agent account cannot also be a staff account', () => {
     ).rejects.toThrow(/user_agent_is_external/);
   });
 
+  it('refuses a blanket promotion of every agent account at once', async () => {
+    // The query somebody would actually run if they wanted to do this — not a
+    // careful per-row update the service layer might have guarded, but one
+    // sweeping statement typed into psql. The constraint is checked per row, so
+    // the whole statement fails.
+    await expect(
+      owner.$executeRawUnsafe(`UPDATE "user" SET is_superadmin = true WHERE agent_id IS NOT NULL`),
+    ).rejects.toThrow(/user_agent_is_external/);
+  });
+
+  it('refuses to attach a role to every agent account at once', async () => {
+    await expect(
+      owner.$executeRawUnsafe(
+        `UPDATE "user" SET role_id = ${roleA} WHERE agent_id IS NOT NULL AND tenant_id = ${tenantA}`,
+      ),
+    ).rejects.toThrow(/user_agent_is_external/);
+  });
+
   it('leaves staff accounts alone', async () => {
     const staff = await owner.user.create({
       data: userRow(tenantA, 'staff', { employeeId: employeeA, roleId: roleA, isSuperadmin: true }),

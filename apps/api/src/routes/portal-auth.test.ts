@@ -270,6 +270,42 @@ describe('inviting an agent contact', () => {
     expect(res.body.error.code).toBe('INVITE_INVALID');
   });
 
+  it('refuses an invite that has expired', async () => {
+    // Seven days is long enough that an expired invite is a real case, not a
+    // theoretical one — and an invite that still worked afterwards would be a
+    // password reset for anyone who kept the email.
+    const pic = await owner.agentPic.create({
+      data: {
+        tenantId,
+        code: 'PTL-PIC3',
+        agentId,
+        name: 'Lars Holm',
+        email: 'lars@nordic.test',
+      },
+      select: { id: true },
+    });
+    sent.length = 0;
+    await request(app)
+      .post(`/api/tenant/crm/agents/${agentId}/portal-users`)
+      .set('Authorization', `Bearer ${superToken}`)
+      .set('X-Tenant-Slug', SLUG)
+      .send({ agentPicId: pic.id.toString() })
+      .expect(201);
+    const token = linkToken();
+
+    await owner.userCredentialToken.updateMany({
+      where: { tenantId, purpose: 'INVITE', usedAt: null },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+
+    const res = await request(app)
+      .post('/api/portal/auth/accept-invite')
+      .set('X-Tenant-Slug', SLUG)
+      .send({ token, password: PASSWORD })
+      .expect(400);
+    expect(res.body.error.code).toBe('INVITE_INVALID');
+  });
+
   it('refuses a link with the right shape and the wrong secret', async () => {
     const token = linkToken();
     const forged = `${token.split('.')[0]}.${'A'.repeat(43)}`;
@@ -456,6 +492,25 @@ describe('resetting a forgotten password', () => {
     // being an enumeration hole, so the response cannot differ — and no mail
     // goes anywhere.
     expect(sent).toHaveLength(0);
+  });
+
+  it('answers a known and an unknown address identically', async () => {
+    // Not just "both return 200". The status, the body and the shape have to
+    // match, or the difference itself tells an attacker which of a forwarder's
+    // agents are real — commercially sensitive quite apart from enumeration.
+    resetAllLimits();
+    const unknown = await request(app)
+      .post('/api/portal/auth/request-reset')
+      .set('X-Tenant-Slug', SLUG)
+      .send({ email: 'stranger@nowhere.test' });
+    resetAllLimits();
+    const known = await request(app)
+      .post('/api/portal/auth/request-reset')
+      .set('X-Tenant-Slug', SLUG)
+      .send({ email: 'mette@nordic.test' });
+
+    expect(unknown.status).toBe(known.status);
+    expect(unknown.body).toEqual(known.body);
   });
 
   it('sends a link for an address that does', async () => {

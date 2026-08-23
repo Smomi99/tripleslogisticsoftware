@@ -479,6 +479,34 @@ describe('the view is the column boundary', () => {
   });
 });
 
+describe('selection can be taken away again', () => {
+  it('hides an inquiry the moment the party row is removed', async () => {
+    await asAgent(tenantA, nordic);
+    expect(await count('inquiry')).toBe(1);
+
+    // The forwarder changes their mind, or the inquiry is re-routed. Access is
+    // not a copy taken at send time — it is a live join, so withdrawing the row
+    // withdraws the inquiry with it.
+    await owner.$executeRawUnsafe(
+      `DELETE FROM inquiry_party WHERE inquiry_id = ${sharedInquiry} AND agent_id = ${nordic}`,
+    );
+    expect(await count('inquiry')).toBe(0);
+    // And the view agrees, since it carries the same predicate independently.
+    expect(await count('agent_inquiry_v')).toBe(0);
+    expect(await count('agent_inquiry_volume_v')).toBe(0);
+
+    // Their own quote survives — it is a record of what they said, not an
+    // entitlement to the inquiry.
+    expect(await count('agent_quote')).toBe(1);
+
+    await owner.$executeRawUnsafe(
+      `INSERT INTO inquiry_party (tenant_id, inquiry_id, agent_id)
+       VALUES (${tenantA}, ${sharedInquiry}, ${nordic})`,
+    );
+    expect(await count('inquiry')).toBe(1);
+  });
+});
+
 describe('the tenant boundary still holds underneath', () => {
   it('shows nothing when an agent is paired with the wrong workspace', async () => {
     // A forged session naming another forwarder's agent id. Both predicates
