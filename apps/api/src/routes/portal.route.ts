@@ -3,6 +3,7 @@ import { Router } from 'express';
 import { resolveTenant } from '../middleware/resolve-tenant';
 import { portalAuthRouter } from './portal-auth.route';
 import { portalInquiryRouter, portalQuoteRouter } from './portal-inquiry.route';
+import { portalReferenceRouter } from './portal-reference.route';
 
 /**
  * The agent portal (docs/AGENT_PORTAL_DESIGN.md).
@@ -20,3 +21,4 @@ portalRouter.use(resolveTenant);
 portalRouter.use('/auth', portalAuthRouter);
 portalRouter.use('/inquiries', portalInquiryRouter);
 portalRouter.use('/quotes', portalQuoteRouter);
+portalRouter.use('/currencies', portalReferenceRouter);

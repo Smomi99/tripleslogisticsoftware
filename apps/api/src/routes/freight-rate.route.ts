@@ -19,6 +19,7 @@ import { type RequestHandler, Router } from 'express';
 
 import { CODE_RETRY_LIMIT, isUniqueViolation, nextCode } from '../lib/codes';
 import { Prisma } from '../generated/prisma/client';
+import { isoCurrency } from '../lib/currency-label';
 import { HttpError } from '../lib/http-error';
 import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import { buildRatePdf, buildRateWorkbook, exportFilename } from '../lib/rate-export';
@@ -86,15 +87,6 @@ const optionalMoney = (value: Prisma.Decimal | null | undefined): string | null 
 
 /** `YYYY-MM-DD`, the shape the shared schema validates and the form sends. */
 const isoDate = (value: Date): string => value.toISOString().slice(0, 10);
-
-/**
- * "USD — US Dollar" -> "USD".
- *
- * `currency.code` is the business code (CUR-001), not the ISO code; the ISO
- * code is the head of `currency.currency`. Rate tables are dense enough that
- * the full name does not fit beside every figure.
- */
-const isoCurrency = (value: string): string => (value.split('—')[0] ?? value).trim();
 
 /** The exclusion constraint is the authority; this makes its refusal readable. */
 function translateWriteError(error: unknown): never {

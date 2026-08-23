@@ -203,3 +203,19 @@ export const agentInquiryListQuerySchema = z.object({
 });
 
 export type AgentInquiryListQuery = z.infer<typeof agentInquiryListQuerySchema>;
+
+/**
+ * A currency, as the portal offers it.
+ *
+ * Deliberately NOT CurrencyDto. That type carries `conversion`, `tenantRate`
+ * and `effectiveRate` — the forwarder's own booking rates, which say something
+ * about their margins and are no business of an outside company. Three fields
+ * is what a dropdown needs.
+ */
+export interface PortalCurrencyOption {
+  id: string;
+  /** The ISO code, e.g. USD — not the CUR-001 business code. */
+  code: string;
+  /** What the dropdown shows, e.g. "USD — US Dollar". */
+  label: string;
+}

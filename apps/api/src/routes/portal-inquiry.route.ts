@@ -13,6 +13,7 @@ import {
 
 import { recordAudit } from '../lib/audit';
 import { CODE_RETRY_LIMIT, isUniqueViolation, nextCode } from '../lib/codes';
+import { isoCurrency } from '../lib/currency-label';
 import { HttpError } from '../lib/http-error';
 import { notifyQuoteSubmitted } from '../lib/quote-notify';
 import { parseId } from '../lib/request';
@@ -86,7 +87,7 @@ const QUOTE_SELECT = {
   createdAt: true,
   updatedAt: true,
   inquiryId: true,
-  currency: { select: { code: true } },
+  currency: { select: { currency: true } },
 } as const;
 
 type QuoteRow = {
@@ -101,7 +102,7 @@ type QuoteRow = {
   createdAt: Date;
   updatedAt: Date;
   inquiryId: bigint;
-  currency: { code: string } | null;
+  currency: { currency: string } | null;
 };
 
 function quoteToDto(row: QuoteRow): AgentQuoteDto {
@@ -110,7 +111,7 @@ function quoteToDto(row: QuoteRow): AgentQuoteDto {
     code: row.code,
     amount: row.amount?.toString() ?? '0',
     currencyId: row.currencyId.toString(),
-    currencyCode: row.currency?.code ?? null,
+    currencyCode: row.currency === null ? null : isoCurrency(row.currency.currency),
     validUntil: row.validUntil?.toISOString().slice(0, 10) ?? null,
     transitDays: row.transitDays,
     remarks: row.remarks,

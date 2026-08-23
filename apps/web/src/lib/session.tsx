@@ -1,7 +1,7 @@
 'use client';
 
 import type { AuthenticatedUser, LoginResponse } from '@ff/shared';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import {
   createContext,
   useCallback,
@@ -61,6 +61,12 @@ export function SessionProvider({
   tenantSlug: string;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
+  // The agent portal has its own provider, its own cookie and its own
+  // endpoints. This one stands down there rather than trading a staff refresh
+  // cookie on a page an outside company is looking at — the two sessions are
+  // meant to be able to coexist in one browser without touching each other.
+  const isPortal = pathname?.startsWith('/portal') ?? false;
   const [user, setUser] = useState<AuthenticatedUser | null>(null);
   const [status, setStatus] = useState<SessionValue['status']>('loading');
   // A ref, not state: the token must be readable by a request issued in the
@@ -83,6 +89,10 @@ export function SessionProvider({
 
   // Restore the session on first mount.
   useEffect(() => {
+    if (isPortal) {
+      setStatus('anonymous');
+      return;
+    }
     let active = true;
     void (async () => {
       const token = await refresh();
@@ -106,7 +116,7 @@ export function SessionProvider({
     return () => {
       active = false;
     };
-  }, [refresh, tenantSlug]);
+  }, [refresh, tenantSlug, isPortal]);
 
   /**
    * Runs a request, and on a 401 refreshes once and retries.
