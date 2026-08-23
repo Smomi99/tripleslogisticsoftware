@@ -127,7 +127,14 @@ const inquiryInclude = {
     include: { containerType: { select: { code: true } } },
     orderBy: { id: 'asc' },
   },
-  _count: { select: { followups: { where: { deletedAt: null } } } },
+  _count: {
+    select: {
+      followups: { where: { deletedAt: null } },
+      // A withdrawn quote is one the agent took back, so it is not an answer
+      // and should not raise the count on the row.
+      agentQuotes: { where: { deletedAt: null, status: { not: 'WITHDRAWN' } } },
+    },
+  },
 } satisfies Prisma.InquiryInclude;
 
 type InquiryWithRelations = Prisma.InquiryGetPayload<{ include: typeof inquiryInclude }>;
@@ -207,6 +214,7 @@ function toDto(inquiry: InquiryWithRelations, today: Date): InquiryDto {
     partyContacts,
     notifyEmails: inquiry.notifyEmails,
     followupCount: inquiry._count.followups,
+    agentQuoteCount: inquiry._count.agentQuotes,
     // §4 rule 11: past its window but still OPEN. Reported rather than written,
     // so the list can flag it before the job next runs.
     isLapsed:

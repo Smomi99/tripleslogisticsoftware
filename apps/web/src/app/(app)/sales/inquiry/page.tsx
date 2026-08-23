@@ -319,7 +319,7 @@ export default function InquiryListPage() {
                 against it. */}
             {can('SALES.INQUIRY.VIEW') && (
               <Button variant="text" size="inline" onClick={() => setAgentQuotes(row)}>
-                Agent quotes
+                Agent quotes({row.agentQuoteCount})
               </Button>
             )}
             {can('SALES.INQUIRY.FOLLOWUP') && (

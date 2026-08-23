@@ -408,3 +408,61 @@ describe('answering an agent', () => {
     await owner.inquiry.update({ where: { id: inquiryId }, data: { status: 'OPEN' } });
   });
 });
+
+describe('the count on the inquiry row', () => {
+  const listInquiry = async () => {
+    const res = await staff('/api/tenant/sales/inquiries?limit=50').expect(200);
+    return (res.body.data as { id: string; agentQuoteCount: number }[]).find(
+      (row) => row.id === inquiryId.toString(),
+    );
+  };
+
+  it('counts the agents that have priced it', async () => {
+    // Two agents quoted earlier in this file.
+    expect((await listInquiry())?.agentQuoteCount).toBe(2);
+  });
+
+  it('does not count a quote the agent withdrew', async () => {
+    // A withdrawn quote is one the agent took back — there is nothing on the
+    // row to read, so it must not raise the number that says there is.
+    await owner.agentQuote.updateMany({
+      where: { tenantId, agentId: baltic },
+      data: { status: 'WITHDRAWN' },
+    });
+    expect((await listInquiry())?.agentQuoteCount).toBe(1);
+
+    await owner.agentQuote.updateMany({
+      where: { tenantId, agentId: baltic },
+      data: { status: 'SUBMITTED' },
+    });
+  });
+
+  it('is zero on an inquiry nobody has priced', async () => {
+    const bare = await owner.inquiry.findFirstOrThrow({
+      where: { tenantId, code: 'INQ-2026-AQV001' },
+      select: { sourceId: true, customerId: true, polId: true, podId: true },
+    });
+    const quiet = await owner.inquiry.create({
+      data: {
+        tenantId,
+        code: 'INQ-2026-AQV002',
+        seriesYear: 2026,
+        inquiryDate: new Date('2026-08-23'),
+        sourceId: bare.sourceId,
+        shipmentType: 'SEA',
+        customerId: bare.customerId,
+        movementType: 'INBOUND',
+        loadingType: 'FCL',
+        polId: bare.polId,
+        podId: bare.podId,
+      },
+      select: { id: true },
+    });
+
+    const res = await staff('/api/tenant/sales/inquiries?limit=50').expect(200);
+    const row = (res.body.data as { id: string; agentQuoteCount: number }[]).find(
+      (r) => r.id === quiet.id.toString(),
+    );
+    expect(row?.agentQuoteCount).toBe(0);
+  });
+});

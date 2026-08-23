@@ -301,6 +301,13 @@ export interface InquiryDto {
   notifyEmails: string | null;
   /** §5.5's "Follow Up(n)" counter. */
   followupCount: number;
+  /**
+   * How many agents have priced this inquiry.
+   *
+   * Withdrawn quotes are not counted: the agent took the offer back, so there
+   * is nothing on the row to read.
+   */
+  agentQuoteCount: number;
   /** True once §4 rule 11's window has passed but the status still says OPEN. */
   isLapsed: boolean;
 }
