@@ -1,8 +1,10 @@
 'use client';
 
-import type { InquiryDto, StaffAgentQuoteDto } from '@ff/shared';
+import type { AgentQuoteDecision, InquiryDto, StaffAgentQuoteDto } from '@ff/shared';
 import { Fragment, useCallback, useEffect, useState } from 'react';
+import { toast } from 'sonner';
 
+import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Modal } from '@/components/ui/modal';
 import { Status } from '@/components/ui/status';
@@ -49,7 +51,11 @@ function History({ quote }: { quote: StaffAgentQuoteDto }) {
               {new Date(entry.at).toLocaleString()}
             </span>
             <span className="text-cell text-hull">
-              {entry.kind === 'SUBMITTED' ? 'Submitted' : 'Amended'}
+              {entry.kind === 'SUBMITTED'
+                ? 'Submitted'
+                : entry.kind === 'DECIDED'
+                  ? 'Answered by your team'
+                  : 'Amended'}
             </span>
           </span>
           {entry.changes.map((change) => {
@@ -85,6 +91,8 @@ export function AgentQuoteDrawer({
   const [quotes, setQuotes] = useState<StaffAgentQuoteDto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [toDecline, setToDecline] = useState<StaffAgentQuoteDto | null>(null);
 
   const load = useCallback(async () => {
     if (inquiry === null) return;
@@ -105,7 +113,33 @@ export function AgentQuoteDrawer({
     void load();
   }, [load]);
 
+  async function decide(quote: StaffAgentQuoteDto, decision: AgentQuoteDecision): Promise<void> {
+    if (inquiry === null) return;
+    setBusy(quote.id);
+    try {
+      await authorizedRequest(
+        `/api/tenant/sales/inquiries/${inquiry.id}/agent-quotes/${quote.id}/decision`,
+        { method: 'POST', body: { decision } },
+      );
+      toast.success(
+        decision === 'ACCEPTED'
+          ? `Accepted ${quote.agentName}`
+          : `Declined ${quote.agentName}`,
+      );
+      setToDecline(null);
+      await load();
+    } catch (caught) {
+      toast.error(caught instanceof ApiError ? caught.message : 'Could not record that.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
   if (inquiry === null) return null;
+
+  // A settled inquiry takes no more decisions, the same rule that stops it
+  // being re-quoted.
+  const decidable = inquiry.status !== 'WON' && inquiry.status !== 'LOST';
 
   return (
     <Modal
@@ -168,20 +202,55 @@ export function AgentQuoteDrawer({
                       <Status tone={STATUS_TONE[quote.status] ?? 'inactive'}>{quote.status}</Status>
                     </td>
                     <td className="whitespace-nowrap px-2 py-2 text-right text-cell">
-                      {/* The count is the useful signal on a dense row: an
-                          amended quote is worth opening, an untouched one is
-                          not. */}
-                      <button
-                        type="button"
-                        className="text-harbour hover:underline"
-                        onClick={() => setOpen(open === quote.id ? null : quote.id)}
-                      >
-                        {quote.history.length <= 1
-                          ? 'Details'
-                          : `${quote.history.length - 1} amendment${
-                              quote.history.length === 2 ? '' : 's'
-                            }`}
-                      </button>
+                      <span className="inline-flex items-center gap-3">
+                        {/* Reversible on purpose: Accept and Decline are one
+                            mis-click apart, and a decided quote can no longer
+                            be amended by the agent. */}
+                        {decidable && quote.status !== 'WITHDRAWN' && (
+                          <>
+                            {quote.status !== 'ACCEPTED' && (
+                              <Button
+                                variant="text"
+                                size="inline"
+                                disabled={busy === quote.id}
+                                onClick={() => void decide(quote, 'ACCEPTED')}
+                              >
+                                Accept
+                              </Button>
+                            )}
+                            {quote.status !== 'DECLINED' && (
+                              <Button
+                                variant="destructive"
+                                size="inline"
+                                disabled={busy === quote.id}
+                                onClick={() => setToDecline(quote)}
+                              >
+                                Decline
+                              </Button>
+                            )}
+                          </>
+                        )}
+                        {/* The count is the useful signal on a dense row: an
+                            amended quote is worth opening, an untouched one is
+                            not. */}
+                        <button
+                          type="button"
+                          className="text-harbour hover:underline"
+                          onClick={() => setOpen(open === quote.id ? null : quote.id)}
+                        >
+                          {(() => {
+                            // Count what the AGENT changed. A decision is our
+                            // own entry in the trail and would otherwise read
+                            // as though they had moved their price.
+                            const amendments = quote.history.filter(
+                              (h) => h.kind === 'AMENDED',
+                            ).length;
+                            return amendments === 0
+                              ? 'Details'
+                              : `${amendments} amendment${amendments === 1 ? '' : 's'}`;
+                          })()}
+                        </button>
+                      </span>
                     </td>
                   </tr>
                   {open === quote.id && (
@@ -216,6 +285,32 @@ export function AgentQuoteDrawer({
           </table>
         )}
       </div>
+
+      {/* §12: every destructive action confirms. Declining tells an outside
+          company their price was rejected, and stops them amending it. */}
+      <Modal
+        open={toDecline !== null}
+        onOpenChange={(next) => !next && setToDecline(null)}
+        title="Decline this quote"
+        description={
+          toDecline === null
+            ? ''
+            : `${toDecline.agentName} will no longer be able to amend their price on ${inquiry.code}.`
+        }
+      >
+        <div className="flex justify-end gap-2">
+          <Button variant="secondary" onClick={() => setToDecline(null)}>
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            disabled={busy !== null}
+            onClick={() => toDecline !== null && void decide(toDecline, 'DECLINED')}
+          >
+            Decline
+          </Button>
+        </div>
+      </Modal>
     </Modal>
   );
 }

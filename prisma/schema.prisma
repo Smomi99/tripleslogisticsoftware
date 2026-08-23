@@ -157,6 +157,8 @@ enum AuditAction {
   PASSWORD_RESET_COMPLETED
   QUOTE_SUBMITTED
   QUOTE_AMENDED
+  QUOTE_ACCEPTED
+  QUOTE_DECLINED
 
   @@map("audit_action")
 }

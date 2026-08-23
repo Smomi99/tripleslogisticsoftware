@@ -261,8 +261,27 @@ export interface StaffAgentQuoteDto {
  */
 export interface AgentQuoteChangeDto {
   at: string;
-  /** SUBMITTED for the first version, AMENDED after that. */
-  kind: 'SUBMITTED' | 'AMENDED';
+  /**
+   * SUBMITTED for the first version, AMENDED when the agent changed their
+   * offer, DECIDED when the forwarder answered it.
+   *
+   * The third matters: an accept or a decline is an UPDATE like any other, so
+   * without separating it a forwarder's own decision shows up as though the
+   * agent had moved their price.
+   */
+  kind: 'SUBMITTED' | 'AMENDED' | 'DECIDED';
   /** Only the fields that actually moved. */
   changes: { field: string; from: string | null; to: string | null }[];
 }
+
+/**
+ * The forwarder's answer to an agent's quote.
+ *
+ * Two outcomes only. WITHDRAWN belongs to the agent, and SUBMITTED is where a
+ * quote starts — neither is something staff set.
+ */
+export const agentQuoteDecisionSchema = z.object({
+  decision: z.enum(['ACCEPTED', 'DECLINED']),
+});
+
+export type AgentQuoteDecision = z.infer<typeof agentQuoteDecisionSchema>['decision'];

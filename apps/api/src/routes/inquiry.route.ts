@@ -21,11 +21,13 @@ import {
   OUTCOME_STATUSES,
   type InquiryVolumeDto,
   type LookupOption,
+  agentQuoteDecisionSchema,
   type StaffAgentQuoteDto,
 } from '@ff/shared';
 import { Router } from 'express';
 
 import { quoteHistory } from '../lib/agent-quote-history';
+import { recordAudit } from '../lib/audit';
 import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
 import { isoCurrency } from '../lib/currency-label';
 import { Prisma } from '../generated/prisma/client';
@@ -942,6 +944,67 @@ inquiryRouter.get(
     if (quotes === null) throw HttpError.notFound('Inquiry not found.');
 
     const payload: ApiSuccess<StaffAgentQuoteDto[]> = { success: true, data: quotes };
+    res.json(payload);
+  },
+);
+
+/**
+ * POST /api/tenant/sales/inquiries/:id/agent-quotes/:quoteId/decision
+ *
+ * Answering an agent. Guarded by ATTACH_PRICE rather than a new action:
+ * deciding which supplier's price the inquiry carries is the same commercial
+ * decision the Price drawer already makes, taken by the same people.
+ *
+ * Deliberately reversible while the inquiry is still live. Accept and Decline
+ * are one mis-click apart, and once a quote leaves SUBMITTED the agent can no
+ * longer amend it — so a one-way door here would strand them behind a mistake
+ * nobody at the forwarder could undo.
+ *
+ * What it deliberately does NOT do is decline the other agents. Whether
+ * accepting one offer settles the rest is a business rule nobody has stated,
+ * and a forwarder may well accept two for different equipment.
+ */
+inquiryRouter.post(
+  '/inquiries/:id/agent-quotes/:quoteId/decision',
+  requirePermission(`${FEATURE}.ATTACH_PRICE`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'inquiry');
+    const quoteId = parseId(req.params.quoteId, 'quote');
+    const { decision } = agentQuoteDecisionSchema.parse(req.body);
+
+    const updated = await withTenant(auth.tenantId, async (db) => {
+      const inquiry = await findScopedInquiry(db, auth, id);
+      if (inquiry.status === 'WON' || inquiry.status === 'LOST') {
+        throw HttpError.conflict(`${inquiry.code} is already ${inquiry.status}.`);
+      }
+
+      const quote = await db.agentQuote.findFirst({
+        where: { id: quoteId, inquiryId: id, deletedAt: null },
+        select: { id: true, status: true },
+      });
+      if (quote === null) throw HttpError.notFound('That quote no longer exists.');
+      if (quote.status === 'WITHDRAWN') {
+        throw HttpError.conflict('That quote was withdrawn by the agent.');
+      }
+
+      await db.agentQuote.update({
+        where: { id: quoteId },
+        data: { status: decision, updatedBy: auth.userId },
+      });
+      return quote.id;
+    });
+
+    await recordAudit({
+      tenantId: auth.tenantId,
+      action: decision === 'ACCEPTED' ? 'QUOTE_ACCEPTED' : 'QUOTE_DECLINED',
+      tableName: 'agent_quote',
+      recordId: updated,
+      actorId: auth.userId,
+      details: { inquiryId: id.toString() },
+    });
+
+    const payload: ApiSuccess<{ decision: string }> = { success: true, data: { decision } };
     res.json(payload);
   },
 );

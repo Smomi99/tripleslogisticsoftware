@@ -297,3 +297,114 @@ describe('who may see it', () => {
     expect(JSON.stringify(res.body)).not.toContain('Baltic');
   });
 });
+
+describe('answering an agent', () => {
+  const decide = (quoteId: bigint, decision: 'ACCEPTED' | 'DECLINED') =>
+    request(app)
+      .post(`/api/tenant/sales/inquiries/${inquiryId}/agent-quotes/${quoteId}/decision`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .set('X-Tenant-Slug', SLUG)
+      .send({ decision });
+
+  const quoteOf = async (agentId: bigint) =>
+    (
+      await owner.agentQuote.findFirstOrThrow({
+        where: { tenantId, agentId },
+        select: { id: true },
+      })
+    ).id;
+
+  it('accepts one', async () => {
+    await decide(await quoteOf(nordic), 'ACCEPTED').expect(200);
+    const res = await staff(`/api/tenant/sales/inquiries/${inquiryId}/agent-quotes`).expect(200);
+    const nordicQuote = res.body.data.find(
+      (q: { agentName: string }) => q.agentName === 'Nordic Forwarding',
+    );
+    expect(nordicQuote.status).toBe('ACCEPTED');
+  });
+
+  it('leaves the other agents alone', async () => {
+    // Whether accepting one settles the rest is a rule nobody has stated, and a
+    // forwarder may take two offers for different equipment.
+    const res = await staff(`/api/tenant/sales/inquiries/${inquiryId}/agent-quotes`).expect(200);
+    const baltic = res.body.data.find(
+      (q: { agentName: string }) => q.agentName === 'Baltic Lines',
+    );
+    expect(baltic.status).toBe('SUBMITTED');
+  });
+
+  it('stops the agent amending an answered quote', async () => {
+    const quoteId = await quoteOf(nordic);
+    await request(app)
+      .patch(`/api/portal/quotes/${quoteId}`)
+      .set('Authorization', `Bearer ${nordicToken}`)
+      .set('X-Tenant-Slug', SLUG)
+      .send({ amount: '1', currencyId: currencyId.toString() })
+      .expect(409);
+  });
+
+  it('can be reversed while the inquiry is live', async () => {
+    // Accept and Decline are one mis-click apart, and the agent can no longer
+    // amend — a one-way door would strand them behind someone else's mistake.
+    const quoteId = await quoteOf(nordic);
+    await decide(quoteId, 'DECLINED').expect(200);
+    const res = await staff(`/api/tenant/sales/inquiries/${inquiryId}/agent-quotes`).expect(200);
+    const nordicQuote = res.body.data.find(
+      (q: { agentName: string }) => q.agentName === 'Nordic Forwarding',
+    );
+    expect(nordicQuote.status).toBe('DECLINED');
+  });
+
+  it('reads a decision as ours, not as the agent repricing', async () => {
+    // An accept is an UPDATE like any other. Without separating it, the
+    // forwarder's own answer appears in the history as though the agent had
+    // moved their price — and gets counted as an amendment on screen.
+    const res = await staff(`/api/tenant/sales/inquiries/${inquiryId}/agent-quotes`).expect(200);
+    const nordicQuote = res.body.data.find(
+      (q: { agentName: string }) => q.agentName === 'Nordic Forwarding',
+    );
+    const kinds = nordicQuote.history.map((h: { kind: string }) => h.kind);
+    expect(kinds).toContain('DECIDED');
+    // Every decision entry moves the status and nothing else — that IS what
+    // makes it a decision rather than a reprice.
+    for (const entry of nordicQuote.history.filter(
+      (h: { kind: string }) => h.kind === 'DECIDED',
+    )) {
+      expect(entry.changes).toHaveLength(1);
+      expect(entry.changes[0].field).toBe('Status');
+    }
+    // And an amendment never is.
+    for (const entry of nordicQuote.history.filter(
+      (h: { kind: string }) => h.kind === 'AMENDED',
+    )) {
+      expect(entry.changes.map((c: { field: string }) => c.field)).not.toEqual(['Status']);
+    }
+  });
+
+  it('records the decision as a decision, not as a status change', async () => {
+    const trail = await owner.auditLog.findMany({
+      where: { tenantId, action: { in: ['QUOTE_ACCEPTED', 'QUOTE_DECLINED'] } },
+      select: { action: true, changedBy: true },
+    });
+    // A trail read six months later should say who declined it, not that a
+    // column moved between two enum values.
+    expect(trail.map((r) => r.action).sort()).toEqual(['QUOTE_ACCEPTED', 'QUOTE_DECLINED']);
+    for (const row of trail) expect(row.changedBy).not.toBeNull();
+  });
+
+  it('refuses a decision from an agent token', async () => {
+    const quoteId = await quoteOf(baltic);
+    await request(app)
+      .post(`/api/tenant/sales/inquiries/${inquiryId}/agent-quotes/${quoteId}/decision`)
+      .set('Authorization', `Bearer ${nordicToken}`)
+      .set('X-Tenant-Slug', SLUG)
+      .send({ decision: 'ACCEPTED' })
+      .expect(403);
+  });
+
+  it('refuses once the inquiry is settled', async () => {
+    await owner.inquiry.update({ where: { id: inquiryId }, data: { status: 'WON' } });
+    await decide(await quoteOf(baltic), 'ACCEPTED').expect(409);
+    await owner.inquiry.update({ where: { id: inquiryId }, data: { status: 'OPEN' } });
+  });
+});

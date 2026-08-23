@@ -152,7 +152,16 @@ export default function PortalInquiryDetailPage() {
     return <p className="text-body text-steel">Loading…</p>;
   }
 
-  const quotable = inquiry.status === 'OPEN';
+  /*
+   * Editable only while the inquiry is open AND the forwarder has not answered.
+   *
+   * The API already refuses a PATCH on a decided quote, so without this the
+   * agent would meet an editable form and a 409 — a rejection with no
+   * explanation, for a decision that had already been made.
+   */
+  const decision = inquiry.quote?.status ?? 'SUBMITTED';
+  const answered = decision === 'ACCEPTED' || decision === 'DECLINED';
+  const quotable = inquiry.status === 'OPEN' && !answered;
 
   return (
     <div className="flex flex-col gap-5">
@@ -227,7 +236,11 @@ export default function PortalInquiryDetailPage() {
         <p className="mb-4 text-cell text-steel">
           {quotable
             ? 'One all-in price for this lane. You can change it while the inquiry is open.'
-            : 'This inquiry is closed, so your quotation can no longer be changed.'}
+            : answered
+              ? decision === 'ACCEPTED'
+                ? 'Your quotation has been accepted. It can no longer be changed.'
+                : 'Your quotation was not taken forward on this inquiry.'
+              : 'This inquiry is closed, so your quotation can no longer be changed.'}
         </p>
 
         <form onSubmit={onSubmit} noValidate className="grid grid-cols-1 gap-4 md:grid-cols-2">

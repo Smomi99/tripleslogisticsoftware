@@ -103,7 +103,14 @@ export async function quoteHistory(
       ...(byQuote.get(key) ?? []),
       {
         at: row.createdAt.toISOString(),
-        kind: before === null ? 'SUBMITTED' : 'AMENDED',
+        // Only the status moved, so this is the forwarder answering rather than
+        // the agent repricing — an agent cannot set status at all.
+        kind:
+          before === null
+            ? 'SUBMITTED'
+            : changes.length === 1 && changes[0]?.field === 'Status'
+              ? 'DECIDED'
+              : 'AMENDED',
         changes,
       },
     ]);
