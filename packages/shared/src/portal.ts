@@ -243,6 +243,8 @@ export interface StaffAgentQuoteDto {
   /** The person at the agent who sent it, when a portal user did. */
   submittedByName: string | null;
   amount: string;
+  /** Needed to turn the quote into a purchase rate; the code is for display. */
+  currencyId: string;
   currencyCode: string | null;
   validUntil: string | null;
   transitDays: number | null;

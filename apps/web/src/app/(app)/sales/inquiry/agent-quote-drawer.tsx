@@ -10,6 +10,7 @@ import { Modal } from '@/components/ui/modal';
 import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
+import { CONVERT_FEATURE, ConvertQuoteForm, modeOf } from './convert-quote-form';
 
 /**
  * What the agents quoted, and what they changed.
@@ -87,12 +88,13 @@ export function AgentQuoteDrawer({
   inquiry: InquiryDto | null;
   onClose: () => void;
 }) {
-  const { authorizedRequest } = useSession();
+  const { authorizedRequest, can } = useSession();
   const [quotes, setQuotes] = useState<StaffAgentQuoteDto[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [toDecline, setToDecline] = useState<StaffAgentQuoteDto | null>(null);
+  const [toConvert, setToConvert] = useState<StaffAgentQuoteDto | null>(null);
 
   const load = useCallback(async () => {
     if (inquiry === null) return;
@@ -140,6 +142,12 @@ export function AgentQuoteDrawer({
   // A settled inquiry takes no more decisions, the same rule that stops it
   // being re-quoted.
   const decidable = inquiry.status !== 'WON' && inquiry.status !== 'LOST';
+
+  // Converting creates a purchase rate, so it needs the purchase permission for
+  // THIS inquiry's mode — not whichever one happened to be typed first.
+  const convertMode = modeOf(inquiry);
+  const mayConvert =
+    convertMode !== null && can(`${CONVERT_FEATURE[convertMode]}.CREATE`);
 
   return (
     <Modal
@@ -206,6 +214,18 @@ export function AgentQuoteDrawer({
                         {/* Reversible on purpose: Accept and Decline are one
                             mis-click apart, and a decided quote can no longer
                             be amended by the agent. */}
+                        {/* Only on a quote you have accepted: turning a price
+                            you have not agreed to into a purchase rate would
+                            file a commitment you never made. */}
+                        {decidable && quote.status === 'ACCEPTED' && mayConvert && (
+                          <Button
+                            variant="text"
+                            size="inline"
+                            onClick={() => setToConvert(quote)}
+                          >
+                            Convert to rate
+                          </Button>
+                        )}
                         {decidable && quote.status !== 'WITHDRAWN' && (
                           <>
                             {quote.status !== 'ACCEPTED' && (
@@ -311,6 +331,13 @@ export function AgentQuoteDrawer({
           </Button>
         </div>
       </Modal>
+
+      <ConvertQuoteForm
+        inquiry={inquiry}
+        quote={toConvert}
+        onClose={() => setToConvert(null)}
+        onConverted={() => void load()}
+      />
     </Modal>
   );
 }
