@@ -136,7 +136,15 @@ export interface AgentInquiryDto {
   modeName: string | null;
   expectedShipmentDate: string | null;
   validTo: string | null;
-  remarks: string | null;
+  /**
+   * inquiry.remarks is NOT here, deliberately. It is free text the forwarder's
+   * own staff type, so a customer name could reach an agent through it and no
+   * database rule could stop that — the one place decision 2 was advisory
+   * rather than structural. agent_inquiry_v drops the column too.
+   *
+   * The agent's own remarks, on their quote, are a different field entirely and
+   * travel the other way.
+   */
   status: string;
   volumes: AgentInquiryVolumeDto[];
   /** This agent's own quote, if they have given one. Never another agent's. */

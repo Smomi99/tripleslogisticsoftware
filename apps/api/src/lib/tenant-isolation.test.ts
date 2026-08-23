@@ -185,6 +185,30 @@ describe('model tier registry', () => {
     }
   });
 
+  it('grants the application read and nothing else on a view', async () => {
+    // ALTER DEFAULT PRIVILEGES grants SELECT, INSERT and UPDATE on "TABLES",
+    // which in Postgres includes views — and both of these are simple enough
+    // to be auto-updatable, so those grants were a write path through to the
+    // base tables over columns chosen only for reading. A view that exists to
+    // narrow what can be READ must never be a way to write.
+    const grants = await owner.$queryRaw<{ table_name: string; privilege_type: string }[]>`
+      SELECT t.table_name, p.privilege_type
+        FROM information_schema.views t
+        LEFT JOIN information_schema.table_privileges p
+          ON p.table_name = t.table_name AND p.grantee = 'ff_app'
+       WHERE t.table_schema = 'public'
+       ORDER BY t.table_name, p.privilege_type`;
+
+    const byView = new Map<string, string[]>();
+    for (const row of grants) {
+      byView.set(row.table_name, [...(byView.get(row.table_name) ?? []), row.privilege_type]);
+    }
+    expect(byView.size).toBeGreaterThan(0);
+    for (const [view, privileges] of byView) {
+      expect(privileges, view).toEqual(['SELECT']);
+    }
+  });
+
   it('classifies each tier correctly', () => {
     expect(tierOf('Customer')).toBe('tenant-owned');
     expect(tierOf('Port')).toBe('system-capable');

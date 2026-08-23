@@ -171,7 +171,9 @@ beforeAll(async () => {
         loadingType: 'FCL',
         polId: pol.id,
         podId: pod.id,
-        remarks: 'Quote by Friday please.',
+        // Deliberately names the customer: if this ever reaches an agent, the
+        // test below says so out loud.
+        remarks: 'Quote by Friday for Confidential Shipper Ltd.',
       },
       select: { id: true },
     });
@@ -452,6 +454,10 @@ describe('the view is the column boundary', () => {
     expect(names).not.toContain('customer_id');
     expect(names).not.toContain('salesman_id');
     expect(names).not.toContain('notify_emails');
+    // Free text the forwarder's staff type. It was the one field whose safety
+    // depended on what somebody happened to write; the client's answer was to
+    // take it out, so decision 2 is now structural everywhere.
+    expect(names).not.toContain('remarks');
     expect(names).toContain('pol_id');
     expect(names).toContain('code');
   });

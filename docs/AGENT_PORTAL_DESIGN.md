@@ -422,8 +422,17 @@ Routes also filter explicitly — belt and braces, on the principle that either
 layer alone should be sufficient.
 
 `AgentInquiryDto`: code, dates, POL/POD, movement, shipment and loading type,
-commodity, TOS, volumes, remarks, and the agent's own quote. **No customer, no
-prices, no rates, no other agent's quote.**
+commodity, TOS, Incoterm, volumes, and the agent's own quote. **No customer, no
+prices, no rates, no other agent's quote, and no staff remarks.**
+
+`inquiry.remarks` was originally included — an agent has little context without
+it — and flagged during Phase 3 as the one field where decision 2 was advisory
+rather than structural, since it is free text the forwarder's own staff type and
+a customer name could travel through it. The client's answer was to exclude it.
+It is gone from `agent_inquiry_v`, from `AgentInquiryDto` and from the screen,
+so the guarantee is now enforced the same way everywhere. If agents later turn
+out to need context, that is a new field written for them to read — not this one
+reinstated.
 
 A quote may be amended only while its inquiry is `OPEN`. Once `QUOTED`, `WON` or
 `LOST`, the portal is read-only for that inquiry — the same reasoning that stops

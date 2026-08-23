@@ -189,7 +189,9 @@ beforeAll(async () => {
           polId: pol.id,
           podId: pod.id,
           status,
-          remarks: 'Two 40ft, ready next week.',
+          // A staff note that names the customer. Nothing an agent sees may
+          // carry it.
+          remarks: 'Two 40ft for Confidential Shipper Ltd, ready next week.',
         },
         select: { id: true },
       })
@@ -250,6 +252,14 @@ describe('the inquiry list', () => {
     expect(body).not.toContain('1234.5678');
     expect(body).not.toContain('customerId');
     expect(body).not.toContain('targetPrice');
+    // Staff remarks are excluded outright — the field is not on the DTO and
+    // not on the view, so there is nothing to sanitise at render time.
+    expect(body).not.toContain('ready next week');
+    // Checked on the inquiry object rather than the whole body: the agent's
+    // OWN quote carries a remarks field, and that one is theirs to write.
+    for (const inquiry of res.body.data as Record<string, unknown>[]) {
+      expect(Object.hasOwn(inquiry, 'remarks')).toBe(false);
+    }
   });
 
   it('renders the lane an agent needs to price it', async () => {

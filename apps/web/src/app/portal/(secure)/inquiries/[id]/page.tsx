@@ -23,9 +23,13 @@ import { usePortalSession } from '@/lib/portal-session';
  * One inquiry, and the form that answers it (§5).
  *
  * What is NOT on this page is as deliberate as what is: no customer, no target
- * price, no other agent's quote. Those absences are enforced twice over — the
- * DTO has no such fields and agent_inquiry_v has no such columns — but they are
- * also a product decision, and this is the screen where it shows.
+ * price, no other agent's quote, and no staff remarks. Those absences are
+ * enforced twice over — the DTO has no such fields and agent_inquiry_v has no
+ * such columns — but they are also a product decision, and this is the screen
+ * where it shows.
+ *
+ * The remarks field further down is the agent's own, on their quote. It travels
+ * the other way.
  */
 
 /** A read-only fact about the shipment. */
@@ -180,12 +184,6 @@ export default function PortalInquiryDetailPage() {
           <Detail label="Expected shipment" value={inquiry.expectedShipmentDate} mono />
           <Detail label="Quote wanted by" value={inquiry.validTo} mono />
         </div>
-        {inquiry.remarks !== null && inquiry.remarks !== '' && (
-          <div className="mt-4 border-t border-line pt-4">
-            <span className="label-manifest">Remarks</span>
-            <p className="mt-1 whitespace-pre-line text-body text-hull">{inquiry.remarks}</p>
-          </div>
-        )}
       </section>
 
       {inquiry.volumes.length > 0 && (

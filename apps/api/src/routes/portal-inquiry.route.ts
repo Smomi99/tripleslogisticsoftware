@@ -51,7 +51,6 @@ interface InquiryRow {
   hs_code: string | null;
   expected_shipment_date: Date | null;
   valid_to: Date | null;
-  remarks: string | null;
   status: string;
   pol_name: string | null;
   pol_code: string | null;
@@ -158,7 +157,6 @@ function inquiryToDto(
     modeName: row.mode_name,
     expectedShipmentDate: row.expected_shipment_date?.toISOString().slice(0, 10) ?? null,
     validTo: row.valid_to?.toISOString().slice(0, 10) ?? null,
-    remarks: row.remarks,
     status: row.status,
     volumes,
     quote,
@@ -175,7 +173,7 @@ function inquiryToDto(
  */
 const INQUIRY_COLUMNS = Prisma.sql`
   v.id, v.code, v.inquiry_date, v.shipment_type, v.movement_type, v.loading_type,
-  v.place_of_receipt, v.hs_code, v.expected_shipment_date, v.valid_to, v.remarks, v.status,
+  v.place_of_receipt, v.hs_code, v.expected_shipment_date, v.valid_to, v.status,
   pol.name AS pol_name, pol.port_code AS pol_code, pol.country AS pol_country,
   pod.name AS pod_name, pod.port_code AS pod_code, pod.country AS pod_country,
   ci.name AS commodity_name, t.name AS tos_name, m.name AS mode_name`;

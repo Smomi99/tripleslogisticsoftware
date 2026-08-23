@@ -1,0 +1,22 @@
+-- The agent views are read-only, and now say so.
+--
+-- Found while checking the rebuilt view: ff_app held INSERT and UPDATE on both
+-- of them. Nobody granted that. A migration from Phase 2 set
+--
+--   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE ON TABLES TO ff_app;
+--
+-- which was written when this schema had no views, and in Postgres "TABLES"
+-- includes them. Worse, both views are simple enough to be auto-updatable —
+-- information_schema.views reports is_updatable = YES — so those grants are a
+-- write path through to inquiry and inquiry_volume, over exactly the columns
+-- that were chosen to be safe to READ.
+--
+-- Nothing is exploitable today: an agent session has no RLS policy permitting
+-- UPDATE on either base table, and a staff session cannot see a row through
+-- these views at all because the view predicate requires an agent. But that is
+-- a fact about today's policies, and the whole point of the view is to be a
+-- boundary that does not depend on getting the next policy right. The first
+-- person to add an agent-writable policy on inquiry — to mark one "seen", say —
+-- would silently open a write path over columns nobody reviewed for writing.
+REVOKE INSERT, UPDATE, DELETE ON "agent_inquiry_v" FROM ff_app;
+REVOKE INSERT, UPDATE, DELETE ON "agent_inquiry_volume_v" FROM ff_app;
