@@ -242,6 +242,23 @@ export function SessionProvider({
   const can = useCallback(
     (permissionKey: string): boolean => {
       if (user === null) return false;
+
+      /*
+       * The client-side mirror of `authenticateAgent`, and it has to come first.
+       *
+       * The API refuses an agent session on every staff router whatever their
+       * role holds — a role is a list somebody ticked, and ticking the wrong box
+       * must not widen an outside company. The browser was not applying that
+       * rule: an agent whose role carried every permission got a sidebar listing
+       * every module, and the shell rendered each staff screen while the API
+       * quietly refused its data. No records leaked, but the shape of the whole
+       * system did, and it looked broken rather than closed.
+       *
+       * Above the superadmin branch on purpose. The database CHECK already makes
+       * an agent superadmin unstorable; this makes it harmless even if it were.
+       */
+      if (user.agentId !== null) return permissionKey.startsWith('AGENT.');
+
       // §7 rule 1: a superadmin holds everything, always.
       if (user.isSuperadmin) return true;
       return user.permissions.includes(permissionKey);
