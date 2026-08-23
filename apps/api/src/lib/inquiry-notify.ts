@@ -27,17 +27,38 @@ export interface NotifyInput {
   appUrl: string | null;
 }
 
-function body(input: NotifyInput, lead: string): string {
-  const lines = [
-    lead,
-    '',
-    `Inquiry:   ${input.code}`,
-    `Customer:  ${input.customerName}`,
+/**
+ * The two audiences get different letters, and the differences are the point.
+ *
+ * **The customer's name is for staff only.** Decision 2 says an agent never
+ * learns who the shipper is; the portal enforces that with a view that has no
+ * customer_id column and a DTO with no such field. An email naming the customer
+ * walks around both — and it is the copy that leaves the building, so it is the
+ * one that matters most.
+ *
+ * **The link differs too.** Staff open /sales/inquiry. An agent cannot: the
+ * staff login refuses an agent credential by design, so sending them there is a
+ * dead end that reads like a broken account.
+ */
+function body(input: NotifyInput, lead: string, audience: 'AGENT' | 'STAFF'): string {
+  const lines = [lead, '', `Inquiry:   ${input.code}`];
+
+  if (audience === 'STAFF') {
+    lines.push(`Customer:  ${input.customerName}`);
+  }
+
+  lines.push(
     `Lane:      ${input.polLabel} → ${input.podLabel}`,
     `Movement:  ${input.movementType === 'INBOUND' ? 'Inbound' : 'Outbound'}`,
-  ];
+  );
+
   if (input.appUrl !== null) {
-    lines.push('', `Open it here: ${input.appUrl}/sales/inquiry`);
+    lines.push(
+      '',
+      audience === 'AGENT'
+        ? `Quote it here: ${input.appUrl}/portal`
+        : `Open it here: ${input.appUrl}/sales/inquiry`,
+    );
   }
   return lines.join('\n');
 }
@@ -76,6 +97,7 @@ export async function notifyInquiry(
       text: body(
         input,
         'An inquiry is waiting for your quotation in the Triple S freight system.',
+        'AGENT',
       ),
     });
     return { kind: 'agents', sent: result.sent, recipients: to.length };
@@ -92,6 +114,7 @@ export async function notifyInquiry(
     text: body(
       input,
       'This outbound lane has no live buying rate. Please obtain one from a carrier.',
+      'STAFF',
     ),
   });
   return { kind: 'price-team', sent: result.sent, recipients: to.length };
