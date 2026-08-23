@@ -183,7 +183,7 @@ export function PermissionMatrix({
                 return (
                   <tr key={feature.feature} className="group border-b border-line last:border-b-0">
                     <td className="sticky left-0 z-10 border-r border-line bg-surface px-3 py-1 transition-colors group-hover:bg-row-hover">
-                      <span className="text-body text-hull">{feature.label}</span>
+                      <span className="text-cell text-hull">{feature.label}</span>
                       {!disabled && (
                         <span className="ml-2 inline-flex gap-1">
                           <button

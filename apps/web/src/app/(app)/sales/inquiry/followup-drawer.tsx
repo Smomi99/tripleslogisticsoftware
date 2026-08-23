@@ -193,7 +193,7 @@ export function FollowupDrawer({
                       <span className="text-cell text-steel">{row.contactPerson}</span>
                     )}
                   </span>
-                  {row.notes !== null && <span className="text-body text-hull">{row.notes}</span>}
+                  {row.notes !== null && <span className="text-cell text-hull">{row.notes}</span>}
                   {row.nextFollowupDate !== null && (
                     <span className="text-cell text-steel">
                       Next: <span className="font-mono">{row.nextFollowupDate}</span>

@@ -131,7 +131,7 @@ export function PriceDrawer({
                     <Status tone={row.isSelected ? 'active' : 'inactive'}>
                       {row.isSelected ? 'Quoted' : 'Attached'}
                     </Status>
-                    <span className="text-body text-hull">{row.carrierName}</span>
+                    <span className="text-cell text-hull">{row.carrierName}</span>
                     <span className="text-cell text-steel">{row.tierLabel}</span>
                     {row.isStale && (
                       <span className="text-cell text-signal">rate has since changed</span>
@@ -173,7 +173,7 @@ export function PriceDrawer({
                 <li key={rate.rateId} className="flex flex-col gap-1 border-b border-line pb-2">
                   <span className="flex flex-wrap items-center gap-2">
                     <span className="font-mono text-cell text-steel">{rate.rateCode}</span>
-                    <span className="text-body text-hull">{rate.carrierName}</span>
+                    <span className="text-cell text-hull">{rate.carrierName}</span>
                     <span className="text-cell text-steel">
                       valid to <span className="font-mono">{rate.validTo}</span>
                     </span>

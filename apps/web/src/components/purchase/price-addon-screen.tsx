@@ -286,7 +286,7 @@ export function PriceAddonScreen({
             >
               <header className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-line px-3 py-2">
                 <span className="font-mono text-cell tabular-nums text-hull">{rate.code}</span>
-                <span className="text-body text-hull">
+                <span className="font-mono text-cell tabular-nums text-hull">
                   {rate.polCode} → {rate.podCode}
                 </span>
                 <span className="text-cell text-steel">{rate.carrierName}</span>

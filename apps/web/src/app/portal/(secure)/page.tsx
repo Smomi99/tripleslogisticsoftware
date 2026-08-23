@@ -123,7 +123,7 @@ export default function PortalInquiryListPage() {
                         Not quoted
                       </Status>
                     ) : (
-                      <span className="font-mono tabular-nums text-hull">
+                      <span className="font-mono text-cell tabular-nums text-hull">
                         {inquiry.quote.currencyCode ?? ''} {money(inquiry.quote.amount)}
                       </span>
                     )}

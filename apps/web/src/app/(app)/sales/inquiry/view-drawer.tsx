@@ -140,7 +140,7 @@ export function ViewDrawer({
           {rows.map(([label, value]) => (
             <div key={label} className="contents">
               <dt className="label-manifest self-center">{label}</dt>
-              <dd className="text-body text-hull">{value}</dd>
+              <dd className="text-cell text-hull">{value}</dd>
             </div>
           ))}
           {inquiry.volumes.length > 0 && (

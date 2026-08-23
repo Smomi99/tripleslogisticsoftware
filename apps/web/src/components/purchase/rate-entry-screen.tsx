@@ -659,7 +659,7 @@ export function RateEntryScreen({
       </div>
 
       <div className="overflow-x-auto rounded-manifest border border-line bg-surface shadow-manifest">
-        <table className="w-full border-collapse">
+        <table className="w-full min-w-max border-collapse">
           <thead>
             <tr className="border-b border-line bg-paper text-left">
               <Th>Code</Th>
@@ -681,7 +681,10 @@ export function RateEntryScreen({
           </thead>
           <tbody>
             {rows.map((rate) => (
-              <tr key={rate.id} className="border-b border-line last:border-0 hover:bg-row-hover">
+              <tr
+                key={rate.id}
+                className="border-b border-line last:border-0 hover:bg-row-hover [&>td]:align-top"
+              >
                 <td className="bg-paper/40 px-2.5 py-2 font-mono text-cell tabular-nums text-hull">
                   {rate.code}
                 </td>

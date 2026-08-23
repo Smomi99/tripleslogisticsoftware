@@ -370,7 +370,7 @@ export function PriceListScreen({
         />
       ) : (
         <div className="max-h-[70vh] overflow-auto rounded-manifest border border-line bg-surface shadow-manifest">
-          <table className="w-full border-collapse">
+          <table className="w-full min-w-max border-collapse">
             <thead className="sticky top-0 z-20">
               <tr className="bg-paper text-left">
                 <StickyTh left="0" width="w-24">
@@ -399,7 +399,7 @@ export function PriceListScreen({
             <tbody>
               {rates.map((rate) => (
                 <Fragment key={rate.id}>
-                  <tr className="border-b border-line last:border-0 hover:bg-row-hover">
+                  <tr className="border-b border-line last:border-0 hover:bg-row-hover [&>td]:align-top">
                   <StickyTd left="0" mono>
                     {rate.code}
                   </StickyTd>
@@ -409,8 +409,8 @@ export function PriceListScreen({
                   <StickyTd left="11rem" mono>
                     {rate.podCode}
                   </StickyTd>
-                  <td className="px-2.5 py-2 text-cell text-hull">{rate.carrierName}</td>
-                  <td className="px-2.5 py-2 text-cell text-hull">{rate.goodsTypeName}</td>
+                  <td className="whitespace-nowrap px-2.5 py-2 text-cell text-hull">{rate.carrierName}</td>
+                  <td className="whitespace-nowrap px-2.5 py-2 text-cell text-hull">{rate.goodsTypeName}</td>
                   {options.tiers.map((tier) => {
                     const line = rate.lines.find((l) => l.tierId === tier.id);
                     return (
@@ -459,7 +459,7 @@ export function PriceListScreen({
                   <td className="px-2.5 py-2 text-right font-mono text-cell tabular-nums text-steel">
                     {rate.freeDays ?? '—'}
                   </td>
-                  <td className="px-2.5 py-2 font-mono text-cell tabular-nums">
+                  <td className="whitespace-nowrap px-2.5 py-2 font-mono text-cell tabular-nums">
                     <div className={rate.expiringSoon ? 'text-signal' : 'text-hull'}>
                       {rate.validTo}
                     </div>
@@ -598,7 +598,7 @@ function StickyTd({
   return (
     <td
       style={{ left }}
-      className={`sticky z-10 border-r border-line bg-surface px-2.5 py-2 text-cell text-hull ${
+      className={`sticky z-10 whitespace-nowrap border-r border-line bg-surface px-2.5 py-2 text-cell text-hull ${
         mono === true ? 'font-mono tabular-nums' : ''
       }`}
     >
