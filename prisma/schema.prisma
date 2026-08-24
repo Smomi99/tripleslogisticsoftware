@@ -234,6 +234,7 @@ model Tenant {
   users                 User[]
   userPermissions       UserPermission[]
   goodsTypes            GoodsType[]
+  containerSizes        ContainerSize[]
   containerTypes        ContainerType[]
   rateTiers             RateTier[]
   toss                  Tos[]
@@ -1515,6 +1516,8 @@ model User {
 
   createdGoodsTypes     GoodsType[]     @relation("GoodsTypeCreatedBy")
   updatedGoodsTypes     GoodsType[]     @relation("GoodsTypeUpdatedBy")
+  createdContainerSizes ContainerSize[] @relation("ContainerSizeCreatedBy")
+  updatedContainerSizes ContainerSize[] @relation("ContainerSizeUpdatedBy")
   createdContainerTypes ContainerType[] @relation("ContainerTypeCreatedBy")
   updatedContainerTypes ContainerType[] @relation("ContainerTypeUpdatedBy")
   createdRateTiers      RateTier[]      @relation("RateTierCreatedBy")
@@ -1768,7 +1771,42 @@ model GoodsType {
 }
 
 /// spec: container_type — teu_factor drives volume reporting (a 40ft is 2 TEU).
+/// client: container SIZE — 20STD, 40STD, 40HC, 45FT.
+///
+/// Was called ContainerType until the module spec separated size from the
+/// physical type of the box. Same rows, same ids: only the name moved, so every
+/// rate priced against a 40HC still is.
+/// client: container TYPE — Dry, Flat Rack, Open Top, Reefer.
+///
+/// The physical box, which is a different axis from its size: a 40HC can be Dry
+/// or Reefer and the price is not remotely the same. System-capable, because
+/// these four mean the same thing to every forwarder on earth.
 model ContainerType {
+  tenantId  BigInt?   @map("tenant_id")
+  id        BigInt    @id @default(autoincrement())
+  code      String    @db.VarChar(32)
+  name      String    @db.VarChar(200)
+  sortOrder Int       @default(0) @map("sort_order")
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdByUser User?   @relation("ContainerTypeCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User?   @relation("ContainerTypeUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  inquiryVolumes InquiryVolume[]
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@map("container_type")
+}
+
+model ContainerSize {
   tenantId  BigInt?   @map("tenant_id")
   id        BigInt    @id @default(autoincrement())
   code      String    @db.VarChar(32)
@@ -1784,19 +1822,19 @@ model ContainerType {
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   tenant        Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  createdByUser User?   @relation("ContainerTypeCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
-  updatedByUser User?   @relation("ContainerTypeUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  createdByUser User?   @relation("ContainerSizeCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User?   @relation("ContainerSizeUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   rateTiers      RateTier[]
   inquiryVolumes InquiryVolume[]
 
   localCharges    RateLocalCharge[]
-  agentQuoteLines AgentQuoteLine[]  @relation("AgentQuoteLineContainerType")
+  agentQuoteLines AgentQuoteLine[]  @relation("AgentQuoteLineContainerSize")
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
   @@index([tenantId])
-  @@map("container_type")
+  @@map("container_size")
 }
 
 /// spec §2: the tier definitions. This table is why the four wireframe columns
@@ -1815,7 +1853,7 @@ model RateTier {
   sortOrder       Int          @default(0) @map("sort_order")
   /// SEA_FCL tiers are a container type; LCL and AIR tiers are weight/volume
   /// brackets and leave this null.
-  containerTypeId BigInt?      @map("container_type_id")
+  containerSizeId BigInt?      @map("container_size_id")
   isActive        Boolean      @default(true) @map("is_active")
   createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -1824,7 +1862,7 @@ model RateTier {
   deletedAt       DateTime?    @map("deleted_at") @db.Timestamptz(6)
 
   tenant        Tenant?        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  containerType ContainerType? @relation(fields: [containerTypeId], references: [id], onDelete: Restrict)
+  containerSize ContainerSize? @relation(fields: [containerSizeId], references: [id], onDelete: Restrict)
   createdByUser User?          @relation("RateTierCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User?          @relation("RateTierUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
@@ -2109,7 +2147,7 @@ model RateLocalCharge {
   /// Which container size the charge applies to, for charges that differ by
   /// box — THC on a 20ft is not THC on a 40ft. Null means it applies whatever
   /// the equipment, which is the normal case for documentation fees.
-  containerTypeId BigInt? @map("container_type_id")
+  containerSizeId BigInt? @map("container_size_id")
 
   remarks   String?   @db.Text
   isActive  Boolean   @default(true) @map("is_active")
@@ -2124,7 +2162,7 @@ model RateLocalCharge {
   costHead      CostHead       @relation(fields: [tenantId, costHeadId], references: [tenantId, id], onDelete: Restrict)
   currency      Currency       @relation(fields: [currencyId], references: [id], onDelete: Restrict)
   costUnit      CostUnit?      @relation(fields: [costUnitId], references: [id], onDelete: Restrict)
-  containerType ContainerType? @relation(fields: [containerTypeId], references: [id], onDelete: Restrict)
+  containerSize ContainerSize? @relation(fields: [containerSizeId], references: [id], onDelete: Restrict)
 
   createdByUser User? @relation("RateLocalChargeCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User? @relation("RateLocalChargeUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
@@ -2133,7 +2171,7 @@ model RateLocalCharge {
   /// legitimate lines on one rate, not a duplicate. NULL means "any size", and
   /// Postgres treats NULLs as distinct — so a partial index in the migration
   /// keeps a second "any size" line for the same head and side out.
-  @@unique([tenantId, rateId, costHeadId, side, containerTypeId])
+  @@unique([tenantId, rateId, costHeadId, side, containerSizeId])
   @@index([tenantId])
   @@index([rateId])
   @@index([costHeadId])
@@ -2460,6 +2498,9 @@ model InquiryVolume {
   inquiryId         BigInt     @map("inquiry_id")
   volumeKind        VolumeKind @map("volume_kind")
   /// Set for FCL rows, null for the single LCL or Air row.
+  containerSizeId   BigInt?    @map("container_size_id")
+  /// The physical box — Dry, Reefer, Flat Rack, Open Top. Null on an LCL
+  /// or air line, which has no container to have a type.
   containerTypeId   BigInt?    @map("container_type_id")
   quantity          Int?
   cbm               Decimal?   @db.Decimal(18, 3)
@@ -2470,7 +2511,7 @@ model InquiryVolume {
   /// The wireframe's "Container Type :" row — free text per column, by the
   /// client's choice. Not a lookup, so it is not reportable; that was the
   /// trade-off they picked over an equipment-type list.
-  containerTypeNote String?    @map("container_type_note") @db.VarChar(200)
+  containerSizeNote String?    @map("container_size_note") @db.VarChar(200)
 
   isActive  Boolean   @default(true) @map("is_active")
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -2481,6 +2522,7 @@ model InquiryVolume {
 
   tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   inquiry       Inquiry        @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict)
+  containerSize ContainerSize? @relation(fields: [containerSizeId], references: [id], onDelete: Restrict)
   containerType ContainerType? @relation(fields: [containerTypeId], references: [id], onDelete: Restrict)
 
   createdByUser User? @relation("InquiryVolumeCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
@@ -2706,7 +2748,7 @@ model AgentQuoteLine {
   carrierId       BigInt?   @map("carrier_id")
   costHeadId      BigInt    @map("cost_head_id")
   /// Container Size. Null on a line charged by weight or per document.
-  containerTypeId BigInt?   @map("container_type_id")
+  containerSizeId BigInt?   @map("container_size_id")
   /// Unit: Container, HBL, HAWB, CBM, KG, M.Ton… (§5 cost_unit).
   costUnitId      BigInt?   @map("cost_unit_id")
   quantity        Decimal   @db.Decimal(18, 3)
@@ -2729,7 +2771,7 @@ model AgentQuoteLine {
   costHead      CostHead         @relation(fields: [tenantId, costHeadId], references: [tenantId, id], onDelete: Restrict)
   /// The system-capable three, guarded by trigger rather than by key.
   carrier       Carrier?         @relation("AgentQuoteLineCarrier", fields: [carrierId], references: [id], onDelete: Restrict)
-  containerType ContainerType?   @relation("AgentQuoteLineContainerType", fields: [containerTypeId], references: [id], onDelete: Restrict)
+  containerSize ContainerSize?   @relation("AgentQuoteLineContainerSize", fields: [containerSizeId], references: [id], onDelete: Restrict)
   costUnit      CostUnit?        @relation("AgentQuoteLineCostUnit", fields: [costUnitId], references: [id], onDelete: Restrict)
   currency      Currency         @relation("AgentQuoteLineCurrency", fields: [currencyId], references: [id], onDelete: Restrict)
 
@@ -2741,7 +2783,7 @@ model AgentQuoteLine {
   @@index([optionId])
   @@index([costHeadId])
   @@index([carrierId])
-  @@index([containerTypeId])
+  @@index([containerSizeId])
   @@index([costUnitId])
   @@index([currencyId])
   @@map("agent_quote_line")

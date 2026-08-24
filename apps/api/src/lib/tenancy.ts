@@ -21,6 +21,7 @@ export const PLATFORM_MODELS = ['Tenant', 'PlatformUser', 'Permission'] as const
 export const SYSTEM_CAPABLE_MODELS = [
   'Carrier',
   'CarrierType',
+  'ContainerSize',
   'ContainerType',
   'CostUnit',
   'Currency',

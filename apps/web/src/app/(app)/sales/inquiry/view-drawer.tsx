@@ -102,7 +102,7 @@ export function ViewDrawer({
             .filter((v) => v.targetPrice !== null)
             .map(
               (v) =>
-                `${v.containerTypeCode ?? v.volumeKind} ${inquiry.currencyCode ?? ''} ${v.targetPrice}`,
+                `${v.containerSizeCode ?? v.volumeKind} ${inquiry.currencyCode ?? ''} ${v.targetPrice}`,
             )
             .join(' · '),
     ],
@@ -119,7 +119,7 @@ export function ViewDrawer({
         ? '—'
         : inquiry.volumes
             .filter((v) => v.weightKg !== null)
-            .map((v) => `${v.containerTypeCode ?? v.volumeKind} ${v.weightKg}`)
+            .map((v) => `${v.containerSizeCode ?? v.volumeKind} ${v.weightKg}`)
             .join(' · '),
     ],
     ['Salesman', inquiry.salesmanName ?? '—'],
@@ -150,7 +150,7 @@ export function ViewDrawer({
                 {inquiry.volumes
                   .map((v) =>
                     v.volumeKind === 'FCL'
-                      ? `${v.quantity ?? 0} × ${v.containerTypeCode ?? '?'}`
+                      ? `${v.quantity ?? 0} × ${v.containerSizeCode ?? '?'}`
                       : v.volumeKind === 'LCL'
                         ? `${v.cbm ?? '0'} CBM`
                         : `${v.weightKg ?? '0'} KG`,

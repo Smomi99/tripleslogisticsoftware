@@ -29,7 +29,7 @@ const PREFIX = 'LKTEST-';
 /** endpoint path -> the table its rows live in. */
 const ENDPOINTS = [
   ['goods-types', 'goods_type'],
-  ['container-types', 'container_type'],
+  ['container-sizes', 'container_size'],
   ['rate-tiers', 'rate_tier'],
   ['tos', 'tos'],
   ['inquiry-sources', 'inquiry_source'],
@@ -46,7 +46,7 @@ const rowsB = new Map<string, bigint>();
 /** Shared rows, keyed by endpoint — visible to both, editable by neither. */
 const sharedRows = new Map<string, bigint>();
 
-let sharedContainerType: bigint;
+let sharedContainerSize: bigint;
 
 async function makeTenantWithUser(
   name: string,
@@ -75,7 +75,7 @@ async function cleanup(): Promise<void> {
   await owner.$executeRawUnsafe(
     `DELETE FROM tenant_master_override WHERE tenant_id IN (${tenantIds})`,
   );
-  // rate_tier references container_type, so it goes first.
+  // rate_tier references container_size, so it goes first.
   await owner.$executeRawUnsafe(`DELETE FROM rate_tier WHERE code LIKE '${PREFIX}%'`);
   for (const [, table] of ENDPOINTS) {
     if (table === 'rate_tier') continue;
@@ -101,22 +101,22 @@ beforeAll(async () => {
     tokenVersion: 0,
   });
 
-  // A shared container type, so the shared Sea FCL tier has something to name.
-  const ct = await owner.containerType.create({
+  // A shared container size, so the shared Sea FCL tier has something to name.
+  const ct = await owner.containerSize.create({
     data: { code: `${PREFIX}SYS-CT`, name: 'Shared Test Box', teuFactor: '1.00' },
     select: { id: true },
   });
-  sharedContainerType = ct.id;
-  sharedRows.set('container-types', ct.id);
+  sharedContainerSize = ct.id;
+  sharedRows.set('container-sizes', ct.id);
 
-  await owner.containerType.create({
+  await owner.containerSize.create({
     data: { tenantId: tenantA, code: `${PREFIX}A-CT`, name: 'Alpha Box', teuFactor: '1.00' },
   });
-  const ctB = await owner.containerType.create({
+  const ctB = await owner.containerSize.create({
     data: { tenantId: b.tenantId, code: `${PREFIX}B-CT`, name: 'Beta Box', teuFactor: '1.00' },
     select: { id: true },
   });
-  rowsB.set('container-types', ctB.id);
+  rowsB.set('container-sizes', ctB.id);
 
   await owner.goodsType.create({
     data: { tenantId: tenantA, code: `${PREFIX}A-GT`, name: 'Alpha Goods' },
@@ -158,7 +158,7 @@ beforeAll(async () => {
       mode: 'SEA_FCL',
       label: 'Shared Tier',
       unit: 'CONTAINER',
-      containerTypeId: sharedContainerType,
+      containerSizeId: sharedContainerSize,
     },
     select: { id: true },
   });
@@ -206,7 +206,7 @@ function asTenantA(path: string) {
 /** The payload each endpoint's write accepts — shapes differ, rules do not. */
 function editPayload(endpoint: string, code: string): Record<string, unknown> {
   switch (endpoint) {
-    case 'container-types':
+    case 'container-sizes':
       return { code, name: 'Hijacked', teuFactor: '1' };
     case 'rate-tiers':
       return { code, mode: 'SEA_LCL', label: 'Hijacked', unit: 'CBM' };
@@ -349,7 +349,7 @@ describe('rate tier keeps its own rules', () => {
     expect(response.body.error.fields.unit).toBeDefined();
   });
 
-  it('refuses a Sea FCL tier with no container type', async () => {
+  it('refuses a Sea FCL tier with no container size', async () => {
     const response = await postTier({
       code: `${PREFIX}NOCT`,
       mode: 'SEA_FCL',
@@ -371,18 +371,18 @@ describe('rate tier keeps its own rules', () => {
     expect(response.status).toBe(400);
   });
 
-  it('will not point a tier at another tenant container type', async () => {
+  it('will not point a tier at another tenant container size', async () => {
     const response = await postTier({
       code: `${PREFIX}FOREIGNCT`,
       mode: 'SEA_FCL',
       label: 'Foreign box',
       unit: 'CONTAINER',
-      containerTypeId: rowsB.get('container-types')!.toString(),
+      containerSizeId: rowsB.get('container-sizes')!.toString(),
     });
     expect(response.status).toBe(400);
   });
 
-  it('offers only container types this workspace can see', async () => {
+  it('offers only container sizes this workspace can see', async () => {
     const response = await asTenantA('/api/tenant/setting/rate-tiers/container-options');
     expect(response.status).toBe(200);
     const names: string[] = response.body.data.map((o: { name: string }) => o.name);

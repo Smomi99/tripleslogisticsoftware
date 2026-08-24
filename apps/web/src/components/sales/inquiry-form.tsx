@@ -32,7 +32,7 @@ import { useSession } from '@/lib/session';
  * capture page, which only ever POSTed, so editing silently raised a duplicate.
  *
  * Two behaviours the spec calls out are the reason this is not a generic form:
- *   - Volume is a grid whose rows depend on Shipment Type — container types for
+ *   - Volume is a grid whose rows depend on Shipment Type — container sizes for
  *     Sea, a single CBM row for LCL, a single KG row for Air.
  *   - The customer quick-add creates a customer without leaving the form, and
  *     returns with it selected.
@@ -47,7 +47,7 @@ interface InquiryOptions {
   termsOfShipment: LookupOption[];
   currencies: LookupOption[];
   salesmen: LookupOption[];
-  containerTypes: LookupOption[];
+  containerSizes: LookupOption[];
   defaultSalesmanId: string | null;
   canSetOutcome: boolean;
   canViewAll: boolean;
@@ -62,7 +62,7 @@ const EMPTY: InquiryOptions = {
   termsOfShipment: [],
   currencies: [],
   salesmen: [],
-  containerTypes: [],
+  containerSizes: [],
   defaultSalesmanId: null,
   canSetOutcome: false,
   canViewAll: false,
@@ -74,7 +74,7 @@ const today = (): string => new Date().toISOString().slice(0, 10);
  * One column of the client's Required-container grid.
  *
  * Their wireframe puts four rows under each container size: the quantity, a
- * free-text container type, a weight and a target price. `amount` is whichever
+ * free-text container size, a weight and a target price. `amount` is whichever
  * the column measures — containers for FCL, CBM for LCL, KG for Air.
  */
 interface VolumeCell {
@@ -96,9 +96,9 @@ function volumesOf(inquiry: InquiryDto | null): Record<string, VolumeCell> {
         ? 'air'
         : volume.volumeKind === 'LCL'
           ? 'lcl'
-          : volume.containerTypeId === null
+          : volume.containerSizeId === null
             ? null
-            : `fcl:${volume.containerTypeId}`;
+            : `fcl:${volume.containerSizeId}`;
     if (key === null) continue;
     values[key] = {
       amount:
@@ -107,7 +107,7 @@ function volumesOf(inquiry: InquiryDto | null): Record<string, VolumeCell> {
           : volume.volumeKind === 'LCL'
             ? (volume.cbm ?? '')
             : String(volume.quantity ?? ''),
-      note: volume.containerTypeNote ?? '',
+      note: volume.containerSizeNote ?? '',
       weightKg: volume.weightKg ?? '',
       targetPrice: volume.targetPrice ?? '',
     };
@@ -357,21 +357,21 @@ export function InquiryForm({
    */
   const volumeColumns = useMemo(() => {
     if (shipmentType === 'AIR') {
-      return [{ key: 'air', label: 'Air (kG)', containerTypeId: null }];
+      return [{ key: 'air', label: 'Air (kG)', containerSizeId: null }];
     }
     if (loadingType === 'LCL') {
-      return [{ key: 'lcl', label: 'LCL (CBM)', containerTypeId: null }];
+      return [{ key: 'lcl', label: 'LCL (CBM)', containerSizeId: null }];
     }
     if (loadingType === 'FCL') {
-      return options.containerTypes.map((type) => ({
+      return options.containerSizes.map((type) => ({
         key: `fcl:${type.id}`,
         label: type.name,
-        containerTypeId: type.id,
+        containerSizeId: type.id,
       }));
     }
     // Sea with no loading type chosen yet: nothing to fill in.
     return [];
-  }, [options.containerTypes, shipmentType, loadingType]);
+  }, [options.containerSizes, shipmentType, loadingType]);
 
   function cell(key: string): VolumeCell {
     return volumes[key] ?? EMPTY_CELL;
@@ -393,7 +393,7 @@ export function InquiryForm({
       if (amount === '' && note === '' && weight === '' && price === '') continue;
 
       const shared = {
-        containerTypeNote: note,
+        containerSizeNote: note,
         targetPrice: price,
       };
       if (column.key === 'air') {
@@ -404,7 +404,7 @@ export function InquiryForm({
       } else {
         rows.push({
           volumeKind: 'FCL',
-          containerTypeId: column.containerTypeId ?? '',
+          containerSizeId: column.containerSizeId ?? '',
           quantity: amount,
           weightKg: weight,
           ...shared,
@@ -812,7 +812,7 @@ export function InquiryForm({
                   {(
                     [
                       { field: 'amount', label: shipmentType === 'AIR' ? 'Weight (kG)' : loadingType === 'LCL' ? 'Volume (CBM)' : 'Quantity', numeric: true },
-                      { field: 'note', label: 'Container type', numeric: false },
+                      { field: 'note', label: 'Container size', numeric: false },
                       { field: 'weightKg', label: 'Weight in Kg', numeric: true },
                       { field: 'targetPrice', label: 'Target price ($)', numeric: true },
                     ] as const

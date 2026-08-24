@@ -47,9 +47,9 @@ export default function RateTierPage() {
     { id: 'unit', header: 'Unit', cell: (r) => RATE_TIER_UNIT_LABEL[r.unit] },
     { id: 'bounds', header: 'Range', numeric: true, cell: bounds },
     {
-      id: 'containerType',
-      header: 'Container Type',
-      cell: (r) => r.containerTypeName ?? '—',
+      id: 'containerSize',
+      header: 'Container Size',
+      cell: (r) => r.containerSizeName ?? '—',
     },
   ];
 
@@ -116,7 +116,7 @@ function RateTierForm({
       minValue: '',
       maxValue: '',
       sortOrder: '',
-      containerTypeId: '',
+      containerSizeId: '',
     },
   });
 
@@ -131,7 +131,7 @@ function RateTierForm({
       minValue: row?.minValue ?? '',
       maxValue: row?.maxValue ?? '',
       sortOrder: row === null ? '' : String(row.sortOrder),
-      containerTypeId: row?.containerTypeId ?? '',
+      containerSizeId: row?.containerSizeId ?? '',
     });
     setFormError(null);
   }, [row, reset]);
@@ -151,7 +151,7 @@ function RateTierForm({
         if (!cancelled) setContainerOptions(response.data);
       } catch {
         // A missing option list is not worth blocking the form for — the server
-        // refuses a Sea FCL tier without a container type either way.
+        // refuses a Sea FCL tier without a container size either way.
       }
     })();
     return () => {
@@ -164,8 +164,8 @@ function RateTierForm({
     try {
       await onSubmit({
         ...values,
-        // Only Sea FCL carries a container type; the other modes must not.
-        containerTypeId: values.mode === 'SEA_FCL' ? values.containerTypeId : undefined,
+        // Only Sea FCL carries a container size; the other modes must not.
+        containerSizeId: values.mode === 'SEA_FCL' ? values.containerSizeId : undefined,
       });
     } catch (error) {
       setFormError(
@@ -213,15 +213,15 @@ function RateTierForm({
 
       {mode === 'SEA_FCL' ? (
         <Field
-          id="containerTypeId"
-          label="Container type"
+          id="containerSizeId"
+          label="Container size"
           required
           hint="A Sea FCL tier prices one box size."
-          error={errors.containerTypeId?.message}
+          error={errors.containerSizeId?.message}
           wide
         >
-          <Select id="containerTypeId" {...register('containerTypeId')}>
-            <option value="">Select a container type</option>
+          <Select id="containerSizeId" {...register('containerSizeId')}>
+            <option value="">Select a container size</option>
             {containerOptions.map((option) => (
               <option key={option.id} value={option.id}>
                 {option.name}

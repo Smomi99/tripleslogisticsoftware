@@ -3,8 +3,8 @@ import { Router } from 'express';
 import {
   type ApiSuccess,
   buildMeta,
-  type ContainerTypeDto,
-  containerTypeInputSchema,
+  type ContainerSizeDto,
+  containerSizeInputSchema,
   type GoodsTypeDto,
   goodsTypeInputSchema,
   type InquirySourceDto,
@@ -193,20 +193,20 @@ rateLookupRouter.post(
 );
 
 // ===========================================================================
-// Container Type
+// Container Size
 // ===========================================================================
 
-const CONTAINER_FEATURE = 'SETTING.CONTAINER_TYPE';
+const CONTAINER_FEATURE = 'SETTING.CONTAINER_SIZE';
 
 rateLookupRouter.get(
-  '/container-types',
+  '/container-sizes',
   requirePermission(`${CONTAINER_FEATURE}.VIEW`),
   async (req, res) => {
     const auth = req.auth!;
     const query = listQuerySchema.parse(req.query);
 
     const result = await withTenant(auth.tenantId, (db) =>
-      listSystemLookup(db, auth.tenantId, 'containerType', {
+      listSystemLookup(db, auth.tenantId, 'containerSize', {
         search: query.search,
         isActive: query.isActive,
         page: query.page,
@@ -216,7 +216,7 @@ rateLookupRouter.get(
       }),
     );
 
-    const payload: ApiSuccess<ContainerTypeDto[]> = {
+    const payload: ApiSuccess<ContainerSizeDto[]> = {
       success: true,
       data: result.rows.map((r) => ({
         id: r.id.toString(),
@@ -234,15 +234,15 @@ rateLookupRouter.get(
 );
 
 rateLookupRouter.post(
-  '/container-types',
+  '/container-sizes',
   requirePermission(`${CONTAINER_FEATURE}.CREATE`),
   async (req, res) => {
     const auth = req.auth!;
-    const input = containerTypeInputSchema.parse(req.body);
+    const input = containerSizeInputSchema.parse(req.body);
 
     const created = await withTenant(auth.tenantId, async (db) => {
-      await assertCodeFree(db, db.containerType as never, input.code);
-      return db.containerType.create({
+      await assertCodeFree(db, db.containerSize as never, input.code);
+      return db.containerSize.create({
         data: {
           tenantId: auth.tenantId,
           code: input.code,
@@ -256,7 +256,7 @@ rateLookupRouter.post(
       });
     });
 
-    const payload: ApiSuccess<ContainerTypeDto> = {
+    const payload: ApiSuccess<ContainerSizeDto> = {
       success: true,
       data: {
         id: created.id.toString(),
@@ -273,23 +273,23 @@ rateLookupRouter.post(
 );
 
 rateLookupRouter.patch(
-  '/container-types/:id',
+  '/container-sizes/:id',
   requirePermission(`${CONTAINER_FEATURE}.EDIT`),
   async (req, res) => {
     const auth = req.auth!;
-    const id = parseId(req.params.id, 'container type');
-    const input = containerTypeInputSchema.parse(req.body);
+    const id = parseId(req.params.id, 'container size');
+    const input = containerSizeInputSchema.parse(req.body);
 
     const updated = await withTenant(auth.tenantId, async (db) => {
-      const existing = await db.containerType.findFirst({
+      const existing = await db.containerSize.findFirst({
         where: { id, deletedAt: null },
         select: { id: true, tenantId: true },
       });
-      if (existing === null) throw HttpError.notFound('Container type not found.');
-      assertEditable(existing.tenantId, 'container type');
-      await assertCodeFree(db, db.containerType as never, input.code, id);
+      if (existing === null) throw HttpError.notFound('Container size not found.');
+      assertEditable(existing.tenantId, 'container size');
+      await assertCodeFree(db, db.containerSize as never, input.code, id);
 
-      return db.containerType.update({
+      return db.containerSize.update({
         where: { id },
         data: {
           code: input.code,
@@ -302,7 +302,7 @@ rateLookupRouter.patch(
       });
     });
 
-    const payload: ApiSuccess<ContainerTypeDto> = {
+    const payload: ApiSuccess<ContainerSizeDto> = {
       success: true,
       data: {
         id: updated.id.toString(),
@@ -319,20 +319,20 @@ rateLookupRouter.patch(
 );
 
 rateLookupRouter.post(
-  '/container-types/:id/toggle-status',
+  '/container-sizes/:id/toggle-status',
   requirePermission(`${CONTAINER_FEATURE}.TOGGLE_STATUS`),
   async (req, res) => {
     const auth = req.auth!;
-    const id = parseId(req.params.id, 'container type');
+    const id = parseId(req.params.id, 'container size');
     const isActive = await withTenant(auth.tenantId, (db) =>
       toggleSystemLookup(
         db,
         auth.tenantId,
         auth.userId,
-        'containerType',
-        db.containerType,
+        'containerSize',
+        db.containerSize,
         id,
-        'Container type not found.',
+        'Container size not found.',
       ),
     );
     const payload: ApiSuccess<{ isActive: boolean }> = { success: true, data: { isActive } };
@@ -359,8 +359,8 @@ rateLookupRouter.get('/rate-tiers', requirePermission(`${TIER_FEATURE}.VIEW`), a
       orderBy: 'l.mode ASC, l.sort_order ASC',
       nameColumn: 'l.label',
       extraColumns:
-        'l.mode, l.label, l.unit, l.min_value, l.max_value, l.sort_order, l.container_type_id, ct.name AS container_type_name',
-      extraJoin: Prisma.sql`LEFT JOIN container_type ct ON ct.id = l.container_type_id`,
+        'l.mode, l.label, l.unit, l.min_value, l.max_value, l.sort_order, l.container_size_id, ct.name AS container_size_name',
+      extraJoin: Prisma.sql`LEFT JOIN container_size ct ON ct.id = l.container_size_id`,
       searchColumns: ['l.label'],
       ...(query.mode === undefined
         ? {}
@@ -380,8 +380,8 @@ rateLookupRouter.get('/rate-tiers', requirePermission(`${TIER_FEATURE}.VIEW`), a
       minValue: optionalDecimal(r['min_value']),
       maxValue: optionalDecimal(r['max_value']),
       sortOrder: Number(r['sort_order'] ?? 0),
-      containerTypeId: r['container_type_id'] === null ? null : String(r['container_type_id']),
-      containerTypeName: (r['container_type_name'] as string | null) ?? null,
+      containerSizeId: r['container_size_id'] === null ? null : String(r['container_size_id']),
+      containerSizeName: (r['container_size_name'] as string | null) ?? null,
       isActive: r.effective_is_active,
       isSystem: r.is_system,
     })),
@@ -390,7 +390,7 @@ rateLookupRouter.get('/rate-tiers', requirePermission(`${TIER_FEATURE}.VIEW`), a
   res.json(payload);
 });
 
-/** Container types for the Sea FCL tier form. */
+/** Container sizes for the Sea FCL tier form. */
 rateLookupRouter.get(
   '/rate-tiers/container-options',
   requirePermission(`${TIER_FEATURE}.VIEW`),
@@ -399,8 +399,8 @@ rateLookupRouter.get(
     const rows = await withTenant(auth.tenantId, async (db) => {
       // See carrier.route.ts: a deactivated shared row is an override, not a flag.
       const inactive = await inactiveMasters(db);
-      return db.containerType.findMany({
-        where: { ...excludeInactive(inactive, 'container_type'), deletedAt: null, isActive: true },
+      return db.containerSize.findMany({
+        where: { ...excludeInactive(inactive, 'container_size'), deletedAt: null, isActive: true },
         select: { id: true, name: true, code: true },
         orderBy: { sortOrder: 'asc' },
       });
@@ -434,30 +434,30 @@ function tierWriteData(input: ReturnType<typeof rateTierInputSchema.parse>, user
 rateLookupRouter.post('/rate-tiers', requirePermission(`${TIER_FEATURE}.CREATE`), async (req, res) => {
   const auth = req.auth!;
   const input = rateTierInputSchema.parse(req.body);
-  const containerTypeId =
-    input.containerTypeId === undefined || input.containerTypeId === ''
+  const containerSizeId =
+    input.containerSizeId === undefined || input.containerSizeId === ''
       ? null
-      : parseRefId(input.containerTypeId, 'container type');
+      : parseRefId(input.containerSizeId, 'container size');
 
   const created = await withTenant(auth.tenantId, async (db) => {
     await assertCodeFree(db, db.rateTier as never, input.code);
 
-    if (input.mode === 'SEA_FCL' && containerTypeId === null) {
-      throw HttpError.badRequest('A Sea FCL tier must name a container type.');
+    if (input.mode === 'SEA_FCL' && containerSizeId === null) {
+      throw HttpError.badRequest('A Sea FCL tier must name a container size.');
     }
-    if (containerTypeId !== null) {
-      const container = await db.containerType.findFirst({
-        where: { id: containerTypeId, deletedAt: null, isActive: true },
+    if (containerSizeId !== null) {
+      const container = await db.containerSize.findFirst({
+        where: { id: containerSizeId, deletedAt: null, isActive: true },
         select: { id: true },
       });
-      if (container === null) throw HttpError.badRequest('That container type is not available.');
+      if (container === null) throw HttpError.badRequest('That container size is not available.');
     }
 
     return db.rateTier.create({
       data: {
         tenantId: auth.tenantId,
         ...tierWriteData(input, auth.userId),
-        containerTypeId,
+        containerSizeId,
         createdBy: auth.userId,
       },
       select: {
@@ -469,9 +469,9 @@ rateLookupRouter.post('/rate-tiers', requirePermission(`${TIER_FEATURE}.CREATE`)
         minValue: true,
         maxValue: true,
         sortOrder: true,
-        containerTypeId: true,
+        containerSizeId: true,
         isActive: true,
-        containerType: { select: { name: true } },
+        containerSize: { select: { name: true } },
       },
     });
   });
@@ -488,8 +488,8 @@ rateLookupRouter.post('/rate-tiers', requirePermission(`${TIER_FEATURE}.CREATE`)
       minValue: created.minValue?.toFixed(3) ?? null,
       maxValue: created.maxValue?.toFixed(3) ?? null,
       sortOrder: created.sortOrder,
-      containerTypeId: created.containerTypeId?.toString() ?? null,
-      containerTypeName: created.containerType?.name ?? null,
+      containerSizeId: created.containerSizeId?.toString() ?? null,
+      containerSizeName: created.containerSize?.name ?? null,
       isActive: created.isActive,
       isSystem: false,
     },
@@ -501,10 +501,10 @@ rateLookupRouter.patch('/rate-tiers/:id', requirePermission(`${TIER_FEATURE}.EDI
   const auth = req.auth!;
   const id = parseId(req.params.id, 'rate tier');
   const input = rateTierInputSchema.parse(req.body);
-  const containerTypeId =
-    input.containerTypeId === undefined || input.containerTypeId === ''
+  const containerSizeId =
+    input.containerSizeId === undefined || input.containerSizeId === ''
       ? null
-      : parseRefId(input.containerTypeId, 'container type');
+      : parseRefId(input.containerSizeId, 'container size');
 
   const updated = await withTenant(auth.tenantId, async (db) => {
     const existing = await db.rateTier.findFirst({
@@ -515,13 +515,13 @@ rateLookupRouter.patch('/rate-tiers/:id', requirePermission(`${TIER_FEATURE}.EDI
     assertEditable(existing.tenantId, 'rate tier');
     await assertCodeFree(db, db.rateTier as never, input.code, id);
 
-    if (input.mode === 'SEA_FCL' && containerTypeId === null) {
-      throw HttpError.badRequest('A Sea FCL tier must name a container type.');
+    if (input.mode === 'SEA_FCL' && containerSizeId === null) {
+      throw HttpError.badRequest('A Sea FCL tier must name a container size.');
     }
 
     return db.rateTier.update({
       where: { id },
-      data: { ...tierWriteData(input, auth.userId), containerTypeId },
+      data: { ...tierWriteData(input, auth.userId), containerSizeId },
       select: {
         id: true,
         code: true,
@@ -531,9 +531,9 @@ rateLookupRouter.patch('/rate-tiers/:id', requirePermission(`${TIER_FEATURE}.EDI
         minValue: true,
         maxValue: true,
         sortOrder: true,
-        containerTypeId: true,
+        containerSizeId: true,
         isActive: true,
-        containerType: { select: { name: true } },
+        containerSize: { select: { name: true } },
       },
     });
   });
@@ -550,8 +550,8 @@ rateLookupRouter.patch('/rate-tiers/:id', requirePermission(`${TIER_FEATURE}.EDI
       minValue: updated.minValue?.toFixed(3) ?? null,
       maxValue: updated.maxValue?.toFixed(3) ?? null,
       sortOrder: updated.sortOrder,
-      containerTypeId: updated.containerTypeId?.toString() ?? null,
-      containerTypeName: updated.containerType?.name ?? null,
+      containerSizeId: updated.containerSizeId?.toString() ?? null,
+      containerSizeName: updated.containerSize?.name ?? null,
       isActive: updated.isActive,
       isSystem: false,
     },

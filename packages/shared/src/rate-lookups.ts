@@ -7,7 +7,7 @@ import { listQuerySchema } from './api';
  *
  * Five small master tables that everything in Purchase and Sales references.
  * They are seeded as shared rows and editable in Settings, so a workspace can
- * add a container type or an air weight break without a migration — which is
+ * add a container size or an air weight break without a migration — which is
  * the whole point of §2's parent/child rate design.
  */
 
@@ -85,9 +85,9 @@ export interface GoodsTypeDto extends LookupRowDto {
   description: string | null;
 }
 
-// ------------------------------------------------------------ containerType
+// ------------------------------------------------------------ containerSize
 
-export const containerTypeInputSchema = z.object({
+export const containerSizeInputSchema = z.object({
   code: codeField,
   name: nameField,
   /** 20STD = 1.00, 40ft = 2.00, 45ft = 2.25. Drives TEU reporting. */
@@ -98,9 +98,9 @@ export const containerTypeInputSchema = z.object({
     .refine((v) => v === '' || /^\d{1,4}$/.test(v), 'Enter a whole number.')
     .optional(),
 });
-export type ContainerTypeInput = z.input<typeof containerTypeInputSchema>;
+export type ContainerSizeInput = z.input<typeof containerSizeInputSchema>;
 
-export interface ContainerTypeDto extends LookupRowDto {
+export interface ContainerSizeDto extends LookupRowDto {
   teuFactor: string;
   sortOrder: number;
 }
@@ -135,15 +135,15 @@ export const rateTierInputSchema = z
      * one, and the field is not even rendered on the other two modes — rejecting
      * '' here made the form refuse to submit with no error anyone could see.
      */
-    containerTypeId: z.union([z.string().regex(/^\d+$/), z.literal('')]).optional(),
+    containerSizeId: z.union([z.string().regex(/^\d+$/), z.literal('')]).optional(),
   })
   .refine(
     (v) => v.unit === MODE_UNIT[v.mode],
     { message: 'That unit does not match the mode — Sea FCL is per container, LCL per CBM, Air per KG.', path: ['unit'] },
   )
   .refine(
-    (v) => v.mode !== 'SEA_FCL' || (v.containerTypeId !== undefined && v.containerTypeId !== ''),
-    { message: 'Choose the container type this tier prices.', path: ['containerTypeId'] },
+    (v) => v.mode !== 'SEA_FCL' || (v.containerSizeId !== undefined && v.containerSizeId !== ''),
+    { message: 'Choose the container size this tier prices.', path: ['containerSizeId'] },
   )
   .refine(
     (v) =>
@@ -164,8 +164,8 @@ export interface RateTierDto extends LookupRowDto {
   minValue: string | null;
   maxValue: string | null;
   sortOrder: number;
-  containerTypeId: string | null;
-  containerTypeName: string | null;
+  containerSizeId: string | null;
+  containerSizeName: string | null;
 }
 
 export const rateTierListQuerySchema = listQuerySchema.extend({

@@ -83,8 +83,8 @@ interface VolumeRow {
   id: bigint;
   inquiry_id: bigint;
   volume_kind: string;
-  container_type_name: string | null;
-  container_type_note: string | null;
+  container_size_name: string | null;
+  container_size_note: string | null;
   quantity: number | null;
   cbm: Prisma.Decimal | null;
   weight_kg: Prisma.Decimal | null;
@@ -145,8 +145,8 @@ function volumeToDto(row: VolumeRow): AgentInquiryVolumeDto {
   return {
     id: row.id.toString(),
     volumeKind: row.volume_kind,
-    containerTypeName: row.container_type_name,
-    containerTypeNote: row.container_type_note,
+    containerSizeName: row.container_size_name,
+    containerSizeNote: row.container_size_note,
     quantity: row.quantity,
     cbm: row.cbm?.toString() ?? null,
     weightKg: row.weight_kg?.toString() ?? null,
@@ -211,11 +211,11 @@ const INQUIRY_JOINS = Prisma.sql`
 async function volumesFor(db: TenantDb, inquiryIds: bigint[]) {
   if (inquiryIds.length === 0) return new Map<string, AgentInquiryVolumeDto[]>();
   const rows = await db.$queryRaw<VolumeRow[]>`
-    SELECT vol.id, vol.inquiry_id, vol.volume_kind, vol.container_type_note,
+    SELECT vol.id, vol.inquiry_id, vol.volume_kind, vol.container_size_note,
            vol.quantity, vol.cbm, vol.weight_kg,
-           ct.name AS container_type_name
+           ct.name AS container_size_name
       FROM agent_inquiry_volume_v vol
-      LEFT JOIN container_type ct ON ct.id = vol.container_type_id
+      LEFT JOIN container_size ct ON ct.id = vol.container_size_id
      WHERE vol.inquiry_id IN (${Prisma.join(inquiryIds)})
      ORDER BY vol.id`;
 
@@ -329,7 +329,7 @@ async function writeOptions(
         position: lineIndex + 1,
         carrierId: optionalBigInt(line.carrierId),
         costHeadId: BigInt(line.costHeadId),
-        containerTypeId: optionalBigInt(line.containerTypeId),
+        containerSizeId: optionalBigInt(line.containerSizeId),
         costUnitId: optionalBigInt(line.costUnitId),
         quantity: new Prisma.Decimal(line.quantity),
         unitPrice: new Prisma.Decimal(line.unitPrice),
@@ -687,7 +687,7 @@ agentQuoteRouter.patch('/:id', requirePermission('AGENT.INQUIRY.QUOTE'), async (
  * rate history say something about the forwarder's margins and are none of an
  * agent's business, so they are not selected rather than selected and dropped.
  *
- * Carrier, cost head, container type and cost unit are here because the
+ * Carrier, cost head, container size and cost unit are here because the
  * wireframe puts them in the agent's own hands. They are names — shipping
  * lines, charge labels, box sizes, units of charge. Nothing priced: cost_head
  * carries no amount, and freight_rate and rate_local_charge stay closed.
@@ -704,7 +704,7 @@ agentReferenceRouter.get('/', requirePermission('AGENT.INQUIRY.VIEW'), async (re
   const byName = { name: 'asc' } as const;
 
   const data = await withAgent(auth.tenantId, auth.agentId, async (db) => {
-    const [currencies, carriers, costHeads, containerTypes, costUnits] = await Promise.all([
+    const [currencies, carriers, costHeads, containerSizes, costUnits] = await Promise.all([
       db.currency.findMany({
         where: live,
         select: { id: true, currency: true },
@@ -712,7 +712,7 @@ agentReferenceRouter.get('/', requirePermission('AGENT.INQUIRY.VIEW'), async (re
       }),
       db.carrier.findMany({ where: live, select: { id: true, name: true }, orderBy: byName }),
       db.costHead.findMany({ where: live, select: { id: true, name: true }, orderBy: byName }),
-      db.containerType.findMany({ where: live, select: { id: true, name: true }, orderBy: byName }),
+      db.containerSize.findMany({ where: live, select: { id: true, name: true }, orderBy: byName }),
       db.costUnit.findMany({ where: live, select: { id: true, name: true }, orderBy: byName }),
     ]);
 
@@ -727,7 +727,7 @@ agentReferenceRouter.get('/', requirePermission('AGENT.INQUIRY.VIEW'), async (re
       })),
       carriers: lookup(carriers),
       costHeads: lookup(costHeads),
-      containerTypes: lookup(containerTypes),
+      containerSizes: lookup(containerSizes),
       costUnits: lookup(costUnits),
     };
   });

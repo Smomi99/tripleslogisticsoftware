@@ -150,7 +150,7 @@ function OptionDetail({ option }: { option: AgentQuoteOptionDto }) {
                 <td className="px-3 py-1.5 text-cell text-steel">{line.carrierName ?? '—'}</td>
                 <td className="px-3 py-1.5 text-cell text-hull">{line.costHeadName}</td>
                 <td className="px-3 py-1.5 text-cell text-steel">
-                  {line.containerTypeName ?? '—'}
+                  {line.containerSizeName ?? '—'}
                 </td>
                 <td className="px-3 py-1.5 text-cell text-steel">{line.costUnitName ?? '—'}</td>
                 <td className="px-3 py-1.5 text-right font-mono text-cell tabular-nums text-hull">

@@ -47,7 +47,7 @@ let seaPolId: bigint;
 let seaPodId: bigint;
 let airPolId: bigint;
 let airPodId: bigint;
-let containerTypeId: bigint;
+let containerSizeId: bigint;
 let inquiryBId: bigint;
 
 async function makeEmployee(tenantId: bigint, suffix: string): Promise<bigint> {
@@ -180,8 +180,8 @@ beforeAll(async () => {
     })
   ).id;
 
-  containerTypeId = (
-    await owner.containerType.findFirstOrThrow({
+  containerSizeId = (
+    await owner.containerSize.findFirstOrThrow({
       where: { tenantId: null },
       select: { id: true },
     })
@@ -310,17 +310,17 @@ describe('§5.4 — what the form captures', () => {
       volumes: [
         {
           volumeKind: 'FCL',
-          containerTypeId: containerTypeId.toString(),
+          containerSizeId: containerSizeId.toString(),
           quantity: '3',
           // Target price and the container note live in the grid now, per size.
           targetPrice: '1800.5000',
-          containerTypeNote: 'Reefer, -18C',
+          containerSizeNote: 'Reefer, -18C',
           // Weight is per size now too, not one figure for the inquiry.
           weightKg: '12500.500',
         },
-        // Blank row: the grid always renders every container type, and empty
+        // Blank row: the grid always renders every container size, and empty
         // ones must not become zero-quantity records.
-        { volumeKind: 'FCL', containerTypeId: containerTypeId.toString(), quantity: '' },
+        { volumeKind: 'FCL', containerSizeId: containerSizeId.toString(), quantity: '' },
       ],
     });
 
@@ -329,7 +329,7 @@ describe('§5.4 — what the form captures', () => {
     expect(data.placeOfReceipt).toBe('Dhaka ICD');
     expect(data.hsCode).toBe('6109.10');
     expect(data.volumes[0].targetPrice).toBe('1800.5000');
-    expect(data.volumes[0].containerTypeNote).toBe('Reefer, -18C');
+    expect(data.volumes[0].containerSizeNote).toBe('Reefer, -18C');
     expect(data.volumes[0].weightKg).toBe('12500.500');
     expect(data.salesmanName).toBe(`Sales one-${SLUG_A}`);
     expect(data.status).toBe('OPEN');
@@ -344,7 +344,7 @@ describe('§5.4 — what the form captures', () => {
       volumes: [
         {
           volumeKind: 'FCL',
-          containerTypeId: containerTypeId.toString(),
+          containerSizeId: containerSizeId.toString(),
           quantity: '1',
           targetPrice: '1000.0000',
         },

@@ -92,18 +92,35 @@ const SYSTEM_CARRIERS = [
  * and a UI rewrite.
  */
 const RATE_LOOKUPS = {
+  /**
+   * The client sorts cargo three ways, and it is the garment trade: Textile,
+   * Non-Textile, DG. The earlier General/Project/Personal/Reefer list was our
+   * guess and is deactivated by migration rather than deleted, because eight
+   * rates were priced against it.
+   *
+   * Reefer is absent on purpose — it is a container type, and lives there now.
+   */
   goodsType: [
-    { code: 'GENERAL', name: 'General Cargo' },
-    { code: 'DG', name: 'Dangerous Goods (DG)' },
-    { code: 'REEFER', name: 'Reefer' },
-    { code: 'PERSONAL', name: 'Personal Effects' },
-    { code: 'PROJECT', name: 'Project Cargo' },
+    { code: 'TEXTILE', name: 'Textile' },
+    { code: 'NONTEXTILE', name: 'Non-Textile' },
+    { code: 'DG', name: 'DG' },
   ],
-  containerType: [
+  /** How big the box is. */
+  containerSize: [
     { code: '20STD', name: "20' Standard", teuFactor: '1.00', sortOrder: 1 },
     { code: '40STD', name: "40' Standard", teuFactor: '2.00', sortOrder: 2 },
     { code: '40HC', name: "40' High Cube", teuFactor: '2.00', sortOrder: 3 },
     { code: '45FT', name: "45' High Cube", teuFactor: '2.25', sortOrder: 4 },
+  ],
+  /**
+   * What kind of box it is — a different axis entirely. A 40HC can be Dry or
+   * Reefer and the price is not remotely the same.
+   */
+  containerType: [
+    { code: 'DRY', name: 'Dry', sortOrder: 1 },
+    { code: 'FLATRACK', name: 'Flat Rack', sortOrder: 2 },
+    { code: 'OPENTOP', name: 'Open Top', sortOrder: 3 },
+    { code: 'REEFER', name: 'Reefer', sortOrder: 4 },
   ],
   tos: [
     { code: 'CY/CY', name: 'CY / CY' },
@@ -318,6 +335,19 @@ async function seedRateLookups(): Promise<number> {
     }
   }
 
+  for (const row of RATE_LOOKUPS.containerSize) {
+    const existing = await prisma.containerSize.findFirst({
+      where: { code: row.code, tenantId: null },
+      select: { id: true },
+    });
+    if (existing === null) {
+      await prisma.containerSize.create({
+        data: { code: row.code, name: row.name, teuFactor: row.teuFactor, sortOrder: row.sortOrder },
+      });
+      created += 1;
+    }
+  }
+
   for (const row of RATE_LOOKUPS.containerType) {
     const existing = await prisma.containerType.findFirst({
       where: { code: row.code, tenantId: null },
@@ -325,14 +355,14 @@ async function seedRateLookups(): Promise<number> {
     });
     if (existing === null) {
       await prisma.containerType.create({
-        data: { code: row.code, name: row.name, teuFactor: row.teuFactor, sortOrder: row.sortOrder },
+        data: { code: row.code, name: row.name, sortOrder: row.sortOrder },
       });
       created += 1;
     }
   }
 
-  // Tiers come last: the Sea FCL ones point at a container type.
-  const containers = await prisma.containerType.findMany({
+  // Tiers come last: the Sea FCL ones point at a container size.
+  const containers = await prisma.containerSize.findMany({
     where: { tenantId: null },
     select: { id: true, code: true },
   });
@@ -353,7 +383,7 @@ async function seedRateLookups(): Promise<number> {
         sortOrder: tier.sortOrder,
         minValue: 'min' in tier && tier.min !== null ? tier.min : null,
         maxValue: 'max' in tier && tier.max !== null ? tier.max : null,
-        containerTypeId:
+        containerSizeId:
           'container' in tier ? (containerByCode.get(tier.container) ?? null) : null,
       },
     });

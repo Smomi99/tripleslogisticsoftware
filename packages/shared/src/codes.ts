@@ -40,7 +40,7 @@ export const CODE_PREFIX = {
   commodityItem: 'CIT',
 
   goodsType: 'GDT',
-  containerType: 'CNT',
+  containerSize: 'CNT',
   rateTier: 'RTR',
   tos: 'TOS',
   mode: 'MOD',

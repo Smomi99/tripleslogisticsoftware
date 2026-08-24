@@ -31,7 +31,7 @@ export default function GoodsTypePage() {
       endpoint={ENDPOINT}
       feature="SETTING.GOODS_TYPE"
       title="Goods Type"
-      description="How the cargo is handled — general, dangerous, reefer, project. Rates are bought per goods type."
+      description="How the cargo is sorted for pricing — textile, non-textile, DG. Rates are bought per goods type."
       noun="goods type"
       addLabel="+ Add goods type"
       searchPlaceholder="Search goods types"

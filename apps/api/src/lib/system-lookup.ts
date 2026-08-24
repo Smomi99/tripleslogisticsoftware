@@ -20,7 +20,7 @@ import type { TenantDb } from './tenant-client';
 /** Table names are never taken from caller input — only from this map. */
 const LOOKUP_TABLES = {
   goodsType: 'goods_type',
-  containerType: 'container_type',
+  containerSize: 'container_size',
   rateTier: 'rate_tier',
   tos: 'tos',
   mode: 'mode',

@@ -2,9 +2,9 @@
 
 import { zodResolver } from '@hookform/resolvers/zod';
 import {
-  type ContainerTypeDto,
-  type ContainerTypeInput,
-  containerTypeInputSchema,
+  type ContainerSizeDto,
+  type ContainerSizeInput,
+  containerSizeInputSchema,
 } from '@ff/shared';
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
@@ -16,16 +16,16 @@ import { LookupScreen } from '@/components/ui/lookup-screen';
 import { ApiError } from '@/lib/api-client';
 
 /**
- * Settings → Container Type (MODULE_PURCHASE_SALES §3.1).
+ * Settings → Container Size (MODULE_PURCHASE_SALES §3.1).
  *
  * Every Sea FCL rate tier names one of these, and the TEU factor is what turns
  * a mixed box count into the TEU figure the reports quote.
  */
-const ENDPOINT = '/api/tenant/setting/container-types';
+const ENDPOINT = '/api/tenant/setting/container-sizes';
 
-export default function ContainerTypePage() {
-  const columns: DataTableColumn<ContainerTypeDto>[] = [
-    { id: 'name', header: 'Container Type', sortable: true, cell: (r) => r.name },
+export default function ContainerSizePage() {
+  const columns: DataTableColumn<ContainerSizeDto>[] = [
+    { id: 'name', header: 'Container Size', sortable: true, cell: (r) => r.name },
     {
       id: 'teuFactor',
       header: 'TEU Factor',
@@ -36,29 +36,29 @@ export default function ContainerTypePage() {
   ];
 
   return (
-    <LookupScreen<ContainerTypeDto>
+    <LookupScreen<ContainerSizeDto>
       endpoint={ENDPOINT}
-      feature="SETTING.CONTAINER_TYPE"
-      title="Container Type"
+      feature="SETTING.CONTAINER_SIZE"
+      title="Container Size"
       description="The box sizes this workspace quotes. The TEU factor converts a box count into TEU for reporting."
-      noun="container type"
-      addLabel="+ Add container type"
-      searchPlaceholder="Search container types"
+      noun="container size"
+      addLabel="+ Add container size"
+      searchPlaceholder="Search container sizes"
       columns={columns}
-      emptyDescription="Add a container type so Sea FCL rate tiers have something to point at."
+      emptyDescription="Add a container size so Sea FCL rate tiers have something to point at."
       renderForm={({ row, onSubmit, onCancel }) => (
-        <ContainerTypeForm row={row} onSubmit={onSubmit} onCancel={onCancel} />
+        <ContainerSizeForm row={row} onSubmit={onSubmit} onCancel={onCancel} />
       )}
     />
   );
 }
 
-function ContainerTypeForm({
+function ContainerSizeForm({
   row,
   onSubmit,
   onCancel,
 }: {
-  row: ContainerTypeDto | null;
+  row: ContainerSizeDto | null;
   onSubmit: (values: unknown) => Promise<void>;
   onCancel: () => void;
 }) {
@@ -68,8 +68,8 @@ function ContainerTypeForm({
     handleSubmit,
     reset,
     formState: { errors, isSubmitting },
-  } = useForm<ContainerTypeInput>({
-    resolver: zodResolver(containerTypeInputSchema),
+  } = useForm<ContainerSizeInput>({
+    resolver: zodResolver(containerSizeInputSchema),
     defaultValues: { code: '', name: '', teuFactor: '1', sortOrder: '' },
   });
 
@@ -101,7 +101,7 @@ function ContainerTypeForm({
       onSubmit={submit}
       onCancel={onCancel}
       isPending={isSubmitting}
-      submitLabel={row === null ? 'Add container type' : 'Save changes'}
+      submitLabel={row === null ? 'Add container size' : 'Save changes'}
       error={formError ?? undefined}
       columns={2}
     >

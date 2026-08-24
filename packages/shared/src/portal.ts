@@ -154,8 +154,8 @@ export interface AgentInquiryDto {
 export interface AgentInquiryVolumeDto {
   id: string;
   volumeKind: string;
-  containerTypeName: string | null;
-  containerTypeNote: string | null;
+  containerSizeName: string | null;
+  containerSizeNote: string | null;
   quantity: number | null;
   cbm: string | null;
   weightKg: string | null;
@@ -191,8 +191,8 @@ export interface AgentQuoteLineDto {
   carrierName: string | null;
   costHeadId: string;
   costHeadName: string;
-  containerTypeId: string | null;
-  containerTypeName: string | null;
+  containerSizeId: string | null;
+  containerSizeName: string | null;
   costUnitId: string | null;
   costUnitName: string | null;
   quantity: string;
@@ -279,7 +279,7 @@ const optionalId = z.string().regex(/^\d*$/, 'Choose a valid option.').optional(
 export const agentQuoteLineInputSchema = z.object({
   carrierId: optionalId,
   costHeadId: z.string().regex(/^\d+$/, 'Choose a cost head.'),
-  containerTypeId: optionalId,
+  containerSizeId: optionalId,
   costUnitId: optionalId,
   quantity: decimalString(3, 'Enter a quantity, for example 2 or 12.5').refine(
     (v) => Number(v) > 0,
@@ -474,6 +474,6 @@ export interface AgentQuoteReferenceDto {
   currencies: PortalCurrencyOption[];
   carriers: PortalLookupOption[];
   costHeads: PortalLookupOption[];
-  containerTypes: PortalLookupOption[];
+  containerSizes: PortalLookupOption[];
   costUnits: PortalLookupOption[];
 }

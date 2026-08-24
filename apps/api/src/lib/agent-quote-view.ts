@@ -15,7 +15,7 @@ import { isoCurrency } from './currency-label';
 /**
  * One charge row, with the label for every id on it.
  *
- * The four lookups joined here — carrier, cost head, container type, cost
+ * The four lookups joined here — carrier, cost head, container size, cost
  * unit — are the tables this feature opened to agents. Nothing priced is among
  * them.
  */
@@ -24,7 +24,7 @@ export const LINE_SELECT = {
   position: true,
   carrierId: true,
   costHeadId: true,
-  containerTypeId: true,
+  containerSizeId: true,
   costUnitId: true,
   quantity: true,
   unitPrice: true,
@@ -33,7 +33,7 @@ export const LINE_SELECT = {
   remarks: true,
   carrier: { select: { name: true } },
   costHead: { select: { name: true } },
-  containerType: { select: { name: true } },
+  containerSize: { select: { name: true } },
   costUnit: { select: { name: true } },
   currency: { select: { currency: true } },
 } as const;
@@ -69,7 +69,7 @@ export interface LineRow {
   position: number;
   carrierId: bigint | null;
   costHeadId: bigint;
-  containerTypeId: bigint | null;
+  containerSizeId: bigint | null;
   costUnitId: bigint | null;
   quantity: Prisma.Decimal;
   unitPrice: Prisma.Decimal;
@@ -78,7 +78,7 @@ export interface LineRow {
   remarks: string | null;
   carrier: { name: string } | null;
   costHead: { name: string } | null;
-  containerType: { name: string } | null;
+  containerSize: { name: string } | null;
   costUnit: { name: string } | null;
   currency: { currency: string } | null;
 }
@@ -108,8 +108,8 @@ export function lineToDto(row: LineRow): AgentQuoteLineDto {
     carrierName: row.carrier?.name ?? null,
     costHeadId: row.costHeadId.toString(),
     costHeadName: row.costHead?.name ?? '',
-    containerTypeId: row.containerTypeId?.toString() ?? null,
-    containerTypeName: row.containerType?.name ?? null,
+    containerSizeId: row.containerSizeId?.toString() ?? null,
+    containerSizeName: row.containerSize?.name ?? null,
     costUnitId: row.costUnitId?.toString() ?? null,
     costUnitName: row.costUnit?.name ?? null,
     quantity: row.quantity.toString(),

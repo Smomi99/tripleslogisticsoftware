@@ -144,7 +144,7 @@ export default function PortalInquiryDetailPage() {
                 <tr key={volume.id} className="border-b border-line last:border-0">
                   <td className="px-5 py-2 text-cell text-hull">{volume.volumeKind}</td>
                   <td className="px-3 py-2 text-cell text-hull">
-                    {volume.containerTypeName ?? volume.containerTypeNote ?? '—'}
+                    {volume.containerSizeName ?? volume.containerSizeNote ?? '—'}
                   </td>
                   <td className="px-3 py-2 text-right font-mono text-cell tabular-nums text-hull">
                     {volume.quantity ?? '—'}

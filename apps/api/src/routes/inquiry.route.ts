@@ -128,7 +128,7 @@ const inquiryInclude = {
   salesman: { select: { id: true, name: true } },
   volumes: {
     where: { deletedAt: null },
-    include: { containerType: { select: { code: true } } },
+    include: { containerSize: { select: { code: true } } },
     orderBy: { id: 'asc' },
   },
   _count: {
@@ -148,13 +148,13 @@ function toDto(inquiry: InquiryWithRelations, today: Date): InquiryDto {
   const volumes: InquiryVolumeDto[] = inquiry.volumes.map((volume) => ({
     id: volume.id.toString(),
     volumeKind: volume.volumeKind,
-    containerTypeId: volume.containerTypeId?.toString() ?? null,
-    containerTypeCode: volume.containerType?.code ?? null,
+    containerSizeId: volume.containerSizeId?.toString() ?? null,
+    containerSizeCode: volume.containerSize?.code ?? null,
     quantity: volume.quantity,
     cbm: optionalQty(volume.cbm),
     weightKg: optionalQty(volume.weightKg),
     targetPrice: optionalMoney(volume.targetPrice),
-    containerTypeNote: volume.containerTypeNote,
+    containerSizeNote: volume.containerSizeNote,
   }));
 
   const parties: InquiryPartyDto[] = inquiry.parties.map((row) => {
@@ -241,7 +241,7 @@ export interface InquiryFormOptions {
   modes: LookupOption[];
   currencies: LookupOption[];
   salesmen: LookupOption[];
-  containerTypes: LookupOption[];
+  containerSizes: LookupOption[];
   /** §5.4: "Salesman defaults to the logged-in user's employee record." */
   defaultSalesmanId: string | null;
   canSetOutcome: boolean;
@@ -297,8 +297,8 @@ inquiryRouter.get('/inquiry-options', requirePermission(`${FEATURE}.VIEW`), asyn
           select: { id: true, name: true },
           orderBy: { name: 'asc' },
         }),
-        db.containerType.findMany({
-          where: { ...excludeInactive(inactive, 'container_type'), deletedAt: null, isActive: true },
+        db.containerSize.findMany({
+          where: { ...excludeInactive(inactive, 'container_size'), deletedAt: null, isActive: true },
           select: { id: true, code: true },
           orderBy: { sortOrder: 'asc' },
         }),
@@ -324,7 +324,7 @@ inquiryRouter.get('/inquiry-options', requirePermission(`${FEATURE}.VIEW`), asyn
       termsOfShipment: toss.map((t) => ({ id: t.id.toString(), name: t.name })),
       currencies: currencies.map((c) => ({ id: c.id.toString(), name: c.currency })),
       salesmen: salesmen.map((e) => ({ id: e.id.toString(), name: e.name })),
-      containerTypes: containers.map((c) => ({ id: c.id.toString(), name: c.code })),
+      containerSizes: containers.map((c) => ({ id: c.id.toString(), name: c.code })),
       defaultSalesmanId: me?.employeeId?.toString() ?? null,
     };
   });
@@ -454,22 +454,22 @@ function volumeRows(
         // A column may carry only a price or a note — the quantity can arrive
         // later, and dropping the row would silently lose what was typed.
         (v.targetPrice !== undefined && v.targetPrice !== '') ||
-        (v.containerTypeNote !== undefined && v.containerTypeNote !== ''),
+        (v.containerSizeNote !== undefined && v.containerSizeNote !== ''),
     )
     .map((v) => ({
       volumeKind: v.volumeKind,
-      containerTypeId:
-        v.containerTypeId === undefined || v.containerTypeId === ''
+      containerSizeId:
+        v.containerSizeId === undefined || v.containerSizeId === ''
           ? null
-          : BigInt(v.containerTypeId),
+          : BigInt(v.containerSizeId),
       quantity: v.quantity === undefined || v.quantity === '' ? null : Number(v.quantity),
       cbm: v.cbm === undefined || v.cbm === '' ? null : v.cbm,
       weightKg: v.weightKg === undefined || v.weightKg === '' ? null : v.weightKg,
       targetPrice: v.targetPrice === undefined || v.targetPrice === '' ? null : v.targetPrice,
-      containerTypeNote:
-        v.containerTypeNote === undefined || v.containerTypeNote === ''
+      containerSizeNote:
+        v.containerSizeNote === undefined || v.containerSizeNote === ''
           ? null
-          : v.containerTypeNote,
+          : v.containerSizeNote,
       createdBy: userId,
       updatedBy: userId,
     }));
@@ -563,15 +563,15 @@ async function updateInquiry(
   const wanted = volumeRows(input, auth.userId);
   const existing = await db.inquiryVolume.findMany({
     where: { inquiryId: id, deletedAt: null },
-    select: { id: true, volumeKind: true, containerTypeId: true },
+    select: { id: true, volumeKind: true, containerSizeId: true },
   });
 
-  const keyOf = (kind: string, containerTypeId: bigint | number | null | undefined): string =>
-    `${kind}:${containerTypeId?.toString() ?? '-'}`;
-  const byKey = new Map(existing.map((row) => [keyOf(row.volumeKind, row.containerTypeId), row.id]));
+  const keyOf = (kind: string, containerSizeId: bigint | number | null | undefined): string =>
+    `${kind}:${containerSizeId?.toString() ?? '-'}`;
+  const byKey = new Map(existing.map((row) => [keyOf(row.volumeKind, row.containerSizeId), row.id]));
 
   for (const row of wanted) {
-    const key = keyOf(row.volumeKind, row.containerTypeId ?? null);
+    const key = keyOf(row.volumeKind, row.containerSizeId ?? null);
     const match = byKey.get(key);
     if (match === undefined) {
       await db.inquiryVolume.create({ data: { ...row, tenantId: auth.tenantId, inquiryId: id } });

@@ -13,7 +13,7 @@ export interface TestLine {
   quantity?: string;
   unitPrice?: string;
   carrierId?: string;
-  containerTypeId?: string;
+  containerSizeId?: string;
   costUnitId?: string;
   remarks?: string;
 }

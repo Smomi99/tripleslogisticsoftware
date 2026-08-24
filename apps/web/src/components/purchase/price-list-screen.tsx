@@ -493,7 +493,7 @@ export function PriceListScreen({
                               <td className="py-1 text-hull">{charge.costHeadName}</td>
                               <td className="py-1 text-steel">{charge.side}</td>
                               <td className="py-1 font-mono text-steel">
-                                {charge.containerTypeCode ?? 'All'}
+                                {charge.containerSizeCode ?? 'All'}
                               </td>
                               <td className="py-1 text-right font-mono tabular-nums text-hull">
                                 {charge.amount} {charge.currencyCode}

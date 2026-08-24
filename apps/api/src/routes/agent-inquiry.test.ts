@@ -283,7 +283,7 @@ beforeAll(async () => {
       volumeKind: 'FCL',
       quantity: 2,
       weightKg: 18000,
-      containerTypeNote: '40HC',
+      containerSizeNote: '40HC',
       targetPrice: 1234.5678,
     },
   });
@@ -340,7 +340,7 @@ describe('the inquiry list', () => {
     expect((inquiry['volumes'] as unknown[]).length).toBe(1);
     const volume = (inquiry['volumes'] as Record<string, unknown>[])[0]!;
     expect(volume['quantity']).toBe(2);
-    expect(volume['containerTypeNote']).toBe('40HC');
+    expect(volume['containerSizeNote']).toBe('40HC');
     expect(volume).not.toHaveProperty('targetPrice');
   });
 

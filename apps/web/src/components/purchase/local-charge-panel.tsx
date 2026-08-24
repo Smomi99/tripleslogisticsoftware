@@ -20,7 +20,7 @@ export function LocalChargePanel({
   onOpenChange,
   charges,
   costHeads,
-  containerTypes,
+  containerSizes,
   currencies,
   defaultCurrencyId,
   onChange,
@@ -29,14 +29,14 @@ export function LocalChargePanel({
   onOpenChange: (open: boolean) => void;
   charges: LocalChargeInput[];
   costHeads: LookupOption[];
-  containerTypes: LookupOption[];
+  containerSizes: LookupOption[];
   currencies: LookupOption[];
   defaultCurrencyId: string;
   onChange: (next: LocalChargeInput[]) => void;
 }) {
   const [costHeadId, setCostHeadId] = useState('');
   const [side, setSide] = useState<ChargeSide>('POL');
-  const [containerTypeId, setContainerTypeId] = useState('');
+  const [containerSizeId, setContainerSizeId] = useState('');
   const [amount, setAmount] = useState('');
   const [currencyId, setCurrencyId] = useState(defaultCurrencyId);
   const [error, setError] = useState<string | null>(null);
@@ -57,13 +57,13 @@ export function LocalChargePanel({
         (c) =>
           c.costHeadId === costHeadId &&
           c.side === side &&
-          (c.containerTypeId ?? '') === containerTypeId,
+          (c.containerSizeId ?? '') === containerSizeId,
       )
     ) {
       setError(
-        containerTypeId === ''
+        containerSizeId === ''
           ? 'That cost head is already on this side.'
-          : 'That cost head is already on this side for that container type.',
+          : 'That cost head is already on this side for that container size.',
       );
       return;
     }
@@ -72,13 +72,13 @@ export function LocalChargePanel({
       {
         costHeadId,
         side,
-        containerTypeId,
+        containerSizeId,
         amount: amount.trim(),
         currencyId: currencyId || defaultCurrencyId,
       },
     ]);
     setCostHeadId('');
-    setContainerTypeId('');
+    setContainerSizeId('');
     setAmount('');
     setError(null);
   }
@@ -116,15 +116,15 @@ export function LocalChargePanel({
             <tbody>
               {charges.map((charge, index) => (
                 <tr
-                  key={`${charge.costHeadId}-${charge.side}-${charge.containerTypeId ?? ''}`}
+                  key={`${charge.costHeadId}-${charge.side}-${charge.containerSizeId ?? ''}`}
                   className="border-b border-line"
                 >
                   <td className="py-1.5">{nameOf(charge.costHeadId)}</td>
                   <td className="py-1.5 text-steel">{charge.side}</td>
                   <td className="py-1.5 font-mono text-steel">
-                    {charge.containerTypeId === undefined || charge.containerTypeId === ''
+                    {charge.containerSizeId === undefined || charge.containerSizeId === ''
                       ? 'All'
-                      : (containerTypes.find((t) => t.id === charge.containerTypeId)?.name ?? '—')}
+                      : (containerSizes.find((t) => t.id === charge.containerSizeId)?.name ?? '—')}
                   </td>
                   <td className="py-1.5 text-right font-mono tabular-nums">
                     {charge.amount} {codeOf(charge.currencyId)}
@@ -146,14 +146,14 @@ export function LocalChargePanel({
 
         <div className="grid grid-cols-1 gap-3 border-t border-line pt-4 md:grid-cols-2">
           {/* Blank means the charge applies whatever the equipment. */}
-          <Field id="lc-container" label="Container type" hint="Leave blank if it applies to all.">
+          <Field id="lc-container" label="Container size" hint="Leave blank if it applies to all.">
             <Select
               id="lc-container"
-              value={containerTypeId}
-              onChange={(e) => setContainerTypeId(e.target.value)}
+              value={containerSizeId}
+              onChange={(e) => setContainerSizeId(e.target.value)}
             >
-              <option value="">All container types</option>
-              {containerTypes.map((type) => (
+              <option value="">All container sizes</option>
+              {containerSizes.map((type) => (
                 <option key={type.id} value={type.id}>
                   {type.name}
                 </option>

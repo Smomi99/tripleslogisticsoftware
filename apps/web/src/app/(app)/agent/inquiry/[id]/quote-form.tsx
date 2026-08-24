@@ -35,7 +35,7 @@ import { useSession } from '@/lib/session';
 const EMPTY_LINE = {
   carrierId: '',
   costHeadId: '',
-  containerTypeId: '',
+  containerSizeId: '',
   costUnitId: '',
   quantity: '',
   unitPrice: '',
@@ -59,7 +59,7 @@ const EMPTY_REFERENCE: AgentQuoteReferenceDto = {
   currencies: [],
   carriers: [],
   costHeads: [],
-  containerTypes: [],
+  containerSizes: [],
   costUnits: [],
 };
 
@@ -81,7 +81,7 @@ function toFormValues(quote: AgentQuoteDto | null): AgentQuoteInput {
       lines: option.lines.map((line) => ({
         carrierId: line.carrierId ?? '',
         costHeadId: line.costHeadId,
-        containerTypeId: line.containerTypeId ?? '',
+        containerSizeId: line.containerSizeId ?? '',
         costUnitId: line.costUnitId ?? '',
         quantity: line.quantity,
         unitPrice: line.unitPrice,
@@ -224,10 +224,10 @@ function ChargeLines({
                   </td>
                   <td className="px-2 py-1.5">
                     <LookupCell
-                      options={reference.containerTypes}
+                      options={reference.containerSizes}
                       width="w-36"
                       placeholder="—"
-                      {...register(`${path}.containerTypeId`)}
+                      {...register(`${path}.containerSizeId`)}
                       disabled={disabled}
                     />
                   </td>

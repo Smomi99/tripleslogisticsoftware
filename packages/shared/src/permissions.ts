@@ -250,7 +250,7 @@ export const FEATURES: readonly FeatureDefinition[] = [
   // a §3.1 lookup with a Settings screen — without a permission its screen
   // could not be gated at all, so it is added on the same shape as the rest.
   { module: 'SETTING', feature: 'SETTING.GOODS_TYPE', label: 'Goods Type', actions: MASTER_DELETABLE },
-  { module: 'SETTING', feature: 'SETTING.CONTAINER_TYPE', label: 'Container Type', actions: MASTER_DELETABLE },
+  { module: 'SETTING', feature: 'SETTING.CONTAINER_SIZE', label: 'Container Size', actions: MASTER_DELETABLE },
   { module: 'SETTING', feature: 'SETTING.RATE_TIER', label: 'Rate Tier', actions: MASTER_DELETABLE },
   { module: 'SETTING', feature: 'SETTING.TOS', label: 'Terms of Shipment', actions: MASTER_DELETABLE },
   // The client's "Modes" screen. The values are Incoterms; the label follows

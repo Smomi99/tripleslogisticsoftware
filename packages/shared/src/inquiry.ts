@@ -121,7 +121,7 @@ const optionalInt = z
  * §5.4: "Volume is a small grid, not six loose inputs — rows appear based on
  * Shipment Type."
  *
- * One row per container type for Sea FCL, a single CBM row for LCL, a single KG
+ * One row per container size for Sea FCL, a single CBM row for LCL, a single KG
  * row for Air. Empty rows are dropped before submit rather than stored as zeros.
  */
 /** Sea only: FCL fills containers, LCL is consolidated. */
@@ -130,14 +130,14 @@ export type LoadingType = (typeof LOADING_TYPES)[number];
 
 export const inquiryVolumeInputSchema = z.object({
   volumeKind: z.enum(VOLUME_KINDS),
-  containerTypeId: optionalIdField,
+  containerSizeId: optionalIdField,
   quantity: optionalInt,
   cbm: optionalQuantity('Enter a CBM figure.'),
   weightKg: optionalQuantity('Enter a weight in KG.'),
   /** The client's wireframe puts Target Price inside the grid, per size. */
   targetPrice: optionalMoney('Enter a target price.'),
-  /** The wireframe's "Container Type :" row. Free text, by the client's choice. */
-  containerTypeNote: z.string().trim().max(200, 'That is too long.').optional(),
+  /** The wireframe's "Container Size :" row. Free text, by the client's choice. */
+  containerSizeNote: z.string().trim().max(200, 'That is too long.').optional(),
 });
 
 export type InquiryVolumeInput = z.input<typeof inquiryVolumeInputSchema>;
@@ -145,13 +145,13 @@ export type InquiryVolumeInput = z.input<typeof inquiryVolumeInputSchema>;
 export interface InquiryVolumeDto {
   id: string;
   volumeKind: VolumeKind;
-  containerTypeId: string | null;
-  containerTypeCode: string | null;
+  containerSizeId: string | null;
+  containerSizeCode: string | null;
   quantity: number | null;
   cbm: string | null;
   weightKg: string | null;
   targetPrice: string | null;
-  containerTypeNote: string | null;
+  containerSizeNote: string | null;
 }
 
 /**

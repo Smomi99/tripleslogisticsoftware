@@ -54,7 +54,7 @@ const ROUTES: Record<string, Route> = {
   'SETTING.CARRIER': '/setting/carrier',
   'SETTING.COMMODITY_CATEGORY': '/setting/commodity',
   'SETTING.GOODS_TYPE': '/setting/goods-type',
-  'SETTING.CONTAINER_TYPE': '/setting/container-type',
+  'SETTING.CONTAINER_SIZE': '/setting/container-size',
   'SETTING.RATE_TIER': '/setting/rate-tier',
   'SETTING.TOS': '/setting/tos',
   'SETTING.MODE': '/setting/mode',

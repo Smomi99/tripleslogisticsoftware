@@ -54,7 +54,7 @@ function requiredVolume(inquiry: InquiryDto): string {
   return inquiry.volumes
     .map((v) => {
       if (v.volumeKind === 'FCL') {
-        return `${v.quantity ?? 0} × ${v.containerTypeCode ?? '?'}`;
+        return `${v.quantity ?? 0} × ${v.containerSizeCode ?? '?'}`;
       }
       if (v.volumeKind === 'LCL') return `${v.cbm ?? '0'} CBM`;
       return `${v.weightKg ?? '0'} KG`;

@@ -37,7 +37,7 @@ import { useSession } from '@/lib/session';
 function requiredLoad(volumes: AgentInquiryVolumeDto[]): string {
   const parts = volumes
     .map((volume) => {
-      const box = volume.containerTypeName ?? volume.containerTypeNote;
+      const box = volume.containerSizeName ?? volume.containerSizeNote;
       if (box !== null && box !== '') {
         return volume.quantity === null ? box : `${box}(${volume.quantity})`;
       }

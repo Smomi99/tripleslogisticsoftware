@@ -44,7 +44,7 @@ import { LocalChargePanel } from './local-charge-panel';
 interface RateOptions {
   ports: LookupOption[];
   carriers: LookupOption[];
-  containerTypes: LookupOption[];
+  containerSizes: LookupOption[];
   goodsTypes: LookupOption[];
   currencies: LookupOption[];
   vendors: LookupOption[];
@@ -58,7 +58,7 @@ interface RateOptions {
 const EMPTY_OPTIONS: RateOptions = {
   ports: [],
   carriers: [],
-  containerTypes: [],
+  containerSizes: [],
   goodsTypes: [],
   currencies: [],
   vendors: [],
@@ -826,7 +826,7 @@ export function RateEntryScreen({
         onOpenChange={setPanelOpen}
         charges={draft.localCharges}
         costHeads={options.costHeads}
-        containerTypes={options.containerTypes}
+        containerSizes={options.containerSizes}
         currencies={options.currencies}
         defaultCurrencyId={draft.currencyId}
         onChange={(localCharges) => setDraft((d) => ({ ...d, localCharges }))}

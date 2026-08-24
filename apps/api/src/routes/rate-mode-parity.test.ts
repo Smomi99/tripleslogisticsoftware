@@ -17,7 +17,7 @@ import { signAccessToken } from '../lib/jwt';
  * rate_tier and §4 rule 9 dictate, and no others.
  *
  * Air is the mode nothing had exercised end to end before: its tiers are weight
- * breaks with a min_value and no container type, a shape no screen had rendered.
+ * breaks with a min_value and no container size, a shape no screen had rendered.
  */
 
 const owner = new PrismaClient({
@@ -209,28 +209,28 @@ describe('phase F — the tier columns come from rate_tier, per mode', () => {
     });
   }
 
-  it('air tiers are weight breaks with a lower bound and no container type', async () => {
+  it('air tiers are weight breaks with a lower bound and no container size', async () => {
     const tiers = await tiersFor('AIR');
     const rows = await owner.rateTier.findMany({
       where: { id: { in: tiers.map((t) => BigInt(t.id)) } },
-      select: { code: true, minValue: true, containerTypeId: true },
+      select: { code: true, minValue: true, containerSizeId: true },
     });
     expect(rows.length).toBeGreaterThan(0);
     for (const row of rows) {
       // The shape no screen had rendered before phase F.
-      expect(row.containerTypeId, row.code).toBeNull();
+      expect(row.containerSizeId, row.code).toBeNull();
       expect(row.minValue, row.code).not.toBeNull();
     }
   });
 
-  it('FCL tiers name a container type, unlike the other two', async () => {
+  it('FCL tiers name a container size, unlike the other two', async () => {
     const tiers = await tiersFor('SEA_FCL');
     const rows = await owner.rateTier.findMany({
       where: { id: { in: tiers.map((t) => BigInt(t.id)) } },
-      select: { code: true, containerTypeId: true },
+      select: { code: true, containerSizeId: true },
     });
     for (const row of rows) {
-      expect(row.containerTypeId, row.code).not.toBeNull();
+      expect(row.containerSizeId, row.code).not.toBeNull();
     }
   });
 });
