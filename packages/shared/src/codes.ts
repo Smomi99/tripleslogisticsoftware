@@ -66,6 +66,10 @@ export const CODE_PREFIX = {
   // Sales
   salesLead: 'LED',
 
+  // Customer Service. The quotation itself uses the yearly series
+  // QTN-2026-000001 rather than this padder — see lib/document-no.
+  quotationFollowup: 'QFU',
+
   // §7 RBAC
   role: 'ROL',
   user: 'USR',

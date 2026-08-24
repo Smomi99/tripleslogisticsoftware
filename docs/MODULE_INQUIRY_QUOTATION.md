@@ -499,6 +499,22 @@ wrong number on a customer-facing document.
 12. The `Booking Rate` label on the quotation and `Conversion Rate` on the PDF are the same field.
     Pick one label for the UI so the team isn't confused later.
 
+**Raised while building I and K (2026-08-25):**
+
+13. **May a draft quotation be deleted?** §7 lists `DELETE` on `CS.QUOTATION`. CR-002 draws the
+    line at master data — a quotation is business history retired by its own status — and its test
+    names quotations explicitly. The stricter rule was followed, so the permission and the route do
+    not exist. But a draft raised against the wrong inquiry is a real case neither rule covers, and
+    there is currently no way to remove one. Confirm whether a `CANCELLED` status, or a delete
+    limited to `DRAFT`, is what the client wants.
+14. **What names the freight on a quotation?** The price table prices the box but does not name the
+    charge: `freight_rate` carries no cost head, only `rate_local_charge` does. So auto-pull can
+    name the Seal, ENS and HBL lines and cannot name the Ocean Freight line. It is asked on the
+    Quotation form instead — what the freight is *called* on a customer document is a sales
+    decision, not a purchasing one — and left blank, only the local charges pull. If the client
+    would rather set it once per rate, that is a column on `freight_rate` and a field on the
+    Purchase screens.
+
 ---
 
 ## 10. IMPLEMENTATION NOTES — what was already built, and where this spec differs
@@ -523,6 +539,14 @@ Since that audit, two things closed:
   **never shown to the agent** — §6.4 lists Won and "Business Lost" as the only answers their
   portal gives, and telling somebody they made a shortlist reveals that they are being compared.
   Being shortlisted does not close their quote to amendment.
+- **Phases I and K shipped** (§4.4 schema, §6.5 Quotation, §6.7 Quotation List). Deltas from the
+  spec, all deliberate: `mode` is the `mode_id` key rather than loose TEXT, since Mode became a
+  real lookup; `container_size` on a line is the key plus a snapshot name rather than TEXT;
+  `quotation_line` carries a second provenance column (`price_source_local_charge_id`) because the
+  price table answers in two parts and §4.4 named only one; `quotation_commodity` snapshots the
+  commodities §5.3 rule 2 copies down. Two things the spec asked for were **not** built and are
+  now questions 13 and 14 below. Phase J — the PDF — is still outstanding, and `EXPORT_PDF` is
+  seeded ready for it.
 - **The RFQ_SENT bug.** §5.1 marks an inquiry `RFQ_SENT` the moment it is shared with agents, but
   both the portal API and its page tested for `OPEN` alone — so the one state an agent is *asked*
   to quote in was the state that refused them. The rule now lives once in `packages/shared`

@@ -272,6 +272,11 @@ model Tenant {
   @@index([slug])
   @@index([status])
   @@index([currencyId])
+  quotations          Quotation[]
+  quotationLines      QuotationLine[]
+  quotationCommodities QuotationCommodity[]
+  quotationRecipients QuotationRecipient[]
+  quotationFollowups  QuotationFollowup[]
   @@map("tenant")
 }
 
@@ -397,6 +402,8 @@ model Port {
   @@index([country])
   @@index([type])
   @@index([name])
+  quotationsPol Quotation[] @relation("QuotationPol")
+  quotationsPod Quotation[] @relation("QuotationPod")
   @@map("port")
 }
 
@@ -441,6 +448,8 @@ model Currency {
   @@unique([tenantId, code])
   @@index([tenantId])
   @@index([currency])
+  quotationsLocal Quotation[] @relation("QuotationLocalCurrency")
+  quotationLines  QuotationLine[] @relation("QuotationLineCurrency")
   @@map("currency")
 }
 
@@ -502,6 +511,7 @@ model CostUnit {
 
   @@unique([tenantId, code])
   @@index([tenantId])
+  quotationLines QuotationLine[] @relation("QuotationLineCostUnit")
   @@map("cost_unit")
 }
 
@@ -537,6 +547,7 @@ model CostHead {
   @@index([unitId])
   @@index([category])
   @@index([name])
+  quotationLines QuotationLine[]
   @@map("cost_head")
 }
 
@@ -608,6 +619,7 @@ model Carrier {
   @@index([tenantId])
   @@index([typeId])
   @@index([name])
+  quotations Quotation[] @relation("QuotationCarrier")
   @@map("carrier")
 }
 
@@ -782,6 +794,7 @@ model Vessel {
   @@index([tenantId])
   @@index([carrierId])
   @@index([name])
+  quotations Quotation[]
   @@map("vessel")
 }
 
@@ -964,6 +977,7 @@ model CommodityItem {
   @@index([industrySectorId])
   @@index([name])
   @@index([hsCode])
+  quotationCommodities QuotationCommodity[]
   @@map("commodity_item")
 }
 
@@ -1028,6 +1042,7 @@ model Customer {
   @@index([country])
   @@index([customerType])
   @@index([businessArea])
+  quotations Quotation[]
   @@map("customer")
 }
 
@@ -1660,6 +1675,14 @@ model User {
   @@index([agentId])
   @@index([customerId])
   @@index([vendorId])
+  quotationsSent    Quotation[] @relation("QuotationSentBy")
+  quotationsCreated Quotation[] @relation("QuotationCreatedBy")
+  quotationsUpdated Quotation[] @relation("QuotationUpdatedBy")
+  quotationLinesCreated QuotationLine[] @relation("QuotationLineCreatedBy")
+  quotationLinesUpdated QuotationLine[] @relation("QuotationLineUpdatedBy")
+  quotationRecipientsCreated QuotationRecipient[] @relation("QuotationRecipientCreatedBy")
+  quotationFollowupsCreated QuotationFollowup[] @relation("QuotationFollowupCreatedBy")
+  quotationFollowupsUpdated QuotationFollowup[] @relation("QuotationFollowupUpdatedBy")
   @@map("user")
 }
 
@@ -1782,6 +1805,7 @@ model GoodsType {
   @@unique([tenantId, code])
   @@index([tenantId])
   @@index([name])
+  quotations Quotation[]
   @@map("goods_type")
 }
 
@@ -1944,6 +1968,7 @@ model ContainerSize {
   @@unique([tenantId, code])
   @@unique([tenantId, id])
   @@index([tenantId])
+  quotationLines QuotationLine[] @relation("QuotationLineContainerSize")
   @@map("container_size")
 }
 
@@ -2012,6 +2037,7 @@ model Tos {
 
   @@unique([tenantId, code])
   @@index([tenantId])
+  quotations Quotation[]
   @@map("tos")
 }
 
@@ -2051,6 +2077,7 @@ model Mode {
 
   @@unique([tenantId, code])
   @@index([tenantId])
+  quotations Quotation[]
   @@map("mode")
 }
 
@@ -2251,6 +2278,7 @@ model FreightRateLine {
   @@index([tenantId])
   @@index([rateId])
   @@index([tierId])
+  quotationLines QuotationLine[]
   @@map("freight_rate_line")
 }
 
@@ -2303,6 +2331,10 @@ model RateLocalCharge {
   @@index([tenantId])
   @@index([rateId])
   @@index([costHeadId])
+  quotationLines QuotationLine[]
+  /// Composite target so quotation_line can reference a charge without
+  /// leaving the tenant (§4 rule 10).
+  @@unique([tenantId, id])
   @@map("rate_local_charge")
 }
 
@@ -2603,6 +2635,7 @@ model Inquiry {
   @@index([customerId])
   @@index([polId])
   @@index([podId])
+  quotations Quotation[]
   @@map("inquiry")
 }
 
@@ -2893,6 +2926,7 @@ model AgentQuote {
   @@index([inquiryId])
   @@index([agentId])
   @@index([status])
+  quotations Quotation[]
   @@map("agent_quote")
 }
 
@@ -3037,4 +3071,352 @@ enum AgentQuoteStatus {
   LOST
 
   @@map("agent_quote_status")
+}
+
+/// The customer-facing price (§4.4, client: Table_Quotation).
+///
+/// This is the one record in the product that leaves the building and binds the
+/// company. §2.2 is the rule that shapes it: a quotation issued today must read
+/// the same next year, after cost heads are renamed, rates expire and the
+/// dollar moves. So the money on it is snapshotted, not joined — see
+/// QuotationLine, where the argument actually bites.
+///
+/// The header keeps foreign keys because the names on it (customer, ports,
+/// carrier) are stable in a way a price is not, and because the list screen
+/// and every report want to filter on them. Where a name could be edited
+/// underneath an issued document it is snapshotted alongside its key.
+model Quotation {
+  tenantId   BigInt @map("tenant_id")
+  id         BigInt @id @default(autoincrement())
+  /// QTN-2026-000001. Shared by every revision of the same document — the
+  /// number identifies the quotation, revisionNo identifies which issue of it.
+  code       String @db.VarChar(32)
+  seriesYear Int    @map("series_year")
+  /// §5.3 rule 8: editing a SENT quotation issues revision 2 and supersedes
+  /// revision 1. Both are kept, and the number is never reused.
+  revisionNo Int    @default(1) @map("revision_no")
+
+  /// §5.3 rule 1: mandatory. A quotation cannot exist without the request that
+  /// prompted it — the client marks Inquiry No red on the wireframe.
+  inquiryId BigInt @map("inquiry_id")
+
+  quotationDate DateTime  @map("quotation_date") @db.Date
+  validityDate  DateTime? @map("validity_date") @db.Date
+
+  /// §5.3 rule 2: the inquiry header, copied down and editable afterwards.
+  /// Edits here do not write back to the inquiry.
+  customerId     BigInt       @map("customer_id")
+  shipmentType   ShipmentType @map("shipment_type")
+  movementType   MovementType @map("movement_type")
+  polId          BigInt       @map("pol_id")
+  podId          BigInt       @map("pod_id")
+  goodsTypeId    BigInt?      @map("goods_type_id")
+  placeOfReceipt String?      @map("place_of_receipt") @db.Text
+  loadingType    LoadingType? @map("loading_type")
+  tosId          BigInt?      @map("tos_id")
+  /// §4.4 writes `mode TEXT`. Mode became a real lookup in the TOS/Mode swap,
+  /// so this is the key rather than loose text — same column the inquiry uses.
+  modeId         BigInt?      @map("mode_id")
+
+  /// The wireframe marks these red. Carrier is required: a price with no
+  /// carrier behind it is not a quotation. First vessel is not — the booking
+  /// may not have one yet.
+  carrierId     BigInt       @map("carrier_id")
+  firstVesselId BigInt?      @map("first_vessel_id")
+  transitType   TransitType? @map("transit_type")
+  etd           DateTime?    @db.Date
+  eta           DateTime?    @db.Date
+
+  /// §2.2 and §5.4: the USD→BDT rate frozen at creation. The client's "Booking
+  /// Rate" column and the PDF's "Conversion Rate" are this one number. Copied
+  /// from the currency master once and then never re-read, so the arithmetic on
+  /// an issued document cannot move under it.
+  localCurrencyId BigInt  @map("local_currency_id")
+  conversionRate  Decimal @map("conversion_rate") @db.Decimal(18, 4)
+
+  /// When the price came from an agent's RFQ rather than our own rate table.
+  sourceAgentQuoteId BigInt? @map("source_agent_quote_id")
+
+  /// Sums of the lines, stored so the PDF and the list do not re-add them.
+  /// Recomputed on every line change (§5.3 rule 6).
+  totalAmountUsd   Decimal? @map("total_amount_usd") @db.Decimal(18, 4)
+  totalAmountLocal Decimal? @map("total_amount_local") @db.Decimal(18, 4)
+  /// §5.3 rule 7: generated from the USD total on save.
+  amountInWords    String?  @map("amount_in_words") @db.Text
+
+  status QuotationStatus @default(DRAFT)
+  sentAt DateTime?       @map("sent_at") @db.Timestamptz(6)
+  sentBy BigInt?         @map("sent_by")
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  inquiry  Inquiry  @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict)
+  customer Customer @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict)
+
+  /// Port, carrier, vessel, goods type, TOS, mode and currency are all
+  /// system-capable (§7A rule 7), so a shared row carries tenant_id NULL and a
+  /// composite tenant FK cannot resolve. Single-column keys, with the
+  /// same-tenant rule enforced by trigger — the shape freight_rate already uses.
+  pol           Port       @relation("QuotationPol", fields: [polId], references: [id], onDelete: Restrict)
+  pod           Port       @relation("QuotationPod", fields: [podId], references: [id], onDelete: Restrict)
+  goodsType     GoodsType? @relation(fields: [goodsTypeId], references: [id], onDelete: Restrict)
+  tos           Tos?       @relation(fields: [tosId], references: [id], onDelete: Restrict)
+  mode          Mode?      @relation(fields: [modeId], references: [id], onDelete: Restrict)
+  carrier       Carrier    @relation("QuotationCarrier", fields: [carrierId], references: [id], onDelete: Restrict)
+  firstVessel   Vessel?    @relation(fields: [firstVesselId], references: [id], onDelete: Restrict)
+  localCurrency Currency   @relation("QuotationLocalCurrency", fields: [localCurrencyId], references: [id], onDelete: Restrict)
+
+  sourceAgentQuote AgentQuote? @relation(fields: [tenantId, sourceAgentQuoteId], references: [tenantId, id], onDelete: Restrict)
+
+  sentByUser    User? @relation("QuotationSentBy", fields: [sentBy], references: [id], onDelete: Restrict)
+  createdByUser User? @relation("QuotationCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("QuotationUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  lines       QuotationLine[]
+  commodities QuotationCommodity[]
+  recipients  QuotationRecipient[]
+  followups   QuotationFollowup[]
+
+  /// The number plus its issue. A second revision of QTN-2026-000001 is a new
+  /// row sharing the number, which is why code alone is not unique.
+  @@unique([tenantId, code, revisionNo])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([inquiryId])
+  @@index([customerId])
+  @@index([carrierId])
+  @@index([status])
+  @@map("quotation")
+}
+
+/// One priced charge on a quotation (client: Table_Quotation_Details).
+///
+/// Every name and number the customer will read is stored here, not joined.
+/// §2.2 is explicit about why: rename a cost head, expire a rate or move the
+/// dollar tomorrow, and a quotation that referenced them would silently rewrite
+/// itself. A document that changes after it is issued is not a document.
+///
+/// The foreign keys stay alongside the snapshots so the rows are still
+/// reportable — what was quoted for Ocean Freight last quarter is a question
+/// the snapshot text cannot answer on its own.
+model QuotationLine {
+  tenantId    BigInt             @map("tenant_id")
+  id          BigInt             @id @default(autoincrement())
+  quotationId BigInt             @map("quotation_id")
+  /// The wireframe's two blocks: the freight and charges it pulled, then the
+  /// Additional Charge section the user added by hand.
+  lineGroup   QuotationLineGroup @default(STANDARD) @map("line_group")
+  sortOrder   Int                @default(0) @map("sort_order")
+
+  costHeadId   BigInt @map("cost_head_id")
+  costHeadName String @map("cost_head_name") @db.VarChar(200)
+
+  /// Null is the wireframe's "No size" — a charge billed per document rather
+  /// than per box, like the ENS and HBL lines on the client's sample.
+  containerSizeId   BigInt? @map("container_size_id")
+  containerSizeName String? @map("container_size_name") @db.VarChar(100)
+
+  costUnitId BigInt? @map("cost_unit_id")
+  unitName   String? @map("unit_name") @db.VarChar(100)
+
+  quantity     Decimal @db.Decimal(18, 3)
+  sellingPrice Decimal @map("selling_price") @db.Decimal(18, 4)
+
+  currencyId   BigInt @map("currency_id")
+  currencyCode String @map("currency_code") @db.VarChar(10)
+
+  /// GENERATED quantity * selling_price. The client's "Total Amount ($)".
+  totalAmount Decimal? @default(dbgenerated()) @map("total_amount") @db.Decimal(18, 4)
+
+  /// The quotation's frozen rate, copied onto every line so a multi-currency
+  /// quotation still totals correctly (§5.4).
+  conversionRate Decimal @map("conversion_rate") @db.Decimal(18, 4)
+
+  /// GENERATED quantity * selling_price * conversion_rate. The client's "Bill
+  /// Amount (Local Currency)": 2 x 5252 = 10504, x 129 = 1,355,016.
+  billAmountLocal Decimal? @default(dbgenerated()) @map("bill_amount_local") @db.Decimal(18, 4)
+
+  /// §6.5: auto-pulled lines are marked quietly, hand-typed prices are marked
+  /// in --signal, so the pricing team can see what nobody had a rate for.
+  source QuotationLineSource @default(MANUAL)
+
+  /// Where an AUTO line came from. Two sources, because the price table answers
+  /// in two parts: freight_rate_line prices the box, rate_local_charge prices
+  /// the cost heads around it. §4.4 names only the first; a Seal Charge with no
+  /// provenance would be indistinguishable from one somebody typed.
+  priceSourceRateLineId    BigInt? @map("price_source_rate_line_id")
+  priceSourceLocalChargeId BigInt? @map("price_source_local_charge_id")
+
+  remarks   String?   @db.Text
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  quotation Quotation @relation(fields: [tenantId, quotationId], references: [tenantId, id], onDelete: Restrict)
+  /// cost_head is tenant-owned, so this one is composite.
+  costHead  CostHead  @relation(fields: [tenantId, costHeadId], references: [tenantId, id], onDelete: Restrict)
+
+  containerSize ContainerSize? @relation("QuotationLineContainerSize", fields: [containerSizeId], references: [id], onDelete: Restrict)
+  costUnit      CostUnit?      @relation("QuotationLineCostUnit", fields: [costUnitId], references: [id], onDelete: Restrict)
+  currency      Currency       @relation("QuotationLineCurrency", fields: [currencyId], references: [id], onDelete: Restrict)
+
+  priceSourceRateLine    FreightRateLine?  @relation(fields: [tenantId, priceSourceRateLineId], references: [tenantId, id], onDelete: Restrict)
+  priceSourceLocalCharge RateLocalCharge?  @relation(fields: [tenantId, priceSourceLocalChargeId], references: [tenantId, id], onDelete: Restrict)
+
+  createdByUser User? @relation("QuotationLineCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("QuotationLineUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([quotationId])
+  @@index([costHeadId])
+  @@index([containerSizeId])
+  @@index([currencyId])
+  @@map("quotation_line")
+}
+
+/// The commodities the quotation covers, snapshotted from the inquiry.
+///
+/// §5.3 rule 2 copies commodity and HS code down with the rest of the header,
+/// and §6.6 prints them. A quotation naming a commodity that was later renamed
+/// in the master would otherwise describe cargo the customer never asked about.
+model QuotationCommodity {
+  tenantId        BigInt  @map("tenant_id")
+  id              BigInt  @id @default(autoincrement())
+  quotationId     BigInt  @map("quotation_id")
+  commodityItemId BigInt  @map("commodity_item_id")
+  commodityName   String  @map("commodity_name") @db.VarChar(200)
+  hsCode          String? @map("hs_code") @db.VarChar(50)
+  isActive        Boolean @default(true) @map("is_active")
+
+  tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  quotation     Quotation     @relation(fields: [tenantId, quotationId], references: [tenantId, id], onDelete: Restrict)
+  commodityItem CommodityItem @relation(fields: [tenantId, commodityItemId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, quotationId, commodityItemId])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([quotationId])
+  @@map("quotation_commodity")
+}
+
+/// Who the quotation goes to (§6.5 "Insert Email ID").
+///
+/// The client's note: the addresses come from the customer record and more can
+/// be added. Stored per quotation rather than read from the customer at send
+/// time, so the record shows who it actually went to — the customer's contact
+/// list will have changed by the time anyone asks.
+model QuotationRecipient {
+  tenantId    BigInt          @map("tenant_id")
+  id          BigInt          @id @default(autoincrement())
+  quotationId BigInt          @map("quotation_id")
+  email       String          @db.VarChar(320)
+  kind        RecipientKind   @default(TO)
+  source      RecipientSource @default(CUSTOMER)
+  isActive    Boolean         @default(true) @map("is_active")
+  createdAt   DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy   BigInt?         @map("created_by")
+
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  quotation Quotation @relation(fields: [tenantId, quotationId], references: [tenantId, id], onDelete: Restrict)
+
+  createdByUser User? @relation("QuotationRecipientCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, quotationId, email, kind])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([quotationId])
+  @@map("quotation_recipient")
+}
+
+/// Chasing the customer for an answer (§6.7's Follow up action).
+/// Mirrors inquiry_followup exactly — the same conversation, one step later.
+model QuotationFollowup {
+  tenantId         BigInt      @map("tenant_id")
+  id               BigInt      @id @default(autoincrement())
+  quotationId      BigInt      @map("quotation_id")
+  followupDate     DateTime    @map("followup_date") @db.Date
+  contactMode      ContactMode @map("contact_mode")
+  contactPerson    String?     @map("contact_person") @db.VarChar(200)
+  notes            String?     @db.Text
+  nextFollowupDate DateTime?   @map("next_followup_date") @db.Date
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  quotation Quotation @relation(fields: [tenantId, quotationId], references: [tenantId, id], onDelete: Restrict)
+
+  createdByUser User? @relation("QuotationFollowupCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("QuotationFollowupUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([quotationId])
+  @@map("quotation_followup")
+}
+
+enum QuotationStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+  EXPIRED
+  /// Replaced by a later revision (§5.3 rule 8). Kept, never deleted.
+  SUPERSEDED
+
+  @@map("quotation_status")
+}
+
+enum QuotationLineGroup {
+  STANDARD
+  /// The wireframe's separate "Additional Charge" block.
+  ADDITIONAL
+
+  @@map("quotation_line_group")
+}
+
+enum QuotationLineSource {
+  /// Pulled from the price table on POL + POD + goods type + carrier.
+  AUTO
+  /// Typed by hand, because no selling price existed. §5.3 rule 5 refuses to
+  /// block the quotation over an incomplete price table — it marks the line.
+  MANUAL
+
+  @@map("quotation_line_source")
+}
+
+enum TransitType {
+  DIRECT
+  INDIRECT
+
+  @@map("transit_type")
+}
+
+enum RecipientKind {
+  TO
+  CC
+
+  @@map("recipient_kind")
+}
+
+enum RecipientSource {
+  CUSTOMER
+  MANUAL
+
+  @@map("recipient_source")
 }

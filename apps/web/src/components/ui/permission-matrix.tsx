@@ -64,6 +64,10 @@ const ACTION_LABEL: Record<Action, string> = {
   QUOTE: 'Quote',
   SET_OUTCOME: 'Won / lost',
   PRICE_CHECK: 'Price check',
+  SEND: 'Send',
+  EXPORT_PDF: 'Export PDF',
+  ADD_ADDITIONAL: 'Add charge',
+  MANUAL_PRICE: 'Type a price',
   CARRIER_POSITION: 'Carrier position',
 };
 

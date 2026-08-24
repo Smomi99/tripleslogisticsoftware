@@ -28,3 +28,4 @@ export * from './sales-lead';
 export * from './user';
 export * from './vendor';
 export * from './vessel';
+export * from './quotation';

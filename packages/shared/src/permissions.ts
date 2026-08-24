@@ -43,6 +43,22 @@ export const ACTIONS = [
    */
   'PRICE_CHECK',
   'CARRIER_POSITION',
+  /*
+   * §7's quotation actions.
+   *
+   * SEND is separate from EDIT because building a quotation and putting it in
+   * front of a customer are different acts — a junior may draft one all day
+   * and still not be the person who commits the company to a price.
+   *
+   * MANUAL_PRICE is the one the spec calls out: "typing a price by hand is
+   * privileged". An auto-pulled line carries whatever the price table holds; a
+   * typed one is a number somebody invented, and §6.5 marks it on screen for
+   * exactly that reason.
+   */
+  'SEND',
+  'EXPORT_PDF',
+  'ADD_ADDITIONAL',
+  'MANUAL_PRICE',
   // The agent side of an inquiry: sending a price back, and changing it while
   // the inquiry is still open. Separate from CREATE/EDIT because it is not the
   // inquiry being written — it is an answer to one.
@@ -211,8 +227,39 @@ export const FEATURES: readonly FeatureDefinition[] = [
   { module: 'SALES', feature: 'SALES.SALES_LEAD_FOLLOWUP', label: 'Sales Lead Follow-up', actions: MASTER },
 
   // -- 3. Customer Service ---------------------------------------------------
-  { module: 'CUSTOMER_SERVICE', feature: 'CUSTOMER_SERVICE.QUOTATION', label: 'Quotation', actions: MASTER },
-  { module: 'CUSTOMER_SERVICE', feature: 'CUSTOMER_SERVICE.QUOTATION_LIST', label: 'Quotation List', actions: MASTER },
+  /*
+   * One feature for both of the client's menu items, the way SALES.INQUIRY
+   * covers New Inquiry and Live Inquiry: §8 opens a feature on its list and
+   * reaches the form from the Add button. Drafting, sending and following up
+   * are the same screen's actions, not separate screens.
+   */
+  {
+    module: 'CUSTOMER_SERVICE',
+    feature: 'CUSTOMER_SERVICE.QUOTATION',
+    label: 'Quotation',
+    /*
+     * §7 lists DELETE. CR-002 does not allow it here: DELETE is for master data
+     * a user typed twice, and a quotation is business history retired by its own
+     * status. A draft raised in error is a real case the rule does not cover —
+     * see §11, question 13. Following the stricter rule until the client answers.
+     */
+    actions: ['VIEW', 'CREATE', 'EDIT', 'SEND', 'FOLLOWUP', 'EXPORT_PDF', 'VIEW_ALL'],
+  },
+  /*
+   * Column-level, like PURCHASE's VIEW_BUY_PRICE. Adding a cost head nobody
+   * priced, and typing a selling price the rate table does not hold, are the
+   * two ways a quotation can leave the price list behind — so they are the two
+   * a forwarder may want to withhold.
+   */
+  {
+    module: 'CUSTOMER_SERVICE',
+    feature: 'CUSTOMER_SERVICE.QUOTATION_LINE',
+    label: 'Quotation pricing',
+    actions: ['ADD_ADDITIONAL', 'MANUAL_PRICE'],
+    // Gates on data inside the Quotation screen, not a screen of its own — so
+    // no VIEW, and nothing for the sidebar to render.
+    columnLevel: true,
+  },
   { module: 'CUSTOMER_SERVICE', feature: 'CUSTOMER_SERVICE.CARGO_BOOKING', label: 'Cargo Booking', actions: MASTER },
   { module: 'CUSTOMER_SERVICE', feature: 'CUSTOMER_SERVICE.SHIPMENT_APPROVAL', label: 'Shipment Approval', actions: MASTER_APPROVE },
   { module: 'CUSTOMER_SERVICE', feature: 'CUSTOMER_SERVICE.SHIPPING_ORDER', label: 'Shipping Order', actions: MASTER },

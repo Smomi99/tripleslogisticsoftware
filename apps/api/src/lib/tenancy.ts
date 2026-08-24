@@ -72,6 +72,11 @@ export const TENANT_OWNED_MODELS = [
   // Sales: an inquiry is one company's pipeline, never shared.
   'Inquiry',
   'InquiryFollowup',
+  'Quotation',
+  'QuotationLine',
+  'QuotationCommodity',
+  'QuotationRecipient',
+  'QuotationFollowup',
   'InquiryParty',
   'InquiryPartyContact',
   'InquiryRate',

@@ -45,6 +45,7 @@ const ROUTES: Record<string, Route> = {
   // The list, not the capture form: §8 makes the list the screen a feature
   // opens on, with New reached from its Add button.
   'SALES.INQUIRY': '/sales/inquiry',
+  'CUSTOMER_SERVICE.QUOTATION': '/cs/quotation',
   'AGENT.INQUIRY': '/agent/inquiry',
   'SALES.NEW_SALES_LEAD': '/sales/sales-lead',
   'SETTING.SEA_AIR_PORT': '/setting/port',

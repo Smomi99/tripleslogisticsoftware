@@ -20,6 +20,7 @@ import { employeeRouter } from './employee.route';
 import { currencyRouter } from './currency.route';
 import { freightRateRouter } from './freight-rate.route';
 import { inquiryRouter } from './inquiry.route';
+import { quotationRouter } from './quotation.route';
 import { salesLeadRouter } from './sales-lead.route';
 import { portRouter } from './port.route';
 import { notificationSettingRouter } from './notification-setting.route';
@@ -59,6 +60,7 @@ tenantRouter.use('/purchase', freightRateRouter);
 
 // Sales — inquiry capture (MODULE_PURCHASE_SALES §5.4).
 tenantRouter.use('/sales', inquiryRouter);
+tenantRouter.use('/cs', quotationRouter);
 tenantRouter.use('/sales', salesLeadRouter);
 
 // CRM.

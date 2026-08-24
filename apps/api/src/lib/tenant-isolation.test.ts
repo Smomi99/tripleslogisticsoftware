@@ -203,7 +203,8 @@ describe('model tier registry', () => {
 
     expect(missingFromRegistry, `tables absent from tenancy.ts: ${missingFromRegistry.join(', ')}`).toEqual([]);
     expect(missingFromDb, `registry names with no table: ${missingFromDb.join(', ')}`).toEqual([]);
-    expect(known.length).toBe(64);
+    // 64 + the five quotation tables.
+    expect(known.length).toBe(69);
   });
 
   it('applies the caller row level security to every view', async () => {

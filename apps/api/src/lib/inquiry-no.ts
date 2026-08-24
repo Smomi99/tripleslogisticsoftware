@@ -1,27 +1,38 @@
 import type { TenantDb } from './tenant-client';
 
 /**
- * The Inquiry No (docs/MODULE_PURCHASE_SALES.md §9 Q9, answered).
+ * Yearly document numbers — `INQ-2026-000001`, `QTN-2026-000001`.
  *
- * `INQ-2026-000001` — per tenant, per year, restarting each January.
+ * Per tenant, per year, restarting each January (MODULE_PURCHASE_SALES §9 Q9,
+ * and §4.4 of the inquiry/quotation module, which writes the quotation the same
+ * way).
  *
- * lib/codes' nextCode cannot produce this: it does MAX+1 over a plain numeric
+ * lib/codes' nextCode cannot produce these: it does MAX+1 over a plain numeric
  * suffix, and `INQ-2026-000001` has a year in the middle, so its regex never
- * matches and every inquiry would come out as INQ-1. Hence a generator of its
+ * matches and every document would come out as INQ-1. Hence a generator of its
  * own rather than a parameter on that one.
  *
  * Same concurrency story as nextCode: two callers racing compute the same
- * number, and UNIQUE(tenant_id, code) is the real guarantee — the loser gets a
- * unique violation and retries. Correctness rests on the constraint, not on
- * this winning the race.
+ * number, and the table's UNIQUE constraint is the real guarantee — the loser
+ * gets a unique violation and retries. Correctness rests on the constraint, not
+ * on this winning the race.
  */
 
 export const INQUIRY_PREFIX = 'INQ';
+export const QUOTATION_PREFIX = 'QTN';
 /** Six digits, as §3.3 writes it. Grows past six rather than wrapping. */
 const SEQUENCE_WIDTH = 6;
 
+export function formatDocumentNo(prefix: string, year: number, sequence: number): string {
+  return `${prefix}-${year}-${String(sequence).padStart(SEQUENCE_WIDTH, '0')}`;
+}
+
 export function formatInquiryNo(year: number, sequence: number): string {
-  return `${INQUIRY_PREFIX}-${year}-${String(sequence).padStart(SEQUENCE_WIDTH, '0')}`;
+  return formatDocumentNo(INQUIRY_PREFIX, year, sequence);
+}
+
+export function formatQuotationNo(year: number, sequence: number): string {
+  return formatDocumentNo(QUOTATION_PREFIX, year, sequence);
 }
 
 export async function nextInquiryNo(
@@ -43,7 +54,34 @@ export async function nextInquiryNo(
   return formatInquiryNo(year, current + 1);
 }
 
-/** The year an inquiry belongs to — its own date, not today's. */
-export function seriesYearOf(inquiryDate: Date): number {
-  return inquiryDate.getUTCFullYear();
+/**
+ * The next quotation number.
+ *
+ * DISTINCT on code rather than MAX over every row: a quotation number is shared
+ * by all its revisions (§5.3 rule 8), so counting rows would skip a number
+ * every time somebody revised one. The highest number issued is what matters,
+ * not how many documents carry it.
+ */
+export async function nextQuotationNo(
+  db: TenantDb,
+  tenantId: bigint,
+  year: number,
+): Promise<string> {
+  const pattern = `${QUOTATION_PREFIX}-${year}-%`;
+
+  const rows = await db.$queryRaw<{ max_seq: number | null }[]>`
+    SELECT MAX((regexp_replace(code, '^.*-', ''))::int) AS max_seq
+      FROM quotation
+     WHERE tenant_id = ${tenantId}
+       AND series_year = ${year}
+       AND code LIKE ${pattern}
+  `;
+
+  const current = rows[0]?.max_seq ?? 0;
+  return formatQuotationNo(year, current + 1);
+}
+
+/** The year a document belongs to — its own date, not today's. */
+export function seriesYearOf(documentDate: Date): number {
+  return documentDate.getUTCFullYear();
 }
