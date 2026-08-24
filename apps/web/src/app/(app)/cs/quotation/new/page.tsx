@@ -2,7 +2,7 @@
 
 import type { QuotationDto } from '@ff/shared';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -33,9 +33,16 @@ import type { QuotationOptions } from '../quotation-form';
 export default function NewQuotationPage() {
   const { authorizedRequest } = useSession();
   const router = useRouter();
+  /*
+   * Live Inquiry's Quote action lands here with the inquiry already chosen.
+   * Arriving that way the choice is fixed rather than merely preselected — the
+   * operator pressed Quote on a particular row, and letting the dropdown drift
+   * off it is how a price ends up attached to somebody else's shipment.
+   */
+  const preselected = useSearchParams().get('inquiryId');
 
   const [options, setOptions] = useState<QuotationOptions | null>(null);
-  const [inquiryId, setInquiryId] = useState('');
+  const [inquiryId, setInquiryId] = useState(preselected ?? '');
   const [carrierId, setCarrierId] = useState('');
   const [localCurrencyId, setLocalCurrencyId] = useState('');
   const [freightCostHeadId, setFreightCostHeadId] = useState('');
@@ -111,11 +118,16 @@ export default function NewQuotationPage() {
             id="inquiryId"
             label="Inquiry No"
             required
-            hint="A quotation cannot exist without the request that prompted it."
+            hint={
+              preselected === null
+                ? 'A quotation cannot exist without the request that prompted it.'
+                : 'Carried from the inquiry you pressed Quote on.'
+            }
           >
             <Select
               id="inquiryId"
               value={inquiryId}
+              disabled={preselected !== null}
               onChange={(event) => setInquiryId(event.target.value)}
             >
               <option value="">Choose an inquiry</option>

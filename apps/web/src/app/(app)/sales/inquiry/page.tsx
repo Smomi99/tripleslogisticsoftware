@@ -8,8 +8,9 @@ import {
   type LookupOption,
   SHIPMENT_TYPES,
 } from '@ff/shared';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
@@ -19,7 +20,6 @@ import { InquiryForm } from '@/components/sales/inquiry-form';
 import { PageHeader } from '@/components/ui/form-layout';
 import { Modal } from '@/components/ui/modal';
 import { Status } from '@/components/ui/status';
-import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 import { useMasterList } from '@/lib/use-master-list';
 
@@ -65,6 +65,7 @@ function requiredVolume(inquiry: InquiryDto): string {
 
 export default function InquiryListPage() {
   const { authorizedRequest, can } = useSession();
+  const router = useRouter();
   const list = useMasterList<InquiryDto, InquirySortField>(
     '/api/tenant/sales/inquiries',
     'inquiryDate',
@@ -75,7 +76,6 @@ export default function InquiryListPage() {
   const [carrierPosition, setCarrierPosition] = useState<InquiryDto | null>(null);
   const [agentQuotes, setAgentQuotes] = useState<InquiryDto | null>(null);
   const [pricing, setPricing] = useState<InquiryDto | null>(null);
-  const [quoting, setQuoting] = useState<string | null>(null);
   /** null closed · 'new' raising · an inquiry editing that one. */
   const [formFor, setFormFor] = useState<InquiryDto | 'new' | null>(null);
 
@@ -87,19 +87,23 @@ export default function InquiryListPage() {
 
   const ports = [...(options?.seaPorts ?? []), ...(options?.airPorts ?? [])];
 
-  async function quote(inquiry: InquiryDto): Promise<void> {
-    setQuoting(inquiry.id);
-    try {
-      await authorizedRequest(`/api/tenant/sales/inquiries/${inquiry.id}/quote`, {
-        method: 'POST',
-      });
-      toast.success(`${inquiry.code} quoted`);
-      await list.reload();
-    } catch (error) {
-      toast.error(error instanceof ApiError ? error.message : 'Could not quote this inquiry.');
-    } finally {
-      setQuoting(null);
-    }
+  /*
+   * Quote opens the quotation this inquiry becomes.
+   *
+   * It used to POST /quote, which set the inquiry to QUOTED on its own. That
+   * was right when there was nowhere for a quotation to live and is wrong now:
+   * §5.3 rule 9 makes an inquiry QUOTED when its quotation is *sent*, and an
+   * inquiry marked quoted with no document behind it is a lie the list tells
+   * about itself. So this navigates, and the status follows the document.
+   *
+   * An inquiry that already has one goes to it rather than starting a second.
+   */
+  function quote(inquiry: InquiryDto): void {
+    router.push(
+      inquiry.quotation === null
+        ? `/cs/quotation/new?inquiryId=${inquiry.id}`
+        : `/cs/quotation/${inquiry.quotation.id}`,
+    );
   }
 
   const columns: DataTableColumn<InquiryDto>[] = [
@@ -129,6 +133,28 @@ export default function InquiryListPage() {
           <span className="text-steel">—</span>
         ) : (
           `${r.currencyCode ?? ''} ${r.quotedPrice}`.trim()
+        ),
+    },
+    {
+      /*
+       * §6.2's Quotation column: View when this inquiry has one, a dash when it
+       * does not. The pair of columns reads the way the desk works — Quoted
+       * Price is the figure attached to the inquiry, this is the document that
+       * went out carrying it.
+       */
+      id: 'quotation',
+      header: 'Quotation',
+      cell: (r) =>
+        r.quotation === null ? (
+          <span className="text-steel">—</span>
+        ) : (
+          <Link
+            href={{ pathname: `/cs/quotation/${r.quotation.id}` }}
+            className="text-harbour hover:underline"
+            title={`${r.quotation.code}${r.quotation.revisionNo > 1 ? ` revision ${r.quotation.revisionNo}` : ''}`}
+          >
+            View
+          </Link>
         ),
     },
     {
@@ -343,16 +369,15 @@ export default function InquiryListPage() {
                 Follow Up({row.followupCount})
               </Button>
             )}
+            {/* Both permissions, because the destination needs the second: a
+                salesman who may convert an inquiry but not raise a quotation
+                would otherwise land on a form that refuses them. */}
             {can('SALES.INQUIRY.CONVERT_QUOTE') &&
+              (row.quotation !== null || can('CUSTOMER_SERVICE.QUOTATION.CREATE')) &&
               row.status !== 'WON' &&
               row.status !== 'LOST' && (
-                <Button
-                  variant="text"
-                  size="inline"
-                  disabled={quoting === row.id}
-                  onClick={() => void quote(row)}
-                >
-                  {quoting === row.id ? 'Quoting…' : 'Quote'}
+                <Button variant="text" size="inline" onClick={() => quote(row)}>
+                  {row.quotation === null ? 'Quote' : 'Open quotation'}
                 </Button>
               )}
           </>

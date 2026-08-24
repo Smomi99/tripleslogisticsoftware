@@ -540,6 +540,64 @@ describe('the list (§6.7)', () => {
   });
 });
 
+describe('the link back to the inquiry (§6.2)', () => {
+  /*
+   * Live Inquiry's Quotation column, and its Quote action, both read this.
+   * Without it the two screens are strangers: an inquiry cannot say whether it
+   * has been quoted, and Quote has nowhere to send you.
+   */
+  const inquiryRow = async () => {
+    const res = await request(app)
+      .get('/api/tenant/sales/inquiries?limit=50')
+      .set('Authorization', `Bearer ${token}`)
+      .set('X-Tenant-Slug', SLUG)
+      .expect(200);
+    return res.body.data.find((r: { id: string }) => r.id === inquiryId.toString());
+  };
+
+  it('names the live quotation on the inquiry', async () => {
+    const row = await inquiryRow();
+    expect(row.quotation).not.toBeNull();
+    expect(row.quotation.code).toMatch(/^QTN-2026-/);
+  });
+
+  it('names the current revision, not the superseded one', async () => {
+    // Revision 1 is still on the record and still reachable from the Quotation
+    // List. It is not what this inquiry stands on any more.
+    const row = await inquiryRow();
+    const named = await owner.quotation.findFirstOrThrow({
+      where: { id: BigInt(row.quotation.id as string) },
+      select: { status: true },
+    });
+    expect(named.status).not.toBe('SUPERSEDED');
+  });
+
+  it('says nothing for an inquiry nobody has quoted', async () => {
+    const bare = await owner.inquiry.create({
+      data: {
+        tenantId,
+        code: 'INQ-2026-000099',
+        seriesYear: 2026,
+        inquiryDate: new Date('2026-08-27'),
+        sourceId: (await owner.inquirySource.findFirstOrThrow({ where: { tenantId }, select: { id: true } })).id,
+        shipmentType: 'SEA',
+        customerId: (await owner.customer.findFirstOrThrow({ where: { tenantId }, select: { id: true } })).id,
+        movementType: 'OUTBOUND',
+        polId: (await owner.port.findFirstOrThrow({ where: { tenantId, code: 'QPOL' }, select: { id: true } })).id,
+        podId: (await owner.port.findFirstOrThrow({ where: { tenantId, code: 'QPOD' }, select: { id: true } })).id,
+        status: 'OPEN',
+      },
+      select: { id: true },
+    });
+    const res = await request(app)
+      .get(`/api/tenant/sales/inquiries/${bare.id}`)
+      .set('Authorization', `Bearer ${token}`)
+      .set('X-Tenant-Slug', SLUG)
+      .expect(200);
+    expect(res.body.data.quotation).toBeNull();
+  });
+});
+
 describe('what an agent may reach', () => {
   it('nothing at all', async () => {
     // A quotation names the customer and carries our margin. An agent reading

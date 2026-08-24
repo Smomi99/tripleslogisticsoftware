@@ -148,6 +148,17 @@ const inquiryInclude = {
     },
     orderBy: { id: 'asc' },
   },
+  /*
+   * §6.2's Quotation column. One row at most: the live issue, since
+   * quotation_live_revision_key allows only one non-superseded revision per
+   * number, and an inquiry is quoted once.
+   */
+  quotations: {
+    where: { deletedAt: null, status: { not: 'SUPERSEDED' } },
+    orderBy: { id: 'desc' },
+    take: 1,
+    select: { id: true, code: true, revisionNo: true, status: true },
+  },
   _count: {
     select: {
       followups: { where: { deletedAt: null } },
@@ -246,6 +257,15 @@ function toDto(inquiry: InquiryWithRelations, today: Date): InquiryDto {
     notifyEmails: inquiry.notifyEmails,
     followupCount: inquiry._count.followups,
     agentQuoteCount: inquiry._count.agentQuotes,
+    quotation:
+      inquiry.quotations[0] === undefined
+        ? null
+        : {
+            id: inquiry.quotations[0].id.toString(),
+            code: inquiry.quotations[0].code,
+            revisionNo: inquiry.quotations[0].revisionNo,
+            status: inquiry.quotations[0].status,
+          },
     // §4 rule 11: past its window but still OPEN. Reported rather than written,
     // so the list can flag it before the job next runs.
     isLapsed:

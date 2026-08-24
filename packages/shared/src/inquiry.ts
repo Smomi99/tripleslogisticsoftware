@@ -396,6 +396,15 @@ export interface InquiryDto {
    * is nothing on the row to read.
    */
   agentQuoteCount: number;
+  /**
+   * §6.2's Quotation column: `View` when this inquiry has one, `—` when it
+   * does not.
+   *
+   * The live issue only. A superseded revision is still on the record and
+   * still reachable from the Quotation List, but it is not the document this
+   * inquiry currently stands on.
+   */
+  quotation: { id: string; code: string; revisionNo: number; status: string } | null;
   /** True once §4 rule 11's window has passed but the status still says OPEN. */
   isLapsed: boolean;
 }
