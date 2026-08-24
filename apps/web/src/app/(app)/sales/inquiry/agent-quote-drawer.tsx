@@ -46,6 +46,7 @@ function money(amount: string): string {
 
 const STATUS_TONE: Record<string, 'active' | 'pending' | 'inactive' | 'overdue'> = {
   SUBMITTED: 'pending',
+  SHORTLISTED: 'pending',
   WON: 'active',
   LOST: 'inactive',
   WITHDRAWN: 'inactive',
@@ -53,6 +54,8 @@ const STATUS_TONE: Record<string, 'active' | 'pending' | 'inactive' | 'overdue'>
 
 const STATUS_LABEL: Record<string, string> = {
   SUBMITTED: 'Submitted',
+  // Named for what it is to the reader: still open, but in the running.
+  SHORTLISTED: 'Shortlisted',
   WON: 'Won',
   LOST: 'Lost',
   WITHDRAWN: 'Withdrawn',
@@ -229,6 +232,25 @@ export function AgentQuoteDrawer({
 
   const mayDecide = can('SALES.INQUIRY.ATTACH_PRICE');
 
+  async function shortlist(quote: StaffAgentQuoteDto, next: boolean): Promise<void> {
+    if (inquiry === null) return;
+    setBusy(quote.id);
+    try {
+      await authorizedRequest(
+        `/api/tenant/sales/inquiries/${inquiry.id}/agent-quotes/${quote.id}/shortlist`,
+        { method: 'POST', body: { shortlisted: next } },
+      );
+      toast.success(
+        next ? `${quote.agentName} shortlisted` : `${quote.agentName} off the shortlist`,
+      );
+      await load();
+    } catch (caught) {
+      toast.error(caught instanceof ApiError ? caught.message : 'Could not record that.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function settle(): Promise<void> {
     if (inquiry === null || toSettle === null) return;
     const { quote, decision } = toSettle;
@@ -396,6 +418,24 @@ export function AgentQuoteDrawer({
                                   Convert to rate
                                 </Button>
                               )}
+                              {/* Narrowing the field, before anyone has won.
+                                  Gone once the quote is answered: a shortlist
+                                  of one settled quote is not a shortlist. */}
+                              {decidable &&
+                                mayDecide &&
+                                (quote.status === 'SUBMITTED' ||
+                                  quote.status === 'SHORTLISTED') && (
+                                  <Button
+                                    variant="text"
+                                    size="inline"
+                                    disabled={busy === quote.id}
+                                    onClick={() =>
+                                      void shortlist(quote, quote.status !== 'SHORTLISTED')
+                                    }
+                                  >
+                                    {quote.status === 'SHORTLISTED' ? 'Un-shortlist' : 'Shortlist'}
+                                  </Button>
+                                )}
                               {decidable && mayDecide && quote.status !== 'WITHDRAWN' && (
                                 <>
                                   {quote.status !== 'WON' && (

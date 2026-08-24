@@ -157,6 +157,10 @@ enum AuditAction {
   PASSWORD_RESET_COMPLETED
   QUOTE_SUBMITTED
   QUOTE_AMENDED
+  /// Narrowing the field before anyone has won. Its own event because it is a
+  /// judgement about a counterparty's price, not a field edit.
+  QUOTE_SHORTLISTED
+  QUOTE_UNSHORTLISTED
   QUOTE_ACCEPTED
   QUOTE_DECLINED
 
@@ -3022,6 +3026,10 @@ model AgentQuoteComment {
 
 enum AgentQuoteStatus {
   SUBMITTED
+  /// The forwarder is still deciding, but this one is in the running. A
+  /// working note, never shown to the agent — §6.4 lists Won and Lost as the
+  /// only answers they get, and "you made the shortlist" is not an answer.
+  SHORTLISTED
   WITHDRAWN
   /// The customer gave us the shipment on this agent's price.
   WON

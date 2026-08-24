@@ -1,0 +1,15 @@
+-- §4.3 lists four states for an agent quote: SUBMITTED, SHORTLISTED, WON, LOST.
+-- Three were built. This adds the fourth.
+--
+-- Shortlisting is the forwarder narrowing the field before anyone has won:
+-- four agents came back, two are worth quoting the customer on. It is a working
+-- note, not an answer, so it stays reversible and the agent is never shown it —
+-- §6.4 enumerates exactly what they see, and Won and Lost are the only outcomes
+-- on that list.
+--
+-- Placed after SUBMITTED so the enum reads in the order a quote travels.
+--
+-- Alone in its migration on purpose: Postgres will not let a transaction USE an
+-- enum value it added itself, so anything referencing 'SHORTLISTED' has to wait
+-- for the next one.
+ALTER TYPE "agent_quote_status" ADD VALUE 'SHORTLISTED' AFTER 'SUBMITTED';

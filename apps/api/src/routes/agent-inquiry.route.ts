@@ -1,6 +1,8 @@
 import { Router } from 'express';
 
 import {
+  acceptsAgentQuotes,
+  AGENT_QUOTE_AMENDABLE,
   type AgentInquiryDto,
   type AgentInquiryVolumeDto,
   agentInquiryListQuerySchema,
@@ -13,6 +15,7 @@ import {
   type ApiSuccess,
   buildMeta,
   CODE_PREFIX,
+  statusShownToAgent,
 } from '@ff/shared';
 
 import {
@@ -132,7 +135,9 @@ function quoteToDto(row: QuoteRow): AgentQuoteDto {
     validUntil: row.validUntil?.toISOString().slice(0, 10) ?? null,
     transitDays: row.transitDays,
     remarks: row.remarks,
-    status: row.status,
+    // A shortlist is the forwarder's working note. To this agent it still
+    // reads as awaiting an answer, which is exactly what it is.
+    status: statusShownToAgent(row.status),
     submittedAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     options: row.options.map(optionToDto),
@@ -509,7 +514,7 @@ agentInquiryRouter.get('/:id', requirePermission('AGENT.INQUIRY.VIEW'), async (r
 
 /** An inquiry stops taking quotes once it has left OPEN. */
 function assertQuotable(status: string): void {
-  if (status !== 'OPEN') {
+  if (!acceptsAgentQuotes(status)) {
     throw new HttpError(
       409,
       'INQUIRY_CLOSED',
@@ -642,7 +647,10 @@ agentQuoteRouter.patch('/:id', requirePermission('AGENT.INQUIRY.QUOTE'), async (
       select: { id: true, inquiryId: true, status: true },
     });
     if (quote === null) return null;
-    if (quote.status !== 'SUBMITTED') {
+    // Shortlisted counts as open: the forwarder is still deciding, and an
+    // agent who has not been answered must not find themselves locked out of
+    // their own price by a note they cannot see.
+    if (!AGENT_QUOTE_AMENDABLE.includes(quote.status as 'SUBMITTED')) {
       throw new HttpError(
         409,
         'QUOTE_CLOSED',

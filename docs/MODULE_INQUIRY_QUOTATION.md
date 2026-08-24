@@ -516,6 +516,21 @@ wrong number on a customer-facing document.
 | **H** — win/loss + loser message | **Mostly done.** `ACCEPTED`/`DECLINED` were renamed `WON`/`LOST`; a loss cannot be recorded without a message, and the client's wording is the placeholder. The thread is two-way and append-only. **Outstanding:** §5.2 says winning for one agent automatically loses it for the others; the build deliberately does not do that yet, because at the time no rule had been stated. | `b38b03f` |
 | **6.4** — RFQ list and quote form | **Done**, columns as specified: no customer, no salesman, no target price, all three enforced by `agent_inquiry_v` rather than by the query. | `b38b03f` |
 
+Since that audit, two things closed:
+
+- **`SHORTLISTED` shipped.** §4.3's fourth state was the one part of the phase genuinely missing.
+  It is reversible, guarded by `SALES.INQUIRY.ATTACH_PRICE` alongside the win/loss decision, and
+  **never shown to the agent** — §6.4 lists Won and "Business Lost" as the only answers their
+  portal gives, and telling somebody they made a shortlist reveals that they are being compared.
+  Being shortlisted does not close their quote to amendment.
+- **The RFQ_SENT bug.** §5.1 marks an inquiry `RFQ_SENT` the moment it is shared with agents, but
+  both the portal API and its page tested for `OPEN` alone — so the one state an agent is *asked*
+  to quote in was the state that refused them. The rule now lives once in `packages/shared`
+  (`INQUIRY_OPEN_TO_AGENT_QUOTES`) and both sides read it. `QUOTED` is deliberately excluded: once
+  a customer quotation rests on an agent's price, that price is frozen. No test caught this because
+  every fixture built its inquiry as `OPEN` and none went through `InquiryRoutingService` — the
+  seam between phases E and G was never crossed.
+
 ### Naming collision — `container_type` already means *size*
 
 The spec is right that size and physical type are different things, and right that the earlier spec

@@ -443,6 +443,95 @@ describe('who may see it', () => {
   });
 });
 
+describe('the shortlist (§4.3 SHORTLISTED)', () => {
+  /*
+   * Narrowing the field before anyone has won.
+   *
+   * The property that matters most here is the one the agent cannot check for
+   * themselves: they are never told. A shortlist is the forwarder thinking
+   * aloud about which of several prices to build a quotation on, and an agent
+   * who learned they had made it would also learn they were being compared.
+   */
+  const shortlist = (quoteId: bigint, shortlisted: boolean) =>
+    request(app)
+      .post(`/api/tenant/sales/inquiries/${inquiryId}/agent-quotes/${quoteId}/shortlist`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .set('X-Tenant-Slug', SLUG)
+      .send({ shortlisted });
+
+  const quoteFor = async (agentId: bigint) =>
+    (
+      await owner.agentQuote.findFirstOrThrow({
+        where: { tenantId, agentId },
+        select: { id: true },
+      })
+    ).id;
+
+  const statusSeenByStaff = async (agentName: string) => {
+    const res = await staff(`/api/tenant/sales/inquiries/${inquiryId}/agent-quotes`).expect(200);
+    return res.body.data.find((q: { agentName: string }) => q.agentName === agentName).status;
+  };
+
+  it('marks a quote as one still in the running', async () => {
+    await shortlist(await quoteFor(nordic), true).expect(200);
+    expect(await statusSeenByStaff('Nordic Forwarding')).toBe('SHORTLISTED');
+  });
+
+  it('never tells the agent', async () => {
+    // The whole point. To Nordic this still reads as awaiting an answer,
+    // because that is what it is.
+    const res = await request(app)
+      .get('/api/tenant/agent/inquiries')
+      .set('Authorization', `Bearer ${nordicToken}`)
+      .set('X-Tenant-Slug', SLUG)
+      .expect(200);
+    const mine = res.body.data.find((r: { id: string }) => r.id === inquiryId.toString());
+    expect(mine.quote.status).toBe('SUBMITTED');
+  });
+
+  it('leaves the agent free to amend', async () => {
+    // Being shortlisted is not being answered. An agent locked out of their own
+    // price by a note they cannot see has no way to understand what happened.
+    await request(app)
+      .patch(`/api/tenant/agent/quotes/${await quoteFor(nordic)}`)
+      .set('Authorization', `Bearer ${nordicToken}`)
+      .set('X-Tenant-Slug', SLUG)
+      .send(quoteBody({ costHeadId, currencyId }, { unitPrice: '1440.00' }))
+      .expect(200);
+    // And it survives the amendment — repricing does not drop you off the list.
+    expect(await statusSeenByStaff('Nordic Forwarding')).toBe('SHORTLISTED');
+  });
+
+  it('leaves the other agents alone', async () => {
+    expect(await statusSeenByStaff('Baltic Lines')).toBe('SUBMITTED');
+  });
+
+  it('records who narrowed the field', async () => {
+    const entries = await owner.auditLog.findMany({
+      where: { tenantId, tableName: 'agent_quote', action: 'QUOTE_SHORTLISTED' },
+      select: { recordId: true, changedBy: true },
+    });
+    expect(entries.length).toBeGreaterThan(0);
+    expect(entries[0]!.changedBy).not.toBeNull();
+  });
+
+  it('reverses', async () => {
+    await shortlist(await quoteFor(nordic), false).expect(200);
+    expect(await statusSeenByStaff('Nordic Forwarding')).toBe('SUBMITTED');
+  });
+
+  it('refuses an agent token', async () => {
+    await request(app)
+      .post(
+        `/api/tenant/sales/inquiries/${inquiryId}/agent-quotes/${await quoteFor(nordic)}/shortlist`,
+      )
+      .set('Authorization', `Bearer ${nordicToken}`)
+      .set('X-Tenant-Slug', SLUG)
+      .send({ shortlisted: true })
+      .expect(403);
+  });
+});
+
 describe('answering an agent', () => {
   const decide = (quoteId: bigint, decision: 'WON' | 'LOST', comment?: string) =>
     request(app)
@@ -598,6 +687,27 @@ describe('answering an agent', () => {
     await owner.inquiry.update({ where: { id: inquiryId }, data: { status: 'WON' } });
     await decide(await quoteOf(baltic), 'WON').expect(409);
     await owner.inquiry.update({ where: { id: inquiryId }, data: { status: 'OPEN' } });
+  });
+});
+
+describe('shortlisting something already answered', () => {
+  it('is refused', async () => {
+    // Nordic was answered in the block above. A shortlist of settled quotes is
+    // not a shortlist, and offering it would imply the answer could be walked
+    // back this way rather than through the decision it belongs to.
+    const quoteId = (
+      await owner.agentQuote.findFirstOrThrow({
+        where: { tenantId, agentId: nordic },
+        select: { id: true, status: true },
+      })
+    ).id;
+    const res = await request(app)
+      .post(`/api/tenant/sales/inquiries/${inquiryId}/agent-quotes/${quoteId}/shortlist`)
+      .set('Authorization', `Bearer ${staffToken}`)
+      .set('X-Tenant-Slug', SLUG)
+      .send({ shortlisted: true })
+      .expect(409);
+    expect(res.body.error.message).toMatch(/still being decided/i);
   });
 });
 

@@ -25,6 +25,7 @@ import {
   type CarrierPositionDto,
   agentQuoteCommentInputSchema,
   agentQuoteDecisionSchema,
+  agentQuoteShortlistSchema,
   type StaffAgentQuoteDto,
 } from '@ff/shared';
 import { Router } from 'express';
@@ -1089,6 +1090,76 @@ inquiryRouter.get(
     if (quotes === null) throw HttpError.notFound('Inquiry not found.');
 
     const payload: ApiSuccess<StaffAgentQuoteDto[]> = { success: true, data: quotes };
+    res.json(payload);
+  },
+);
+
+/**
+ * POST /api/tenant/sales/inquiries/:id/agent-quotes/:quoteId/shortlist
+ *
+ * §4.3's fourth state. Four agents came back; two are worth quoting the
+ * customer on. This marks those two while the decision is still being made.
+ *
+ * Guarded by ATTACH_PRICE for the same reason the decision below is: it is the
+ * same commercial judgement, taken by the same people, and shortlisting is
+ * strictly the weaker half of it — you cannot lose a booking by narrowing a
+ * list.
+ *
+ * Reversible both ways, and only between SUBMITTED and SHORTLISTED. An answered
+ * quote is not a candidate any more, and un-losing an agent is the decision
+ * endpoint's job, not this one's.
+ *
+ * The agent is never told. §6.4 lists what their portal shows, and Won and Lost
+ * are the only outcomes on it — being told you made a shortlist would reveal
+ * that you are being compared, and invite you to hold your price.
+ */
+inquiryRouter.post(
+  '/inquiries/:id/agent-quotes/:quoteId/shortlist',
+  requirePermission(`${FEATURE}.ATTACH_PRICE`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'inquiry');
+    const quoteId = parseId(req.params.quoteId, 'quote');
+    const { shortlisted } = agentQuoteShortlistSchema.parse(req.body);
+
+    const status = await withTenant(auth.tenantId, async (db) => {
+      const inquiry = await findScopedInquiry(db, auth, id);
+      if (inquiry.status === 'WON' || inquiry.status === 'LOST') {
+        throw HttpError.conflict(`${inquiry.code} is already ${inquiry.status}.`);
+      }
+
+      const quote = await db.agentQuote.findFirst({
+        where: { id: quoteId, inquiryId: id, deletedAt: null },
+        select: { id: true, status: true },
+      });
+      if (quote === null) throw HttpError.notFound('That quote no longer exists.');
+      if (quote.status === 'WITHDRAWN') {
+        throw HttpError.conflict('That quote was withdrawn by the agent.');
+      }
+      if (quote.status === 'WON' || quote.status === 'LOST') {
+        throw HttpError.conflict(
+          `That quote is already ${quote.status.toLowerCase()}. A shortlist is for the ones still being decided.`,
+        );
+      }
+
+      const next = shortlisted ? 'SHORTLISTED' : 'SUBMITTED';
+      await db.agentQuote.update({
+        where: { id: quoteId },
+        data: { status: next, updatedBy: auth.userId },
+      });
+      return next;
+    });
+
+    await recordAudit({
+      tenantId: auth.tenantId,
+      action: shortlisted ? 'QUOTE_SHORTLISTED' : 'QUOTE_UNSHORTLISTED',
+      tableName: 'agent_quote',
+      recordId: quoteId,
+      actorId: auth.userId,
+      details: { inquiryId: id.toString() },
+    });
+
+    const payload: ApiSuccess<{ status: string }> = { success: true, data: { status } };
     res.json(payload);
   },
 );

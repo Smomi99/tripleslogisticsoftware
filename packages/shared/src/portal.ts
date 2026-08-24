@@ -456,8 +456,56 @@ export const agentQuoteDecisionSchema = z
 
 export type AgentQuoteDecision = z.infer<typeof agentQuoteDecisionSchema>['decision'];
 
+/**
+ * Marking a quote as one of the ones still in the running (§4.3 SHORTLISTED).
+ *
+ * Reversible, because it is a working note rather than an answer: four agents
+ * came back, two are worth quoting the customer on, and that opinion changes
+ * as the day goes on. Winning and losing are the decisions that stick.
+ */
+export const agentQuoteShortlistSchema = z.object({
+  shortlisted: z.boolean(),
+});
+
 /** The terminal states, for anything that needs to ask "is this settled?". */
 export const AGENT_QUOTE_OUTCOMES = ['WON', 'LOST'] as const;
+
+/**
+ * What the agent is allowed to be told.
+ *
+ * §6.4 lists exactly what their portal shows: their own quote, the comments,
+ * and finally Won or "Business Lost". A shortlist is the forwarder thinking
+ * aloud — telling an agent they made it would leak that they are being
+ * compared, and invite them to hold their price.
+ */
+export function statusShownToAgent(status: string): string {
+  return status === 'SHORTLISTED' ? 'SUBMITTED' : status;
+}
+
+/** States an agent may still amend: nobody has answered them yet. */
+export const AGENT_QUOTE_AMENDABLE = ['SUBMITTED', 'SHORTLISTED'] as const;
+
+/**
+ * Inquiry states in which an agent may still price.
+ *
+ * RFQ_SENT is the important one and was the bug: §5.1 marks an inquiry RFQ_SENT
+ * at the moment it is shared with agents, so the state an agent is *asked* to
+ * quote in was the one state the portal refused. Both sides of the app read
+ * this list rather than each keeping their own copy — that drift is what let
+ * the two disagree in the first place.
+ *
+ * QUOTED is deliberately absent: once we have quoted the customer off the back
+ * of an agent's price, that price is frozen. An agent moving it afterwards
+ * would leave the quotation we sent resting on a number we can no longer buy.
+ *
+ * An allow-list rather than a block-list, so a status added later is closed
+ * until somebody decides otherwise.
+ */
+export const INQUIRY_OPEN_TO_AGENT_QUOTES = ['OPEN', 'RFQ_SENT'] as const;
+
+export function acceptsAgentQuotes(status: string): boolean {
+  return (INQUIRY_OPEN_TO_AGENT_QUOTES as readonly string[]).includes(status);
+}
 
 /** A lookup row as a dropdown needs it, and no wider. */
 export interface PortalLookupOption {

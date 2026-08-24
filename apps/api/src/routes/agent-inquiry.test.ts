@@ -522,6 +522,59 @@ describe('submitting a quote', () => {
   });
 });
 
+describe('the state an RFQ is actually in', () => {
+  /*
+   * §5.1 marks an inquiry RFQ_SENT at the moment it is shared with agents. So
+   * RFQ_SENT is the state an agent is *asked* to quote in — and it was the one
+   * state the portal refused, because both sides checked for OPEN alone.
+   *
+   * Nothing caught it: every other test here builds its inquiry as OPEN and
+   * never goes through the routing service, so the seam between the two phases
+   * was never crossed. This crosses it.
+   */
+  it('accepts a quote on an inquiry that was sent out for one', async () => {
+    // Clear the quote an earlier block left behind: one agent gets one quote
+    // per inquiry, and a second POST is refused for that reason rather than
+    // for the status, which is what this test is about.
+    await owner.$executeRawUnsafe(
+      `DELETE FROM agent_quote_line WHERE option_id IN (
+         SELECT o.id FROM agent_quote_option o
+         JOIN agent_quote q ON q.id = o.quote_id WHERE q.inquiry_id = ${sharedInquiry})`,
+    );
+    await owner.$executeRawUnsafe(
+      `DELETE FROM agent_quote_option WHERE quote_id IN (
+         SELECT id FROM agent_quote WHERE inquiry_id = ${sharedInquiry})`,
+    );
+    await owner.$executeRawUnsafe(
+      `DELETE FROM agent_quote_comment WHERE quote_id IN (
+         SELECT id FROM agent_quote WHERE inquiry_id = ${sharedInquiry})`,
+    );
+    await owner.$executeRawUnsafe(`DELETE FROM agent_quote WHERE inquiry_id = ${sharedInquiry}`);
+
+    await owner.inquiry.update({
+      where: { id: sharedInquiry },
+      data: { status: 'RFQ_SENT' },
+    });
+    await request(app)
+      .post(`/api/tenant/agent/inquiries/${sharedInquiry}/quote`)
+      .set('Authorization', `Bearer ${nordicToken}`)
+      .set('X-Tenant-Slug', SLUG)
+      .send(quoteBody({ costHeadId, currencyId }, { unitPrice: '1450.50' }))
+      .expect(201);
+  });
+
+  it('still refuses one that has been settled', async () => {
+    await owner.inquiry.update({ where: { id: sharedInquiry }, data: { status: 'WON' } });
+    await request(app)
+      .post(`/api/tenant/agent/inquiries/${sharedInquiry}/quote`)
+      .set('Authorization', `Bearer ${nordicToken}`)
+      .set('X-Tenant-Slug', SLUG)
+      .send(quoteBody({ costHeadId, currencyId }, { unitPrice: '1450.50' }))
+      .expect(409);
+    await owner.inquiry.update({ where: { id: sharedInquiry }, data: { status: 'OPEN' } });
+  });
+});
+
 describe('amending a quote', () => {
   function patch(path: string, token: string, body: object) {
     return request(app)

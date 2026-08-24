@@ -1,6 +1,6 @@
 'use client';
 
-import { type AgentInquiryDto } from '@ff/shared';
+import { acceptsAgentQuotes, type AgentInquiryDto } from '@ff/shared';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
@@ -92,7 +92,9 @@ export default function PortalInquiryDetailPage() {
    */
   const decision = inquiry.quote?.status ?? 'SUBMITTED';
   const answered = decision === 'WON' || decision === 'LOST';
-  const quotable = inquiry.status === 'OPEN' && !answered;
+  // The same list the API enforces. An inquiry shared with agents is RFQ_SENT,
+  // and reading OPEN alone here told them their own live RFQ was closed.
+  const quotable = acceptsAgentQuotes(inquiry.status) && !answered;
 
   return (
     <div className="flex flex-col gap-5">
