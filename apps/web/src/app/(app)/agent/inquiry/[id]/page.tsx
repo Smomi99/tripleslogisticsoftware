@@ -118,8 +118,16 @@ export default function PortalInquiryDetailPage() {
           <Detail label="Loading type" value={inquiry.loadingType} />
           <Detail label="Incoterm" value={inquiry.tosName} />
           <Detail label="Terms of shipment" value={inquiry.modeName} />
-          <Detail label="Commodity" value={inquiry.commodityName} />
-          <Detail label="HS code" value={inquiry.hsCode} mono />
+          <Detail
+            label="Commodity"
+            value={
+              inquiry.commodities.length === 0
+                ? null
+                : inquiry.commodities
+                    .map((c) => (c.hsCode === null || c.hsCode === '' ? c.name : `${c.name} (${c.hsCode})`))
+                    .join(', ')
+            }
+          />
           <Detail label="Inquiry date" value={inquiry.inquiryDate} mono />
           <Detail label="Expected shipment" value={inquiry.expectedShipmentDate} mono />
           <Detail label="Quote wanted by" value={inquiry.validTo} mono />

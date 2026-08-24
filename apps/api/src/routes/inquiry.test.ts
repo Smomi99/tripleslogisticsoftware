@@ -43,6 +43,7 @@ let tokenManager: string;
 
 let sourceId: bigint;
 let customerId: bigint;
+let commodityItemId: bigint;
 let seaPolId: bigint;
 let seaPodId: bigint;
 let airPolId: bigint;
@@ -96,6 +97,7 @@ async function cleanup(): Promise<void> {
   for (const table of [
     'email_log',
     'inquiry_rate',
+    'inquiry_commodity',
     'inquiry_followup',
     'inquiry_volume',
     'inquiry',
@@ -103,6 +105,7 @@ async function cleanup(): Promise<void> {
     '"user"',
     'employee',
     'customer',
+    'commodity_item',
     'industry_sector',
   ]) {
     await owner.$executeRawUnsafe(`DELETE FROM ${table} WHERE tenant_id IN (${t})`);
@@ -166,6 +169,20 @@ beforeAll(async () => {
     data: { tenantId: tenantA, code: `ISC-${PREFIX}`, name: 'Inq Garments' },
     select: { id: true },
   });
+  // Commodity became a multi-select in Phase D, so an inquiry that names one
+  // needs a real row to name.
+  commodityItemId = (
+    await owner.commodityItem.create({
+      data: {
+        tenantId: tenantA,
+        code: `CIT-${PREFIX}`,
+        industrySectorId: sector.id,
+        name: 'Knit T-Shirts',
+        hsCode: '610910',
+      },
+      select: { id: true },
+    })
+  ).id;
   customerId = (
     await owner.customer.create({
       data: {
@@ -228,6 +245,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   const t = `SELECT id FROM tenant WHERE slug = '${SLUG_A}'`;
   await owner.$executeRawUnsafe(`DELETE FROM inquiry_volume WHERE tenant_id IN (${t})`);
+  await owner.$executeRawUnsafe(`DELETE FROM inquiry_commodity WHERE tenant_id IN (${t})`);
   await owner.$executeRawUnsafe(`DELETE FROM inquiry WHERE tenant_id IN (${t})`);
 });
 
@@ -302,7 +320,9 @@ describe('§5.4 — what the form captures', () => {
   it('stores the whole record, including the volume grid', async () => {
     const response = await create(tokenAdmin, {
       placeOfReceipt: 'Dhaka ICD',
-      hsCode: '6109.10',
+      // §3 made commodity a multi-select, and the HS code travels with the
+      // commodity it belongs to rather than sitting alone on the header.
+      commodities: [{ commodityItemId: commodityItemId.toString(), hsCode: '6109.10' }],
       currencyId: (await owner.currency.findFirstOrThrow({ select: { id: true } })).id.toString(),
       expectedShipmentDate: '2026-04-01',
       validTo: '2026-03-31',
@@ -328,7 +348,8 @@ describe('§5.4 — what the form captures', () => {
     expect(response.status, JSON.stringify(response.body.error ?? {})).toBe(201);
     const data = response.body.data;
     expect(data.placeOfReceipt).toBe('Dhaka ICD');
-    expect(data.hsCode).toBe('6109.10');
+    expect(data.commodities).toHaveLength(1);
+    expect(data.commodities[0].hsCode).toBe('6109.10');
     expect(data.volumes[0].targetPrice).toBe('1800.5000');
     expect(data.volumes[0].containerSizeNote).toBe('Reefer, -18C');
     expect(data.volumes[0].weightKg).toBe('12500.500');

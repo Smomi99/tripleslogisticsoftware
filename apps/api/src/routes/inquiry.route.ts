@@ -106,7 +106,17 @@ const inquiryInclude = {
   customer: { select: { id: true, name: true } },
   pol: { select: { id: true, name: true, portCode: true } },
   pod: { select: { id: true, name: true, portCode: true } },
-  commodityItem: { select: { id: true, name: true } },
+  commodities: {
+    where: { deletedAt: null },
+    orderBy: { id: 'asc' },
+    select: {
+      commodityItemId: true,
+      hsCode: true,
+      commodityItem: { select: { name: true } },
+    },
+  },
+  goodsType: { select: { id: true, name: true } },
+  wonAgent: { select: { id: true, name: true } },
   tos: { select: { id: true, name: true } },
   mode: { select: { id: true, name: true } },
   parties: {
@@ -129,7 +139,10 @@ const inquiryInclude = {
   salesman: { select: { id: true, name: true } },
   volumes: {
     where: { deletedAt: null },
-    include: { containerSize: { select: { code: true } } },
+    include: {
+      containerSize: { select: { code: true } },
+      containerType: { select: { name: true } },
+    },
     orderBy: { id: 'asc' },
   },
   _count: {
@@ -151,6 +164,8 @@ function toDto(inquiry: InquiryWithRelations, today: Date): InquiryDto {
     volumeKind: volume.volumeKind,
     containerSizeId: volume.containerSizeId?.toString() ?? null,
     containerSizeCode: volume.containerSize?.code ?? null,
+    containerTypeId: volume.containerTypeId?.toString() ?? null,
+    containerTypeName: volume.containerType?.name ?? null,
     quantity: volume.quantity,
     cbm: optionalQty(volume.cbm),
     weightKg: optionalQty(volume.weightKg),
@@ -196,9 +211,15 @@ function toDto(inquiry: InquiryWithRelations, today: Date): InquiryDto {
     podCode: inquiry.pod.portCode,
     podName: inquiry.pod.name,
     placeOfReceipt: inquiry.placeOfReceipt,
-    commodityItemId: inquiry.commodityItemId?.toString() ?? null,
-    commodityName: inquiry.commodityItem?.name ?? null,
-    hsCode: inquiry.hsCode,
+    commodities: inquiry.commodities.map((c) => ({
+      commodityItemId: c.commodityItemId.toString(),
+      name: c.commodityItem?.name ?? '',
+      hsCode: c.hsCode,
+    })),
+    goodsTypeId: inquiry.goodsTypeId?.toString() ?? null,
+    goodsTypeName: inquiry.goodsType?.name ?? null,
+    weightKg: inquiry.weightKg?.toString() ?? null,
+    targetPrice: inquiry.targetPrice?.toString() ?? null,
     tosId: inquiry.tosId?.toString() ?? null,
     tosName: inquiry.tos?.name ?? null,
     modeId: inquiry.modeId?.toString() ?? null,
@@ -239,6 +260,10 @@ export interface InquiryFormOptions {
   seaPorts: LookupOption[];
   airPorts: LookupOption[];
   commodities: { id: string; name: string; hsCode: string | null }[];
+  /** How the cargo is sorted for pricing — Textile, Non-Textile, DG. */
+  goodsTypes: LookupOption[];
+  /** The physical box — Dry, Flat Rack, Open Top, Reefer. */
+  containerTypes: LookupOption[];
   /** TOS — the eleven Incoterms. */
   termsOfShipment: LookupOption[];
   /** Mode — the CY/CY family. */
@@ -259,7 +284,7 @@ inquiryRouter.get('/inquiry-options', requirePermission(`${FEATURE}.VIEW`), asyn
     // Shared rows this workspace switched off are recorded as overrides, not on
     // the rows themselves (§7A rule 7), so `isActive` alone still offers them.
     const inactive = await inactiveMasters(db);
-    const [sources, customers, ports, commodities, modes, toss, currencies, salesmen, containers, me] =
+    const [sources, customers, ports, commodities, modes, goodsTypes, containerTypes, toss, currencies, salesmen, containers, me] =
       await Promise.all([
         db.inquirySource.findMany({
           where: { ...excludeInactive(inactive, 'inquiry_source'), deletedAt: null, isActive: true },
@@ -285,6 +310,16 @@ inquiryRouter.get('/inquiry-options', requirePermission(`${FEATURE}.VIEW`), asyn
           where: { ...excludeInactive(inactive, 'mode'), deletedAt: null, isActive: true },
           select: { id: true, name: true },
           orderBy: { code: 'asc' },
+        }),
+        db.goodsType.findMany({
+          where: { ...excludeInactive(inactive, 'goods_type'), deletedAt: null, isActive: true },
+          select: { id: true, name: true },
+          orderBy: { name: 'asc' },
+        }),
+        db.containerType.findMany({
+          where: { ...excludeInactive(inactive, 'container_type'), deletedAt: null, isActive: true },
+          select: { id: true, name: true },
+          orderBy: { sortOrder: 'asc' },
         }),
         db.tos.findMany({
           where: { ...excludeInactive(inactive, 'tos'), deletedAt: null, isActive: true },
@@ -327,6 +362,8 @@ inquiryRouter.get('/inquiry-options', requirePermission(`${FEATURE}.VIEW`), asyn
         hsCode: c.hsCode,
       })),
       modes: modes.map((m) => ({ id: m.id.toString(), name: m.name })),
+      goodsTypes: goodsTypes.map((g) => ({ id: g.id.toString(), name: g.name })),
+      containerTypes: containerTypes.map((c) => ({ id: c.id.toString(), name: c.name })),
       termsOfShipment: toss.map((t) => ({ id: t.id.toString(), name: t.name })),
       currencies: currencies.map((c) => ({ id: c.id.toString(), name: c.currency })),
       salesmen: salesmen.map((e) => ({ id: e.id.toString(), name: e.name })),
@@ -359,7 +396,7 @@ async function assertReferences(
   customerId: bigint;
   polId: bigint;
   podId: bigint;
-  commodityItemId: bigint | null;
+  goodsTypeId: bigint | null;
   tosId: bigint | null;
   modeId: bigint | null;
   currencyId: bigint | null;
@@ -418,8 +455,8 @@ async function assertReferences(
     return id;
   };
 
-  const commodityItemId = await optional(input.commodityItemId, 'commodity', (id) =>
-    db.commodityItem.findFirst({ where: { id, deletedAt: null, isActive: true }, select: { id: true } }),
+  const goodsTypeId = await optional(input.goodsTypeId, 'goods type', (id) =>
+    db.goodsType.findFirst({ where: { id, deletedAt: null, isActive: true }, select: { id: true } }),
   );
   const tosId = await optional(input.tosId, 'Incoterm', (id) =>
     db.tos.findFirst({ where: { id, deletedAt: null, isActive: true }, select: { id: true } }),
@@ -442,7 +479,7 @@ async function assertReferences(
     customerId,
     polId,
     podId,
-    commodityItemId,
+    goodsTypeId,
     tosId,
     modeId,
     currencyId,
@@ -452,6 +489,33 @@ async function assertReferences(
 }
 
 /** Drops the grid rows the user left blank rather than storing them as zeros. */
+/** A decimal string from the wire, or null when the box was left blank. */
+function decimalOrNull(value: string | undefined): Prisma.Decimal | null {
+  return value === undefined || value === '' ? null : new Prisma.Decimal(value);
+}
+
+/**
+ * The commodity rows an inquiry carries.
+ *
+ * Built from the request rather than merged with what is stored: the form sends
+ * the whole list every time, and a commodity the operator removed has to
+ * actually go. §5.3's rule for quotation lines, applied one level up.
+ */
+function commodityRows(
+  input: ReturnType<typeof inquiryInputSchema.parse>,
+  auth: { tenantId: bigint; userId: bigint },
+): { commodityItemId: bigint; hsCode: string | null; createdBy: bigint; updatedBy: bigint }[] {
+  // No tenantId: nested under inquiry.create Prisma takes it from the parent,
+  // and at the top level the tenant extension injects it. Passing it by hand
+  // is refused in the first case and redundant in the second.
+  return (input.commodities ?? []).map((row) => ({
+    commodityItemId: BigInt(row.commodityItemId),
+    hsCode: row.hsCode === undefined || row.hsCode === '' ? null : row.hsCode,
+    createdBy: auth.userId,
+    updatedBy: auth.userId,
+  }));
+}
+
 function volumeRows(
   input: ReturnType<typeof inquiryInputSchema.parse>,
   userId: bigint,
@@ -473,6 +537,10 @@ function volumeRows(
         v.containerSizeId === undefined || v.containerSizeId === ''
           ? null
           : BigInt(v.containerSizeId),
+      containerTypeId:
+        v.containerTypeId === undefined || v.containerTypeId === ''
+          ? null
+          : BigInt(v.containerTypeId),
       quantity: v.quantity === undefined || v.quantity === '' ? null : Number(v.quantity),
       cbm: v.cbm === undefined || v.cbm === '' ? null : v.cbm,
       weightKg: v.weightKg === undefined || v.weightKg === '' ? null : v.weightKg,
@@ -607,6 +675,28 @@ async function updateInquiry(
     });
   }
 
+  /*
+   * Commodities are replaced rather than reconciled row by row.
+   *
+   * The form sends the whole list every time, and the only interesting change
+   * is which commodities are on it. Soft-deleting the old set and writing the
+   * new one keeps §4 rule 3 and leaves the partial unique index free to accept
+   * a commodity that was removed and then put back — which reconciling in place
+   * would collide with.
+   */
+  const wantedCommodities = commodityRows(input, auth);
+  await db.inquiryCommodity.updateMany({
+    where: { inquiryId: id, deletedAt: null },
+    data: { deletedAt: new Date(), isActive: false, updatedBy: auth.userId },
+  });
+  if (wantedCommodities.length > 0) {
+    await db.inquiryCommodity.createMany({
+      // tenantId by hand here: this call is top level, where the type requires
+      // it. Nested under inquiry.create it must be left out instead.
+      data: wantedCommodities.map((row) => ({ ...row, tenantId: auth.tenantId, inquiryId: id })),
+    });
+  }
+
   await writeParties(db, auth, id, input);
 
   return db.inquiry.update({
@@ -620,8 +710,9 @@ async function updateInquiry(
       polId: refs.polId,
       podId: refs.podId,
       placeOfReceipt: input.placeOfReceipt || null,
-      commodityItemId: refs.commodityItemId,
-      hsCode: input.hsCode || null,
+      goodsTypeId: refs.goodsTypeId,
+      weightKg: decimalOrNull(input.weightKg),
+      targetPrice: decimalOrNull(input.targetPrice),
       tosId: refs.tosId,
       modeId: refs.modeId,
       loadingType: input.loadingType ?? null,
@@ -669,8 +760,9 @@ inquiryRouter.post('/inquiries', requirePermission(`${FEATURE}.CREATE`), async (
               input.placeOfReceipt === undefined || input.placeOfReceipt === ''
                 ? null
                 : input.placeOfReceipt,
-            commodityItemId: refs.commodityItemId,
-            hsCode: input.hsCode === undefined || input.hsCode === '' ? null : input.hsCode,
+            goodsTypeId: refs.goodsTypeId,
+            weightKg: decimalOrNull(input.weightKg),
+            targetPrice: decimalOrNull(input.targetPrice),
             tosId: refs.tosId,
             modeId: refs.modeId,
             loadingType: input.loadingType ?? null,
@@ -688,6 +780,9 @@ inquiryRouter.post('/inquiries', requirePermission(`${FEATURE}.CREATE`), async (
             createdBy: auth.userId,
             updatedBy: auth.userId,
             ...(volumes.length > 0 ? { volumes: { createMany: { data: volumes } } } : {}),
+            ...(commodityRows(input, auth).length > 0
+              ? { commodities: { createMany: { data: commodityRows(input, auth) } } }
+              : {}),
           },
           include: inquiryInclude,
         });

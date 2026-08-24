@@ -77,8 +77,17 @@ export function ViewDrawer({
     ['POL', `${inquiry.polCode} — ${inquiry.polName}`],
     ['POD', `${inquiry.podCode} — ${inquiry.podName}`],
     ['Place of receipt', inquiry.placeOfReceipt ?? '—'],
-    ['Commodity', inquiry.commodityName ?? '—'],
-    ['HS code', inquiry.hsCode ?? '—'],
+    [
+      'Commodity',
+      inquiry.commodities.length === 0
+        ? '—'
+        : inquiry.commodities
+            .map((c) => (c.hsCode === null || c.hsCode === '' ? c.name : `${c.name} (${c.hsCode})`))
+            .join(', '),
+    ],
+    ['Goods type', inquiry.goodsTypeName ?? '—'],
+    ['Weight (kg)', inquiry.weightKg ?? '—'],
+    ['Target price', inquiry.targetPrice ?? '—'],
     ['TOS (Incoterm)', inquiry.tosName ?? '—'],
     ['Mode', inquiry.modeName ?? '—'],
     ['Loading type', inquiry.loadingType ?? '—'],

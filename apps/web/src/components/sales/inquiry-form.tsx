@@ -44,6 +44,8 @@ interface InquiryOptions {
   seaPorts: LookupOption[];
   airPorts: LookupOption[];
   commodities: { id: string; name: string; hsCode: string | null }[];
+  goodsTypes: LookupOption[];
+  containerTypes: LookupOption[];
   termsOfShipment: LookupOption[];
   modes: LookupOption[];
   currencies: LookupOption[];
@@ -60,6 +62,8 @@ const EMPTY: InquiryOptions = {
   seaPorts: [],
   airPorts: [],
   commodities: [],
+  goodsTypes: [],
+  containerTypes: [],
   termsOfShipment: [],
   modes: [],
   currencies: [],
@@ -82,11 +86,19 @@ const today = (): string => new Date().toISOString().slice(0, 10);
 interface VolumeCell {
   amount: string;
   note: string;
+  /** Dry, Reefer, Flat Rack, Open Top — §6.1's Container Type column. */
+  containerTypeId: string;
   weightKg: string;
   targetPrice: string;
 }
 
-const EMPTY_CELL: VolumeCell = { amount: '', note: '', weightKg: '', targetPrice: '' };
+const EMPTY_CELL: VolumeCell = {
+  amount: '',
+  note: '',
+  containerTypeId: '',
+  weightKg: '',
+  targetPrice: '',
+};
 
 /** Turns saved volume rows back into the grid's keyed cells. */
 function volumesOf(inquiry: InquiryDto | null): Record<string, VolumeCell> {
@@ -110,6 +122,7 @@ function volumesOf(inquiry: InquiryDto | null): Record<string, VolumeCell> {
             ? (volume.cbm ?? '')
             : String(volume.quantity ?? ''),
       note: volume.containerSizeNote ?? '',
+      containerTypeId: volume.containerTypeId ?? '',
       weightKg: volume.weightKg ?? '',
       targetPrice: volume.targetPrice ?? '',
     };
@@ -147,8 +160,21 @@ export function InquiryForm({
   );
   const [polId, setPolId] = useState(inquiry?.polId ?? '');
   const [podId, setPodId] = useState(inquiry?.podId ?? '');
-  const [commodityItemId, setCommodityItemId] = useState(inquiry?.commodityItemId ?? '');
-  const [hsCode, setHsCode] = useState(inquiry?.hsCode ?? '');
+  /**
+   * §3 made commodity a multi-select, each line carrying its own HS code.
+   *
+   * Held as an array rather than two parallel ones so a row can never lose
+   * track of which code belongs to it.
+   */
+  const [commodities, setCommodities] = useState<{ commodityItemId: string; hsCode: string }[]>(
+    inquiry?.commodities.map((c) => ({
+      commodityItemId: c.commodityItemId,
+      hsCode: c.hsCode ?? '',
+    })) ?? [],
+  );
+  const [goodsTypeId, setGoodsTypeId] = useState(inquiry?.goodsTypeId ?? '');
+  const [weightKg, setWeightKg] = useState(inquiry?.weightKg ?? '');
+  const [targetPrice, setTargetPrice] = useState(inquiry?.targetPrice ?? '');
   const [placeOfReceipt, setPlaceOfReceipt] = useState(inquiry?.placeOfReceipt ?? '');
   const [tosId, setTosId] = useState(inquiry?.tosId ?? '');
   const [modeId, setModeId] = useState(inquiry?.modeId ?? '');
@@ -392,12 +418,14 @@ export function InquiryForm({
       const note = value.note.trim();
       const weight = value.weightKg.trim();
       const price = value.targetPrice.trim();
-      // A column with nothing in any of its four boxes is not a row.
-      if (amount === '' && note === '' && weight === '' && price === '') continue;
+      const boxType = value.containerTypeId.trim();
+      // A column with nothing in any of its boxes is not a row.
+      if (amount === '' && note === '' && weight === '' && price === '' && boxType === '') continue;
 
       const shared = {
         containerSizeNote: note,
         targetPrice: price,
+        containerTypeId: boxType,
       };
       if (column.key === 'air') {
         // Air measures the column in KG, so the amount IS the weight.
@@ -444,8 +472,12 @@ export function InquiryForm({
             polId,
             podId,
             placeOfReceipt,
-            commodityItemId,
-            hsCode,
+            // Blank rows are the operator part-way through choosing; they are
+            // not an intention and are not sent.
+            commodities: commodities.filter((c) => c.commodityItemId !== ''),
+            goodsTypeId,
+            weightKg,
+            targetPrice,
             tosId,
             modeId,
             loadingType: loadingType === '' ? undefined : loadingType,
@@ -723,35 +755,109 @@ export function InquiryForm({
             />
           </Field>
 
-          <Field id="commodityItemId" label="Commodity" error={errorFor('commodityItemId')}>
+          <Field id="goodsTypeId" label="Goods type" error={errorFor('goodsTypeId')}>
             <Select
-              id="commodityItemId"
-              value={commodityItemId}
-              onChange={(e) => {
-                const next = e.target.value;
-                setCommodityItemId(next);
-                // §5.4: HS code prefills from the commodity and stays editable.
-                const match = options.commodities.find((c) => c.id === next);
-                if (match?.hsCode != null) setHsCode(match.hsCode);
-              }}
+              id="goodsTypeId"
+              value={goodsTypeId}
+              onChange={(e) => setGoodsTypeId(e.target.value)}
             >
-              <option value="">Select a commodity</option>
-              {options.commodities.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.name}
+              <option value="">Select a goods type</option>
+              {options.goodsTypes.map((g) => (
+                <option key={g.id} value={g.id}>
+                  {g.name}
                 </option>
               ))}
             </Select>
           </Field>
 
-          <Field
-            id="hsCode"
-            label="HS code"
-            hint="Prefilled from the commodity; edit if the customer's differs."
-            error={errorFor('hsCode')}
-          >
-            <Input id="hsCode" numeric value={hsCode} onChange={(e) => setHsCode(e.target.value)} />
-          </Field>
+          {/*
+            Commodity and HS code, one pair per row.
+
+            The client's form shows them side by side, and §3 made the commodity
+            a multi-select — so the code has to travel with its own commodity
+            rather than sitting alone on the header, where a second commodity
+            would have nowhere to put one.
+          */}
+          <div className="md:col-span-3">
+            <span className="label-manifest">Commodity</span>
+            <div className="mt-1 flex flex-col gap-2">
+              {(commodities.length === 0
+                ? [{ commodityItemId: '', hsCode: '' }]
+                : commodities
+              ).map((row, index) => (
+                <div key={index} className="flex flex-wrap items-start gap-2">
+                  <Select
+                    aria-label={`Commodity ${index + 1}`}
+                    id={index === 0 ? 'commodityItemId' : undefined}
+                    className="w-64"
+                    value={row.commodityItemId}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      const match = options.commodities.find((c) => c.id === next);
+                      setCommodities((current) => {
+                        const list = current.length === 0 ? [{ commodityItemId: '', hsCode: '' }] : [...current];
+                        list[index] = {
+                          commodityItemId: next,
+                          // §5.4: the HS code prefills from the commodity and
+                          // stays editable — a customer's own code can differ.
+                          hsCode: match?.hsCode ?? list[index]?.hsCode ?? '',
+                        };
+                        return list;
+                      });
+                    }}
+                  >
+                    <option value="">Select a commodity</option>
+                    {options.commodities.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name}
+                      </option>
+                    ))}
+                  </Select>
+                  <Input
+                    aria-label={`HS code ${index + 1}`}
+                    id={index === 0 ? 'hsCode' : undefined}
+                    numeric
+                    className="w-40"
+                    placeholder="HS code"
+                    value={row.hsCode}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setCommodities((current) => {
+                        const list = current.length === 0 ? [{ commodityItemId: '', hsCode: '' }] : [...current];
+                        list[index] = { ...list[index]!, hsCode: next };
+                        return list;
+                      });
+                    }}
+                  />
+                  {commodities.length > 1 && (
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="inline"
+                      aria-label={`Remove commodity ${index + 1}`}
+                      onClick={() =>
+                        setCommodities((current) => current.filter((_, i) => i !== index))
+                      }
+                    >
+                      ×
+                    </Button>
+                  )}
+                </div>
+              ))}
+              <div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="compact"
+                  onClick={() =>
+                    setCommodities((current) => [...current, { commodityItemId: '', hsCode: '' }])
+                  }
+                >
+                  Add commodity
+                </Button>
+              </div>
+            </div>
+          </div>
 
           {/* TOS is the Incoterm — which party carries cost and risk. */}
           <Field id="tosId" label="TOS" error={errorFor('tosId')}>
@@ -832,6 +938,7 @@ export function InquiryForm({
                     [
                       { field: 'amount', label: shipmentType === 'AIR' ? 'Weight (kG)' : loadingType === 'LCL' ? 'Volume (CBM)' : 'Quantity', numeric: true },
                       { field: 'note', label: 'Container size', numeric: false },
+                      { field: 'containerTypeId', label: 'Container type', numeric: false },
                       { field: 'weightKg', label: 'Weight in Kg', numeric: true },
                       { field: 'targetPrice', label: 'Target price ($)', numeric: true },
                     ] as const
@@ -839,6 +946,13 @@ export function InquiryForm({
                     // Air measures its single column in KG already, so a second
                     // weight row would be the same number asked for twice.
                     .filter((row) => !(shipmentType === 'AIR' && row.field === 'weightKg'))
+                    // Only a container has a container type. An LCL consignment
+                    // and an air shipment do not travel in one.
+                    .filter(
+                      (row) =>
+                        row.field !== 'containerTypeId' ||
+                        (shipmentType === 'SEA' && loadingType === 'FCL'),
+                    )
                     .map((row) => (
                       <tr key={row.field}>
                         <th className="border border-line px-2 py-1 text-left text-cell font-normal text-steel">
@@ -846,15 +960,36 @@ export function InquiryForm({
                         </th>
                         {volumeColumns.map((column) => (
                           <td key={column.key} className="border border-line p-0">
-                            <Input
-                              id={`vol-${column.key}-${row.field}`}
-                              aria-label={`${column.label} ${row.label}`}
-                              numeric={row.numeric}
-                              inputMode={row.numeric ? 'decimal' : 'text'}
-                              className="border-0 text-center"
-                              value={cell(column.key)[row.field]}
-                              onChange={(e) => setCell(column.key, { [row.field]: e.target.value })}
-                            />
+                            {row.field === 'containerTypeId' ? (
+                              <Select
+                                id={`vol-${column.key}-${row.field}`}
+                                aria-label={`${column.label} ${row.label}`}
+                                className="border-0 text-center"
+                                value={cell(column.key).containerTypeId}
+                                onChange={(e) =>
+                                  setCell(column.key, { containerTypeId: e.target.value })
+                                }
+                              >
+                                <option value="">—</option>
+                                {options.containerTypes.map((type) => (
+                                  <option key={type.id} value={type.id}>
+                                    {type.name}
+                                  </option>
+                                ))}
+                              </Select>
+                            ) : (
+                              <Input
+                                id={`vol-${column.key}-${row.field}`}
+                                aria-label={`${column.label} ${row.label}`}
+                                numeric={row.numeric}
+                                inputMode={row.numeric ? 'decimal' : 'text'}
+                                className="border-0 text-center"
+                                value={cell(column.key)[row.field]}
+                                onChange={(e) =>
+                                  setCell(column.key, { [row.field]: e.target.value })
+                                }
+                              />
+                            )}
                           </td>
                         ))}
                       </tr>
@@ -866,6 +1001,37 @@ export function InquiryForm({
         </div>
 
         <div className="grid grid-cols-1 gap-4 border-t border-line pt-4 md:grid-cols-3">
+          {/*
+            §6.1 places these between the container grid and the dates, and the
+            grid carries its own per-row pair. Both are real: the grid says what
+            each size weighs and should fetch, these say what the shipment
+            weighs and what the customer wants to pay for the whole thing.
+          */}
+          <Field
+            id="weightKg"
+            label="Weight in Kg"
+            hint="The whole shipment. Per-size weights go in the grid above."
+            error={errorFor('weightKg')}
+          >
+            <Input
+              id="weightKg"
+              numeric
+              inputMode="decimal"
+              value={weightKg}
+              onChange={(e) => setWeightKg(e.target.value)}
+            />
+          </Field>
+
+          <Field id="targetPrice" label="Target price ($)" error={errorFor('targetPrice')}>
+            <Input
+              id="targetPrice"
+              numeric
+              inputMode="decimal"
+              value={targetPrice}
+              onChange={(e) => setTargetPrice(e.target.value)}
+            />
+          </Field>
+
           <Field id="currencyId" label="Currency" error={errorFor('currencyId')}>
             <Select
               id="currencyId"

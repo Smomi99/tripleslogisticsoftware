@@ -136,6 +136,50 @@ afterAll(async () => {
 });
 
 describe('model tier registry', () => {
+  /*
+   * tenant_master_override keys a row by its table's NAME (§7A rule 7), which
+   * makes it the one place a table rename can silently change what a stored
+   * decision means.
+   *
+   * It has happened: renaming container_type to container_size left an override
+   * that said "45FT is off for this workspace" pointing at the new
+   * container_type, where record 4 is Reefer. A box type nobody had ever
+   * switched off vanished from a dropdown, and only a browser check found it.
+   *
+   * Two assertions, because a rename can break this two ways: the name can stop
+   * existing, or — worse, because it is silent — the name can survive while the
+   * table beneath it becomes something else. The second is only catchable by
+   * checking the row still exists in the table the override names.
+   */
+  it('has no override naming a table that does not exist', async () => {
+    const orphans = await owner.$queryRaw<{ table_name: string }[]>`
+      SELECT DISTINCT o.table_name
+        FROM tenant_master_override o
+       WHERE NOT EXISTS (
+         SELECT 1 FROM information_schema.tables t
+          WHERE t.table_schema = 'public' AND t.table_name = o.table_name)`;
+    expect(orphans.map((o) => o.table_name)).toEqual([]);
+  });
+
+  it('has no override pointing at a row that is not there', async () => {
+    // A dangling record_id is what a rename leaves behind when the new table is
+    // smaller than the old one — and when it is bigger, the id lands on a
+    // stranger instead, which is why the repair migration exists.
+    const names = await owner.$queryRaw<{ table_name: string }[]>`
+      SELECT DISTINCT table_name FROM tenant_master_override`;
+    const dangling: string[] = [];
+    for (const { table_name: table } of names) {
+      const rows = await owner.$queryRawUnsafe<{ n: bigint }[]>(
+        `SELECT count(*) AS n FROM tenant_master_override o
+          WHERE o.table_name = $1
+            AND NOT EXISTS (SELECT 1 FROM "${table}" x WHERE x.id = o.record_id)`,
+        table,
+      );
+      if (Number(rows[0]?.n ?? 0) > 0) dangling.push(table);
+    }
+    expect(dangling).toEqual([]);
+  });
+
   it('covers every table in the database', async () => {
     // Checked against the database rather than the client, so adding a table
     // and forgetting tenancy.ts fails here instead of shipping unscoped.
@@ -159,7 +203,7 @@ describe('model tier registry', () => {
 
     expect(missingFromRegistry, `tables absent from tenancy.ts: ${missingFromRegistry.join(', ')}`).toEqual([]);
     expect(missingFromDb, `registry names with no table: ${missingFromDb.join(', ')}`).toEqual([]);
-    expect(known.length).toBe(63);
+    expect(known.length).toBe(64);
   });
 
   it('applies the caller row level security to every view', async () => {

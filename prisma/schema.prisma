@@ -237,6 +237,7 @@ model Tenant {
   containerSizes        ContainerSize[]
   emailTemplates        EmailTemplate[]
   emailLogs             EmailLog[]
+  inquiryCommodities    InquiryCommodity[]
   containerTypes        ContainerType[]
   rateTiers             RateTier[]
   toss                  Tos[]
@@ -949,9 +950,9 @@ model CommodityItem {
   // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
   // prisma migrate owns them — an appendix-only constraint is dropped by the
   // next migrate dev, which is how this was found.
-  createdByUser User?     @relation("CommodityItemCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
-  updatedByUser User?     @relation("CommodityItemUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
-  inquiries     Inquiry[]
+  createdByUser      User?              @relation("CommodityItemCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser      User?              @relation("CommodityItemUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  inquiryCommodities InquiryCommodity[]
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -1161,6 +1162,7 @@ model Agent {
   inquiryParties InquiryParty[]
   users          User[]         @relation("AgentUsers")
   quotes         AgentQuote[]
+  wonInquiries   Inquiry[]      @relation("InquiryWonAgent")
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -1516,24 +1518,26 @@ model User {
   customer Customer? @relation("CustomerUsers", fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict)
   vendor   Vendor?   @relation("VendorUsers", fields: [tenantId, vendorId], references: [tenantId, id], onDelete: Restrict)
 
-  createdGoodsTypes     GoodsType[]     @relation("GoodsTypeCreatedBy")
-  updatedGoodsTypes     GoodsType[]     @relation("GoodsTypeUpdatedBy")
-  createdEmailTemplates EmailTemplate[] @relation("EmailTemplateCreatedBy")
-  updatedEmailTemplates EmailTemplate[] @relation("EmailTemplateUpdatedBy")
-  createdEmailLogs      EmailLog[]      @relation("EmailLogCreatedBy")
-  updatedEmailLogs      EmailLog[]      @relation("EmailLogUpdatedBy")
-  createdContainerSizes ContainerSize[] @relation("ContainerSizeCreatedBy")
-  updatedContainerSizes ContainerSize[] @relation("ContainerSizeUpdatedBy")
-  createdContainerTypes ContainerType[] @relation("ContainerTypeCreatedBy")
-  updatedContainerTypes ContainerType[] @relation("ContainerTypeUpdatedBy")
-  createdRateTiers      RateTier[]      @relation("RateTierCreatedBy")
-  updatedRateTiers      RateTier[]      @relation("RateTierUpdatedBy")
-  createdToss           Tos[]           @relation("TosCreatedBy")
-  updatedToss           Tos[]           @relation("TosUpdatedBy")
-  createdModes          Mode[]          @relation("ModeCreatedBy")
-  updatedModes          Mode[]          @relation("ModeUpdatedBy")
-  createdInquirySources InquirySource[] @relation("InquirySourceCreatedBy")
-  updatedInquirySources InquirySource[] @relation("InquirySourceUpdatedBy")
+  createdGoodsTypes         GoodsType[]        @relation("GoodsTypeCreatedBy")
+  updatedGoodsTypes         GoodsType[]        @relation("GoodsTypeUpdatedBy")
+  createdEmailTemplates     EmailTemplate[]    @relation("EmailTemplateCreatedBy")
+  updatedEmailTemplates     EmailTemplate[]    @relation("EmailTemplateUpdatedBy")
+  createdInquiryCommodities InquiryCommodity[] @relation("InquiryCommodityCreatedBy")
+  updatedInquiryCommodities InquiryCommodity[] @relation("InquiryCommodityUpdatedBy")
+  createdEmailLogs          EmailLog[]         @relation("EmailLogCreatedBy")
+  updatedEmailLogs          EmailLog[]         @relation("EmailLogUpdatedBy")
+  createdContainerSizes     ContainerSize[]    @relation("ContainerSizeCreatedBy")
+  updatedContainerSizes     ContainerSize[]    @relation("ContainerSizeUpdatedBy")
+  createdContainerTypes     ContainerType[]    @relation("ContainerTypeCreatedBy")
+  updatedContainerTypes     ContainerType[]    @relation("ContainerTypeUpdatedBy")
+  createdRateTiers          RateTier[]         @relation("RateTierCreatedBy")
+  updatedRateTiers          RateTier[]         @relation("RateTierUpdatedBy")
+  createdToss               Tos[]              @relation("TosCreatedBy")
+  updatedToss               Tos[]              @relation("TosUpdatedBy")
+  createdModes              Mode[]             @relation("ModeCreatedBy")
+  updatedModes              Mode[]             @relation("ModeUpdatedBy")
+  createdInquirySources     InquirySource[]    @relation("InquirySourceCreatedBy")
+  updatedInquirySources     InquirySource[]    @relation("InquirySourceUpdatedBy")
 
   createdFreightRates       FreightRate[]       @relation("FreightRateCreatedBy")
   updatedFreightRates       FreightRate[]       @relation("FreightRateUpdatedBy")
@@ -1769,6 +1773,7 @@ model GoodsType {
   updatedByUser User?   @relation("GoodsTypeUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   freightRates FreightRate[]
+  inquiries    Inquiry[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -1858,9 +1863,10 @@ model EmailLog {
   updatedBy     BigInt?     @map("updated_by")
   deletedAt     DateTime?   @map("deleted_at") @db.Timestamptz(6)
 
-  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  createdByUser User?  @relation("EmailLogCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
-  updatedByUser User?  @relation("EmailLogUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  inquiryParties InquiryParty[]
+  createdByUser  User?          @relation("EmailLogCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser  User?          @relation("EmailLogUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   @@unique([tenantId, id])
   @@index([tenantId])
@@ -2346,8 +2352,56 @@ enum MovementType {
 
 /// §9 Q10, answered: this list is right. EXPIRED is set by §4 rule 11's
 /// auto-expiry; WON and LOST need their own permission.
+/// client: the multi-select behind "Commodity (multi) + HS Code" (§3, §6.1).
+///
+/// One inquiry, several commodities, each with its own HS code — which is why
+/// the code sits here rather than on the inquiry. The four inquiries that
+/// carried a single commodity on the header were moved into this table by
+/// 20260825120000; nothing was invented for the other three.
+model InquiryCommodity {
+  tenantId        BigInt    @map("tenant_id")
+  id              BigInt    @id @default(autoincrement())
+  inquiryId       BigInt    @map("inquiry_id")
+  commodityItemId BigInt    @map("commodity_item_id")
+  /// Prefilled from the commodity and then editable: a corrected commodity must
+  /// not rewrite an inquiry already sent to an agent.
+  hsCode          String?   @map("hs_code") @db.VarChar(50)
+  isActive        Boolean   @default(true) @map("is_active")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy       BigInt?   @map("created_by")
+  updatedBy       BigInt?   @map("updated_by")
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  inquiry       Inquiry       @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict)
+  commodityItem CommodityItem @relation(fields: [tenantId, commodityItemId], references: [tenantId, id], onDelete: Restrict)
+  createdByUser User?         @relation("InquiryCommodityCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User?         @relation("InquiryCommodityUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([inquiryId])
+  @@index([commodityItemId])
+  @@map("inquiry_commodity")
+}
+
+enum InquiryShareStatus {
+  SHARED
+  VIEWED
+  QUOTED
+  WON
+  LOST
+
+  @@map("inquiry_share_status")
+}
+
 enum InquiryStatus {
   OPEN
+  /// Shared with agents, waiting on their prices (§5.1 inbound).
+  RFQ_SENT
+  /// A live rate covers the lane, so it can be quoted from (§5.1 outbound).
+  PRICED
   QUOTED
   WON
   LOST
@@ -2435,35 +2489,40 @@ model Inquiry {
   seriesYear  Int      @map("series_year")
   inquiryDate DateTime @map("inquiry_date") @db.Date
 
-  sourceId        BigInt       @map("source_id")
-  shipmentType    ShipmentType @map("shipment_type")
-  customerId      BigInt       @map("customer_id")
-  movementType    MovementType @map("movement_type")
-  polId           BigInt       @map("pol_id")
-  podId           BigInt       @map("pod_id")
-  placeOfReceipt  String?      @map("place_of_receipt") @db.Text
-  commodityItemId BigInt?      @map("commodity_item_id")
-  /// §5.4: prefilled from the commodity, then editable — so it is stored, not
-  /// joined. A corrected commodity must not rewrite an inquiry already sent.
-  hsCode          String?      @map("hs_code") @db.VarChar(50)
+  sourceId       BigInt       @map("source_id")
+  shipmentType   ShipmentType @map("shipment_type")
+  customerId     BigInt       @map("customer_id")
+  movementType   MovementType @map("movement_type")
+  polId          BigInt       @map("pol_id")
+  podId          BigInt       @map("pod_id")
+  placeOfReceipt String?      @map("place_of_receipt") @db.Text
+  /// How the cargo is sorted for pricing — Textile, Non-Textile, DG. §5.1
+  /// matches a lane on it. Nullable: the inquiries raised before the field
+  /// existed are not guessed at.
+  goodsTypeId    BigInt?      @map("goods_type_id")
   /// An Incoterm (EXW…DDP). See the Tos model — 20260825090000 made TOS the
   /// Incoterms, which is what the module spec asks for.
-  tosId           BigInt?      @map("tos_id")
+  tosId          BigInt?      @map("tos_id")
   /// The CY/CY family — where the carrier takes the cargo and hands it back.
   /// The three inquiries that carry a term value carry it here.
-  modeId          BigInt?      @map("mode_id")
+  modeId         BigInt?      @map("mode_id")
   /// Sea only: FCL or LCL. Drives which columns the volume grid offers.
-  loadingType     LoadingType? @map("loading_type")
+  loadingType    LoadingType? @map("loading_type")
   /// Recipients for this inquiry, prefilled from the selected contacts and then
   /// editable by hand — the client asked for a one-off address to be possible.
   /// Stored as typed, so it can legitimately disagree with the contacts beside
   /// it; that is the trade-off they chose over a derived, read-only list.
-  notifyEmails    String?      @map("notify_emails") @db.Text
+  notifyEmails   String?      @map("notify_emails") @db.Text
 
   /// Target price moved into inquiry_volume: the client's wireframe asks for
   /// one per container size, so a 20ft and a 40ft can be quoted apart.
   currencyId BigInt? @map("currency_id")
 
+  /// §6.1 puts these on the header as well as on every grid row. Both: the
+  /// grid says what each size weighs and should fetch, the header says what the
+  /// shipment weighs and what the customer wants to pay overall.
+  weightKg             Decimal?  @map("weight_kg") @db.Decimal(18, 3)
+  targetPrice          Decimal?  @map("target_price") @db.Decimal(18, 4)
   expectedShipmentDate DateTime? @map("expected_shipment_date") @db.Date
   /// "Inquiry Valid Upto". §4 rule 11 auto-expires an OPEN inquiry past this.
   validTo              DateTime? @map("valid_to") @db.Date
@@ -2475,6 +2534,12 @@ model Inquiry {
   status     InquiryStatus @default(OPEN)
 
   /// §9 Q12: the lead this came from, when it came from one.
+  /// §5.2: when the business is won through an agent, which one. A CHECK ties
+  /// it to status = WON; the reverse is not required, since business is won
+  /// from our own rates every day.
+  wonAgentId BigInt?   @map("won_agent_id")
+  wonAt      DateTime? @map("won_at") @db.Timestamptz(6)
+
   leadId BigInt? @map("lead_id")
 
   /// Written back by §5.5's Price action from the attached rates.
@@ -2491,23 +2556,25 @@ model Inquiry {
 
   // System-capable targets take single-column FKs: a shared row has a null
   // tenant_id, and a composite tenant FK cannot resolve against it.
-  source   InquirySource @relation(fields: [sourceId], references: [id], onDelete: Restrict)
-  pol      Port          @relation("InquiryPol", fields: [polId], references: [id], onDelete: Restrict)
-  pod      Port          @relation("InquiryPod", fields: [podId], references: [id], onDelete: Restrict)
-  tos      Tos?          @relation(fields: [tosId], references: [id], onDelete: Restrict)
-  mode     Mode?         @relation(fields: [modeId], references: [id], onDelete: Restrict)
-  currency Currency?     @relation(fields: [currencyId], references: [id], onDelete: Restrict)
+  source    InquirySource @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  pol       Port          @relation("InquiryPol", fields: [polId], references: [id], onDelete: Restrict)
+  pod       Port          @relation("InquiryPod", fields: [podId], references: [id], onDelete: Restrict)
+  tos       Tos?          @relation(fields: [tosId], references: [id], onDelete: Restrict)
+  mode      Mode?         @relation(fields: [modeId], references: [id], onDelete: Restrict)
+  goodsType GoodsType?    @relation(fields: [goodsTypeId], references: [id], onDelete: Restrict)
+  wonAgent  Agent?        @relation("InquiryWonAgent", fields: [tenantId, wonAgentId], references: [tenantId, id], onDelete: Restrict)
+  currency  Currency?     @relation(fields: [currencyId], references: [id], onDelete: Restrict)
 
   // Tenant-owned targets take the composite tenant-safe FK (§4 rule 10).
-  customer      Customer       @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict)
-  commodityItem CommodityItem? @relation(fields: [tenantId, commodityItemId], references: [tenantId, id], onDelete: Restrict)
-  salesman      Employee?      @relation(fields: [tenantId, salesmanId], references: [tenantId, id], onDelete: Restrict)
-  lead          SalesLead?     @relation(fields: [tenantId, leadId], references: [tenantId, id], onDelete: Restrict)
+  customer Customer   @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict)
+  salesman Employee?  @relation(fields: [tenantId, salesmanId], references: [tenantId, id], onDelete: Restrict)
+  lead     SalesLead? @relation(fields: [tenantId, leadId], references: [tenantId, id], onDelete: Restrict)
 
   createdByUser User? @relation("InquiryCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User? @relation("InquiryUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   volumes     InquiryVolume[]
+  commodities InquiryCommodity[]
   followups   InquiryFollowup[]
   rates       InquiryRate[]
   parties     InquiryParty[]
@@ -2569,15 +2636,25 @@ model InquiryParty {
   agentId   BigInt? @map("agent_id")
   carrierId BigInt? @map("carrier_id")
 
+  /// §4.2 asks for inquiry_agent_share. This is that table — it already records
+  /// who an inquiry went to, and it covers carriers too, which §6.1 requires
+  /// and an agent-only table could not express. So the tracking lives here
+  /// rather than in a second answer to the same question.
+  status     InquiryShareStatus @default(SHARED)
+  notifiedAt DateTime?          @map("notified_at") @db.Timestamptz(6)
+  /// The message that told them, so the screen can show what went out.
+  emailLogId BigInt?            @map("email_log_id")
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   createdBy BigInt?  @map("created_by")
 
-  tenant  Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  inquiry Inquiry  @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict)
-  agent   Agent?   @relation(fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  inquiry  Inquiry   @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict)
+  agent    Agent?    @relation(fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
   /// carrier is system-capable, so its tenant_id may be NULL and a composite
   /// key is impossible. The §4 rule 10 trigger guards it instead.
-  carrier Carrier? @relation(fields: [carrierId], references: [id], onDelete: Restrict)
+  carrier  Carrier?  @relation(fields: [carrierId], references: [id], onDelete: Restrict)
+  emailLog EmailLog? @relation(fields: [tenantId, emailLogId], references: [tenantId, id], onDelete: Restrict)
 
   createdByUser User? @relation("InquiryPartyCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
 

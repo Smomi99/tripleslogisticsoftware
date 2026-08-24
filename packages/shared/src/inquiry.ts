@@ -29,8 +29,33 @@ export const MOVEMENT_TYPE_LABEL: Record<MovementType, string> = {
   OUTBOUND: 'Outbound',
 };
 
+/** One commodity on an inquiry, with the HS code that belongs to it. */
+export interface InquiryCommodityDto {
+  commodityItemId: string;
+  name: string;
+  hsCode: string | null;
+}
+
+/**
+ * A decimal on the wire, as a string.
+ *
+ * §4 rule 6 keeps these in NUMERIC and a JSON number is a float. Blank is
+ * allowed and means "not stated", which is different from zero.
+ */
+const decimalField = (places: number, message: string) =>
+  z
+    .string()
+    .trim()
+    .regex(new RegExp(`^\\d+(\\.\\d{1,${places}})?$`), message)
+    .optional()
+    .or(z.literal(''));
+
 export const INQUIRY_STATUSES = [
   'OPEN',
+  /** Shared with agents, waiting on their prices (§5.1 inbound). */
+  'RFQ_SENT',
+  /** A live rate covers the lane, so it can be quoted from (§5.1 outbound). */
+  'PRICED',
   'QUOTED',
   'WON',
   'LOST',
@@ -41,6 +66,8 @@ export type InquiryStatus = (typeof INQUIRY_STATUSES)[number];
 
 export const INQUIRY_STATUS_LABEL: Record<InquiryStatus, string> = {
   OPEN: 'Open',
+  RFQ_SENT: 'RFQ sent',
+  PRICED: 'Priced',
   QUOTED: 'Quoted',
   WON: 'Won',
   LOST: 'Lost',
@@ -55,6 +82,10 @@ export const INQUIRY_STATUS_TONE: Record<
 > =
   {
     OPEN: 'inactive',
+    // Waiting on somebody outside the building, and ready to quote from,
+    // are both 'in progress' — the tone the client gave QUOTED.
+    RFQ_SENT: 'pending',
+    PRICED: 'pending',
     QUOTED: 'pending',
     WON: 'active',
     LOST: 'overdue',
@@ -131,6 +162,12 @@ export type LoadingType = (typeof LOADING_TYPES)[number];
 export const inquiryVolumeInputSchema = z.object({
   volumeKind: z.enum(VOLUME_KINDS),
   containerSizeId: optionalIdField,
+  /**
+   * The physical box — Dry, Reefer, Flat Rack, Open Top (§6.1's Container Type
+   * column). A different axis from the size: a 40HC can be either, and the
+   * price is not remotely the same.
+   */
+  containerTypeId: optionalIdField,
   quantity: optionalInt,
   cbm: optionalQuantity('Enter a CBM figure.'),
   weightKg: optionalQuantity('Enter a weight in KG.'),
@@ -147,6 +184,8 @@ export interface InquiryVolumeDto {
   volumeKind: VolumeKind;
   containerSizeId: string | null;
   containerSizeCode: string | null;
+  containerTypeId: string | null;
+  containerTypeName: string | null;
   quantity: number | null;
   cbm: string | null;
   weightKg: string | null;
@@ -203,8 +242,26 @@ export const inquiryInputSchema = z
     polId: idField,
     podId: idField,
     placeOfReceipt: z.string().trim().max(500, 'That is too long.').optional(),
-    commodityItemId: optionalIdField,
-    hsCode: z.string().trim().max(50, 'HS code is too long.').optional(),
+    /**
+     * §3: many commodities per inquiry, each with its own HS code.
+     *
+     * An empty array is allowed. An inquiry can be raised before anyone knows
+     * exactly what is in the box, and refusing to save it would send the
+     * operator to a notepad instead.
+     */
+    commodities: z
+      .array(
+        z.object({
+          commodityItemId: idField,
+          hsCode: z.string().trim().max(50, 'HS code is too long.').optional(),
+        }),
+      )
+      .max(20, 'That is more commodities than one inquiry carries.')
+      .optional(),
+    goodsTypeId: optionalIdField,
+    /** §6.1 puts these on the header as well as on each grid row. */
+    weightKg: decimalField(3, 'Enter a weight, for example 12500 or 12500.5'),
+    targetPrice: decimalField(4, 'Enter a target price, for example 1850 or 1850.50'),
     tosId: optionalIdField,
     /** §6.5 asks for TOS and Mode as separate header fields. */
     modeId: optionalIdField,
@@ -280,9 +337,11 @@ export interface InquiryDto {
   podCode: string;
   podName: string;
   placeOfReceipt: string | null;
-  commodityItemId: string | null;
-  commodityName: string | null;
-  hsCode: string | null;
+  commodities: InquiryCommodityDto[];
+  goodsTypeId: string | null;
+  goodsTypeName: string | null;
+  weightKg: string | null;
+  targetPrice: string | null;
   tosId: string | null;
   tosName: string | null;
   modeId: string | null;

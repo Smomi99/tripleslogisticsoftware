@@ -41,6 +41,7 @@ export const SYSTEM_CAPABLE_MODELS = [
 export const TENANT_OWNED_MODELS = [
   'Agent',
   'EmailLog',
+  'InquiryCommodity',
   'AgentExpertArea',
   'AgentNetworkMember',
   'AgentPic',

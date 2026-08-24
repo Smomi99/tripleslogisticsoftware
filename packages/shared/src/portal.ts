@@ -129,8 +129,11 @@ export interface AgentInquiryDto {
   podCode: string | null;
   podCountry: string | null;
   placeOfReceipt: string | null;
-  commodityName: string | null;
-  hsCode: string | null;
+  /**
+   * Several per inquiry since §3 made commodity a multi-select, each with
+   * its own HS code. An agent needs to know what is in the box to price it.
+   */
+  commodities: { name: string; hsCode: string | null }[];
   tosName: string | null;
   /** The Incoterm. Decides what the price is expected to include. */
   modeName: string | null;

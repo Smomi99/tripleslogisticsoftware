@@ -64,7 +64,6 @@ interface InquiryRow {
   movement_type: string;
   loading_type: string | null;
   place_of_receipt: string | null;
-  hs_code: string | null;
   expected_shipment_date: Date | null;
   valid_to: Date | null;
   status: string;
@@ -74,7 +73,6 @@ interface InquiryRow {
   pod_name: string | null;
   pod_code: string | null;
   pod_country: string | null;
-  commodity_name: string | null;
   tos_name: string | null;
   mode_name: string | null;
 }
@@ -156,6 +154,7 @@ function volumeToDto(row: VolumeRow): AgentInquiryVolumeDto {
 function inquiryToDto(
   row: InquiryRow,
   volumes: AgentInquiryVolumeDto[],
+  commodities: { name: string; hsCode: string | null }[],
   quote: AgentQuoteDto | null,
 ): AgentInquiryDto {
   return {
@@ -172,8 +171,7 @@ function inquiryToDto(
     podCode: row.pod_code,
     podCountry: row.pod_country,
     placeOfReceipt: row.place_of_receipt,
-    commodityName: row.commodity_name,
-    hsCode: row.hs_code,
+    commodities,
     tosName: row.tos_name,
     modeName: row.mode_name,
     expectedShipmentDate: row.expected_shipment_date?.toISOString().slice(0, 10) ?? null,
@@ -194,20 +192,45 @@ function inquiryToDto(
  */
 const INQUIRY_COLUMNS = Prisma.sql`
   v.id, v.code, v.inquiry_date, v.shipment_type, v.movement_type, v.loading_type,
-  v.place_of_receipt, v.hs_code, v.expected_shipment_date, v.valid_to, v.status,
+  v.place_of_receipt, v.expected_shipment_date, v.valid_to, v.status,
   pol.name AS pol_name, pol.port_code AS pol_code, pol.country AS pol_country,
   pod.name AS pod_name, pod.port_code AS pod_code, pod.country AS pod_country,
-  ci.name AS commodity_name, t.name AS tos_name, m.name AS mode_name`;
+  t.name AS tos_name, m.name AS mode_name`;
 
 const INQUIRY_JOINS = Prisma.sql`
   FROM agent_inquiry_v v
   LEFT JOIN port pol ON pol.id = v.pol_id
   LEFT JOIN port pod ON pod.id = v.pod_id
-  LEFT JOIN commodity_item ci ON ci.id = v.commodity_item_id
   LEFT JOIN tos t ON t.id = v.tos_id
   LEFT JOIN mode m ON m.id = v.mode_id`;
 
 /** Volumes for a set of inquiries, from the view that has no target price. */
+/**
+ * What is in the box, for a set of inquiries.
+ *
+ * Read straight from inquiry_commodity rather than through a view: unlike
+ * inquiry_volume it carries nothing an agent may not see — no target price, no
+ * customer — so the agent_read policy is the whole boundary and there is no
+ * column to hide behind one.
+ */
+async function commoditiesFor(db: TenantDb, inquiryIds: bigint[]) {
+  const byInquiry = new Map<string, { name: string; hsCode: string | null }[]>();
+  if (inquiryIds.length === 0) return byInquiry;
+  const rows = await db.inquiryCommodity.findMany({
+    where: { inquiryId: { in: inquiryIds }, deletedAt: null },
+    orderBy: { id: 'asc' },
+    select: { inquiryId: true, hsCode: true, commodityItem: { select: { name: true } } },
+  });
+  for (const row of rows) {
+    const key = row.inquiryId.toString();
+    byInquiry.set(key, [
+      ...(byInquiry.get(key) ?? []),
+      { name: row.commodityItem?.name ?? '', hsCode: row.hsCode },
+    ]);
+  }
+  return byInquiry;
+}
+
 async function volumesFor(db: TenantDb, inquiryIds: bigint[]) {
   if (inquiryIds.length === 0) return new Map<string, AgentInquiryVolumeDto[]>();
   const rows = await db.$queryRaw<VolumeRow[]>`
@@ -393,8 +416,9 @@ agentInquiryRouter.get('/', requirePermission('AGENT.INQUIRY.VIEW'), async (req,
       LIMIT ${PAGE_SIZE} OFFSET ${offset}`;
 
     const ids = rows.map((r) => r.id);
-    const [volumes, quotes] = await Promise.all([
+    const [volumes, commodities, quotes] = await Promise.all([
       volumesFor(db, ids),
+      commoditiesFor(db, ids),
       ids.length === 0
         ? Promise.resolve([] as QuoteRow[])
         : (db.agentQuote.findMany({
@@ -411,6 +435,7 @@ agentInquiryRouter.get('/', requirePermission('AGENT.INQUIRY.VIEW'), async (req,
         return inquiryToDto(
           row,
           volumes.get(row.id.toString()) ?? [],
+          commodities.get(row.id.toString()) ?? [],
           quote === undefined ? null : quoteToDto(quote),
         );
       }),
@@ -445,8 +470,9 @@ agentInquiryRouter.get('/:id', requirePermission('AGENT.INQUIRY.VIEW'), async (r
     const row = rows[0];
     if (row === undefined) return null;
 
-    const [volumes, quote] = await Promise.all([
+    const [volumes, commodities, quote] = await Promise.all([
       volumesFor(db, [row.id]),
+      commoditiesFor(db, [row.id]),
       db.agentQuote.findFirst({
         where: { inquiryId: row.id, agentId, deletedAt: null, status: { not: 'WITHDRAWN' } },
         select: QUOTE_SELECT,
@@ -456,6 +482,7 @@ agentInquiryRouter.get('/:id', requirePermission('AGENT.INQUIRY.VIEW'), async (r
     return inquiryToDto(
       row,
       volumes.get(row.id.toString()) ?? [],
+      commodities.get(row.id.toString()) ?? [],
       quote === null ? null : quoteToDto(quote),
     );
   });

@@ -110,7 +110,12 @@ export default function InquiryListPage() {
     },
     { id: 'pol', header: 'POL', numeric: true, cell: (r) => r.polCode },
     { id: 'pod', header: 'POD', numeric: true, cell: (r) => r.podCode },
-    { id: 'commodity', header: 'Commodity', cell: (r) => r.commodityName ?? '—' },
+    {
+      id: 'commodity',
+      header: 'Commodity',
+      // Several per inquiry since §3; the column stays one line.
+      cell: (r) => (r.commodities.length === 0 ? '—' : r.commodities.map((c) => c.name).join(', ')),
+    },
     { id: 'volume', header: 'Required Container', numeric: true, cell: requiredVolume },
     {
       id: 'quotedPrice',
