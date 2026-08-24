@@ -7,6 +7,7 @@ import { env } from '../config/env';
 import { PrismaClient } from '../generated/prisma/client';
 import { signAccessToken } from '../lib/jwt';
 import { hashPassword } from '../lib/password';
+import { quoteBody } from '../lib/test-quote';
 
 /**
  * Phase 4 of the agent portal: what an agent can actually do.
@@ -42,6 +43,7 @@ let balticInquiry: bigint;
 let unsentInquiry: bigint;
 let closedInquiry: bigint;
 let currencyId: bigint;
+let costHeadId: bigint;
 let nordicToken: string;
 let balticToken: string;
 let staffToken: string;
@@ -49,6 +51,9 @@ let staffToken: string;
 async function cleanup(): Promise<void> {
   const scope = `(SELECT id FROM tenant WHERE slug = '${SLUG}')`;
   for (const table of [
+    'agent_quote_comment',
+    'agent_quote_line',
+    'agent_quote_option',
     'agent_quote',
     'inquiry_party_contact',
     'inquiry_party',
@@ -66,6 +71,8 @@ async function cleanup(): Promise<void> {
     'industry_sector',
     'port',
     'inquiry_source',
+    'cost_head',
+    'cost_unit',
   ]) {
     await owner.$executeRawUnsafe(`DELETE FROM ${table} WHERE tenant_id IN ${scope}`);
   }
@@ -215,6 +222,24 @@ beforeAll(async () => {
     await owner.currency.findFirstOrThrow({ where: { tenantId: null }, select: { id: true } })
   ).id;
 
+  // A quotation prices cost heads now, so the fixture needs one to price.
+  const costUnit = await owner.costUnit.create({
+    data: { tenantId, code: 'PIQ-CU', name: 'Container' },
+    select: { id: true },
+  });
+  costHeadId = (
+    await owner.costHead.create({
+      data: {
+        tenantId,
+        code: 'PIQ-CH',
+        category: 'SERVICE',
+        name: 'Ocean Freight',
+        unitId: costUnit.id,
+      },
+      select: { id: true },
+    })
+  ).id;
+
   const inquiry = async (code: string, status: 'OPEN' | 'WON') =>
     (
       await owner.inquiry.create({
@@ -350,14 +375,8 @@ describe('opening one inquiry', () => {
 });
 
 describe('submitting a quote', () => {
-  const quote = (extra: Record<string, unknown> = {}) => ({
-    amount: '1450.50',
-    currencyId: currencyId.toString(),
-    validUntil: '2026-09-30',
-    transitDays: 22,
-    remarks: 'Subject to space.',
-    ...extra,
-  });
+  const quote = (overrides: { unitPrice?: string; quantity?: string } = {}) =>
+    quoteBody({ costHeadId, currencyId }, overrides);
 
   function post(path: string, token: string, body: object) {
     return request(app)
@@ -371,8 +390,23 @@ describe('submitting a quote', () => {
     sent.length = 0;
     const res = await post(`/api/tenant/agent/inquiries/${sharedInquiry}/quote`, nordicToken, quote())
       .expect(201);
-    expect(res.body.data.amount).toBe('1450.5');
+    // The figures live on the lines now; the header carries no single amount.
+    expect(res.body.data.amount).toBe('');
     expect(res.body.data.status).toBe('SUBMITTED');
+    expect(res.body.data.options).toHaveLength(1);
+    const [option] = res.body.data.options;
+    expect(option.position).toBe(1);
+    expect(option.transitDays).toBe(22);
+    expect(option.via).toBe('Singapore');
+    expect(option.podFreeDays).toBe(14);
+    expect(option.lines).toHaveLength(1);
+    expect(option.lines[0].unitPrice).toBe('1450.5');
+    expect(option.lines[0].costHeadName).toBe('Ocean Freight');
+    // Computed by the database, not sent by the client.
+    expect(option.lines[0].totalAmount).toBe('1450.5');
+    expect(option.totals).toEqual([
+      expect.objectContaining({ amount: '1450.5' }),
+    ]);
 
     expect(sent).toHaveLength(1);
     expect(sent[0]?.to).toEqual(['pricing@forwarder.test']);
@@ -394,8 +428,8 @@ describe('submitting a quote', () => {
 
   it('shows the quote back on the inquiry', async () => {
     const res = await get(`/api/tenant/agent/inquiries/${sharedInquiry}`, nordicToken).expect(200);
-    expect(res.body.data.quote.amount).toBe('1450.5');
-    expect(res.body.data.quote.currencyCode).toBeTruthy();
+    expect(res.body.data.quote.options[0].lines[0].unitPrice).toBe('1450.5');
+    expect(res.body.data.quote.options[0].lines[0].currencyCode).toBeTruthy();
   });
 
   it('refuses a second quote on the same inquiry', async () => {
@@ -415,19 +449,64 @@ describe('submitting a quote', () => {
     expect(res.body.error.code).toBe('INQUIRY_CLOSED');
   });
 
-  it('refuses a price of zero', async () => {
-    await post(`/api/tenant/agent/inquiries/${unsentInquiry}/quote`, nordicToken, quote({ amount: '0' }))
-      .expect(400);
+  it('refuses a quantity of zero', async () => {
+    await post(
+      `/api/tenant/agent/inquiries/${unsentInquiry}/quote`,
+      nordicToken,
+      quote({ quantity: '0' }),
+    ).expect(400);
+  });
+
+  it('refuses an offer with no charge lines', async () => {
+    // An option that prices nothing is not an offer, and the schema says so
+    // before the database has to.
+    await post(`/api/tenant/agent/inquiries/${unsentInquiry}/quote`, nordicToken, {
+      options: [{ lines: [] }],
+    }).expect(400);
+  });
+
+  it('refuses a quotation with no options at all', async () => {
+    await post(`/api/tenant/agent/inquiries/${unsentInquiry}/quote`, nordicToken, {
+      options: [],
+    }).expect(400);
+  });
+
+  it('ignores a total the client tries to send', async () => {
+    // Total Amount is generated. A client that sends its own has not been
+    // trusted to multiply correctly, and here is not permitted to try.
+    const body = quoteBody({ costHeadId, currencyId }, { unitPrice: '100', quantity: '3' });
+    (body.options[0]!.lines![0] as unknown as Record<string, unknown>)['totalAmount'] = '1';
+    const res = await post(
+      `/api/tenant/agent/inquiries/${balticInquiry}/quote`,
+      balticToken,
+      body,
+    ).expect(201);
+    expect(res.body.data.options[0].lines[0].totalAmount).toBe('300');
+
+    // Baltic having no quote is a precondition of later tests; put it back.
+    const quoteId = BigInt(res.body.data.id as string);
+    await owner.$executeRawUnsafe(
+      `DELETE FROM agent_quote_line WHERE option_id IN
+         (SELECT id FROM agent_quote_option WHERE quote_id = ${quoteId})`,
+    );
+    await owner.$executeRawUnsafe(
+      `DELETE FROM agent_quote_option WHERE quote_id = ${quoteId}`,
+    );
+    await owner.$executeRawUnsafe(`DELETE FROM agent_quote WHERE id = ${quoteId}`);
   });
 
   it('keeps the exact figure, to four decimal places', async () => {
     // §4 rule 6: money is NUMERIC(18,4) and travels as a string. A JSON number
     // is a float, and 1450.50 would not survive the round trip intact.
-    const row = await owner.agentQuote.findFirstOrThrow({
-      where: { tenantId, inquiryId: sharedInquiry },
-      select: { amount: true },
-    });
-    expect(row.amount?.toString()).toBe('1450.5');
+    const rows = await owner.$queryRawUnsafe<{ unit_price: string; total_amount: string }[]>(
+      `SELECT l.unit_price::text, l.total_amount::text
+         FROM agent_quote_line l
+         JOIN agent_quote_option o ON o.id = l.option_id
+         JOIN agent_quote q ON q.id = o.quote_id
+        WHERE q.inquiry_id = ${sharedInquiry}`,
+    );
+    expect(rows[0]?.unit_price).toBe('1450.5000');
+    expect(rows[0]?.total_amount).toBe('1450.5000');
   });
 });
 
@@ -445,11 +524,15 @@ describe('amending a quote', () => {
       where: { tenantId, inquiryId: sharedInquiry },
       select: { id: true },
     });
-    const res = await patch(`/api/tenant/agent/quotes/${quote.id}`, nordicToken, {
-      amount: '1399',
-      currencyId: currencyId.toString(),
-    }).expect(200);
-    expect(res.body.data.amount).toBe('1399');
+    const res = await patch(
+      `/api/tenant/agent/quotes/${quote.id}`,
+      nordicToken,
+      quoteBody({ costHeadId, currencyId }, { unitPrice: '1399' }),
+    ).expect(200);
+    expect(res.body.data.options[0].lines[0].unitPrice).toBe('1399');
+    // One live generation, not two: the previous offer was retired, not left
+    // beside its replacement.
+    expect(res.body.data.options).toHaveLength(1);
 
     const trail = await owner.auditLog.findMany({
       where: { tenantId, action: 'QUOTE_AMENDED' },
@@ -458,15 +541,29 @@ describe('amending a quote', () => {
     expect(trail.length).toBeGreaterThan(0);
   });
 
+  it('keeps what was offered before, soft deleted', async () => {
+    // §4 rule 3, earning its keep commercially: "you quoted 1450.50 last week"
+    // is a thing both sides may need to point at.
+    const retired = await owner.$queryRawUnsafe<{ unit_price: string }[]>(
+      `SELECT l.unit_price::text
+         FROM agent_quote_line l
+         JOIN agent_quote_option o ON o.id = l.option_id
+         JOIN agent_quote q ON q.id = o.quote_id
+        WHERE q.inquiry_id = ${sharedInquiry} AND l.deleted_at IS NOT NULL`,
+    );
+    expect(retired.map((r) => r.unit_price)).toContain('1450.5000');
+  });
+
   it('refuses to let another agent touch it', async () => {
     const quote = await owner.agentQuote.findFirstOrThrow({
       where: { tenantId, inquiryId: sharedInquiry },
       select: { id: true },
     });
-    await patch(`/api/tenant/agent/quotes/${quote.id}`, balticToken, {
-      amount: '1',
-      currencyId: currencyId.toString(),
-    }).expect(404);
+    await patch(
+      `/api/tenant/agent/quotes/${quote.id}`,
+      balticToken,
+      quoteBody({ costHeadId, currencyId }, { unitPrice: '1' }),
+    ).expect(404);
   });
 
   it('stops once the inquiry is no longer open', async () => {
@@ -476,10 +573,11 @@ describe('amending a quote', () => {
     });
     await owner.inquiry.update({ where: { id: sharedInquiry }, data: { status: 'QUOTED' } });
 
-    const res = await patch(`/api/tenant/agent/quotes/${quote.id}`, nordicToken, {
-      amount: '1000',
-      currencyId: currencyId.toString(),
-    }).expect(409);
+    const res = await patch(
+      `/api/tenant/agent/quotes/${quote.id}`,
+      nordicToken,
+      quoteBody({ costHeadId, currencyId }, { unitPrice: '1000' }),
+    ).expect(409);
     expect(res.body.error.code).toBe('INQUIRY_CLOSED');
 
     await owner.inquiry.update({ where: { id: sharedInquiry }, data: { status: 'OPEN' } });
@@ -493,10 +591,11 @@ describe('staff can see what agents sent', () => {
     // opaque in both directions.
     const quotes = await owner.agentQuote.findMany({
       where: { tenantId },
-      select: { code: true, amount: true, agentId: true },
+      select: { code: true, agentId: true, options: { where: { deletedAt: null } } },
     });
     expect(quotes.length).toBeGreaterThan(0);
     expect(quotes[0]?.agentId).toBe(nordic);
+    expect(quotes[0]?.options.length).toBeGreaterThan(0);
   });
 
   it('refuses an agent token at the staff inquiry screen', async () => {

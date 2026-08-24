@@ -92,6 +92,7 @@ export function ConvertQuoteForm({
   const [tierId, setTierId] = useState('');
   const [validFrom, setValidFrom] = useState(today());
   const [validTo, setValidTo] = useState('');
+  const [optionId, setOptionId] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -114,11 +115,46 @@ export function ConvertQuoteForm({
   useEffect(() => {
     void load();
     if (quote !== null) {
-      // The agent said how long their price stands; that is the rate's validity
-      // unless someone changes it here.
-      setValidTo(quote.validUntil ?? plusDays(today(), 30));
+      setOptionId(quote.options[0]?.id ?? '');
     }
   }, [load, quote]);
+
+  /*
+   * Which offer is being filed.
+   *
+   * A quotation can carry several alternatives now, and they are genuinely
+   * different rates — a different carrier, a different transit, a different
+   * price. Only one of them is the one you booked, so the buyer says which
+   * rather than the screen guessing.
+   */
+  const chosen = quote?.options.find((o) => o.id === optionId) ?? quote?.options[0] ?? null;
+
+  /*
+   * The buy price.
+   *
+   * Every charge on the option, added up. A purchase rate holds one buy price
+   * per tier, and splitting the breakdown into freight-plus-local-charges would
+   * mean deciding which cost head counts as the freight — a rule nobody has
+   * stated, and not one to invent inside a conversion. The all-in figure is
+   * what the agent will actually invoice, so it is the honest cost to file.
+   *
+   * An option priced in two currencies has no single such figure, and is
+   * refused below rather than silently converted at a rate nobody quoted.
+   */
+  const totals = chosen?.totals ?? [];
+  const single = totals.length === 1 ? totals[0]! : null;
+  const buyPrice = chosen === null ? (quote?.amount ?? '') : (single?.amount ?? '');
+  const buyCurrencyId = chosen === null ? (quote?.currencyId ?? '') : (single?.currencyId ?? '');
+  const buyCurrencyCode = chosen === null ? (quote?.currencyCode ?? '') : (single?.currencyCode ?? '');
+  const mixedCurrency = chosen !== null && totals.length > 1;
+  const transitDays = chosen?.transitDays ?? quote?.transitDays ?? null;
+
+  useEffect(() => {
+    // The agent said how long this offer stands; that is the rate's validity
+    // unless someone changes it here.
+    if (quote === null) return;
+    setValidTo(chosen?.validUntil ?? quote.validUntil ?? plusDays(today(), 30));
+  }, [quote, chosen]);
 
   if (quote === null) return null;
 
@@ -151,17 +187,23 @@ export function ConvertQuoteForm({
           goodsTypeId,
           purchaseSourceType: 'AGENT',
           purchaseAgentId: quote.agentId,
-          currencyId: quote.currencyId,
+          currencyId: buyCurrencyId,
           validFrom,
           validTo,
-          transitDays: quote.transitDays === null ? '' : String(quote.transitDays),
-          remarks: `From ${quote.agentName}, quote ${quote.code} on ${inquiry.code}.${
-            quote.remarks === null || quote.remarks === '' ? '' : ` ${quote.remarks}`
-          }`,
+          transitDays: transitDays === null ? '' : String(transitDays),
+          remarks: [
+            `From ${quote.agentName}, quote ${quote.code} on ${inquiry.code}`,
+            chosen === null ? null : `option ${chosen.position}`,
+            chosen?.carrierName == null ? null : `via ${chosen.carrierName}`,
+            chosen?.via == null || chosen.via === '' ? null : `routed ${chosen.via}`,
+          ]
+            .filter((part) => part !== null)
+            .join(', ') +
+            `.${quote.remarks === null || quote.remarks === '' ? '' : ` ${quote.remarks}`}`,
           status: 'DRAFT',
           // Zero margin on purpose: the buyer records the cost, the price team
           // adds the profit on the Add-on screen.
-          lines: [{ tierId, buyPrice: quote.amount, profitType: 'FLAT', profitValue: '0' }],
+          lines: [{ tierId, buyPrice, profitType: 'FLAT', profitValue: '0' }],
           localCharges: [],
         },
       });
@@ -177,7 +219,14 @@ export function ConvertQuoteForm({
     }
   }
 
-  const ready = carrierId !== '' && goodsTypeId !== '' && tierId !== '' && validTo !== '';
+  const ready =
+    carrierId !== '' &&
+    goodsTypeId !== '' &&
+    tierId !== '' &&
+    validTo !== '' &&
+    buyPrice !== '' &&
+    buyCurrencyId !== '' &&
+    !mixedCurrency;
 
   return (
     <Modal
@@ -187,10 +236,40 @@ export function ConvertQuoteForm({
       description={`${quote.agentName}'s price on ${inquiry.code} becomes a rate you can quote from and reuse.`}
     >
       <div className="flex flex-col gap-4">
+        {quote.options.length > 1 && (
+          <Field id="optionId" label="Which offer did you book" required>
+            <Select id="optionId" value={optionId} onChange={(e) => setOptionId(e.target.value)}>
+              {quote.options.map((option) => (
+                <option key={option.id} value={option.id}>
+                  Option {option.position}
+                  {option.carrierName === null ? '' : ` · ${option.carrierName}`}
+                  {option.transitDays === null ? '' : ` · ${option.transitDays} days`}
+                  {option.totals.length === 1
+                    ? ` · ${option.totals[0]!.currencyCode ?? ''} ${money(option.totals[0]!.amount)}`
+                    : ''}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
+
+        {mixedCurrency && (
+          <p role="alert" className="text-cell text-alert">
+            This offer is priced in more than one currency, so it has no single buy price. A
+            purchase rate holds one. Ask the agent to requote it in one currency, or file the rate
+            by hand.
+          </p>
+        )}
+
         <dl className="grid grid-cols-[8rem_1fr] gap-x-4 gap-y-1 rounded-manifest border border-line bg-paper px-3 py-2">
           <dt className="label-manifest self-center">Buy price</dt>
           <dd className="font-mono text-cell tabular-nums text-hull">
-            {quote.currencyCode ?? ''} {money(quote.amount)}
+            {buyPrice === '' ? '—' : `${buyCurrencyCode ?? ''} ${money(buyPrice)}`}
+            {chosen !== null && chosen.lines.length > 1 && (
+              <span className="ml-2 font-sans text-cell text-steel">
+                all {chosen.lines.length} charges combined
+              </span>
+            )}
           </dd>
           <dt className="label-manifest self-center">Bought from</dt>
           <dd className="text-cell text-hull">{quote.agentName}</dd>

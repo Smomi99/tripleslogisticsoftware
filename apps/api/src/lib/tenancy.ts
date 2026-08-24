@@ -45,6 +45,9 @@ export const TENANT_OWNED_MODELS = [
   // The agent portal (docs/AGENT_PORTAL_DESIGN.md). A quote is one forwarder's
   // buying position and is never shared, the same reasoning as FreightRate.
   'AgentQuote',
+  'AgentQuoteOption',
+  'AgentQuoteLine',
+  'AgentQuoteComment',
   'AuditLog',
   'CarrierPic',
   'CarrierPortPair',

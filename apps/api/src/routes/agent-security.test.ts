@@ -8,6 +8,7 @@ import { PERMISSIONS, userFormSchema } from '@ff/shared';
 import { env } from '../config/env';
 import { PrismaClient } from '../generated/prisma/client';
 import { hashPassword } from '../lib/password';
+import { quoteBody } from '../lib/test-quote';
 
 /**
  * The production gate for agent accounts.
@@ -62,6 +63,7 @@ let baltic: bigint;
 let nordicInquiry: bigint;
 let balticInquiry: bigint;
 let currencyId: bigint;
+let costHeadId: bigint;
 let balticQuoteId: bigint;
 
 /** Agent holding EVERY permission there is. The worst case. */
@@ -82,6 +84,9 @@ async function cleanup(): Promise<void> {
     `UPDATE "user" SET agent_id = NULL, role_id = NULL WHERE tenant_id IN ${scope}`,
   );
   for (const table of [
+    'agent_quote_comment',
+    'agent_quote_line',
+    'agent_quote_option',
     'agent_quote',
     'inquiry_rate',
     'inquiry_party_contact',
@@ -105,6 +110,8 @@ async function cleanup(): Promise<void> {
     'carrier',
     'goods_type',
     'inquiry_source',
+    'cost_head',
+    'cost_unit',
   ]) {
     await owner.$executeRawUnsafe(`DELETE FROM ${table} WHERE tenant_id IN ${scope}`);
   }
@@ -367,11 +374,30 @@ beforeAll(async () => {
   balticToken = await signIn('baltic-agent');
   confusedStaffToken = await signIn('confused-staff');
 
+  // A cost head to price against.
+  const costUnit = await owner.costUnit.create({
+    data: { tenantId, code: 'SEC-CU', name: 'Container' },
+    select: { id: true },
+  });
+  costHeadId = (
+    await owner.costHead.create({
+      data: {
+        tenantId,
+        code: 'SEC-CH',
+        category: 'SERVICE',
+        name: 'Ocean Freight',
+        unitId: costUnit.id,
+      },
+      select: { id: true },
+    })
+  ).id;
+
   // Baltic quotes their own inquiry, so there is a foreign quote to try to reach.
-  const quoted = await post(`/api/tenant/agent/inquiries/${balticInquiry}/quote`, balticToken, {
-    amount: '1502',
-    currencyId: currencyId.toString(),
-  }).expect(201);
+  const quoted = await post(
+    `/api/tenant/agent/inquiries/${balticInquiry}/quote`,
+    balticToken,
+    quoteBody({ costHeadId, currencyId }, { unitPrice: '1502' }),
+  ).expect(201);
   balticQuoteId = BigInt(quoted.body.data.id as string);
 });
 
@@ -473,7 +499,7 @@ describe('AGENT.INQUIRY.QUOTE', () => {
     const res = await post(
       `/api/tenant/agent/inquiries/${balticInquiry}/quote`,
       godAgentToken,
-      { amount: '1', currencyId: currencyId.toString() },
+      quoteBody({ costHeadId, currencyId }, { unitPrice: '1' }),
     );
     // 404, not 403: confirming it exists is itself a leak.
     expect(res.status).toBe(404);
@@ -484,7 +510,7 @@ describe('AGENT.INQUIRY.QUOTE', () => {
       .patch(`/api/tenant/agent/quotes/${balticQuoteId}`)
       .set('Authorization', `Bearer ${godAgentToken}`)
       .set('X-Tenant-Slug', SLUG)
-      .send({ amount: '1', currencyId: currencyId.toString() });
+      .send(quoteBody({ costHeadId, currencyId }, { unitPrice: '1' }));
     expect(res.status).toBe(404);
   });
 
@@ -494,16 +520,92 @@ describe('AGENT.INQUIRY.QUOTE', () => {
     const res = await post(
       `/api/tenant/agent/inquiries/${nordicInquiry}/quote`,
       readOnlyAgentToken,
-      { amount: '1000', currencyId: currencyId.toString() },
+      quoteBody({ costHeadId, currencyId }, { unitPrice: '1000' }),
     );
     expect(res.status).toBe(403);
   });
 
   it('lets the right agent quote its own inquiry', async () => {
-    await post(`/api/tenant/agent/inquiries/${nordicInquiry}/quote`, godAgentToken, {
-      amount: '1450.50',
-      currencyId: currencyId.toString(),
-    }).expect(201);
+    await post(
+      `/api/tenant/agent/inquiries/${nordicInquiry}/quote`,
+      godAgentToken,
+      quoteBody({ costHeadId, currencyId }, { unitPrice: '1450.50' }),
+    ).expect(201);
+  });
+});
+
+/*
+ * The Status thread is a two-way channel to an outside company, which makes it
+ * the newest piece of attack surface in the product. These are the questions
+ * worth asking of it.
+ */
+describe('the Status thread', () => {
+  it('does not let an agent read the thread on another agent quote', async () => {
+    const res = await get(`/api/tenant/agent/quotes/${balticQuoteId}/comments`, godAgentToken);
+    expect(res.status).toBe(404);
+  });
+
+  it('does not let an agent post into another agent thread', async () => {
+    const res = await post(
+      `/api/tenant/agent/quotes/${balticQuoteId}/comments`,
+      godAgentToken,
+      { body: 'SENTINELINTRUSION' },
+    );
+    expect(res.status).toBe(404);
+
+    const rows = await owner.agentQuoteComment.findMany({
+      where: { tenantId, quoteId: balticQuoteId },
+      select: { body: true },
+    });
+    expect(rows.map((r) => r.body).join(' ')).not.toContain('SENTINELINTRUSION');
+  });
+
+  it('never names the member of staff who wrote a message', async () => {
+    // The forwarder speaks as a company. Which of their people typed it is the
+    // same class of fact as created_by, which agent_inquiry_v omits.
+    const own = await owner.agentQuote.findFirstOrThrow({
+      where: { tenantId, agentId: nordic },
+      select: { id: true },
+    });
+    const staffUser = await owner.user.findFirstOrThrow({
+      where: { tenantId, username: 'confused-staff' },
+      select: { id: true },
+    });
+    await owner.agentQuoteComment.create({
+      data: {
+        tenantId,
+        quoteId: own.id,
+        authorId: staffUser.id,
+        body: 'We can move on this if you sharpen the 40HC.',
+      },
+    });
+
+    const res = await get(`/api/tenant/agent/quotes/${own.id}/comments`, godAgentToken).expect(200);
+    const body = JSON.stringify(res.body);
+    expect(body).toContain('sharpen the 40HC');
+    expect(body).not.toContain('confused-staff');
+    expect(body).not.toContain('@sec.test');
+  });
+
+  it('cannot be rewritten, even by the workspace role the API runs as', async () => {
+    // Append-only is a privilege, not a convention: ff_app holds SELECT and
+    // INSERT on this table and nothing else.
+    const grants = await owner.$queryRawUnsafe<{ privilege_type: string }[]>(
+      `SELECT privilege_type FROM information_schema.role_table_grants
+        WHERE grantee = 'ff_app' AND table_name = 'agent_quote_comment' ORDER BY 1`,
+    );
+    expect(grants.map((g) => g.privilege_type).sort()).toEqual(['INSERT', 'SELECT']);
+  });
+
+  it('refuses an empty message', async () => {
+    const own = await owner.agentQuote.findFirstOrThrow({
+      where: { tenantId, agentId: nordic },
+      select: { id: true },
+    });
+    const res = await post(`/api/tenant/agent/quotes/${own.id}/comments`, godAgentToken, {
+      body: '   ',
+    });
+    expect(res.status).toBe(400);
   });
 });
 
@@ -546,7 +648,9 @@ describe('what an agent can never read', () => {
 
   it('reads its own quote and nobody else', async () => {
     const res = await get(`/api/tenant/agent/inquiries/${nordicInquiry}`, godAgentToken).expect(200);
-    expect(res.body.data.quote.amount).toBe('1450.5');
+    expect(res.body.data.quote.options[0].lines[0].unitPrice).toBe('1450.5');
+    // Baltic quoted 1502 on their own inquiry. Not a digit of it here.
+    expect(JSON.stringify(res.body)).not.toContain('1502');
   });
 });
 

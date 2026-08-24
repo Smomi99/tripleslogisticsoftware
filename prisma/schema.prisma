@@ -257,6 +257,9 @@ model Tenant {
 
   notificationSetting NotificationSetting?
   agentQuotes         AgentQuote[]
+  agentQuoteOptions   AgentQuoteOption[]
+  agentQuoteLines     AgentQuoteLine[]
+  agentQuoteComments  AgentQuoteComment[]
 
   @@index([slug])
   @@index([status])
@@ -421,10 +424,11 @@ model Currency {
   updatedByUser User?     @relation("CurrencyUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
   inquiries     Inquiry[]
 
-  openingCustomers Customer[]   @relation("CustomerOpeningCurrency")
-  openingVendors   Vendor[]     @relation("VendorOpeningCurrency")
-  openingAgents    Agent[]      @relation("AgentOpeningCurrency")
+  openingCustomers Customer[]       @relation("CustomerOpeningCurrency")
+  openingVendors   Vendor[]         @relation("VendorOpeningCurrency")
+  openingAgents    Agent[]          @relation("AgentOpeningCurrency")
   agentQuotes      AgentQuote[]
+  agentQuoteLines  AgentQuoteLine[] @relation("AgentQuoteLineCurrency")
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -480,6 +484,7 @@ model CostUnit {
   tenant           Tenant?           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   costHeads        CostHead[]
   rateLocalCharges RateLocalCharge[]
+  agentQuoteLines  AgentQuoteLine[]  @relation("AgentQuoteLineCostUnit")
 
   // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
   // prisma migrate owns them — an appendix-only constraint is dropped by the
@@ -516,6 +521,7 @@ model CostHead {
   createdByUser    User?             @relation("CostHeadCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser    User?             @relation("CostHeadUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
   rateLocalCharges RateLocalCharge[]
+  agentQuoteLines  AgentQuoteLine[]
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -573,12 +579,14 @@ model Carrier {
   tenant Tenant?     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   type   CarrierType @relation(fields: [typeId], references: [id], onDelete: Restrict)
 
-  pics           CarrierPic[]
-  servicePorts   CarrierServicePort[]
-  portPairs      CarrierPortPair[]
-  vessels        Vessel[]
-  ratesCarried   FreightRate[]        @relation("FreightRateCarrier")
-  ratesPurchased FreightRate[]        @relation("FreightRatePurchaseCarrier")
+  pics              CarrierPic[]
+  servicePorts      CarrierServicePort[]
+  portPairs         CarrierPortPair[]
+  vessels           Vessel[]
+  ratesCarried      FreightRate[]        @relation("FreightRateCarrier")
+  ratesPurchased    FreightRate[]        @relation("FreightRatePurchaseCarrier")
+  agentQuoteOptions AgentQuoteOption[]   @relation("AgentQuoteOptionCarrier")
+  agentQuoteLines   AgentQuoteLine[]     @relation("AgentQuoteLineCarrier")
 
   // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
   // prisma migrate owns them — an appendix-only constraint is dropped by the
@@ -1616,9 +1624,14 @@ model User {
   createdNotificationSettings NotificationSetting[] @relation("NotificationSettingCreatedBy")
   updatedNotificationSettings NotificationSetting[] @relation("NotificationSettingUpdatedBy")
 
-  submittedAgentQuotes   AgentQuote[]          @relation("AgentQuoteSubmittedBy")
-  createdAgentQuotes     AgentQuote[]          @relation("AgentQuoteCreatedBy")
-  updatedAgentQuotes     AgentQuote[]          @relation("AgentQuoteUpdatedBy")
+  submittedAgentQuotes       AgentQuote[]        @relation("AgentQuoteSubmittedBy")
+  createdAgentQuoteOptions   AgentQuoteOption[]  @relation("AgentQuoteOptionCreatedBy")
+  updatedAgentQuoteOptions   AgentQuoteOption[]  @relation("AgentQuoteOptionUpdatedBy")
+  createdAgentQuoteLines     AgentQuoteLine[]    @relation("AgentQuoteLineCreatedBy")
+  updatedAgentQuoteLines     AgentQuoteLine[]    @relation("AgentQuoteLineUpdatedBy")
+  authoredAgentQuoteComments AgentQuoteComment[] @relation("AgentQuoteCommentAuthor")
+  createdAgentQuotes         AgentQuote[]        @relation("AgentQuoteCreatedBy")
+  updatedAgentQuotes         AgentQuote[]        @relation("AgentQuoteUpdatedBy")
 
   @@unique([tenantId, username])
   @@unique([tenantId, email])
@@ -1777,7 +1790,8 @@ model ContainerType {
   rateTiers      RateTier[]
   inquiryVolumes InquiryVolume[]
 
-  localCharges RateLocalCharge[]
+  localCharges    RateLocalCharge[]
+  agentQuoteLines AgentQuoteLine[]  @relation("AgentQuoteLineContainerType")
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -2621,6 +2635,9 @@ model AgentQuote {
   createdByUser   User? @relation("AgentQuoteCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser   User? @relation("AgentQuoteUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
+  options  AgentQuoteOption[]
+  comments AgentQuoteComment[]
+
   @@unique([tenantId, code])
   @@unique([tenantId, id])
   @@index([tenantId])
@@ -2630,13 +2647,141 @@ model AgentQuote {
   @@map("agent_quote")
 }
 
+/// client: the "Different Form" block of the Agent Inquiry wireframe.
+///
+/// One alternative offer within a quote. An agent who can route two ways sends
+/// both — each with its own carrier, its own charge lines, and its own transit
+/// time, routing, free days, validity and sailing dates.
+model AgentQuoteOption {
+  tenantId    BigInt    @map("tenant_id")
+  id          BigInt    @id @default(autoincrement())
+  quoteId     BigInt    @map("quote_id")
+  /// 1, 2, 3… as shown to both sides.
+  position    Int       @db.SmallInt
+  carrierId   BigInt?   @map("carrier_id")
+  /// T/T on the sheet.
+  transitDays Int?      @map("transit_days")
+  /// Free text: a real routing is "Singapore" or "Colombo, Port Klang".
+  via         String?   @db.VarChar(200)
+  podFreeDays Int?      @map("pod_free_days")
+  /// How long THIS offer stands — not the forwarder's deadline for receiving
+  /// it, which is inquiry.validTo.
+  validUntil  DateTime? @map("valid_until") @db.Date
+  etd         DateTime? @db.Date
+  eta         DateTime? @db.Date
+  remarks     String?   @db.Text
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy   BigInt?   @map("created_by")
+  updatedBy   BigInt?   @map("updated_by")
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant  Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  quote   AgentQuote @relation(fields: [tenantId, quoteId], references: [tenantId, id], onDelete: Restrict)
+  /// Plain FK, not composite: carrier is system-capable (§7A rule 7) and a
+  /// shared row has tenant_id null. The same-tenant rule is the trigger
+  /// agent_quote_option_carrier_id_tenant_guard instead.
+  carrier Carrier?   @relation("AgentQuoteOptionCarrier", fields: [carrierId], references: [id], onDelete: Restrict)
+
+  createdByUser User? @relation("AgentQuoteOptionCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("AgentQuoteOptionUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  lines AgentQuoteLine[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([quoteId])
+  @@index([carrierId])
+  @@map("agent_quote_option")
+}
+
+/// client: one charge row of the wireframe's Carrier / Cost Head / Container
+/// Size / Unit / Qty / Unit Price / Currency / Total Amount table.
+model AgentQuoteLine {
+  tenantId        BigInt    @map("tenant_id")
+  id              BigInt    @id @default(autoincrement())
+  optionId        BigInt    @map("option_id")
+  position        Int       @db.SmallInt
+  carrierId       BigInt?   @map("carrier_id")
+  costHeadId      BigInt    @map("cost_head_id")
+  /// Container Size. Null on a line charged by weight or per document.
+  containerTypeId BigInt?   @map("container_type_id")
+  /// Unit: Container, HBL, HAWB, CBM, KG, M.Ton… (§5 cost_unit).
+  costUnitId      BigInt?   @map("cost_unit_id")
+  quantity        Decimal   @db.Decimal(18, 3)
+  unitPrice       Decimal   @map("unit_price") @db.Decimal(18, 4)
+  currencyId      BigInt    @map("currency_id")
+  /// GENERATED quantity * unit_price. Never written by hand — the rule §5 sets
+  /// for gross_salary, applied to money a counterparty will hold us to.
+  totalAmount     Decimal?  @default(dbgenerated()) @map("total_amount") @db.Decimal(18, 4)
+  remarks         String?   @db.Text
+  isActive        Boolean   @default(true) @map("is_active")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy       BigInt?   @map("created_by")
+  updatedBy       BigInt?   @map("updated_by")
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  option        AgentQuoteOption @relation(fields: [tenantId, optionId], references: [tenantId, id], onDelete: Restrict)
+  /// cost_head is tenant-owned, so this one IS composite.
+  costHead      CostHead         @relation(fields: [tenantId, costHeadId], references: [tenantId, id], onDelete: Restrict)
+  /// The system-capable three, guarded by trigger rather than by key.
+  carrier       Carrier?         @relation("AgentQuoteLineCarrier", fields: [carrierId], references: [id], onDelete: Restrict)
+  containerType ContainerType?   @relation("AgentQuoteLineContainerType", fields: [containerTypeId], references: [id], onDelete: Restrict)
+  costUnit      CostUnit?        @relation("AgentQuoteLineCostUnit", fields: [costUnitId], references: [id], onDelete: Restrict)
+  currency      Currency         @relation("AgentQuoteLineCurrency", fields: [currencyId], references: [id], onDelete: Restrict)
+
+  createdByUser User? @relation("AgentQuoteLineCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("AgentQuoteLineUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([optionId])
+  @@index([costHeadId])
+  @@index([carrierId])
+  @@index([containerTypeId])
+  @@index([costUnitId])
+  @@index([currencyId])
+  @@map("agent_quote_line")
+}
+
+/// client: the wireframe's Status column — "all the comments will appear here".
+///
+/// Append-only: ff_app holds SELECT and INSERT and nothing else, the same
+/// treatment audit_log gets. You cannot edit or withdraw what you have already
+/// said to a counterparty. No updatedAt or deletedAt, because neither can ever
+/// be set.
+model AgentQuoteComment {
+  tenantId  BigInt            @map("tenant_id")
+  id        BigInt            @id @default(autoincrement())
+  quoteId   BigInt            @map("quote_id")
+  authorId  BigInt            @map("author_id")
+  body      String            @db.Text
+  /// Set when this comment is the one that announced the result, so the thread
+  /// can render it as the outcome rather than as another remark.
+  outcome   AgentQuoteStatus?
+  createdAt DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenant Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  quote  AgentQuote @relation(fields: [tenantId, quoteId], references: [tenantId, id], onDelete: Restrict)
+  author User       @relation("AgentQuoteCommentAuthor", fields: [tenantId, authorId], references: [tenantId, id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([quoteId, createdAt])
+  @@index([authorId])
+  @@map("agent_quote_comment")
+}
 
 enum AgentQuoteStatus {
   SUBMITTED
   WITHDRAWN
-  ACCEPTED
-  DECLINED
+  /// The customer gave us the shipment on this agent's price.
+  WON
+  /// They did not. The comment posted with it says why.
+  LOST
 
   @@map("agent_quote_status")
 }
-

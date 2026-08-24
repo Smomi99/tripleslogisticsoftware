@@ -4,14 +4,24 @@ import {
   type AgentInquiryDto,
   type AgentInquiryVolumeDto,
   agentInquiryListQuerySchema,
+  type AgentQuoteCommentDto,
+  agentQuoteCommentInputSchema,
   type AgentQuoteDto,
+  type AgentQuoteInput,
   agentQuoteInputSchema,
+  type AgentQuoteReferenceDto,
   type ApiSuccess,
   buildMeta,
   CODE_PREFIX,
-  type PortalCurrencyOption,
 } from '@ff/shared';
 
+import {
+  COMMENT_SELECT_FLAT,
+  type FlatCommentRow,
+  flatCommentToDto,
+  resolveAuthors,
+} from '../lib/agent-quote-comment';
+import { optionToDto, OPTIONS_INCLUDE, type OptionRow } from '../lib/agent-quote-view';
 import { recordAudit } from '../lib/audit';
 import { CODE_RETRY_LIMIT, isUniqueViolation, nextCode } from '../lib/codes';
 import { isoCurrency } from '../lib/currency-label';
@@ -93,6 +103,7 @@ const QUOTE_SELECT = {
   updatedAt: true,
   inquiryId: true,
   currency: { select: { currency: true } },
+  options: OPTIONS_INCLUDE,
 } as const;
 
 type QuoteRow = {
@@ -108,13 +119,16 @@ type QuoteRow = {
   updatedAt: Date;
   inquiryId: bigint;
   currency: { currency: string } | null;
+  options: OptionRow[];
 };
 
 function quoteToDto(row: QuoteRow): AgentQuoteDto {
   return {
     id: row.id.toString(),
     code: row.code,
-    amount: row.amount?.toString() ?? '0',
+    // Empty once options carry the figures; still filled on the quotes
+    // submitted before the breakdown existed.
+    amount: row.amount?.toString() ?? '',
     currencyId: row.currencyId.toString(),
     currencyCode: row.currency === null ? null : isoCurrency(row.currency.currency),
     validUntil: row.validUntil?.toISOString().slice(0, 10) ?? null,
@@ -123,6 +137,7 @@ function quoteToDto(row: QuoteRow): AgentQuoteDto {
     status: row.status,
     submittedAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+    options: row.options.map(optionToDto),
   };
 }
 
@@ -210,6 +225,150 @@ async function volumesFor(db: TenantDb, inquiryIds: bigint[]) {
     byInquiry.set(key, [...(byInquiry.get(key) ?? []), volumeToDto(row)]);
   }
   return byInquiry;
+}
+
+/**
+ * The forwarder's own company name.
+ *
+ * Read with withTenant rather than withAgent, because `tenant` is one of the
+ * tables Phase 3 closed to agents — the same reason nextCode allocates outside
+ * the agent scope. What comes back is a name the agent already knows: the
+ * company they are quoting. It signs staff messages in the Status thread so
+ * they do not read as coming from nobody, while the individual who typed them
+ * stays unnamed.
+ */
+async function forwarderNameFor(tenantId: bigint): Promise<string> {
+  const tenant = await withTenant(tenantId, (db) =>
+    db.tenant.findFirst({ where: { id: tenantId }, select: { name: true } }),
+  );
+  return tenant?.name ?? 'The forwarder';
+}
+
+/** An id from the wire, or null when the field was left blank. */
+const optionalBigInt = (v: string | undefined) =>
+  v === undefined || v === '' ? null : BigInt(v);
+
+const optionalDate = (v: string | undefined) =>
+  v === undefined || v === '' ? null : new Date(v);
+
+const optionalText = (v: string | undefined) => (v === undefined || v === '' ? null : v);
+
+const optionalInt = (v: number | '' | undefined) => (typeof v === 'number' ? v : null);
+
+/**
+ * Writes the offers of a quote: one option row per alternative, one line row
+ * per charge.
+ *
+ * Positions are assigned here from array order rather than accepted from the
+ * client. A client that sends two options both numbered 1 would otherwise
+ * violate the partial unique index and surface as a 500 — and worse, a client
+ * that renumbers them could reorder somebody else's offer.
+ */
+async function writeOptions(
+  db: TenantDb,
+  args: { tenantId: bigint; quoteId: bigint; userId: bigint; options: AgentQuoteInput['options'] },
+): Promise<void> {
+  for (const [index, option] of args.options.entries()) {
+    /*
+     * The option's headline carrier, taken from its lines.
+     *
+     * The wireframe puts Carrier on each charge row, not on the routing footer,
+     * so that is where the agent types it — but "Option 1 · Maersk Line" is what
+     * a buyer scans a comparison by.
+     *
+     * Blank lines are ignored rather than counted as disagreement. A
+     * documentation fee with no carrier against it is a charge nobody thought
+     * to attribute, not evidence of a second shipping line — and treating it as
+     * the latter would blank the carrier on almost every real quotation, since
+     * local charges are usually left unattributed.
+     *
+     * Two DIFFERENT carriers is genuine disagreement: the option is co-loaded
+     * and no single name is true, so it stays null rather than picking one and
+     * being wrong on a screen someone buys from.
+     *
+     * Recomputed on every write, so it cannot drift from the lines it came
+     * from.
+     */
+    const lineCarriers = new Set(
+      option.lines
+        .map((line) => line.carrierId)
+        .filter((id): id is string => id !== undefined && id !== ''),
+    );
+    const sharedCarrier = lineCarriers.size === 1 ? [...lineCarriers][0] : undefined;
+    // `??` is not enough: the form sends an unset select as '', not undefined,
+    // and '' ?? x is ''. An empty string here means "not stated", the same as
+    // a missing key.
+    const optionCarrier =
+      option.carrierId === undefined || option.carrierId === ''
+        ? sharedCarrier
+        : option.carrierId;
+
+    const created = await db.agentQuoteOption.create({
+      data: {
+        tenantId: args.tenantId,
+        quoteId: args.quoteId,
+        position: index + 1,
+        carrierId: optionalBigInt(optionCarrier),
+        transitDays: optionalInt(option.transitDays),
+        via: optionalText(option.via),
+        podFreeDays: optionalInt(option.podFreeDays),
+        validUntil: optionalDate(option.validUntil),
+        etd: optionalDate(option.etd),
+        eta: optionalDate(option.eta),
+        remarks: optionalText(option.remarks),
+        createdBy: args.userId,
+        updatedBy: args.userId,
+      },
+      select: { id: true },
+    });
+
+    await db.agentQuoteLine.createMany({
+      data: option.lines.map((line, lineIndex) => ({
+        tenantId: args.tenantId,
+        optionId: created.id,
+        position: lineIndex + 1,
+        carrierId: optionalBigInt(line.carrierId),
+        costHeadId: BigInt(line.costHeadId),
+        containerTypeId: optionalBigInt(line.containerTypeId),
+        costUnitId: optionalBigInt(line.costUnitId),
+        quantity: new Prisma.Decimal(line.quantity),
+        unitPrice: new Prisma.Decimal(line.unitPrice),
+        currencyId: BigInt(line.currencyId),
+        remarks: optionalText(line.remarks),
+        createdBy: args.userId,
+        updatedBy: args.userId,
+      })),
+    });
+  }
+}
+
+/**
+ * Retires the offers currently on a quote so a fresh set can replace them.
+ *
+ * Soft delete, per §4 rule 3 — and here it earns its keep commercially as well
+ * as structurally. What an agent offered last Tuesday is a thing both sides may
+ * need to point at, and the partial unique index on position is scoped to
+ * `deleted_at IS NULL`, so the new generation reuses 1 and 2 cleanly.
+ */
+async function retireOptions(
+  db: TenantDb,
+  args: { quoteId: bigint; userId: bigint },
+): Promise<void> {
+  const live = await db.agentQuoteOption.findMany({
+    where: { quoteId: args.quoteId, deletedAt: null },
+    select: { id: true },
+  });
+  if (live.length === 0) return;
+  const ids = live.map((o) => o.id);
+  const now = new Date();
+  await db.agentQuoteLine.updateMany({
+    where: { optionId: { in: ids }, deletedAt: null },
+    data: { deletedAt: now, isActive: false, updatedBy: args.userId },
+  });
+  await db.agentQuoteOption.updateMany({
+    where: { id: { in: ids } },
+    data: { deletedAt: now, isActive: false, updatedBy: args.userId },
+  });
 }
 
 /** GET /api/portal/inquiries */
@@ -376,7 +535,7 @@ agentInquiryRouter.post('/:id/quote', requirePermission('AGENT.INQUIRY.QUOTE'), 
         nextCode(scoped, 'agentQuote', CODE_PREFIX.agentQuote, auth.tenantId),
       );
       try {
-        const quote = (await db.agentQuote.create({
+        const header = await db.agentQuote.create({
           data: {
             tenantId: auth.tenantId,
             code,
@@ -386,18 +545,24 @@ agentInquiryRouter.post('/:id/quote', requirePermission('AGENT.INQUIRY.QUOTE'), 
             // of having both.
             agentId,
             submittedBy: auth.userId,
-            amount: new Prisma.Decimal(input.amount),
-            currencyId: BigInt(input.currencyId),
-            validUntil:
-              input.validUntil === undefined || input.validUntil === ''
-                ? null
-                : new Date(input.validUntil),
-            transitDays:
-              typeof input.transitDays === 'number' ? input.transitDays : null,
-            remarks: input.remarks === undefined || input.remarks === '' ? null : input.remarks,
+            // No headline amount: the figures live on the lines, and the
+            // currency below is only the one the form defaulted to.
+            currencyId: BigInt(input.options[0]!.lines[0]!.currencyId),
             createdBy: auth.userId,
             updatedBy: auth.userId,
           },
+          select: { id: true },
+        });
+
+        await writeOptions(db, {
+          tenantId: auth.tenantId,
+          quoteId: header.id,
+          userId: auth.userId,
+          options: input.options,
+        });
+
+        const quote = (await db.agentQuote.findFirstOrThrow({
+          where: { id: header.id },
           select: QUOTE_SELECT,
         })) as unknown as QuoteRow;
         return { quote, inquiryCode: inquiry.code };
@@ -465,22 +630,32 @@ agentQuoteRouter.patch('/:id', requirePermission('AGENT.INQUIRY.QUOTE'), async (
     // The same reasoning that stops staff editing a WON inquiry.
     assertQuotable(status);
 
+    /*
+     * An amendment replaces the offers wholesale rather than patching them
+     * field by field.
+     *
+     * A quotation is one commercial statement, not a bag of independent
+     * values: "option 2 now routes via Colombo at a different rate, and its
+     * third line is gone" has no sensible per-field merge. The agent edits the
+     * whole form and sends the whole form, the previous generation is retired
+     * with its rows intact, and both sides can still see what was offered
+     * before.
+     */
+    await retireOptions(db, { quoteId: quote.id, userId: auth.userId });
+    await writeOptions(db, {
+      tenantId: auth.tenantId,
+      quoteId: quote.id,
+      userId: auth.userId,
+      options: input.options,
+    });
+
     return (await db.agentQuote.update({
       where: { id: quote.id },
       data: {
-        amount: new Prisma.Decimal(input.amount),
-        currencyId: BigInt(input.currencyId),
-        // An omitted field is left alone; an empty one is cleared. The form
-        // always sends all of them, so this only matters to a caller that does
-        // not — and silently wiping an agent's remarks because a request did
-        // not mention them is not a PATCH, it is a PUT wearing its badge.
-        ...(input.validUntil === undefined
-          ? {}
-          : { validUntil: input.validUntil === '' ? null : new Date(input.validUntil) }),
-        ...(input.transitDays === undefined
-          ? {}
-          : { transitDays: typeof input.transitDays === 'number' ? input.transitDays : null }),
-        ...(input.remarks === undefined ? {} : { remarks: input.remarks === '' ? null : input.remarks }),
+        // The header keeps only the default currency; the money is on the
+        // lines. amount stays as it was, which for a quote first submitted
+        // under the old single-price form preserves what it said.
+        currencyId: BigInt(input.options[0]!.lines[0]!.currencyId),
         updatedBy: auth.userId,
       },
       select: QUOTE_SELECT,
@@ -505,12 +680,17 @@ agentQuoteRouter.patch('/:id', requirePermission('AGENT.INQUIRY.QUOTE'), async (
 /**
  * GET /api/tenant/agent/currencies
  *
- * The only reference data an agent can enumerate, and it lives beside the
- * routes that use it so the list stays one screenful.
+ * Every dropdown the quote form needs, and nothing else. It lives beside the
+ * routes that use it so the list an agent can enumerate stays one screenful.
  *
- * Three columns. `conversion`, `tenantRate` and the rate history say something
- * about the forwarder's margins and are none of an agent's business, so they
- * are not selected rather than selected and dropped.
+ * Currency is three columns wide on purpose: `conversion`, `tenantRate` and the
+ * rate history say something about the forwarder's margins and are none of an
+ * agent's business, so they are not selected rather than selected and dropped.
+ *
+ * Carrier, cost head, container type and cost unit are here because the
+ * wireframe puts them in the agent's own hands. They are names — shipping
+ * lines, charge labels, box sizes, units of charge. Nothing priced: cost_head
+ * carries no amount, and freight_rate and rate_local_charge stay closed.
  */
 export const agentReferenceRouter: Router = Router();
 
@@ -520,21 +700,123 @@ agentReferenceRouter.get('/', requirePermission('AGENT.INQUIRY.VIEW'), async (re
   const auth = req.auth!;
   if (auth.agentId === null) throw HttpError.forbidden('This area is for agent accounts.');
 
-  const rows = await withAgent(auth.tenantId, auth.agentId, (db) =>
-    db.currency.findMany({
-      where: { isActive: true, deletedAt: null },
-      select: { id: true, currency: true },
-      orderBy: { currency: 'asc' },
-    }),
-  );
+  const live = { isActive: true, deletedAt: null } as const;
+  const byName = { name: 'asc' } as const;
 
-  const payload: ApiSuccess<PortalCurrencyOption[]> = {
+  const data = await withAgent(auth.tenantId, auth.agentId, async (db) => {
+    const [currencies, carriers, costHeads, containerTypes, costUnits] = await Promise.all([
+      db.currency.findMany({
+        where: live,
+        select: { id: true, currency: true },
+        orderBy: { currency: 'asc' },
+      }),
+      db.carrier.findMany({ where: live, select: { id: true, name: true }, orderBy: byName }),
+      db.costHead.findMany({ where: live, select: { id: true, name: true }, orderBy: byName }),
+      db.containerType.findMany({ where: live, select: { id: true, name: true }, orderBy: byName }),
+      db.costUnit.findMany({ where: live, select: { id: true, name: true }, orderBy: byName }),
+    ]);
+
+    const lookup = (rows: { id: bigint; name: string }[]) =>
+      rows.map((r) => ({ id: r.id.toString(), label: r.name }));
+
+    return {
+      currencies: currencies.map((row) => ({
+        id: row.id.toString(),
+        code: isoCurrency(row.currency),
+        label: row.currency,
+      })),
+      carriers: lookup(carriers),
+      costHeads: lookup(costHeads),
+      containerTypes: lookup(containerTypes),
+      costUnits: lookup(costUnits),
+    };
+  });
+
+  const payload: ApiSuccess<AgentQuoteReferenceDto> = { success: true, data };
+  res.json(payload);
+});
+
+/**
+ * The Status thread, from the agent's side.
+ *
+ * GET  /api/tenant/agent/quotes/:id/comments
+ * POST /api/tenant/agent/quotes/:id/comments
+ *
+ * Both sides write here; this is the agent's door to the same thread the
+ * forwarder reads on the inquiry screen. Guarded by VIEW rather than QUOTE:
+ * answering a question about a quote is not amending it, and an agent whose
+ * quote has been settled can still reply.
+ */
+agentQuoteRouter.get('/:id/comments', requirePermission('AGENT.INQUIRY.VIEW'), async (req, res) => {
+  const auth = req.auth!;
+  const agentId = auth.agentId;
+  if (agentId === null) throw HttpError.forbidden('This area is for agent accounts.');
+  const quoteId = parseId(req.params.id, 'quote');
+
+  const rows = await withAgent(auth.tenantId, agentId, async (db) => {
+    // RLS scopes agent_quote to this agent, so a quote id belonging to someone
+    // else finds nothing rather than reading their thread.
+    const quote = await db.agentQuote.findFirst({
+      where: { id: quoteId, agentId, deletedAt: null },
+      select: { id: true },
+    });
+    if (quote === null) return null;
+    return db.agentQuoteComment.findMany({
+      where: { quoteId: quote.id },
+      orderBy: { createdAt: 'asc' },
+      select: COMMENT_SELECT_FLAT,
+    });
+  });
+  if (rows === null) throw HttpError.notFound('That quote is not available to you.');
+
+  const [forwarderName, authors] = await Promise.all([
+    forwarderNameFor(auth.tenantId),
+    resolveAuthors(
+      auth.tenantId,
+      rows.map((row: FlatCommentRow) => row.authorId),
+    ),
+  ]);
+  const payload: ApiSuccess<AgentQuoteCommentDto[]> = {
     success: true,
-    data: rows.map((row) => ({
-      id: row.id.toString(),
-      code: isoCurrency(row.currency),
-      label: row.currency,
-    })),
+    data: rows.map((row: FlatCommentRow) =>
+      flatCommentToDto(row, authors, 'AGENT', forwarderName),
+    ),
   };
   res.json(payload);
+});
+
+agentQuoteRouter.post('/:id/comments', requirePermission('AGENT.INQUIRY.VIEW'), async (req, res) => {
+  const auth = req.auth!;
+  const agentId = auth.agentId;
+  if (agentId === null) throw HttpError.forbidden('This area is for agent accounts.');
+  const quoteId = parseId(req.params.id, 'quote');
+  const input = agentQuoteCommentInputSchema.parse(req.body);
+
+  const created = await withAgent(auth.tenantId, agentId, async (db) => {
+    const quote = await db.agentQuote.findFirst({
+      where: { id: quoteId, agentId, deletedAt: null },
+      select: { id: true },
+    });
+    if (quote === null) return null;
+    return db.agentQuoteComment.create({
+      data: {
+        tenantId: auth.tenantId,
+        quoteId: quote.id,
+        authorId: auth.userId,
+        body: input.body,
+      },
+      select: COMMENT_SELECT_FLAT,
+    });
+  });
+  if (created === null) throw HttpError.notFound('That quote is not available to you.');
+
+  const [forwarderName, authors] = await Promise.all([
+    forwarderNameFor(auth.tenantId),
+    resolveAuthors(auth.tenantId, [created.authorId]),
+  ]);
+  const payload: ApiSuccess<AgentQuoteCommentDto> = {
+    success: true,
+    data: flatCommentToDto(created, authors, 'AGENT', forwarderName),
+  };
+  res.status(201).json(payload);
 });

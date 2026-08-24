@@ -1,23 +1,16 @@
 'use client';
 
-import { zodResolver } from '@hookform/resolvers/zod';
-import {
-  type AgentInquiryDto,
-  type AgentQuoteDto,
-  type AgentQuoteInput,
-  agentQuoteInputSchema,
-  type PortalCurrencyOption,
-} from '@ff/shared';
+import { type AgentInquiryDto } from '@ff/shared';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
-import { useForm } from 'react-hook-form';
-import { toast } from 'sonner';
 
+import { StatusThread } from '@/components/agent-quote/status-thread';
 import { Button } from '@/components/ui/button';
-import { Field, Input, Select } from '@/components/ui/field';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
+
+import { QuoteForm } from './quote-form';
 
 /**
  * One inquiry, and the form that answers it (§5).
@@ -46,93 +39,27 @@ function Detail({ label, value, mono }: { label: string; value: string | null; m
 
 export default function PortalInquiryDetailPage() {
   const params = useParams<{ id: string }>();
-  const { authorizedRequest: request, authorizedList: list } = useSession();
+  const { authorizedRequest: request } = useSession();
   const [inquiry, setInquiry] = useState<AgentInquiryDto | null>(null);
-  const [currencies, setCurrencies] = useState<PortalCurrencyOption[]>([]);
   const [notFound, setNotFound] = useState(false);
-  const [formError, setFormError] = useState<string | null>(null);
-
-  const {
-    register,
-    handleSubmit,
-    reset,
-    formState: { errors, isSubmitting },
-  } = useForm<AgentQuoteInput>({
-    resolver: zodResolver(agentQuoteInputSchema),
-    defaultValues: { amount: '', currencyId: '', validUntil: '', remarks: '' },
-  });
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
       const data = await request<AgentInquiryDto>(`/api/tenant/agent/inquiries/${params.id}`);
       setInquiry(data);
-      reset({
-        amount: data.quote?.amount ?? '',
-        currencyId: data.quote?.currencyId ?? '',
-        validUntil: data.quote?.validUntil ?? '',
-        remarks: data.quote?.remarks ?? '',
-        ...(data.quote?.transitDays != null ? { transitDays: data.quote.transitDays } : {}),
-      });
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) {
         setNotFound(true);
         return;
       }
-      setFormError('Could not load this inquiry. Try again in a moment.');
+      setLoadError('Could not load this inquiry. Try again in a moment.');
     }
-  }, [request, params.id, reset]);
+  }, [request, params.id]);
 
   useEffect(() => {
     void load();
   }, [load]);
-
-  useEffect(() => {
-    void (async () => {
-      try {
-        // Currencies are one of the few reference tables an agent may read.
-        const result = await list<PortalCurrencyOption[]>('/api/tenant/agent/currencies');
-        setCurrencies(result.data);
-      } catch {
-        // A quote can still be typed; the select simply has fewer options.
-      }
-    })();
-  }, [list]);
-
-  const onSubmit = handleSubmit(async (values) => {
-    setFormError(null);
-    const body = {
-      amount: values.amount,
-      currencyId: values.currencyId,
-      ...(values.validUntil !== undefined && values.validUntil !== ''
-        ? { validUntil: values.validUntil }
-        : {}),
-      ...(typeof values.transitDays === 'number' ? { transitDays: values.transitDays } : {}),
-      ...(values.remarks !== undefined && values.remarks !== '' ? { remarks: values.remarks } : {}),
-    };
-
-    try {
-      const existing = inquiry?.quote ?? null;
-      const saved =
-        existing === null
-          ? await request<AgentQuoteDto>(`/api/tenant/agent/inquiries/${params.id}/quote`, {
-              method: 'POST',
-              body,
-            })
-          : await request<AgentQuoteDto>(`/api/tenant/agent/quotes/${existing.id}`, {
-              method: 'PATCH',
-              body,
-            });
-      // §9: the toast carries the same verb as the button.
-      toast.success(existing === null ? 'Quote sent' : 'Quote updated');
-      setInquiry((current) => (current === null ? current : { ...current, quote: saved }));
-    } catch (error) {
-      setFormError(
-        error instanceof ApiError
-          ? error.message
-          : 'Could not send your quote. Try again in a moment.',
-      );
-    }
-  });
 
   if (notFound) {
     return (
@@ -149,7 +76,11 @@ export default function PortalInquiryDetailPage() {
   }
 
   if (inquiry === null) {
-    return <p className="text-body text-steel">Loading…</p>;
+    return (
+      <p className={loadError === null ? 'text-body text-steel' : 'text-body text-alert'}>
+        {loadError ?? 'Loading…'}
+      </p>
+    );
   }
 
   /*
@@ -160,7 +91,7 @@ export default function PortalInquiryDetailPage() {
    * explanation, for a decision that had already been made.
    */
   const decision = inquiry.quote?.status ?? 'SUBMITTED';
-  const answered = decision === 'ACCEPTED' || decision === 'DECLINED';
+  const answered = decision === 'WON' || decision === 'LOST';
   const quotable = inquiry.status === 'OPEN' && !answered;
 
   return (
@@ -231,97 +162,49 @@ export default function PortalInquiryDetailPage() {
         </section>
       )}
 
-      <section className="rounded-manifest border border-line bg-surface p-5 shadow-manifest">
+      <section
+        id="quotation"
+        className="scroll-mt-20 rounded-manifest border border-line bg-surface p-5 shadow-manifest"
+      >
         <h2 className="mb-1 text-section text-hull">Your quotation</h2>
         <p className="mb-4 text-cell text-steel">
           {quotable
-            ? 'One all-in price for this lane. You can change it while the inquiry is open.'
+            ? 'Price each charge on its own line. Send a second option if you can route this another way.'
             : answered
-              ? decision === 'ACCEPTED'
-                ? 'Your quotation has been accepted. It can no longer be changed.'
-                : 'Your quotation was not taken forward on this inquiry.'
+              ? decision === 'WON'
+                ? 'You won this business. Your quotation can no longer be changed.'
+                : 'This one went elsewhere. See the messages below.'
               : 'This inquiry is closed, so your quotation can no longer be changed.'}
         </p>
 
-        <form onSubmit={onSubmit} noValidate className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          <Field id="amount" label="Price" required error={errors.amount?.message}>
-            <Input
-              id="amount"
-              numeric
-              inputMode="decimal"
-              placeholder="1450.00"
-              disabled={!quotable}
-              aria-invalid={errors.amount !== undefined}
-              {...register('amount')}
-            />
-          </Field>
-
-          <Field id="currencyId" label="Currency" required error={errors.currencyId?.message}>
-            <Select
-              id="currencyId"
-              disabled={!quotable}
-              aria-invalid={errors.currencyId !== undefined}
-              {...register('currencyId')}
-            >
-              <option value="">Choose…</option>
-              {currencies.map((currency) => (
-                <option key={currency.id} value={currency.id}>
-                  {currency.label}
-                </option>
-              ))}
-            </Select>
-          </Field>
-
-          <Field id="validUntil" label="Valid until" error={errors.validUntil?.message}>
-            <Input id="validUntil" type="date" disabled={!quotable} {...register('validUntil')} />
-          </Field>
-
-          <Field id="transitDays" label="Transit days" error={errors.transitDays?.message}>
-            <Input
-              id="transitDays"
-              numeric
-              inputMode="numeric"
-              disabled={!quotable}
-              {...register('transitDays', {
-                setValueAs: (value: string) => (value === '' ? '' : Number(value)),
-              })}
-            />
-          </Field>
-
-          <Field id="remarks" label="Remarks" error={errors.remarks?.message} wide>
-            <textarea
-              id="remarks"
-              rows={3}
-              disabled={!quotable}
-              className="w-full rounded-manifest border border-line bg-surface px-2.5 py-2 text-body text-hull focus:outline-2 focus:outline-harbour disabled:bg-paper disabled:text-steel"
-              {...register('remarks')}
-            />
-          </Field>
-
-          {formError !== null && (
-            <p role="alert" className="text-cell text-alert md:col-span-2">
-              {formError}
-            </p>
-          )}
-
-          {quotable && (
-            <div className="flex items-center gap-3 md:col-span-2">
-              <Button type="submit" disabled={isSubmitting}>
-                {isSubmitting
-                  ? 'Sending…'
-                  : inquiry.quote === null
-                    ? 'Send quote'
-                    : 'Update quote'}
-              </Button>
-              {inquiry.quote !== null && (
-                <span className="text-cell text-steel">
-                  Sent {new Date(inquiry.quote.submittedAt).toLocaleDateString()}
-                </span>
-              )}
-            </div>
-          )}
-        </form>
+        <QuoteForm
+          inquiryId={params.id}
+          quote={inquiry.quote}
+          quotable={quotable}
+          onSaved={(saved) =>
+            setInquiry((current) => (current === null ? current : { ...current, quote: saved }))
+          }
+        />
       </section>
+
+      {/* The wireframe's Status column. Only ever present once a quotation
+          exists — there is nothing to discuss before then. */}
+      {inquiry.quote !== null && (
+        <section
+          id="status"
+          className="scroll-mt-20 rounded-manifest border border-line bg-surface p-5 shadow-manifest"
+        >
+          <h2 className="mb-1 text-section text-hull">Status</h2>
+          <p className="mb-4 text-cell text-steel">
+            Messages between you and your forwarder about this quotation.
+          </p>
+          <StatusThread
+            endpoint={`/api/tenant/agent/quotes/${inquiry.quote.id}/comments`}
+            canPost
+            emptyHint="No messages yet. Ask a question here if anything about this inquiry is unclear."
+          />
+        </section>
+      )}
     </div>
   );
 }

@@ -354,10 +354,30 @@ describe('agent_quote', () => {
     expect(second.id).toBeGreaterThan(0n);
   });
 
-  it('requires an amount while quotes are single-price', async () => {
-    await expect(
-      owner.agentQuote.create({ data: { ...base(), code: 'AQ-004', agentId: agentA } as never }),
-    ).rejects.toThrow(/agent_quote_amount_required|violates check/i);
+  it('allows a quote with no headline amount, now the figures are on its lines', async () => {
+    /*
+     * agent_quote_amount_required was dropped when quotations became a
+     * breakdown. The column stays — the quotes submitted before it keep their
+     * value — but a quote carrying two options in two currencies has no single
+     * honest number to put here, and requiring one would mean inventing it.
+     */
+    // Its own agent: one quote per agent per inquiry is a separate rule, and
+    // agentA has already used its turn further up this file.
+    const agent = await owner.agent.create({
+      data: {
+        tenantId: tenantA,
+        code: 'AG-NOAMT',
+        name: 'No Amount Lines',
+        country: 'Denmark',
+        agentType: 'GENERAL',
+      },
+      select: { id: true },
+    });
+    const created = await owner.agentQuote.create({
+      data: { ...base(), code: 'AQ-004', agentId: agent.id } as never,
+      select: { id: true, amount: true },
+    });
+    expect(created.amount).toBeNull();
   });
 
   it('refuses a zero or negative price', async () => {

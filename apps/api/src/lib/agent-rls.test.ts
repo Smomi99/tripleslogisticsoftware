@@ -58,6 +58,8 @@ async function cleanup(): Promise<void> {
     'industry_sector',
     'port',
     'carrier',
+    'cost_head',
+    'cost_unit',
     'goods_type',
     'inquiry_source',
     'currency',
@@ -156,6 +158,23 @@ beforeAll(async () => {
     });
   const pol = await port('RLSPOL', 'Bangladesh');
   const pod = await port('RLSPOD', 'Denmark');
+
+  // The charge vocabulary an agent has to quote in. Present so the boundary
+  // tests can assert what is readable, not merely that nothing is. (A carrier
+  // already exists further down, built for the rate fixture.)
+  const costUnit = await owner.costUnit.create({
+    data: { tenantId: tenantA, code: 'RLS-CU', name: 'Container' },
+    select: { id: true },
+  });
+  await owner.costHead.create({
+    data: {
+      tenantId: tenantA,
+      code: 'RLS-CH',
+      category: 'SERVICE',
+      name: 'Ocean Freight',
+      unitId: costUnit.id,
+    },
+  });
 
   const inquiry = async (code: string) =>
     owner.inquiry.create({
@@ -348,12 +367,11 @@ describe('the commercially sensitive tables are shut', () => {
     expect(await count('inquiry_rate')).toBe(0);
   });
 
-  it('cannot read customers, staff, vendors or carriers', async () => {
+  it('cannot read customers, staff or vendors', async () => {
     expect(await count('customer')).toBe(0);
     expect(await count('"user"')).toBe(0);
     expect(await count('employee')).toBe(0);
     expect(await count('vendor')).toBe(0);
-    expect(await count('carrier')).toBe(0);
   });
 
   it('cannot read the audit trail', async () => {
@@ -365,7 +383,30 @@ describe('the commercially sensitive tables are shut', () => {
   });
 
   it('cannot read settings tables', async () => {
-    for (const table of ['cost_head', 'vessel', 'carrier_pic', 'role', 'notification_setting']) {
+    for (const table of ['vessel', 'carrier_pic', 'role', 'notification_setting']) {
+      expect(await count(table), table).toBe(0);
+    }
+  });
+
+  /*
+   * carrier, cost_head and cost_unit were on the closed list until the client's
+   * wireframe put a Carrier and a Cost Head dropdown in the agent's own hands.
+   * Opening them was a deliberate decision and this is where it is recorded.
+   *
+   * What they expose is trade vocabulary: the names of shipping lines, the
+   * forwarder's charge labels, and units like Container and CBM. An agent
+   * quoting you already knows what a THC is. What stays shut is everything with
+   * a number attached — the assertions below the change say so.
+   */
+  it('can read the vocabulary it has to quote in', async () => {
+    expect(await count('carrier')).toBeGreaterThan(0);
+    expect(await count('cost_head')).toBeGreaterThan(0);
+    expect(await count('cost_unit')).toBeGreaterThan(0);
+  });
+
+  it('still cannot read anything priced', async () => {
+    // The widening above must not have dragged a rate table with it.
+    for (const table of ['freight_rate', 'freight_rate_line', 'rate_local_charge', 'inquiry_rate']) {
       expect(await count(table), table).toBe(0);
     }
   });

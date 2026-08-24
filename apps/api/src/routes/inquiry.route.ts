@@ -21,12 +21,16 @@ import {
   OUTCOME_STATUSES,
   type InquiryVolumeDto,
   type LookupOption,
+  type AgentQuoteCommentDto,
+  agentQuoteCommentInputSchema,
   agentQuoteDecisionSchema,
   type StaffAgentQuoteDto,
 } from '@ff/shared';
 import { Router } from 'express';
 
+import { commentToDto, COMMENT_SELECT } from '../lib/agent-quote-comment';
 import { quoteHistory } from '../lib/agent-quote-history';
+import { optionToDto, OPTIONS_INCLUDE, type OptionRow } from '../lib/agent-quote-view';
 import { recordAudit } from '../lib/audit';
 import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
 import { isoCurrency } from '../lib/currency-label';
@@ -917,8 +921,13 @@ inquiryRouter.get(
           agent: { select: { name: true } },
           currency: { select: { currency: true } },
           submittedByUser: { select: { username: true, email: true } },
+          options: OPTIONS_INCLUDE,
         },
-        orderBy: [{ status: 'asc' }, { amount: 'asc' }],
+        // Was ordered by amount, which is null on every quote that carries a
+        // breakdown — the figures moved to the lines and there is no single
+        // number left to sort on. Newest first instead, which is the order a
+        // buyer reads them in anyway.
+        orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
       });
 
       // Currency ids in the audit snapshots mean nothing on screen; this turns
@@ -938,7 +947,8 @@ inquiryRouter.get(
         agentId: row.agentId.toString(),
         agentName: row.agent?.name ?? '—',
         submittedByName: row.submittedByUser?.username ?? null,
-        amount: row.amount?.toString() ?? '0',
+        options: (row.options as unknown as OptionRow[]).map(optionToDto),
+        amount: row.amount?.toString() ?? '',
         currencyId: row.currencyId.toString(),
         currencyCode: row.currency === null ? null : isoCurrency(row.currency.currency),
         validUntil: row.validUntil?.toISOString().slice(0, 10) ?? null,
@@ -965,14 +975,20 @@ inquiryRouter.get(
  * deciding which supplier's price the inquiry carries is the same commercial
  * decision the Price drawer already makes, taken by the same people.
  *
- * Deliberately reversible while the inquiry is still live. Accept and Decline
- * are one mis-click apart, and once a quote leaves SUBMITTED the agent can no
- * longer amend it — so a one-way door here would strand them behind a mistake
- * nobody at the forwarder could undo.
+ * Deliberately reversible while the inquiry is still live. Won and Lost are one
+ * mis-click apart, and once a quote leaves SUBMITTED the agent can no longer
+ * amend it — so a one-way door here would strand them behind a mistake nobody
+ * at the forwarder could undo.
  *
- * What it deliberately does NOT do is decline the other agents. Whether
- * accepting one offer settles the rest is a business rule nobody has stated,
- * and a forwarder may well accept two for different equipment.
+ * What it deliberately does NOT do is settle the other agents. Whether winning
+ * on one offer loses it for the rest is a business rule nobody has stated, and
+ * a forwarder may well place two bookings for different equipment.
+ *
+ * The message posted with it is the whole point of the client's note: an agent
+ * who is told only "lost" learns nothing and prices you the same way next time.
+ * It is required on a loss and optional on a win, and it lands in the same
+ * thread both sides have been talking in — flagged as the outcome, so it reads
+ * as the end of the conversation rather than another remark.
  */
 inquiryRouter.post(
   '/inquiries/:id/agent-quotes/:quoteId/decision',
@@ -981,7 +997,7 @@ inquiryRouter.post(
     const auth = req.auth!;
     const id = parseId(req.params.id, 'inquiry');
     const quoteId = parseId(req.params.quoteId, 'quote');
-    const { decision } = agentQuoteDecisionSchema.parse(req.body);
+    const { decision, comment } = agentQuoteDecisionSchema.parse(req.body);
 
     const updated = await withTenant(auth.tenantId, async (db) => {
       const inquiry = await findScopedInquiry(db, auth, id);
@@ -1002,12 +1018,28 @@ inquiryRouter.post(
         where: { id: quoteId },
         data: { status: decision, updatedBy: auth.userId },
       });
+
+      // Same transaction as the status change: an outcome the agent is never
+      // told about is the failure this feature exists to prevent, so it is not
+      // allowed to be a separate write that can fail on its own.
+      const body = (comment ?? '').trim();
+      if (body !== '') {
+        await db.agentQuoteComment.create({
+          data: {
+            tenantId: auth.tenantId,
+            quoteId,
+            authorId: auth.userId,
+            body,
+            outcome: decision,
+          },
+        });
+      }
       return quote.id;
     });
 
     await recordAudit({
       tenantId: auth.tenantId,
-      action: decision === 'ACCEPTED' ? 'QUOTE_ACCEPTED' : 'QUOTE_DECLINED',
+      action: decision === 'WON' ? 'QUOTE_ACCEPTED' : 'QUOTE_DECLINED',
       tableName: 'agent_quote',
       recordId: updated,
       actorId: auth.userId,
@@ -1016,6 +1048,96 @@ inquiryRouter.post(
 
     const payload: ApiSuccess<{ decision: string }> = { success: true, data: { decision } };
     res.json(payload);
+  },
+);
+
+/**
+ * The Status thread, from the forwarder's side.
+ *
+ * GET  /api/tenant/sales/inquiries/:id/agent-quotes/:quoteId/comments
+ * POST /api/tenant/sales/inquiries/:id/agent-quotes/:quoteId/comments
+ *
+ * The same conversation the agent reads, through the door staff already have.
+ * Reading needs VIEW; writing needs ATTACH_PRICE — posting to a supplier in the
+ * company's name is the same class of act as deciding which supplier to use,
+ * and it is not something a read-only viewer should be able to do.
+ */
+inquiryRouter.get(
+  '/inquiries/:id/agent-quotes/:quoteId/comments',
+  requirePermission(`${FEATURE}.VIEW`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'inquiry');
+    const quoteId = parseId(req.params.quoteId, 'quote');
+
+    const result = await withTenant(auth.tenantId, async (db) => {
+      // Reuses the inquiry's own visibility rule: a salesman who cannot see the
+      // inquiry cannot read what was said about its quotes.
+      const inquiry = await findScopedInquiry(db, auth, id);
+      const quote = await db.agentQuote.findFirst({
+        where: { id: quoteId, inquiryId: inquiry.id, deletedAt: null },
+        select: { id: true },
+      });
+      if (quote === null) return null;
+      const rows = await db.agentQuoteComment.findMany({
+        where: { quoteId: quote.id },
+        orderBy: { createdAt: 'asc' },
+        select: COMMENT_SELECT,
+      });
+      const tenant = await db.tenant.findFirst({
+        where: { id: auth.tenantId },
+        select: { name: true },
+      });
+      return { rows, forwarderName: tenant?.name ?? 'Us' };
+    });
+    if (result === null) throw HttpError.notFound('That quote no longer exists.');
+
+    const payload: ApiSuccess<AgentQuoteCommentDto[]> = {
+      success: true,
+      data: result.rows.map((row) => commentToDto(row, 'STAFF', result.forwarderName)),
+    };
+    res.json(payload);
+  },
+);
+
+inquiryRouter.post(
+  '/inquiries/:id/agent-quotes/:quoteId/comments',
+  requirePermission(`${FEATURE}.ATTACH_PRICE`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'inquiry');
+    const quoteId = parseId(req.params.quoteId, 'quote');
+    const input = agentQuoteCommentInputSchema.parse(req.body);
+
+    const result = await withTenant(auth.tenantId, async (db) => {
+      const inquiry = await findScopedInquiry(db, auth, id);
+      const quote = await db.agentQuote.findFirst({
+        where: { id: quoteId, inquiryId: inquiry.id, deletedAt: null },
+        select: { id: true },
+      });
+      if (quote === null) return null;
+      const created = await db.agentQuoteComment.create({
+        data: {
+          tenantId: auth.tenantId,
+          quoteId: quote.id,
+          authorId: auth.userId,
+          body: input.body,
+        },
+        select: COMMENT_SELECT,
+      });
+      const tenant = await db.tenant.findFirst({
+        where: { id: auth.tenantId },
+        select: { name: true },
+      });
+      return { created, forwarderName: tenant?.name ?? 'Us' };
+    });
+    if (result === null) throw HttpError.notFound('That quote no longer exists.');
+
+    const payload: ApiSuccess<AgentQuoteCommentDto> = {
+      success: true,
+      data: commentToDto(result.created, 'STAFF', result.forwarderName),
+    };
+    res.status(201).json(payload);
   },
 );
 
