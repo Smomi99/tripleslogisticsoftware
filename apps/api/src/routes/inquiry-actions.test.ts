@@ -58,6 +58,7 @@ function as(token: string) {
 async function cleanup(): Promise<void> {
   const t = `SELECT id FROM tenant WHERE slug = '${SLUG}'`;
   for (const table of [
+    'email_log',
     'inquiry_rate',
     'inquiry_followup',
     'inquiry_volume',

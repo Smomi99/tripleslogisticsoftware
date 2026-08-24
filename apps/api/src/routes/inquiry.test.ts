@@ -94,6 +94,7 @@ async function makeUser(
 async function cleanup(): Promise<void> {
   const t = `SELECT id FROM tenant WHERE slug IN ('${SLUG_A}', '${SLUG_B}')`;
   for (const table of [
+    'email_log',
     'inquiry_rate',
     'inquiry_followup',
     'inquiry_volume',

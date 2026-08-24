@@ -1,30 +1,33 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import type { QueueMailInput } from './email-queue';
 import type { TenantDb } from './tenant-client';
 
 /**
  * What the two notification emails actually say.
  *
- * The existing coverage in inquiry-parties.test.ts checks who is written to.
- * This checks what they are told, which turned out to be the more dangerous
- * half: the agent's copy named the customer, and pointed at a staff screen the
- * agent's credentials cannot open.
+ * The coverage in inquiry-parties.test.ts checks who is written to. This checks
+ * what they are told, which turned out to be the more dangerous half: the
+ * agent's copy named the customer, and pointed at a screen their credentials
+ * cannot open.
  *
- * Mail is captured rather than sent, so the body can be read exactly as it
- * would arrive.
+ * The outbox is captured rather than written, so both halves of a queued
+ * message can be read: the fallback body that goes out when a workspace has no
+ * template, and — more importantly — the VARIABLES the template is rendered
+ * from. Those matter more than the wording now that templates are editable by
+ * the tenant: a variable that was never supplied cannot be leaked by anybody
+ * editing a template later.
  */
 
-const sent: { to: string[]; subject: string; text: string }[] = [];
-vi.mock('./mailer', () => ({
-  sendMail: (mail: { to: string[]; subject: string; text: string }) => {
-    sent.push(mail);
-    return Promise.resolve({ sent: true });
+const queued: QueueMailInput[] = [];
+vi.mock('./email-queue', () => ({
+  queueMail: (input: QueueMailInput) => {
+    queued.push(input);
+    return Promise.resolve({ queued: true, id: 1n });
   },
-  parseAddressList: (raw: string | null | undefined) =>
-    raw == null ? [] : raw.split(/[,;\n]/).map((a) => a.trim()).filter((a) => a !== ''),
 }));
 
-const { notifyInquiry } = await import('./inquiry-notify');
+const { notifyInquiry, INQUIRY_AGENT_RFQ, INQUIRY_PRICE_TEAM } = await import('./inquiry-notify');
 
 const CUSTOMER = 'Confidential Shipper Ltd';
 
@@ -42,6 +45,7 @@ function stubDb(over: {
 }
 
 const base = {
+  tenantId: 7n,
   inquiryId: 1n,
   code: 'INQ-2026-000042',
   polLabel: 'Chattogram',
@@ -51,61 +55,83 @@ const base = {
   appUrl: 'https://acme.example.com',
 };
 
+/** Everything a template could possibly render, as one string. */
+const surfaceOf = (input: QueueMailInput) =>
+  [input.fallback.subject, input.fallback.bodyText, JSON.stringify(input.variables)].join('\n');
+
 describe('the agent copy', () => {
   it('never names the customer', async () => {
-    sent.length = 0;
+    queued.length = 0;
     const result = await notifyInquiry(
       stubDb({ contacts: [{ agentPic: { email: 'mette@nordic.test' } }] }),
       { ...base, movementType: 'INBOUND' },
     );
 
     expect(result.kind).toBe('agents');
-    expect(sent).toHaveLength(1);
-    // Decision 2 is enforced in the portal by a view with no customer_id column
-    // and a DTO with no such field. An email would walk around both — and this
-    // is the copy that leaves the building.
-    expect(sent[0]?.text).not.toContain(CUSTOMER);
-    expect(sent[0]?.text).not.toContain('Customer:');
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.templateKey).toBe(INQUIRY_AGENT_RFQ);
+    // Enforced elsewhere by a view with no customer_id and a DTO with no such
+    // field. An email would walk around both — and this is the copy that leaves
+    // the building.
+    expect(surfaceOf(queued[0]!)).not.toContain(CUSTOMER);
+    expect(queued[0]?.fallback.bodyText).not.toContain('Customer:');
   });
 
-  it('sends them to the portal, not to a staff screen', async () => {
-    // The staff login refuses an agent credential by design, so /sales/inquiry
-    // is a dead end that reads like a broken account.
-    expect(sent[0]?.text).toContain('https://acme.example.com/portal');
-    expect(sent[0]?.text).not.toContain('/sales/inquiry');
+  it('is not even given the customer as a variable to render', async () => {
+    // The structural half, and the reason this test exists twice over: a
+    // template is tenant-editable, so somebody could add {{customerName}} to
+    // the agent's letter with the best of intentions. There is nothing to
+    // substitute.
+    expect(Object.keys(queued[0]?.variables ?? {})).not.toContain('customerName');
+  });
+
+  it('points at Agent Inquiry, not a staff screen', async () => {
+    // The staff login refuses an agent credential by design. This used to say
+    // /portal, which stopped existing when the separate portal was removed —
+    // a dead link in every RFQ that went out.
+    expect(queued[0]?.variables['link']).toBe('https://acme.example.com/agent/inquiry');
+    expect(surfaceOf(queued[0]!)).not.toContain('/sales/inquiry');
+    expect(surfaceOf(queued[0]!)).not.toContain('/portal');
   });
 
   it('still carries the lane, which is what they are being asked to price', async () => {
-    expect(sent[0]?.text).toContain('INQ-2026-000042');
-    expect(sent[0]?.text).toContain('Chattogram → Aarhus');
-    expect(sent[0]?.subject).toContain('quotation requested');
+    expect(surfaceOf(queued[0]!)).toContain('INQ-2026-000042');
+    expect(queued[0]?.fallback.bodyText).toContain('Chattogram → Aarhus');
+    expect(queued[0]?.fallback.subject).toContain('quotation requested');
+  });
+
+  it('files the message against the inquiry it is about', async () => {
+    // So "what was sent about this inquiry?" has an answer on the record.
+    expect(queued[0]?.relatedType).toBe('inquiry');
+    expect(queued[0]?.relatedId).toBe(1n);
   });
 });
 
 describe('the price team copy', () => {
   it('names the customer, because they are staff', async () => {
-    sent.length = 0;
+    queued.length = 0;
     const result = await notifyInquiry(stubDb({ priceTeam: 'pricing@forwarder.test' }), {
       ...base,
       movementType: 'OUTBOUND',
     });
 
     expect(result.kind).toBe('price-team');
-    expect(sent[0]?.text).toContain(CUSTOMER);
-    expect(sent[0]?.text).toContain('/sales/inquiry');
-    expect(sent[0]?.text).not.toContain('/portal');
+    expect(queued[0]?.templateKey).toBe(INQUIRY_PRICE_TEAM);
+    expect(queued[0]?.fallback.bodyText).toContain(CUSTOMER);
+    expect(queued[0]?.variables['customerName']).toBe(CUSTOMER);
+    expect(queued[0]?.variables['link']).toBe('https://acme.example.com/sales/inquiry');
   });
 });
 
 describe('a lane that already has a rate', () => {
   it('produces no mail at all', async () => {
-    sent.length = 0;
+    queued.length = 0;
     const result = await notifyInquiry(stubDb({ priceTeam: 'pricing@forwarder.test' }), {
       ...base,
       movementType: 'OUTBOUND',
       laneMatched: true,
     });
     expect(result.kind).toBe('none');
-    expect(sent).toHaveLength(0);
+    expect(queued).toHaveLength(0);
   });
 });

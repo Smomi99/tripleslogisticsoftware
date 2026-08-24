@@ -41,6 +41,8 @@ export const CODE_PREFIX = {
 
   goodsType: 'GDT',
   containerSize: 'CNT',
+  containerType: 'CTY',
+  emailTemplate: 'EMT',
   rateTier: 'RTR',
   tos: 'TOS',
   mode: 'MOD',

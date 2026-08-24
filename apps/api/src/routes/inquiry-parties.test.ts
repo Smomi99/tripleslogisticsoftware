@@ -52,6 +52,8 @@ async function cleanup(): Promise<void> {
   await owner.$executeRaw`DELETE FROM freight_rate WHERE code LIKE 'IP-RATE-%'`;
   await owner.$executeRawUnsafe(`DELETE FROM notification_setting WHERE tenant_id IN ${scope}`);
   for (const t of [
+    // Queued mail records who caused it, so it goes before the users.
+    'email_log',
     'inquiry_party_contact', 'inquiry_party', 'inquiry_volume', 'inquiry',
     'agent_pic', 'agent', 'carrier_pic', 'carrier', 'customer_pic', 'customer', 'industry_sector', 'port', '"user"',
   ]) {
@@ -323,13 +325,14 @@ describe('the lane check', () => {
  *
  * SMTP is not configured on a developer machine, so nothing actually leaves —
  * which is the point. What is asserted here is the DECISION: whether a message
- * was called for at all, of which kind, and to how many people. Delivery is
- * lib/mailer.ts's problem and it is written never to throw.
+ * was called for at all, of which kind, and to how many people. Delivery is the
+ * outbox worker's problem, and queueing is written never to throw.
  */
 describe('inquiry notifications', () => {
   const notify = (over: Record<string, unknown>) =>
     withTenant(tenantId, (db) =>
       notifyInquiry(db, {
+        tenantId,
         inquiryId: 0n,
         code: 'INQ-TEST',
         movementType: 'OUTBOUND',
@@ -385,6 +388,6 @@ describe('inquiry notifications', () => {
     const result = await notify({});
     expect(result.kind).toBe('price-team');
     expect(result.recipients).toBe(0);
-    expect(result.sent).toBe(false);
+    expect(result.queued).toBe(false);
   });
 });

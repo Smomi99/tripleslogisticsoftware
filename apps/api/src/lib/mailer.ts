@@ -42,9 +42,20 @@ function transporter(): Transporter | null {
 
 export interface Mail {
   to: string[];
+  cc?: string[];
   subject: string;
-  /** Plain text. No HTML: these go to agents on mail clients we cannot test. */
+  /**
+   * Plain text, and required.
+   *
+   * It used to be the only option, on the reasoning that these go to agents on
+   * mail clients we cannot test. That reasoning still holds, which is why it
+   * stays mandatory — the HTML below is the alternative part of a multipart
+   * message, never a replacement for it. A client that cannot render the one
+   * still gets the other.
+   */
   text: string;
+  /** Optional richer part. The quotation needs it; a notification does not. */
+  html?: string;
 }
 
 export interface MailResult {
@@ -62,6 +73,9 @@ export interface MailResult {
  */
 export async function sendMail(mail: Mail): Promise<MailResult> {
   const recipients = [...new Set(mail.to.map((a) => a.trim()).filter((a) => a !== ''))];
+  const copies = [...new Set((mail.cc ?? []).map((a) => a.trim()).filter((a) => a !== ''))]
+    // Somebody on both lines gets one copy, not two.
+    .filter((a) => !recipients.includes(a));
   if (recipients.length === 0) {
     logger.info({ subject: mail.subject }, 'mail skipped: no recipients');
     return { sent: false, reason: 'no-recipients' };
@@ -80,10 +94,15 @@ export async function sendMail(mail: Mail): Promise<MailResult> {
     await client.sendMail({
       from: MAIL_CONFIG.from,
       to: recipients.join(', '),
+      ...(copies.length > 0 ? { cc: copies.join(', ') } : {}),
       subject: mail.subject,
       text: mail.text,
+      ...(mail.html === undefined || mail.html === '' ? {} : { html: mail.html }),
     });
-    logger.info({ subject: mail.subject, to: recipients.length }, 'mail sent');
+    logger.info(
+      { subject: mail.subject, to: recipients.length, cc: copies.length },
+      'mail sent',
+    );
     return { sent: true };
   } catch (error) {
     // The address list is logged, the body is not — an inquiry's commercial

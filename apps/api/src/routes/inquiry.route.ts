@@ -753,6 +753,8 @@ async function notifyAfterSave(
       });
 
       return notifyInquiry(db, {
+        tenantId: auth.tenantId,
+        actorId: auth.userId,
         inquiryId: BigInt(dto.id),
         code: dto.code,
         movementType: dto.movementType,

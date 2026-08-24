@@ -23,6 +23,7 @@ export const SYSTEM_CAPABLE_MODELS = [
   'CarrierType',
   'ContainerSize',
   'ContainerType',
+  'EmailTemplate',
   'CostUnit',
   'Currency',
   'ExpertArea',
@@ -39,6 +40,7 @@ export const SYSTEM_CAPABLE_MODELS = [
 /** tenant_id NOT NULL — visible only to the owning tenant. */
 export const TENANT_OWNED_MODELS = [
   'Agent',
+  'EmailLog',
   'AgentExpertArea',
   'AgentNetworkMember',
   'AgentPic',

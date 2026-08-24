@@ -47,6 +47,7 @@ async function cleanup(): Promise<void> {
   const scope = `(SELECT id FROM tenant WHERE slug = '${SLUG}')`;
   await owner.$executeRawUnsafe(`UPDATE "user" SET agent_id = NULL WHERE tenant_id IN ${scope}`);
   for (const table of [
+    'email_log',
     'agent_quote_comment',
     'agent_quote_line',
     'agent_quote_option',

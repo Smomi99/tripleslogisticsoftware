@@ -37,6 +37,7 @@ let currencyB: bigint;
 async function cleanup(): Promise<void> {
   const scope = `(SELECT id FROM tenant WHERE slug IN ('${SLUG_A}', '${SLUG_B}'))`;
   for (const table of [
+    'email_log',
     'agent_quote',
     'inquiry_volume',
     'inquiry',

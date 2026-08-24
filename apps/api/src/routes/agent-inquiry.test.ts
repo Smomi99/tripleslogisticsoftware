@@ -51,6 +51,7 @@ let staffToken: string;
 async function cleanup(): Promise<void> {
   const scope = `(SELECT id FROM tenant WHERE slug = '${SLUG}')`;
   for (const table of [
+    'email_log',
     'agent_quote_comment',
     'agent_quote_line',
     'agent_quote_option',
@@ -408,13 +409,24 @@ describe('submitting a quote', () => {
       expect.objectContaining({ amount: '1450.5' }),
     ]);
 
-    expect(sent).toHaveLength(1);
-    expect(sent[0]?.to).toEqual(['pricing@forwarder.test']);
-    expect(sent[0]?.subject).toContain('INQ-2026-PIQ001');
-    expect(sent[0]?.subject).toContain('Nordic Forwarding');
-    // The figure stays in the portal. Mail is not a channel this product
+    // Mail is queued now rather than sent, so the assertion moves to the
+    // outbox. Nothing about SMTP can delay an agent submitting a price, and a
+    // mail server that is down does not lose the notice.
+    const outbox = await owner.emailLog.findMany({
+      where: { tenantId, templateKey: 'AGENT_QUOTE_SUBMITTED' },
+      orderBy: { id: 'desc' },
+    });
+    expect(outbox).toHaveLength(1);
+    expect(outbox[0]?.status).toBe('QUEUED');
+    expect(outbox[0]?.toAddresses).toEqual(['pricing@forwarder.test']);
+    expect(outbox[0]?.subject).toContain('INQ-2026-PIQ001');
+    expect(outbox[0]?.subject).toContain('Nordic Forwarding');
+    // Filed against the inquiry, so the screen can show what went out about it.
+    expect(outbox[0]?.relatedType).toBe('inquiry');
+    // The figure stays in the application. Mail is not a channel this product
     // controls, and a forwarded thread should not carry an agent's price.
-    expect(sent[0]?.text).not.toContain('1450');
+    expect(outbox[0]?.bodyText).not.toContain('1450');
+    expect(outbox[0]?.subject).not.toContain('1450');
   });
 
   it('files it against the right agent whatever the body says', async () => {

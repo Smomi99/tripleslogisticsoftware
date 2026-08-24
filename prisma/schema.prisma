@@ -235,6 +235,8 @@ model Tenant {
   userPermissions       UserPermission[]
   goodsTypes            GoodsType[]
   containerSizes        ContainerSize[]
+  emailTemplates        EmailTemplate[]
+  emailLogs             EmailLog[]
   containerTypes        ContainerType[]
   rateTiers             RateTier[]
   toss                  Tos[]
@@ -1516,6 +1518,10 @@ model User {
 
   createdGoodsTypes     GoodsType[]     @relation("GoodsTypeCreatedBy")
   updatedGoodsTypes     GoodsType[]     @relation("GoodsTypeUpdatedBy")
+  createdEmailTemplates EmailTemplate[] @relation("EmailTemplateCreatedBy")
+  updatedEmailTemplates EmailTemplate[] @relation("EmailTemplateUpdatedBy")
+  createdEmailLogs      EmailLog[]      @relation("EmailLogCreatedBy")
+  updatedEmailLogs      EmailLog[]      @relation("EmailLogUpdatedBy")
   createdContainerSizes ContainerSize[] @relation("ContainerSizeCreatedBy")
   updatedContainerSizes ContainerSize[] @relation("ContainerSizeUpdatedBy")
   createdContainerTypes ContainerType[] @relation("ContainerTypeCreatedBy")
@@ -1776,6 +1782,100 @@ model GoodsType {
 /// Was called ContainerType until the module spec separated size from the
 /// physical type of the box. Same rows, same ids: only the name moved, so every
 /// rate priced against a 40HC still is.
+/// client: module spec §2.3 — what a message says.
+///
+/// System-capable: the shipped defaults carry tenantId null and serve every
+/// workspace, and a tenant that wants its own wording writes a row with the
+/// same key. Resolution prefers the tenant's own — see resolveTemplate.
+model EmailTemplate {
+  tenantId  BigInt?   @map("tenant_id")
+  id        BigInt    @id @default(autoincrement())
+  code      String    @db.VarChar(32)
+  /// What the code asks for: INQUIRY_AGENT_RFQ, INQUIRY_PRICE_TEAM, …
+  key       String    @db.VarChar(64)
+  name      String    @db.VarChar(200)
+  subject   String    @db.Text
+  /// Required. A text part is the only thing every mail client agrees on.
+  bodyText  String    @map("body_text") @db.Text
+  /// Optional, and sent as the richer alternative when present.
+  bodyHtml  String?   @map("body_html") @db.Text
+  /// The placeholders this template accepts, for the editor and for tests.
+  variables Json      @default("[]")
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdByUser User?   @relation("EmailTemplateCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User?   @relation("EmailTemplateUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@map("email_template")
+}
+
+/// client: module spec §2.3 — what was actually sent, and the queue it waited in.
+///
+/// The row is written first and the send happens after, so a slow SMTP server
+/// cannot delay the request that caused it and a failure cannot roll back the
+/// record it was about. The row is also the queue: `status`, `attempts` and
+/// `nextAttemptAt` are what the worker reads.
+///
+/// No `code` column, following audit_log — this is a record of events, found by
+/// what it relates to rather than by a reference anybody types.
+model EmailLog {
+  tenantId      BigInt      @map("tenant_id")
+  id            BigInt      @id @default(autoincrement())
+  templateKey   String      @map("template_key") @db.VarChar(64)
+  toAddresses   String[]    @map("to_addresses")
+  ccAddresses   String[]    @default([]) @map("cc_addresses")
+  /// Rendered when queued, not when sent: what went out has to be what the
+  /// record shows, even if the template is edited an hour later.
+  subject       String      @db.Text
+  bodyText      String      @map("body_text") @db.Text
+  bodyHtml      String?     @map("body_html") @db.Text
+  /// What the message is about — "inquiry", "quotation". Deliberately not a
+  /// foreign key: it points at whichever table applies, and a message about a
+  /// deleted draft should not block the delete.
+  relatedType   String?     @map("related_type") @db.VarChar(64)
+  relatedId     BigInt?     @map("related_id")
+  status        EmailStatus @default(QUEUED)
+  error         String?     @db.Text
+  attempts      Int         @default(0)
+  maxAttempts   Int         @default(5) @map("max_attempts")
+  /// Backoff: invisible to the worker until this passes.
+  nextAttemptAt DateTime    @default(now()) @map("next_attempt_at") @db.Timestamptz(6)
+  /// Held while a worker has it in flight; a stale lock is reclaimed.
+  lockedAt      DateTime?   @map("locked_at") @db.Timestamptz(6)
+  sentAt        DateTime?   @map("sent_at") @db.Timestamptz(6)
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy     BigInt?     @map("created_by")
+  updatedBy     BigInt?     @map("updated_by")
+  deletedAt     DateTime?   @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdByUser User?  @relation("EmailLogCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User?  @relation("EmailLogUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([tenantId, relatedType, relatedId])
+  @@map("email_log")
+}
+
+enum EmailStatus {
+  QUEUED
+  SENT
+  FAILED
+
+  @@map("email_status")
+}
+
 /// client: container TYPE — Dry, Flat Rack, Open Top, Reefer.
 ///
 /// The physical box, which is a different axis from its size: a 40HC can be Dry

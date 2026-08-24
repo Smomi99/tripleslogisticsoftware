@@ -393,6 +393,91 @@ async function seedRateLookups(): Promise<number> {
   return created;
 }
 
+
+/**
+ * The shipped email templates (module spec §2.3).
+ *
+ * Seeded as system rows — tenant_id null — so a new workspace can send mail on
+ * its first day. A forwarder who wants their own wording writes a row with the
+ * same key and their own tenant_id; resolveTemplate prefers it.
+ *
+ * `variables` is the contract: what the code supplies, and therefore what an
+ * editor may use. The agent template does NOT list customerName, and the code
+ * does not supply it — an agent must never learn who the shipper is, and the
+ * only way to keep that true through a tenant-editable template is for the
+ * value never to reach the renderer.
+ */
+const EMAIL_TEMPLATES = [
+  {
+    key: 'INQUIRY_AGENT_RFQ',
+    name: 'Inquiry — request a quotation from an agent',
+    subject: 'Inquiry {{code}} — quotation requested ({{polLabel}} → {{podLabel}})',
+    bodyText: [
+      'An inquiry is waiting for your quotation.',
+      '',
+      'Inquiry:   {{code}}',
+      'Lane:      {{polLabel}} → {{podLabel}}',
+      'Movement:  {{movement}}',
+      '',
+      'Quote it here: {{link}}',
+    ].join('\n'),
+    variables: ['code', 'polLabel', 'podLabel', 'movement', 'link'],
+  },
+  {
+    key: 'INQUIRY_PRICE_TEAM',
+    name: 'Inquiry — no live rate, please obtain one',
+    subject: 'Rate needed — {{code}} ({{polLabel}} → {{podLabel}})',
+    bodyText: [
+      'This outbound lane has no live buying rate. Please obtain one from a carrier.',
+      '',
+      'Inquiry:   {{code}}',
+      'Customer:  {{customerName}}',
+      'Lane:      {{polLabel}} → {{podLabel}}',
+      'Movement:  {{movement}}',
+      '',
+      'Open it here: {{link}}',
+    ].join('\n'),
+    variables: ['code', 'customerName', 'polLabel', 'podLabel', 'movement', 'link'],
+  },
+  {
+    key: 'AGENT_QUOTE_SUBMITTED',
+    name: 'Agent quotation received',
+    subject: 'Quotation received — {{code}} ({{agentName}})',
+    bodyText: [
+      '{{agentName}} has submitted a quotation for inquiry {{code}}.',
+      '',
+      'The price is on the inquiry rather than in this email.',
+      '',
+      'Open it here: {{link}}',
+    ].join('\n'),
+    variables: ['agentName', 'code', 'link'],
+  },
+] as const;
+
+/** Idempotent: a workspace that has edited its own copy is never overwritten. */
+async function seedEmailTemplates(): Promise<number> {
+  let created = 0;
+  for (const [index, row] of EMAIL_TEMPLATES.entries()) {
+    const existing = await prisma.emailTemplate.findFirst({
+      where: { key: row.key, tenantId: null, deletedAt: null },
+      select: { id: true },
+    });
+    if (existing !== null) continue;
+    await prisma.emailTemplate.create({
+      data: {
+        code: formatCode(CODE_PREFIX.emailTemplate, index + 1),
+        key: row.key,
+        name: row.name,
+        subject: row.subject,
+        bodyText: row.bodyText,
+        variables: [...row.variables],
+      },
+    });
+    created += 1;
+  }
+  return created;
+}
+
 /**
  * A development tenant with a superadmin. Guarded by an explicit flag so it can
  * never run against production by accident.
@@ -507,6 +592,9 @@ async function main(): Promise<void> {
 
   const permissions = await seedPermissions();
   console.log(`  permissions: ${permissions}`);
+
+  const templates = await seedEmailTemplates();
+  console.log(`  email templates: ${templates} created (idempotent)`);
 
   const lookups = await seedSystemLookups();
   console.log(`  system lookups: ${lookups} created (idempotent)`);
