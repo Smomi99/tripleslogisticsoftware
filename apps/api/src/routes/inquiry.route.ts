@@ -38,6 +38,7 @@ import { Prisma } from '../generated/prisma/client';
 import { env } from '../config/env';
 import { HttpError } from '../lib/http-error';
 import { notifyInquiry } from '../lib/inquiry-notify';
+import { routeAndApply, type RoutePlan } from '../lib/inquiry-routing';
 import { logger } from '../lib/logger';
 import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import { nextInquiryNo, seriesYearOf } from '../lib/inquiry-no';
@@ -699,7 +700,7 @@ async function updateInquiry(
 
   await writeParties(db, auth, id, input);
 
-  return db.inquiry.update({
+  const updated = await db.inquiry.update({
     where: { id },
     data: {
       inquiryDate: new Date(input.inquiryDate),
@@ -729,6 +730,12 @@ async function updateInquiry(
     },
     include: inquiryInclude,
   });
+
+  // §5.1 again: an edit can move the lane, the goods type or who it was shared
+  // with, so the routing is re-decided rather than left as it was.
+  const plan = await routeAndApply(db, updated.id);
+  const row = await db.inquiry.findFirstOrThrow({ where: { id }, include: inquiryInclude });
+  return { row, plan };
 }
 
 inquiryRouter.post('/inquiries', requirePermission(`${FEATURE}.CREATE`), async (req, res) => {
@@ -790,10 +797,14 @@ inquiryRouter.post('/inquiries', requirePermission(`${FEATURE}.CREATE`), async (
         // Recipients are written after the row exists, since they reference it.
         // Same transaction, so a failure here takes the inquiry with it.
         await writeParties(db, auth, created.id, input);
-        return db.inquiry.findFirstOrThrow({
+        // §5.1 runs here rather than after the commit, so the row can never be
+        // seen with a status that disagrees with its own routing.
+        const plan = await routeAndApply(db, created.id);
+        const row = await db.inquiry.findFirstOrThrow({
           where: { id: created.id },
           include: inquiryInclude,
         });
+        return { row, plan };
       } catch (error) {
         if (isUniqueViolation(error, 'code')) continue;
         throw error;
@@ -802,8 +813,8 @@ inquiryRouter.post('/inquiries', requirePermission(`${FEATURE}.CREATE`), async (
     throw new HttpError(409, 'CODE_GENERATION_FAILED', 'Could not raise the inquiry. Try again.');
   });
 
-  const dto = toDto(created, startOfToday());
-  await notifyAfterSave(auth, dto);
+  const dto = toDto(created.row, startOfToday());
+  await notifyAfterSave(auth, dto, created.plan);
 
   const payload: ApiSuccess<InquiryDto> = { success: true, data: dto };
   res.status(201).json(payload);
@@ -844,23 +855,11 @@ inquiryRouter.post('/inquiries', requirePermission(`${FEATURE}.CREATE`), async (
 async function notifyAfterSave(
   auth: { tenantId: bigint; userId: bigint },
   dto: InquiryDto,
+  plan: RoutePlan,
 ): Promise<void> {
   try {
     await withTenant(auth.tenantId, async (db) => {
-      const today = startOfToday();
-      const live = await db.freightRate.count({
-        where: {
-          deletedAt: null,
-          status: 'PUBLISHED',
-          mode: { in: MODES_FOR[dto.shipmentType] },
-          polId: BigInt(dto.polId),
-          podId: BigInt(dto.podId),
-          validFrom: { lte: today },
-          validTo: { gte: today },
-        },
-      });
-
-      return notifyInquiry(db, {
+      const result = await notifyInquiry(db, {
         tenantId: auth.tenantId,
         actorId: auth.userId,
         inquiryId: BigInt(dto.id),
@@ -869,9 +868,24 @@ async function notifyAfterSave(
         polLabel: `${dto.polCode} ${dto.polName}`,
         podLabel: `${dto.podCode} ${dto.podName}`,
         customerName: dto.customerName,
-        laneMatched: live > 0,
         appUrl: env.APP_URL ?? null,
+        plan,
       });
+
+      /*
+       * Mark the agents as told, so the share row can answer "did the RFQ
+       * actually go out?" — the question §4.2's share tracking exists for.
+       * Only when something was queued: on the lane-already-priced path the
+       * inquiry is shared but nobody was chased, and saying otherwise would
+       * make the screen claim a message that does not exist.
+       */
+      if (result.kind === 'agents' && result.queued) {
+        await db.inquiryParty.updateMany({
+          where: { inquiryId: BigInt(dto.id), agentId: { not: null } },
+          data: { notifiedAt: new Date(), status: 'SHARED' },
+        });
+      }
+      return result;
     });
   } catch (error) {
     logger.warn({ err: error, code: dto.code }, 'inquiry notification failed; the inquiry is saved');
@@ -1418,8 +1432,8 @@ inquiryRouter.patch('/inquiries/:id', requirePermission(`${FEATURE}.EDIT`), asyn
     return updateInquiry(db, auth, id, input);
   });
 
-  const dto = toDto(updated, startOfToday());
-  await notifyAfterSave(auth, dto);
+  const dto = toDto(updated.row, startOfToday());
+  await notifyAfterSave(auth, dto, updated.plan);
 
   const payload: ApiSuccess<InquiryDto> = { success: true, data: dto };
   res.json(payload);

@@ -2540,6 +2540,11 @@ model Inquiry {
   wonAgentId BigInt?   @map("won_agent_id")
   wonAt      DateTime? @map("won_at") @db.Timestamptz(6)
 
+  /// §5.1: an outbound inquiry whose lane has no live rate. The status stays
+  /// OPEN — to the salesman it is an ordinary open inquiry — and this is the
+  /// pricing team's view of it: waiting on us, and already asked for.
+  awaitingRate Boolean @default(false) @map("awaiting_rate")
+
   leadId BigInt? @map("lead_id")
 
   /// Written back by §5.5's Price action from the attached rates.

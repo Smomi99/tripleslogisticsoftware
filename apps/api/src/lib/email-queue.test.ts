@@ -82,6 +82,23 @@ beforeEach(async () => {
   await owner.$executeRawUnsafe(`DELETE FROM email_log WHERE tenant_id IN ${scope}`);
 });
 
+/**
+ * Drains until this workspace's outbox is settled.
+ *
+ * drainOutbox is deliberately global — one worker serves every tenant — and it
+ * takes a bounded batch. Other suites queue real mail, so a single pass is not
+ * guaranteed to reach the row a test just wrote. Looping until nothing of ours
+ * is left QUEUED tests the worker rather than the batch size.
+ */
+async function drainMine(tenantId: bigint, passes = 12): Promise<void> {
+  for (let i = 0; i < passes; i += 1) {
+    const pending = await owner.emailLog.count({ where: { tenantId, status: 'QUEUED' } });
+    if (pending === 0) return;
+    const tally = await drainOutbox();
+    if (tally.claimed === 0) return;
+  }
+}
+
 /** Only this workspace's mail — the drain is global, other suites are noisy. */
 const outbox = (tenantId: bigint) =>
   owner.emailLog.findMany({ where: { tenantId }, orderBy: { id: 'asc' } });
@@ -159,8 +176,7 @@ describe('queueing', () => {
 describe('draining', () => {
   it('sends a queued message and records that it went', async () => {
     await queueOne(tenantA);
-    const tally = await drainOutbox();
-    expect(tally.sent).toBeGreaterThanOrEqual(1);
+    await drainMine(tenantA);
 
     const rows = await outbox(tenantA);
     expect(rows[0]?.status).toBe('SENT');
@@ -172,16 +188,16 @@ describe('draining', () => {
 
   it('does not send the same message twice', async () => {
     await queueOne(tenantA);
-    await drainOutbox();
+    await drainMine(tenantA);
     sent.length = 0;
-    await drainOutbox();
+    await drainMine(tenantA);
     expect(sent).toHaveLength(0);
   });
 
   it('keeps a failed message and backs off rather than losing it', async () => {
     await queueOne(tenantA);
     behaviour = 'fail';
-    await drainOutbox();
+    await drainMine(tenantA);
 
     const rows = await outbox(tenantA);
     expect(rows[0]?.status).toBe('QUEUED');
@@ -200,7 +216,7 @@ describe('draining', () => {
       where: { id: row.id },
       data: { attempts: row.maxAttempts - 1 },
     });
-    await drainOutbox();
+    await drainMine(tenantA);
 
     const after = (await outbox(tenantA))[0]!;
     expect(after.attempts).toBe(after.maxAttempts);
@@ -213,7 +229,7 @@ describe('draining', () => {
     // retries to discover that fills the log and marks real messages FAILED.
     await queueOne(tenantA);
     behaviour = 'unconfigured';
-    await drainOutbox();
+    await drainMine(tenantA);
 
     const rows = await outbox(tenantA);
     expect(rows[0]?.status).toBe('QUEUED');
@@ -226,7 +242,8 @@ describe('the tenant boundary', () => {
   it('drains both workspaces without mixing them up', async () => {
     await queueOne(tenantA, { to: ['alpha@x.test'] });
     await queueOne(tenantB, { to: ['beta@x.test'] });
-    await drainOutbox();
+    await drainMine(tenantA);
+    await drainMine(tenantB);
 
     const a = await outbox(tenantA);
     const b = await outbox(tenantB);

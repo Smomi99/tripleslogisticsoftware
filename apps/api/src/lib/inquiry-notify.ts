@@ -1,6 +1,6 @@
 import { queueMail } from './email-queue';
+import type { RoutePlan } from './inquiry-routing';
 import { logger } from './logger';
-import { parseAddressList } from './mailer';
 import type { TenantDb } from './tenant-client';
 
 /**
@@ -25,10 +25,10 @@ export interface NotifyInput {
   polLabel: string;
   podLabel: string;
   customerName: string;
-  /** True when the lane already has a live purchased rate. */
-  laneMatched: boolean;
   appUrl: string | null;
   actorId?: bigint | null;
+  /** Decided in the save transaction by §5.1's routing service. */
+  plan: RoutePlan;
 }
 
 export const INQUIRY_AGENT_RFQ = 'INQUIRY_AGENT_RFQ';
@@ -99,27 +99,28 @@ function fallbackBody(
  * depends on it, because the inquiry is already saved by the time this runs.
  */
 export async function notifyInquiry(
-  db: TenantDb,
+  _db: TenantDb,
   input: NotifyInput,
 ): Promise<{ kind: 'none' | 'agents' | 'price-team'; queued: boolean; recipients: number }> {
-  // The whole point of the lane check: a rate already exists, so nobody needs
-  // to be asked for one.
-  if (input.laneMatched) {
-    logger.info({ code: input.code }, 'no notification: the lane already has a live rate');
-    return { kind: 'none', queued: false, recipients: 0 };
+  const { plan } = input;
+
+  // Who to write to is the routing service's decision, not this function's.
+  // Sending is all that happens here, which is why the three branches below
+  // read as three sends rather than three rules.
+  if (plan.agentEmails.length === 0 && plan.priceTeamEmails.length === 0) {
+    logger.info(
+      { code: input.code, branch: plan.branch },
+      'no notification for this inquiry',
+    );
+    return {
+      kind: plan.branch === 'OUTBOUND_PRICED' || plan.branch === 'NOWHERE' ? 'none' : 'agents',
+      queued: false,
+      recipients: 0,
+    };
   }
 
-  if (input.movementType === 'INBOUND') {
-    // The contacts chosen on the inquiry, not every contact the agent has:
-    // the operator picked these people deliberately.
-    const contacts = await db.inquiryPartyContact.findMany({
-      where: { inquiryId: input.inquiryId, agentPicId: { not: null } },
-      select: { agentPic: { select: { email: true } } },
-    });
-    const to = contacts
-      .map((c) => c.agentPic?.email ?? '')
-      .filter((email): email is string => email !== '');
-
+  if (plan.agentEmails.length > 0) {
+    const to = plan.agentEmails;
     const values = agentVariables(input);
     const result = await queueMail({
       tenantId: input.tenantId,
@@ -141,10 +142,13 @@ export async function notifyInquiry(
     return { kind: 'agents', queued: result.queued, recipients: to.length };
   }
 
-  const setting = await db.notificationSetting.findFirst({
-    select: { priceTeamEmails: true },
-  });
-  const to = parseAddressList(setting?.priceTeamEmails);
+  /*
+   * The pricing team, resolved from the permission rather than from a typed
+   * list (§5.1). notification_setting.price_team_emails is left alone but no
+   * longer read here: an address list goes stale the first time somebody
+   * leaves, and nobody notices until a lane goes unpriced.
+   */
+  const to = plan.priceTeamEmails;
 
   const values = staffVariables(input);
   const result = await queueMail({

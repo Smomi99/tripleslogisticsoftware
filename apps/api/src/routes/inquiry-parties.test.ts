@@ -6,7 +6,6 @@ import { createApp } from '../app';
 import { env } from '../config/env';
 import { PrismaClient } from '../generated/prisma/client';
 import { signAccessToken } from '../lib/jwt';
-import { notifyInquiry } from '../lib/inquiry-notify';
 import { withTenant } from '../lib/tenant-client';
 
 /**
@@ -32,6 +31,8 @@ let token: string;
 let sourceId: bigint;
 let customerId: bigint;
 let carrierId: bigint;
+let rateGoodsTypeId: bigint;
+let rateCurrencyId: bigint;
 let carrierPicId: bigint;
 let customerId2: bigint;
 let agentId: bigint;
@@ -54,7 +55,8 @@ async function cleanup(): Promise<void> {
   for (const t of [
     // Queued mail records who caused it, so it goes before the users.
     'email_log',
-    'inquiry_party_contact', 'inquiry_party', 'inquiry_volume', 'inquiry',
+    'inquiry_party_contact', 'inquiry_party', 'inquiry_commodity', 'inquiry_volume', 'inquiry',
+    'freight_rate', 'goods_type',
     'agent_pic', 'agent', 'carrier_pic', 'carrier', 'customer_pic', 'customer', 'industry_sector', 'port', '"user"',
   ]) {
     await owner.$executeRawUnsafe(`DELETE FROM ${t} WHERE tenant_id IN ${scope}`);
@@ -111,6 +113,13 @@ beforeAll(async () => {
   });
   customerId = customer.id;
   const carrierType = await owner.carrierType.findFirstOrThrow({ select: { id: true } });
+  rateGoodsTypeId = (
+    await owner.goodsType.create({
+      data: { tenantId, code: 'GDT-IP', name: 'Parties Textile' },
+      select: { id: true },
+    })
+  ).id;
+  rateCurrencyId = (await owner.currency.findFirstOrThrow({ select: { id: true } })).id;
   carrierId = (await owner.carrier.create({
     data: { tenantId, code: 'IP-CAR', name: 'IP Carrier', typeId: carrierType.id },
     select: { id: true },
@@ -328,66 +337,110 @@ describe('the lane check', () => {
  * was called for at all, of which kind, and to how many people. Delivery is the
  * outbox worker's problem, and queueing is written never to throw.
  */
-describe('inquiry notifications', () => {
-  const notify = (over: Record<string, unknown>) =>
+describe('routing an inquiry the way it is actually saved', () => {
+  /*
+   * The decision itself is covered branch by branch in inquiry-routing.test.ts,
+   * and what each audience is told in inquiry-notify.test.ts. What is worth
+   * asserting HERE — the file about who an inquiry is shared with — is that the
+   * two halves meet on the real save path: an inquiry raised through the API
+   * comes back with the status its routing decided, and a message in the outbox
+   * addressed to the people who were ticked.
+   */
+  const outboxFor = (inquiryId: string) =>
     withTenant(tenantId, (db) =>
-      notifyInquiry(db, {
-        tenantId,
-        inquiryId: 0n,
-        code: 'INQ-TEST',
-        movementType: 'OUTBOUND',
-        polLabel: 'A',
-        podLabel: 'B',
-        customerName: 'C',
-        laneMatched: false,
-        appUrl: null,
-        ...over,
-      } as Parameters<typeof notifyInquiry>[1]),
-    );
-
-  it('sends nothing when the lane already has a live rate', async () => {
-    // The client's rule, and the reason the lane check exists at all.
-    const outbound = await notify({ laneMatched: true });
-    expect(outbound.kind).toBe('none');
-    const inbound = await notify({ laneMatched: true, movementType: 'INBOUND' });
-    expect(inbound.kind).toBe('none');
-  });
-
-  it('writes to the price team on an unrated Outbound lane', async () => {
-    await withTenant(tenantId, (db) =>
-      db.notificationSetting.create({
-        data: { tenantId, priceTeamEmails: 'pricing@ip.test, ops@ip.test' },
+      db.emailLog.findMany({
+        where: { relatedType: 'inquiry', relatedId: BigInt(inquiryId) },
+        orderBy: { id: 'desc' },
       }),
     );
-    const result = await notify({});
-    expect(result.kind).toBe('price-team');
-    expect(result.recipients).toBe(2);
-  });
 
-  it('writes to the chosen agent contacts on an unrated Inbound lane', async () => {
+  it('shares an inbound inquiry with the ticked contacts and marks it RFQ_SENT', async () => {
     const created = await raise({
       movementType: 'INBOUND',
       partyIds: [agentId.toString()],
       partyContactIds: [agentPicId.toString()],
     });
-    expect(created.status).toBe(201);
+    expect(created.status, JSON.stringify(created.body.error ?? {})).toBe(201);
+    const id = created.body.data.id as string;
 
-    const result = await notify({
-      movementType: 'INBOUND',
-      inquiryId: BigInt(created.body.data.id as string),
-    });
-    expect(result.kind).toBe('agents');
+    expect(created.body.data.status).toBe('RFQ_SENT');
+
+    const outbox = await outboxFor(id);
+    expect(outbox).toHaveLength(1);
+    expect(outbox[0]?.templateKey).toBe('INQUIRY_AGENT_RFQ');
     // The one contact that was ticked, not every contact the agent has.
-    expect(result.recipients).toBe(1);
+    expect(outbox[0]?.toAddresses).toHaveLength(1);
+
+    // And the share row can now answer "did the RFQ actually go out?".
+    const parties = await withTenant(tenantId, (db) =>
+      db.inquiryParty.findMany({ where: { inquiryId: BigInt(id) } }),
+    );
+    expect(parties[0]?.notifiedAt).not.toBeNull();
+    expect(parties[0]?.status).toBe('SHARED');
   });
 
-  it('is a no-op rather than an error when nobody is configured', async () => {
-    await withTenant(tenantId, (db) =>
-      db.notificationSetting.updateMany({ data: { priceTeamEmails: null } }),
+  it('leaves an outbound inquiry with no rate OPEN, flagged, and asks the pricing team', async () => {
+    const created = await raise({ movementType: 'OUTBOUND' });
+    expect(created.status).toBe(201);
+    const id = created.body.data.id as string;
+
+    // §5.1 is explicit that the status does not move.
+    expect(created.body.data.status).toBe('OPEN');
+
+    const row = await withTenant(tenantId, (db) =>
+      db.inquiry.findFirstOrThrow({ where: { id: BigInt(id) }, select: { awaitingRate: true } }),
     );
-    const result = await notify({});
-    expect(result.kind).toBe('price-team');
-    expect(result.recipients).toBe(0);
-    expect(result.queued).toBe(false);
+    expect(row.awaitingRate).toBe(true);
+
+    const outbox = await outboxFor(id);
+    expect(outbox[0]?.templateKey).toBe('INQUIRY_PRICE_TEAM');
+    // Resolved from PURCHASE.RATE.MANAGE_PROFIT, not from a typed address list.
+    expect(outbox[0]?.toAddresses.length).toBeGreaterThan(0);
+  });
+
+  it('does not chase agents on an inbound lane we can already price', async () => {
+    // The client's exception, on the real path: the inquiry is still shared and
+    // still says RFQ_SENT, and no message goes out.
+    await withTenant(tenantId, (db) =>
+      db.freightRate.create({
+        data: {
+          tenantId,
+          code: `FR-IP-${Math.random().toString(36).slice(2, 8)}`,
+          mode: 'SEA_FCL',
+          polId,
+          podId,
+          carrierId,
+          goodsTypeId: rateGoodsTypeId,
+          currencyId: rateCurrencyId,
+          validFrom: new Date(Date.now() - 86_400_000),
+          validTo: new Date(Date.now() + 30 * 86_400_000),
+          status: 'PUBLISHED',
+          purchaseSourceType: 'CARRIER',
+          purchaseCarrierId: carrierId,
+        },
+      }),
+    );
+
+    const created = await raise({
+      movementType: 'INBOUND',
+      goodsTypeId: rateGoodsTypeId.toString(),
+      partyIds: [agentId.toString()],
+      partyContactIds: [agentPicId.toString()],
+    });
+    expect(created.status).toBe(201);
+    const id = created.body.data.id as string;
+
+    expect(created.body.data.status).toBe('RFQ_SENT');
+    expect(await outboxFor(id)).toHaveLength(0);
+
+    // The share row says nobody was chased, which is the honest record.
+    const parties = await withTenant(tenantId, (db) =>
+      db.inquiryParty.findMany({ where: { inquiryId: BigInt(id) } }),
+    );
+    expect(parties[0]?.notifiedAt).toBeNull();
+
+    await withTenant(tenantId, (db) =>
+      db.freightRate.updateMany({ data: { deletedAt: new Date() } }),
+    );
   });
 });

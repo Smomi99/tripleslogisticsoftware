@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { QueueMailInput } from './email-queue';
+import type { RoutePlan } from './inquiry-routing';
 import type { TenantDb } from './tenant-client';
 
 /**
@@ -44,6 +45,21 @@ function stubDb(over: {
   } as unknown as TenantDb;
 }
 
+/**
+ * Who to write to is decided by the routing service now (§5.1), so these tests
+ * hand a plan in. What they assert is unchanged and is the dangerous half:
+ * WHAT each audience is told, and what they are not.
+ */
+const plan = (over: Partial<RoutePlan> = {}): RoutePlan => ({
+  branch: 'INBOUND_SHARED',
+  status: 'RFQ_SENT',
+  awaitingRate: false,
+  agentEmails: [],
+  priceTeamEmails: [],
+  liveRates: 0,
+  ...over,
+});
+
 const base = {
   tenantId: 7n,
   inquiryId: 1n,
@@ -51,7 +67,6 @@ const base = {
   polLabel: 'Chattogram',
   podLabel: 'Aarhus',
   customerName: CUSTOMER,
-  laneMatched: false,
   appUrl: 'https://acme.example.com',
 };
 
@@ -64,7 +79,11 @@ describe('the agent copy', () => {
     queued.length = 0;
     const result = await notifyInquiry(
       stubDb({ contacts: [{ agentPic: { email: 'mette@nordic.test' } }] }),
-      { ...base, movementType: 'INBOUND' },
+      {
+        ...base,
+        movementType: 'INBOUND',
+        plan: plan({ agentEmails: ['mette@nordic.test'] }),
+      },
     );
 
     expect(result.kind).toBe('agents');
@@ -110,9 +129,15 @@ describe('the agent copy', () => {
 describe('the price team copy', () => {
   it('names the customer, because they are staff', async () => {
     queued.length = 0;
-    const result = await notifyInquiry(stubDb({ priceTeam: 'pricing@forwarder.test' }), {
+    const result = await notifyInquiry(stubDb({}), {
       ...base,
       movementType: 'OUTBOUND',
+      plan: plan({
+        branch: 'OUTBOUND_AWAITING_RATE',
+        status: 'OPEN',
+        awaitingRate: true,
+        priceTeamEmails: ['pricing@forwarder.test'],
+      }),
     });
 
     expect(result.kind).toBe('price-team');
@@ -126,10 +151,11 @@ describe('the price team copy', () => {
 describe('a lane that already has a rate', () => {
   it('produces no mail at all', async () => {
     queued.length = 0;
-    const result = await notifyInquiry(stubDb({ priceTeam: 'pricing@forwarder.test' }), {
+    const result = await notifyInquiry(stubDb({}), {
       ...base,
       movementType: 'OUTBOUND',
-      laneMatched: true,
+      // A live rate covers the lane, so the plan asks for nobody.
+      plan: plan({ branch: 'OUTBOUND_PRICED', status: 'PRICED', liveRates: 2 }),
     });
     expect(result.kind).toBe('none');
     expect(queued).toHaveLength(0);
