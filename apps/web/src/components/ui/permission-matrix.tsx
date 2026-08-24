@@ -63,6 +63,8 @@ const ACTION_LABEL: Record<Action, string> = {
   CONVERT_QUOTE: 'Quote',
   QUOTE: 'Quote',
   SET_OUTCOME: 'Won / lost',
+  PRICE_CHECK: 'Price check',
+  CARRIER_POSITION: 'Carrier position',
 };
 
 export function PermissionMatrix({

@@ -29,6 +29,31 @@ export const MOVEMENT_TYPE_LABEL: Record<MovementType, string> = {
   OUTBOUND: 'Outbound',
 };
 
+/**
+ * One carrier's standing on a lane (§6.2's Carrier Position, from CR-001).
+ *
+ * The two positions are the forwarder's own judgement, recorded per carrier per
+ * port pair: who is cheapest, and who actually delivers. They disagree often —
+ * the cheapest carrier on a lane is rarely the one you would put urgent cargo
+ * on — which is why the screen sorts by either and shows both.
+ */
+export interface CarrierPositionDto {
+  carrierId: string;
+  carrierName: string;
+  carrierTypeName: string | null;
+  /** 1 is cheapest. Null when nobody has ranked them yet. */
+  lowPricePosition: string | null;
+  /** 1 is best service. Null when nobody has ranked them yet. */
+  servicePosition: string | null;
+  rankSource: string;
+  remarks: string | null;
+  /** Live published rates we hold with this carrier on this lane, today. */
+  liveRates: number;
+}
+
+export const CARRIER_POSITION_SORTS = ['price', 'service'] as const;
+export type CarrierPositionSort = (typeof CARRIER_POSITION_SORTS)[number];
+
 /** One commodity on an inquiry, with the HS code that belongs to it. */
 export interface InquiryCommodityDto {
   commodityItemId: string;

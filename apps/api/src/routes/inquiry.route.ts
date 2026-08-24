@@ -22,6 +22,7 @@ import {
   type InquiryVolumeDto,
   type LookupOption,
   type AgentQuoteCommentDto,
+  type CarrierPositionDto,
   agentQuoteCommentInputSchema,
   agentQuoteDecisionSchema,
   type StaffAgentQuoteDto,
@@ -1262,6 +1263,104 @@ inquiryRouter.post(
       data: commentToDto(result.created, 'STAFF', result.forwarderName),
     };
     res.status(201).json(payload);
+  },
+);
+
+/**
+ * GET /api/tenant/sales/inquiries/:id/carrier-position
+ *
+ * §6.2: "opens the lane ranking from carrier_port_pair (CR-001) for this
+ * inquiry's POL→POD — cheapest-first and best-service-first. This is what those
+ * rankings were built for."
+ *
+ * The reverse of the carrier screen's own port-pair list: that one asks "which
+ * lanes does this carrier serve", and this asks "who serves this lane". Same
+ * rows, and the question a salesman actually has in front of an inquiry.
+ *
+ * Behind its own permission (§7). The ranking is the forwarder's commercial
+ * judgement built up over years, and a new starter reading an inquiry does not
+ * automatically get to read it.
+ */
+inquiryRouter.get(
+  '/inquiries/:id/carrier-position',
+  requirePermission(`${FEATURE}.CARRIER_POSITION`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'inquiry');
+    const sort = req.query['sort'] === 'service' ? 'service' : 'price';
+
+    const rows = await withTenant(auth.tenantId, async (db) => {
+      // The same visibility rule the inquiry itself obeys: a salesman who
+      // cannot see the inquiry cannot see the lane analysis for it.
+      const inquiry = await findScopedInquiry(db, auth, id);
+
+      const pairs = await db.carrierPortPair.findMany({
+        where: {
+          polId: inquiry.polId,
+          podId: inquiry.podId,
+          deletedAt: null,
+          isActive: true,
+        },
+        select: {
+          carrierId: true,
+          lowPricePosition: true,
+          servicePosition: true,
+          rankSource: true,
+          remarks: true,
+          carrier: { select: { name: true, type: { select: { name: true } } } },
+        },
+      });
+
+      // Whether we currently buy from each of them on this lane. A carrier
+      // ranked first on price we hold no rate with is a different conversation
+      // from one we already buy.
+      const today = startOfToday();
+      const live = await db.freightRate.groupBy({
+        by: ['carrierId'],
+        where: {
+          deletedAt: null,
+          status: 'PUBLISHED',
+          polId: inquiry.polId,
+          podId: inquiry.podId,
+          validFrom: { lte: today },
+          validTo: { gte: today },
+        },
+        _count: { _all: true },
+      });
+      const liveByCarrier = new Map(
+        live.map((r) => [r.carrierId.toString(), r._count._all]),
+      );
+
+      return pairs.map<CarrierPositionDto>((p) => ({
+        carrierId: p.carrierId.toString(),
+        carrierName: p.carrier?.name ?? '—',
+        carrierTypeName: p.carrier?.type?.name ?? null,
+        lowPricePosition: p.lowPricePosition?.toString() ?? null,
+        servicePosition: p.servicePosition?.toString() ?? null,
+        rankSource: p.rankSource,
+        remarks: p.remarks,
+        liveRates: liveByCarrier.get(p.carrierId.toString()) ?? 0,
+      }));
+    });
+
+    /*
+     * Sorted here rather than in SQL because of the nulls.
+     *
+     * An unranked carrier is not "position zero" — it is a carrier nobody has
+     * judged yet, and putting it at the top of a cheapest-first list would be a
+     * recommendation we never made. They go last, whichever way the list is
+     * sorted.
+     */
+    const key = sort === 'service' ? 'servicePosition' : 'lowPricePosition';
+    rows.sort((a, b) => {
+      const left = a[key] === null ? Number.POSITIVE_INFINITY : Number(a[key]);
+      const right = b[key] === null ? Number.POSITIVE_INFINITY : Number(b[key]);
+      if (left !== right) return left - right;
+      return a.carrierName.localeCompare(b.carrierName);
+    });
+
+    const payload: ApiSuccess<CarrierPositionDto[]> = { success: true, data: rows };
+    res.json(payload);
   },
 );
 

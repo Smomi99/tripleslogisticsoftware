@@ -56,7 +56,7 @@ async function cleanup(): Promise<void> {
     // Queued mail records who caused it, so it goes before the users.
     'email_log',
     'inquiry_party_contact', 'inquiry_party', 'inquiry_commodity', 'inquiry_volume', 'inquiry',
-    'freight_rate', 'goods_type',
+    'freight_rate', 'goods_type', 'carrier_port_pair',
     'agent_pic', 'agent', 'carrier_pic', 'carrier', 'customer_pic', 'customer', 'industry_sector', 'port', '"user"',
   ]) {
     await owner.$executeRawUnsafe(`DELETE FROM ${t} WHERE tenant_id IN ${scope}`);
@@ -442,5 +442,114 @@ describe('routing an inquiry the way it is actually saved', () => {
     await withTenant(tenantId, (db) =>
       db.freightRate.updateMany({ data: { deletedAt: new Date() } }),
     );
+  });
+});
+
+describe('carrier position — the lane ranking (§6.2)', () => {
+  /*
+   * CR-001 built these rankings and they have had nowhere to be read since.
+   * This is the screen they were built for, so what matters is that the right
+   * carriers come back, in the right order, for the right lane.
+   */
+  let secondCarrierId: bigint;
+  let otherPodId: bigint;
+
+  beforeAll(async () => {
+    const carrierType = await owner.carrierType.findFirstOrThrow({ select: { id: true } });
+    secondCarrierId = (
+      await owner.carrier.create({
+        data: { tenantId, code: 'CAR-IP2', name: 'Second Lines', typeId: carrierType.id },
+        select: { id: true },
+      })
+    ).id;
+    otherPodId = (
+      await owner.port.create({
+        data: {
+          tenantId,
+          code: 'IPOTH',
+          name: 'Other Port',
+          portCode: 'IPOTH',
+          country: 'Denmark',
+          type: 'SEAPORT',
+        },
+        select: { id: true },
+      })
+    ).id;
+
+    // Cheapest is not best served: the two orderings disagree on purpose.
+    await owner.carrierPortPair.create({
+      data: {
+        tenantId,
+        code: 'CPP-IP1',
+        carrierId,
+        polId,
+        podId,
+        lowPricePosition: '2',
+        servicePosition: '1',
+      },
+    });
+    await owner.carrierPortPair.create({
+      data: {
+        tenantId,
+        code: 'CPP-IP2',
+        carrierId: secondCarrierId,
+        polId,
+        podId,
+        lowPricePosition: '1',
+        servicePosition: '3',
+      },
+    });
+    // Ranked on a different lane. Must not appear.
+    await owner.carrierPortPair.create({
+      data: {
+        tenantId,
+        code: 'CPP-IP3',
+        carrierId,
+        polId,
+        podId: otherPodId,
+        lowPricePosition: '1',
+        servicePosition: '1',
+      },
+    });
+  });
+
+  // Not async: supertest's Test is the thing .expect() lives on, and wrapping
+  // it in a promise hands back something that has no such method.
+  const position = (inquiryId: string, sort?: string) =>
+    as().get(
+      `/api/tenant/sales/inquiries/${inquiryId}/carrier-position${sort === undefined ? '' : `?sort=${sort}`}`,
+    );
+
+  it('ranks cheapest first by default', async () => {
+    const created = await raise({ movementType: 'OUTBOUND' });
+    const res = await position(created.body.data.id as string).expect(200);
+    expect(res.body.data.map((r: { carrierName: string }) => r.carrierName)).toEqual([
+      'Second Lines',
+      'IP Carrier',
+    ]);
+  });
+
+  it('ranks best service first when asked', async () => {
+    const created = await raise({ movementType: 'OUTBOUND' });
+    const res = await position(created.body.data.id as string, 'service').expect(200);
+    // The other way round, which is the whole reason both orderings exist.
+    expect(res.body.data.map((r: { carrierName: string }) => r.carrierName)).toEqual([
+      'IP Carrier',
+      'Second Lines',
+    ]);
+  });
+
+  it('shows only carriers on this inquiry lane', async () => {
+    const created = await raise({ movementType: 'OUTBOUND' });
+    const res = await position(created.body.data.id as string).expect(200);
+    expect(res.body.data).toHaveLength(2);
+  });
+
+  it('reports whether we already buy from each of them', async () => {
+    const created = await raise({ movementType: 'OUTBOUND' });
+    const res = await position(created.body.data.id as string).expect(200);
+    // No live rate on this lane in this test, so nobody is bought from — a
+    // carrier ranked first we hold no rate with is a different conversation.
+    for (const row of res.body.data) expect(row.liveRates).toBe(0);
   });
 });

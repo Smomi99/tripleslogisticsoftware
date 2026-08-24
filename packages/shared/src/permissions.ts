@@ -30,6 +30,19 @@ export const ACTIONS = [
   'ATTACH_PRICE',
   'CONVERT_QUOTE',
   'SET_OUTCOME',
+  /*
+   * §7 gives these two their own actions, and they earn it.
+   *
+   * PRICE_CHECK opens what the company paid for the lane. VIEW_BUY_PRICE
+   * already guards that column on the purchase screens; a salesman who may
+   * read an inquiry does not automatically get to read the buying side of it.
+   *
+   * CARRIER_POSITION opens the lane ranking — which carrier is cheapest and
+   * which serves it best. That is the forwarder's own commercial judgement,
+   * built up over years, and worth being able to withhold from a new starter.
+   */
+  'PRICE_CHECK',
+  'CARRIER_POSITION',
   // The agent side of an inquiry: sending a price back, and changing it while
   // the inquiry is still open. Separate from CREATE/EDIT because it is not the
   // inquiry being written — it is an answer to one.
@@ -116,6 +129,8 @@ const INQUIRY: readonly Action[] = [
   'ATTACH_PRICE',
   'CONVERT_QUOTE',
   'SET_OUTCOME',
+  'PRICE_CHECK',
+  'CARRIER_POSITION',
 ];
 
 export interface FeatureDefinition {
@@ -181,7 +196,10 @@ export const FEATURES: readonly FeatureDefinition[] = [
   // New Inquiry and Inquiry List are two views of one record, so they share
   // one feature — §6 writes it as a single SALES.INQUIRY. Capturing an inquiry
   // and working it are the same permission; what differs is the action.
-  { module: 'SALES', feature: 'SALES.INQUIRY', label: 'Inquiry', actions: INQUIRY },
+  // The spec renames the menu item: "Inquiry List -> Renamed Live Inquiry".
+  // This label is the screen's name everywhere -- sidebar, breadcrumb and the
+  // permission matrix -- so it changes in one place.
+  { module: 'SALES', feature: 'SALES.INQUIRY', label: 'Live Inquiry', actions: INQUIRY },
   // The only feature an agent account is ever granted. VIEW shows the
   // inquiries they were selected for; QUOTE lets them answer one, so a
   // forwarder can give read-only access to a junior at the agent.

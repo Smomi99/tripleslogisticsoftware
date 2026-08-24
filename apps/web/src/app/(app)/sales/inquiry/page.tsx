@@ -24,6 +24,7 @@ import { useSession } from '@/lib/session';
 import { useMasterList } from '@/lib/use-master-list';
 
 import { AgentQuoteDrawer } from './agent-quote-drawer';
+import { CarrierPositionDrawer } from './carrier-position-drawer';
 import { FollowupDrawer } from './followup-drawer';
 import { PriceDrawer } from './price-drawer';
 import { ViewDrawer } from './view-drawer';
@@ -71,6 +72,7 @@ export default function InquiryListPage() {
   const [options, setOptions] = useState<InquiryOptions | null>(null);
   const [viewing, setViewing] = useState<InquiryDto | null>(null);
   const [followingUp, setFollowingUp] = useState<InquiryDto | null>(null);
+  const [carrierPosition, setCarrierPosition] = useState<InquiryDto | null>(null);
   const [agentQuotes, setAgentQuotes] = useState<InquiryDto | null>(null);
   const [pricing, setPricing] = useState<InquiryDto | null>(null);
   const [quoting, setQuoting] = useState<string | null>(null);
@@ -157,7 +159,7 @@ export default function InquiryListPage() {
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
-        title="Inquiry"
+        title="Live Inquiry"
         description="Every customer request on the board. Price it, follow it up, and turn it into a quotation."
         action={
           can('SALES.INQUIRY.CREATE') ? (
@@ -314,9 +316,18 @@ export default function InquiryListPage() {
                 Edit
               </Button>
             )}
-            {can('SALES.INQUIRY.ATTACH_PRICE') && (
+            {/* §7 gives Price Check its own action: a salesman who may read
+                an inquiry does not automatically get to read what the company
+                paid for the lane. */}
+            {can('SALES.INQUIRY.PRICE_CHECK') && (
               <Button variant="text" size="inline" onClick={() => setPricing(row)}>
                 Price
+              </Button>
+            )}
+            {/* §6.2's sixth action, and what CR-001's rankings were built for. */}
+            {can('SALES.INQUIRY.CARRIER_POSITION') && (
+              <Button variant="text" size="inline" onClick={() => setCarrierPosition(row)}>
+                Carrier Position
               </Button>
             )}
             {/* What the agents came back with. Same permission as viewing the
@@ -407,6 +418,11 @@ export default function InquiryListPage() {
         onClose={() => setViewing(null)}
         onChanged={() => void list.reload()}
       />
+      <CarrierPositionDrawer
+        inquiry={carrierPosition}
+        onClose={() => setCarrierPosition(null)}
+      />
+
       <FollowupDrawer
         inquiry={followingUp}
         onClose={() => setFollowingUp(null)}
