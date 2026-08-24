@@ -122,7 +122,33 @@ const RATE_LOOKUPS = {
     { code: 'OPENTOP', name: 'Open Top', sortOrder: 3 },
     { code: 'REEFER', name: 'Reefer', sortOrder: 4 },
   ],
+  /**
+   * TOS — the eleven Incoterms 2020 rules, in their canonical order. EXW…DDP
+   * apply to any transport mode; FAS, FOB, CFR and CIF are sea and inland
+   * waterway only, noted in the name rather than enforced, since the client did
+   * not ask for that rule.
+   */
   tos: [
+    { code: 'EXW', name: 'EXW — Ex Works', sortOrder: 1 },
+    { code: 'FCA', name: 'FCA — Free Carrier', sortOrder: 2 },
+    { code: 'FAS', name: 'FAS — Free Alongside Ship (sea only)', sortOrder: 3 },
+    { code: 'FOB', name: 'FOB — Free On Board (sea only)', sortOrder: 4 },
+    { code: 'CFR', name: 'CFR — Cost and Freight (sea only)', sortOrder: 5 },
+    { code: 'CIF', name: 'CIF — Cost, Insurance and Freight (sea only)', sortOrder: 6 },
+    { code: 'CPT', name: 'CPT — Carriage Paid To', sortOrder: 7 },
+    { code: 'CIP', name: 'CIP — Carriage and Insurance Paid To', sortOrder: 8 },
+    { code: 'DPU', name: 'DPU — Delivered at Place Unloaded', sortOrder: 9 },
+    { code: 'DAP', name: 'DAP — Delivered at Place', sortOrder: 10 },
+    { code: 'DDP', name: 'DDP — Delivered Duty Paid', sortOrder: 11 },
+  ],
+  /**
+   * Mode — where the carrier takes the cargo and where it hands it back.
+   *
+   * This is the documented assumption, not a stated client rule: open question
+   * 1 of the module spec. No values were invented for it — these are the seven
+   * the product already had.
+   */
+  mode: [
     { code: 'CY/CY', name: 'CY / CY' },
     { code: 'CY/CFS', name: 'CY / CFS' },
     { code: 'CFS/CY', name: 'CFS / CY' },
@@ -130,25 +156,6 @@ const RATE_LOOKUPS = {
     { code: 'DOOR/DOOR', name: 'Door / Door' },
     { code: 'DOOR/CY', name: 'Door / CY' },
     { code: 'CY/DOOR', name: 'CY / Door' },
-  ],
-  /**
-   * The client's "Modes" list. The values they supplied are the eleven
-   * Incoterms 2020 rules, in their order. EXW…DDP apply to any transport mode;
-   * FAS, FOB, CFR and CIF are sea and inland waterway only — noted in the name
-   * rather than enforced, since the client did not ask for that rule.
-   */
-  mode: [
-    { code: 'EXW', name: 'EXW — Ex Works' },
-    { code: 'FCA', name: 'FCA — Free Carrier' },
-    { code: 'FAS', name: 'FAS — Free Alongside Ship (sea only)' },
-    { code: 'FOB', name: 'FOB — Free On Board (sea only)' },
-    { code: 'CFR', name: 'CFR — Cost and Freight (sea only)' },
-    { code: 'CIF', name: 'CIF — Cost, Insurance and Freight (sea only)' },
-    { code: 'CPT', name: 'CPT — Carriage Paid To' },
-    { code: 'CIP', name: 'CIP — Carriage and Insurance Paid To' },
-    { code: 'DPU', name: 'DPU — Delivered at Place Unloaded' },
-    { code: 'DAP', name: 'DAP — Delivered at Place' },
-    { code: 'DDP', name: 'DDP — Delivered Duty Paid' },
   ],
   inquirySource: [
     { code: 'CALL', name: 'Direct Call' },

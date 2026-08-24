@@ -108,6 +108,7 @@ const inquiryInclude = {
   pod: { select: { id: true, name: true, portCode: true } },
   commodityItem: { select: { id: true, name: true } },
   tos: { select: { id: true, name: true } },
+  mode: { select: { id: true, name: true } },
   parties: {
     select: {
       id: true,
@@ -200,6 +201,8 @@ function toDto(inquiry: InquiryWithRelations, today: Date): InquiryDto {
     hsCode: inquiry.hsCode,
     tosId: inquiry.tosId?.toString() ?? null,
     tosName: inquiry.tos?.name ?? null,
+    modeId: inquiry.modeId?.toString() ?? null,
+    modeName: inquiry.mode?.name ?? null,
     loadingType: inquiry.loadingType,
     currencyId: inquiry.currencyId?.toString() ?? null,
     currencyCode:
@@ -236,8 +239,9 @@ export interface InquiryFormOptions {
   seaPorts: LookupOption[];
   airPorts: LookupOption[];
   commodities: { id: string; name: string; hsCode: string | null }[];
+  /** TOS — the eleven Incoterms. */
   termsOfShipment: LookupOption[];
-  /** The client's "Modes" list — Incoterms. */
+  /** Mode — the CY/CY family. */
   modes: LookupOption[];
   currencies: LookupOption[];
   salesmen: LookupOption[];
@@ -285,7 +289,9 @@ inquiryRouter.get('/inquiry-options', requirePermission(`${FEATURE}.VIEW`), asyn
         db.tos.findMany({
           where: { ...excludeInactive(inactive, 'tos'), deletedAt: null, isActive: true },
           select: { id: true, name: true },
-          orderBy: { code: 'asc' },
+          // EXW…DDP is a sequence, not an alphabet. sortOrder moved onto this
+          // table with the swap, so the list can finally read in its own order.
+          orderBy: [{ sortOrder: 'asc' }, { code: 'asc' }],
         }),
         db.currency.findMany({
           where: { ...excludeInactive(inactive, 'currency'), deletedAt: null, isActive: true },
@@ -355,6 +361,7 @@ async function assertReferences(
   podId: bigint;
   commodityItemId: bigint | null;
   tosId: bigint | null;
+  modeId: bigint | null;
   currencyId: bigint | null;
   salesmanId: bigint | null;
   leadId: bigint | null;
@@ -414,8 +421,11 @@ async function assertReferences(
   const commodityItemId = await optional(input.commodityItemId, 'commodity', (id) =>
     db.commodityItem.findFirst({ where: { id, deletedAt: null, isActive: true }, select: { id: true } }),
   );
-  const tosId = await optional(input.tosId, 'term of shipment', (id) =>
+  const tosId = await optional(input.tosId, 'Incoterm', (id) =>
     db.tos.findFirst({ where: { id, deletedAt: null, isActive: true }, select: { id: true } }),
+  );
+  const modeId = await optional(input.modeId, 'mode', (id) =>
+    db.mode.findFirst({ where: { id, deletedAt: null, isActive: true }, select: { id: true } }),
   );
   const currencyId = await optional(input.currencyId, 'currency', (id) =>
     db.currency.findFirst({ where: { id, deletedAt: null, isActive: true }, select: { id: true } }),
@@ -434,6 +444,7 @@ async function assertReferences(
     podId,
     commodityItemId,
     tosId,
+    modeId,
     currencyId,
     salesmanId,
     leadId,
@@ -612,6 +623,7 @@ async function updateInquiry(
       commodityItemId: refs.commodityItemId,
       hsCode: input.hsCode || null,
       tosId: refs.tosId,
+      modeId: refs.modeId,
       loadingType: input.loadingType ?? null,
       notifyEmails: input.notifyEmails || null,
       currencyId: refs.currencyId,
@@ -660,6 +672,7 @@ inquiryRouter.post('/inquiries', requirePermission(`${FEATURE}.CREATE`), async (
             commodityItemId: refs.commodityItemId,
             hsCode: input.hsCode === undefined || input.hsCode === '' ? null : input.hsCode,
             tosId: refs.tosId,
+            modeId: refs.modeId,
             loadingType: input.loadingType ?? null,
             notifyEmails: input.notifyEmails || null,
             currencyId: refs.currencyId,

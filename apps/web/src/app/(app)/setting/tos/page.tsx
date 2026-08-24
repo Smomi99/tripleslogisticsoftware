@@ -23,7 +23,7 @@ export default function TosPage() {
       endpoint="/api/tenant/setting/tos"
       feature="SETTING.TOS"
       title="TOS"
-      description="Terms of shipment — where the carrier takes the cargo and where it hands it back."
+      description="Incoterms — which party carries cost and risk over each leg of the journey."
       noun="term"
       addLabel="+ Add term"
       searchPlaceholder="Search terms of shipment"

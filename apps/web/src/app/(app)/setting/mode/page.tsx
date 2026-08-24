@@ -27,7 +27,7 @@ export default function ModePage() {
       endpoint="/api/tenant/setting/modes"
       feature="SETTING.MODE"
       title="Modes"
-      description="Incoterms — which party carries cost and risk over each leg of the journey."
+      description="Terms of shipment — where the carrier takes the cargo and where it hands it back."
       noun="mode"
       addLabel="+ Add mode"
       searchPlaceholder="Search modes"

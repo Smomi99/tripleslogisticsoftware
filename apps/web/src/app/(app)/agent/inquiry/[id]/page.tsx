@@ -116,8 +116,8 @@ export default function PortalInquiryDetailPage() {
           <Detail label="Place of receipt" value={inquiry.placeOfReceipt} />
           <Detail label="Shipment" value={inquiry.shipmentType} />
           <Detail label="Loading type" value={inquiry.loadingType} />
-          <Detail label="Terms of service" value={inquiry.tosName} />
-          <Detail label="Incoterm" value={inquiry.modeName} />
+          <Detail label="Incoterm" value={inquiry.tosName} />
+          <Detail label="Terms of shipment" value={inquiry.modeName} />
           <Detail label="Commodity" value={inquiry.commodityName} />
           <Detail label="HS code" value={inquiry.hsCode} mono />
           <Detail label="Inquiry date" value={inquiry.inquiryDate} mono />

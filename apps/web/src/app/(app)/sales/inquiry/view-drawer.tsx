@@ -79,7 +79,8 @@ export function ViewDrawer({
     ['Place of receipt', inquiry.placeOfReceipt ?? '—'],
     ['Commodity', inquiry.commodityName ?? '—'],
     ['HS code', inquiry.hsCode ?? '—'],
-    ['Terms of shipment', inquiry.tosName ?? '—'],
+    ['TOS (Incoterm)', inquiry.tosName ?? '—'],
+    ['Mode', inquiry.modeName ?? '—'],
     ['Loading type', inquiry.loadingType ?? '—'],
     [
       inquiry.movementType === 'INBOUND' ? 'Agents' : 'Customers notified',

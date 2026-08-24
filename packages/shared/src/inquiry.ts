@@ -206,6 +206,8 @@ export const inquiryInputSchema = z
     commodityItemId: optionalIdField,
     hsCode: z.string().trim().max(50, 'HS code is too long.').optional(),
     tosId: optionalIdField,
+    /** §6.5 asks for TOS and Mode as separate header fields. */
+    modeId: optionalIdField,
     /**
      * Sea only. Chooses which columns the volume grid offers, and is left unset
      * on an Air inquiry where the question does not arise.
@@ -283,6 +285,8 @@ export interface InquiryDto {
   hsCode: string | null;
   tosId: string | null;
   tosName: string | null;
+  modeId: string | null;
+  modeName: string | null;
   loadingType: LoadingType | null;
   currencyId: string | null;
   currencyCode: string | null;

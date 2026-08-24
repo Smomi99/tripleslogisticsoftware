@@ -583,6 +583,8 @@ function registerSimpleLookup(
   feature: string,
   noun: string,
   schema: typeof tosInputSchema,
+  /** Only `tos` has a sort_order to read; the others go by code. */
+  orderBy = 'l.code ASC',
 ): void {
   const model = (db: Parameters<typeof toggleSystemLookup>[0]): SimpleLookupModel => {
     const chosen = table === 'tos' ? db.tos : table === 'mode' ? db.mode : db.inquirySource;
@@ -598,7 +600,7 @@ function registerSimpleLookup(
         isActive: query.isActive,
         page: query.page,
         limit: query.limit,
-        orderBy: 'l.code ASC',
+        orderBy,
       }),
     );
 
@@ -683,8 +685,17 @@ function registerSimpleLookup(
   );
 }
 
-registerSimpleLookup('tos', 'tos', 'SETTING.TOS', 'Terms of shipment', tosInputSchema);
-// The client calls this screen "Modes"; the values are Incoterms. Same shape as
+// The screen is called TOS and the values are the eleven Incoterms. EXW…DDP is
+// a sequence rather than an alphabet, so it reads in sort order.
+registerSimpleLookup(
+  'tos',
+  'tos',
+  'SETTING.TOS',
+  'Incoterm',
+  tosInputSchema,
+  'l.sort_order ASC, l.code ASC',
+);
+// The screen is called Modes and the values are the CY/CY family. Same shape as
 // TOS — a code and a name — so it shares the registrar rather than repeating it.
 registerSimpleLookup('modes', 'mode', 'SETTING.MODE', 'Mode', tosInputSchema);
 registerSimpleLookup(

@@ -45,6 +45,7 @@ interface InquiryOptions {
   airPorts: LookupOption[];
   commodities: { id: string; name: string; hsCode: string | null }[];
   termsOfShipment: LookupOption[];
+  modes: LookupOption[];
   currencies: LookupOption[];
   salesmen: LookupOption[];
   containerSizes: LookupOption[];
@@ -60,6 +61,7 @@ const EMPTY: InquiryOptions = {
   airPorts: [],
   commodities: [],
   termsOfShipment: [],
+  modes: [],
   currencies: [],
   salesmen: [],
   containerSizes: [],
@@ -149,6 +151,7 @@ export function InquiryForm({
   const [hsCode, setHsCode] = useState(inquiry?.hsCode ?? '');
   const [placeOfReceipt, setPlaceOfReceipt] = useState(inquiry?.placeOfReceipt ?? '');
   const [tosId, setTosId] = useState(inquiry?.tosId ?? '');
+  const [modeId, setModeId] = useState(inquiry?.modeId ?? '');
   const [loadingType, setLoadingType] = useState<'' | 'FCL' | 'LCL'>(
     inquiry?.loadingType ?? '',
   );
@@ -444,6 +447,7 @@ export function InquiryForm({
             commodityItemId,
             hsCode,
             tosId,
+            modeId,
             loadingType: loadingType === '' ? undefined : loadingType,
             currencyId,
             expectedShipmentDate,
@@ -749,12 +753,27 @@ export function InquiryForm({
             <Input id="hsCode" numeric value={hsCode} onChange={(e) => setHsCode(e.target.value)} />
           </Field>
 
+          {/* TOS is the Incoterm — which party carries cost and risk. */}
           <Field id="tosId" label="TOS" error={errorFor('tosId')}>
             <Select id="tosId" value={tosId} onChange={(e) => setTosId(e.target.value)}>
-              <option value="">Select terms</option>
+              <option value="">Select an Incoterm</option>
               {options.termsOfShipment.map((tos) => (
                 <option key={tos.id} value={tos.id}>
                   {tos.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+
+          {/* Mode is where the carrier takes the cargo and hands it back —
+              CY/CY and its family. §6.5 wants both fields on the header, and
+              until now the form offered only one. */}
+          <Field id="modeId" label="Mode" error={errorFor('modeId')}>
+            <Select id="modeId" value={modeId} onChange={(e) => setModeId(e.target.value)}>
+              <option value="">Select a mode</option>
+              {options.modes.map((mode) => (
+                <option key={mode.id} value={mode.id}>
+                  {mode.name}
                 </option>
               ))}
             </Select>
