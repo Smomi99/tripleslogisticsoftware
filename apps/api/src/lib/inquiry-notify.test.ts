@@ -28,7 +28,8 @@ vi.mock('./email-queue', () => ({
   },
 }));
 
-const { notifyInquiry, INQUIRY_AGENT_RFQ, INQUIRY_PRICE_TEAM } = await import('./inquiry-notify');
+const { notifyInquiry, INQUIRY_AGENT_RFQ, INQUIRY_CARRIER_RFQ, INQUIRY_PRICE_TEAM } =
+  await import('./inquiry-notify');
 
 const CUSTOMER = 'Confidential Shipper Ltd';
 
@@ -36,11 +37,16 @@ const CUSTOMER = 'Confidential Shipper Ltd';
 function stubDb(over: {
   contacts?: { agentPic: { email: string } | null }[];
   priceTeam?: string | null;
+  signature?: string | null;
 }): TenantDb {
   return {
     inquiryPartyContact: { findMany: () => Promise.resolve(over.contacts ?? []) },
     notificationSetting: {
-      findFirst: () => Promise.resolve({ priceTeamEmails: over.priceTeam ?? null }),
+      findFirst: () =>
+        Promise.resolve({
+          priceTeamEmails: over.priceTeam ?? null,
+          signatureBlock: over.signature ?? null,
+        }),
     },
   } as unknown as TenantDb;
 }
@@ -55,6 +61,7 @@ const plan = (over: Partial<RoutePlan> = {}): RoutePlan => ({
   status: 'RFQ_SENT',
   awaitingRate: false,
   agentEmails: [],
+  carrierEmails: [],
   priceTeamEmails: [],
   liveRates: 0,
   ...over,
@@ -67,12 +74,103 @@ const base = {
   polLabel: 'Chattogram',
   podLabel: 'Aarhus',
   customerName: CUSTOMER,
+  // The three facts the client's rate request opens with.
+  commodity: 'Knitted garments',
+  volume: "1 x 20STD + 1 x 40HC",
+  expectedShipmentDate: '2026-09-15',
+  senderName: 'Tanjila Sathi',
+  senderDesignation: 'Sr. Executive, Business Development & Pricing',
   appUrl: 'https://acme.example.com',
 };
 
 /** Everything a template could possibly render, as one string. */
 const surfaceOf = (input: QueueMailInput) =>
   [input.fallback.subject, input.fallback.bodyText, JSON.stringify(input.variables)].join('\n');
+
+describe("the carrier copy (docs/Email Templet.docx)", () => {
+  const carrier = () =>
+    notifyInquiry(stubDb({ signature: 'TRIPLE S LOGISTICS, Banani, Dhaka-1213' }), {
+      ...base,
+      movementType: 'OUTBOUND',
+      plan: plan({
+        branch: 'OUTBOUND_AWAITING_RATE',
+        status: 'OPEN',
+        carrierEmails: ['pricing@maersk.test'],
+      }),
+    });
+
+  it('asks the question the client asks', async () => {
+    queued.length = 0;
+    await carrier();
+    const sent = queued.find((q) => q.templateKey === INQUIRY_CARRIER_RFQ);
+    expect(sent).toBeDefined();
+    const surface = surfaceOf(sent!);
+    expect(surface).toContain('Rate Request');
+    expect(surface).toContain('Knitted garments');
+    expect(surface).toContain("1 x 20STD + 1 x 40HC");
+    expect(surface).toContain('2026-09-15');
+    expect(surface).toContain('validity');
+  });
+
+  it('never names the customer either', async () => {
+    /*
+     * The client's own letter does not name the shipper, and neither does
+     * this. A carrier is not an agent, but the reasoning that keeps the
+     * customer off the agent's copy — they can approach them directly —
+     * applies at least as strongly to a shipping line.
+     */
+    queued.length = 0;
+    await carrier();
+    const sent = queued.find((q) => q.templateKey === INQUIRY_CARRIER_RFQ);
+    expect(surfaceOf(sent!)).not.toContain(CUSTOMER);
+  });
+
+  it('points nobody at a login they do not have', async () => {
+    queued.length = 0;
+    await carrier();
+    const sent = queued.find((q) => q.templateKey === INQUIRY_CARRIER_RFQ);
+    const surface = surfaceOf(sent!);
+    expect(surface).not.toContain('Submit your quotation');
+    expect(surface).not.toContain('user ID');
+  });
+
+  it('signs off with the salesman and the workspace block', async () => {
+    queued.length = 0;
+    await carrier();
+    const surface = surfaceOf(queued.find((q) => q.templateKey === INQUIRY_CARRIER_RFQ)!);
+    expect(surface).toContain('Tanjila Sathi');
+    expect(surface).toContain('TRIPLE S LOGISTICS');
+  });
+
+  it('still tells the price team, so a lane cannot go quiet', async () => {
+    queued.length = 0;
+    const result = await notifyInquiry(stubDb({}), {
+      ...base,
+      movementType: 'OUTBOUND',
+      plan: plan({
+        branch: 'OUTBOUND_AWAITING_RATE',
+        status: 'OPEN',
+        carrierEmails: ['pricing@maersk.test'],
+        priceTeamEmails: ['pricing@acme.test'],
+      }),
+    });
+    expect(queued.map((q) => q.templateKey).sort()).toEqual([
+      INQUIRY_CARRIER_RFQ,
+      INQUIRY_PRICE_TEAM,
+    ]);
+    expect(result.recipients).toBe(2);
+  });
+
+  it('sends nothing when no carrier contact was ticked', async () => {
+    queued.length = 0;
+    await notifyInquiry(stubDb({}), {
+      ...base,
+      movementType: 'OUTBOUND',
+      plan: plan({ branch: 'OUTBOUND_PRICED', status: 'PRICED' }),
+    });
+    expect(queued).toHaveLength(0);
+  });
+});
 
 describe('the agent copy', () => {
   it('never names the customer', async () => {
@@ -115,8 +213,12 @@ describe('the agent copy', () => {
 
   it('still carries the lane, which is what they are being asked to price', async () => {
     expect(surfaceOf(queued[0]!)).toContain('INQ-2026-000042');
-    expect(queued[0]?.fallback.bodyText).toContain('Chattogram → Aarhus');
-    expect(queued[0]?.fallback.subject).toContain('quotation requested');
+    // The client's letter states the lane as two lines rather than an arrow,
+    // and puts both ends plus the inquiry number in the subject.
+    expect(queued[0]?.fallback.bodyText).toContain('POL: Chattogram');
+    expect(queued[0]?.fallback.bodyText).toContain('POD: Aarhus');
+    expect(queued[0]?.fallback.subject).toContain('Rate Request');
+    expect(queued[0]?.fallback.subject).toContain('INQ-2026-000042');
   });
 
   it('files the message against the inquiry it is about', async () => {

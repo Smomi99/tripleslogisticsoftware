@@ -414,26 +414,111 @@ async function seedRateLookups(): Promise<number> {
  * only way to keep that true through a tenant-editable template is for the
  * value never to reach the renderer.
  */
+/*
+ * The client's own wording, from docs/Email Templet.docx.
+ *
+ * Two audiences, one letter. The carrier and the agent are asked the identical
+ * question — quote this lane, with validity and surcharges — and the client
+ * wrote them as two documents differing in a single line: the agent is told
+ * where to submit, because the agent has a login and the carrier does not.
+ *
+ * Three things in their document are deliberately NOT baked in here:
+ *
+ *   the customer      never appears, and must not. §2.1 rule 2: an agent who
+ *                     learns who the shipper is can approach them directly.
+ *                     Their template does not name the customer either, which
+ *                     is the client agreeing with the rule rather than an
+ *                     accident to be tidied up.
+ *   the signer        "Tanjila Sathi, Sr. Executive" is a person, not a
+ *                     constant. It resolves from the inquiry's salesman, so
+ *                     the reply goes to whoever is actually working the lane.
+ *   the company block their Banani and Chattogram addresses are Triple S's.
+ *                     These templates are shared rows every workspace falls
+ *                     back to, so the block comes from the workspace's own
+ *                     notification settings via {{signature}}.
+ *
+ * A placeholder with no value renders empty, so a workspace that has filled in
+ * none of this still sends a correct, if unsigned, letter.
+ */
+const RFQ_BODY = [
+  'Dear Sir/Madam,',
+  '',
+  'Hope you are doing well.',
+  '',
+  'We are currently working to secure the below shipment and would appreciate',
+  'your best possible freight rate:',
+  '',
+  'Commodity: {{commodity}}',
+  'POL: {{polLabel}}',
+  'POD: {{podLabel}}',
+  'Volume: {{volume}}',
+  'Expected Shipment Date: {{expectedShipmentDate}}',
+  '',
+  'Could you please quote your most competitive rate for the above shipment,',
+  'along with the applicable validity and any relevant surcharges?',
+];
+
+const RFQ_SIGN_OFF = [
+  '',
+  'Your prompt support and best rate would be highly appreciated.',
+  '',
+  'Kind regards,',
+  '{{senderName}}',
+  '{{senderDesignation}}',
+  '',
+  '{{signature}}',
+];
+
 const EMAIL_TEMPLATES = [
   {
     key: 'INQUIRY_AGENT_RFQ',
-    name: 'Inquiry — request a quotation from an agent',
-    subject: 'Inquiry {{code}} — quotation requested ({{polLabel}} → {{podLabel}})',
+    name: 'Inquiry — rate request to an agent',
+    subject: 'Rate Request. POL: {{polLabel}}, POD: {{podLabel}}, Inquiry No: {{code}}',
     bodyText: [
-      'An inquiry is waiting for your quotation.',
+      ...RFQ_BODY,
       '',
-      'Inquiry:   {{code}}',
-      'Lane:      {{polLabel}} → {{podLabel}}',
-      'Movement:  {{movement}}',
-      '',
-      'Quote it here: {{link}}',
+      // The one line that differs from the carrier's letter.
+      'Submit your quotation at {{link}}',
+      "If you don't have a user ID and password, please contact me.",
+      ...RFQ_SIGN_OFF,
     ].join('\n'),
-    variables: ['code', 'polLabel', 'podLabel', 'movement', 'link'],
+    variables: [
+      'code',
+      'polLabel',
+      'podLabel',
+      'commodity',
+      'volume',
+      'expectedShipmentDate',
+      'senderName',
+      'senderDesignation',
+      'signature',
+      'link',
+    ],
+  },
+  {
+    key: 'INQUIRY_CARRIER_RFQ',
+    name: 'Inquiry — rate request to a carrier',
+    subject: 'Rate Request. POL: {{polLabel}}, POD: {{podLabel}}, Inquiry No: {{code}}',
+    // No submission link: a carrier has no login, and the reply comes back by
+    // email to the salesman who signed it.
+    bodyText: [...RFQ_BODY, ...RFQ_SIGN_OFF].join('\n'),
+    variables: [
+      'code',
+      'polLabel',
+      'podLabel',
+      'commodity',
+      'volume',
+      'expectedShipmentDate',
+      'senderName',
+      'senderDesignation',
+      'signature',
+    ],
   },
   {
     key: 'INQUIRY_PRICE_TEAM',
     name: 'Inquiry — no live rate, please obtain one',
     subject: 'Rate needed — {{code}} ({{polLabel}} → {{podLabel}})',
+    // Internal, so this one may name the customer.
     bodyText: [
       'This outbound lane has no live buying rate. Please obtain one from a carrier.',
       '',
@@ -461,15 +546,39 @@ const EMAIL_TEMPLATES = [
   },
 ] as const;
 
-/** Idempotent: a workspace that has edited its own copy is never overwritten. */
+/**
+ * The product's default letters.
+ *
+ * The shared row (tenant_id NULL) is the product's own wording, so when that
+ * wording changes the row is refreshed rather than skipped — otherwise a fix to
+ * a template only ever reaches workspaces created after it, which is not a
+ * default at all. §7A rule 7 stops a tenant editing a shared row, so nothing
+ * anyone typed is at risk here.
+ *
+ * A workspace that wants its own wording gets a tenant-owned row instead, and
+ * this never touches those.
+ */
 async function seedEmailTemplates(): Promise<number> {
   let created = 0;
   for (const [index, row] of EMAIL_TEMPLATES.entries()) {
     const existing = await prisma.emailTemplate.findFirst({
       where: { key: row.key, tenantId: null, deletedAt: null },
-      select: { id: true },
+      select: { id: true, subject: true, bodyText: true },
     });
-    if (existing !== null) continue;
+    if (existing !== null) {
+      if (existing.subject !== row.subject || existing.bodyText !== row.bodyText) {
+        await prisma.emailTemplate.update({
+          where: { id: existing.id },
+          data: {
+            name: row.name,
+            subject: row.subject,
+            bodyText: row.bodyText,
+            variables: [...row.variables],
+          },
+        });
+      }
+      continue;
+    }
     await prisma.emailTemplate.create({
       data: {
         code: formatCode(CODE_PREFIX.emailTemplate, index + 1),

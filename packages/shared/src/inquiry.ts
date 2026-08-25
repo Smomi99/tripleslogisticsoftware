@@ -379,6 +379,8 @@ export interface InquiryDto {
   remarks: string | null;
   salesmanId: string | null;
   salesmanName: string | null;
+  /** Signed under the name on the client's rate request (§ Email Templet). */
+  salesmanDesignation: string | null;
   status: InquiryStatus;
   quotedPrice: string | null;
   leadId: string | null;
@@ -546,8 +548,22 @@ export const notificationSettingSchema = z.object({
       'One of those is not an email address.',
     )
     .default(''),
+  /**
+   * How outgoing mail signs off — the company block at the foot of the rate
+   * requests sent to agents and carriers (docs/Email Templet.docx).
+   *
+   * Free text on purpose: it is an address, a phone number and a website laid
+   * out the way the company writes them, and every attempt to structure that
+   * ends in a form nobody's letterhead quite fits.
+   *
+   * It lives here rather than in the template because the seeded templates are
+   * shared with every workspace on the server, and one company's address under
+   * another company's letter is the leak §7A rule 7 is about.
+   */
+  signatureBlock: z.string().trim().max(2000, 'That signature is too long.').default(''),
 });
 
 export interface NotificationSettingDto {
   priceTeamEmails: string;
+  signatureBlock: string;
 }

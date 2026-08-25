@@ -22,6 +22,7 @@ const ENDPOINT = '/api/tenant/setting/notifications';
 export default function NotificationSettingPage() {
   const { authorizedRequest, can } = useSession();
   const [priceTeamEmails, setPriceTeamEmails] = useState('');
+  const [signatureBlock, setSignatureBlock] = useState('');
   const [isLoading, setLoading] = useState(true);
   const [isSaving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,7 +31,10 @@ export default function NotificationSettingPage() {
     let cancelled = false;
     void authorizedRequest<NotificationSettingDto>(ENDPOINT)
       .then((data) => {
-        if (!cancelled) setPriceTeamEmails(data.priceTeamEmails);
+        if (!cancelled) {
+          setPriceTeamEmails(data.priceTeamEmails);
+          setSignatureBlock(data.signatureBlock);
+        }
       })
       .catch(() => undefined)
       .finally(() => {
@@ -42,7 +46,7 @@ export default function NotificationSettingPage() {
   }, [authorizedRequest]);
 
   async function save(): Promise<void> {
-    const parsed = notificationSettingSchema.safeParse({ priceTeamEmails });
+    const parsed = notificationSettingSchema.safeParse({ priceTeamEmails, signatureBlock });
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? 'Check the addresses.');
       return;
@@ -92,6 +96,33 @@ export default function NotificationSettingPage() {
           An inbound inquiry goes to the agent contacts chosen on it instead, and nothing is sent
           at all when the lane already has a live rate — there is nothing to ask for.
         </p>
+
+        <div className="mt-5 border-t border-line pt-4">
+          <Field
+            id="signatureBlock"
+            label="Email signature"
+            hint="The company block at the foot of every rate request sent to an agent or a carrier. Your name and designation are added above it from the inquiry's salesman."
+            wide
+          >
+            <textarea
+              id="signatureBlock"
+              rows={5}
+              value={signatureBlock}
+              disabled={isLoading || !mayEdit}
+              placeholder={[
+                'YOUR COMPANY LTD',
+                'Office address',
+                'Tel: +880 ... | web: www.example.com',
+              ].join('\n')}
+              onChange={(e) => setSignatureBlock(e.target.value)}
+              className="w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-body text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour"
+            />
+          </Field>
+          <p className="mt-2 text-cell text-steel">
+            Left empty, the letters still go — unsigned. Nothing is filled in for you, because a
+            sign-off is the one part of a rate request that has to be yours.
+          </p>
+        </div>
 
         {mayEdit && (
           <div className="mt-4">

@@ -139,7 +139,9 @@ const inquiryInclude = {
     },
   },
   currency: { select: { id: true, currency: true } },
-  salesman: { select: { id: true, name: true } },
+  // Designation too: the client's rate request signs off with it under the
+  // salesman's name, the way their own letter does.
+  salesman: { select: { id: true, name: true, designation: true } },
   volumes: {
     where: { deletedAt: null },
     include: {
@@ -247,6 +249,7 @@ function toDto(inquiry: InquiryWithRelations, today: Date): InquiryDto {
     remarks: inquiry.remarks,
     salesmanId: inquiry.salesmanId?.toString() ?? null,
     salesmanName: inquiry.salesman?.name ?? null,
+    salesmanDesignation: inquiry.salesman?.designation ?? null,
     status: inquiry.status,
     quotedPrice: optionalMoney(inquiry.quotedPrice),
     leadId: inquiry.leadId?.toString() ?? null,
@@ -874,6 +877,26 @@ inquiryRouter.post('/inquiries', requirePermission(`${FEATURE}.CREATE`), async (
  * not roll back an inquiry that saved correctly, so this is deliberately not
  * awaited inside withTenant and its failures never reach the response.
  */
+/**
+ * "1 x 20' STD + 1 x 40' HC", the way the client writes it on their letter.
+ *
+ * Their sample uses the size code rather than the master's full name, because
+ * that is the shorthand a carrier's pricing desk reads at a glance.
+ */
+function renderVolume(dto: InquiryDto): string {
+  if (dto.volumes.length === 0) return 'To be confirmed';
+  const parts = dto.volumes
+    .map((v) => {
+      if (v.volumeKind === 'FCL') {
+        return `${v.quantity ?? 0} x ${v.containerSizeCode ?? v.containerSizeNote ?? '?'}`;
+      }
+      if (v.volumeKind === 'LCL') return `${v.cbm ?? '0'} CBM`;
+      return `${v.weightKg ?? '0'} KG`;
+    })
+    .filter((part) => part !== '');
+  return parts.length === 0 ? 'To be confirmed' : parts.join(' + ');
+}
+
 async function notifyAfterSave(
   auth: { tenantId: bigint; userId: bigint },
   dto: InquiryDto,
@@ -890,6 +913,17 @@ async function notifyAfterSave(
         polLabel: `${dto.polCode} ${dto.polName}`,
         podLabel: `${dto.podCode} ${dto.podName}`,
         customerName: dto.customerName,
+        // The three facts the client's rate request opens with.
+        commodity:
+          dto.commodities.length === 0
+            ? 'As per attached'
+            : dto.commodities.map((c) => c.name).join(', '),
+        volume: renderVolume(dto),
+        expectedShipmentDate: dto.expectedShipmentDate,
+        // Signed by whoever is working the lane, so the reply comes back to
+        // them rather than to a name baked into a template.
+        senderName: dto.salesmanName,
+        senderDesignation: dto.salesmanDesignation,
         appUrl: env.APP_URL ?? null,
         plan,
       });

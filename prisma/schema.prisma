@@ -2657,6 +2657,12 @@ model NotificationSetting {
   /// Comma-separated. Who to tell when an Outbound lane has no live rate and
   /// someone has to go and get one from a carrier.
   priceTeamEmails String? @map("price_team_emails") @db.Text
+  /// How outgoing mail signs off: the company name, addresses, phone and web
+  /// the client's templates end with. Here rather than in the template text
+  /// because the seeded templates are shared with every workspace, and one
+  /// company's address under another company's rate request is exactly the
+  /// leak §7A rule 7 is about.
+  signatureBlock  String? @map("signature_block") @db.Text
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)

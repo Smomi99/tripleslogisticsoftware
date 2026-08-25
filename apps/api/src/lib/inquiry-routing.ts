@@ -38,6 +38,15 @@ export interface RoutePlan {
   awaitingRate: boolean;
   /** Agent contacts to ask, empty when nobody is being asked. */
   agentEmails: string[];
+  /**
+   * Carrier contacts to ask.
+   *
+   * inquiry_party_contact has carried carrier_pic_id since §6.1's "Share to
+   * Agent / Carrier", and until now nothing read it — a user could tick a
+   * carrier's contact and no letter would ever go. These are the people the
+   * client's "Email To Carrier" template is addressed to.
+   */
+  carrierEmails: string[];
   /** Pricing team addresses, empty unless the lane needs buying. */
   priceTeamEmails: string[];
   /** How many live rates matched. Zero on the inbound-share path. */
@@ -173,6 +182,7 @@ export async function decideRoute(db: TenantDb, input: RouteInput): Promise<Rout
           .filter((email) => email !== ''),
       ),
     ];
+    const carrierEmails = await carrierContacts(db, input.inquiryId);
 
     const shared = await db.inquiryParty.count({
       where: { inquiryId: input.inquiryId, agentId: { not: null } },
@@ -185,6 +195,7 @@ export async function decideRoute(db: TenantDb, input: RouteInput): Promise<Rout
         status: 'OPEN',
         awaitingRate: false,
         agentEmails: [],
+        carrierEmails: [],
         priceTeamEmails: [],
         liveRates,
       };
@@ -198,10 +209,16 @@ export async function decideRoute(db: TenantDb, input: RouteInput): Promise<Rout
       status: 'RFQ_SENT',
       awaitingRate: false,
       agentEmails: liveRates > 0 ? [] : agentEmails,
+      carrierEmails: liveRates > 0 ? [] : carrierEmails,
       priceTeamEmails: [],
       liveRates,
     };
   }
+
+  // Outbound. The carriers ticked on the form are asked for a rate on the same
+  // terms as the agents: the client's exception is about not chasing anyone for
+  // a lane we can already price, and it does not care who the letter is to.
+  const carrierEmails = await carrierContacts(db, input.inquiryId);
 
   if (liveRates > 0) {
     return {
@@ -209,6 +226,7 @@ export async function decideRoute(db: TenantDb, input: RouteInput): Promise<Rout
       status: 'PRICED',
       awaitingRate: false,
       agentEmails: [],
+      carrierEmails: [],
       priceTeamEmails: [],
       liveRates,
     };
@@ -219,9 +237,35 @@ export async function decideRoute(db: TenantDb, input: RouteInput): Promise<Rout
     status: 'OPEN',
     awaitingRate: true,
     agentEmails: [],
+    carrierEmails,
+    /*
+     * The price team is still told, even when carriers are being asked
+     * directly. Their job is to make sure the lane ends up with a rate, and an
+     * inquiry that quietly asked two carriers and nobody else is how a lane
+     * goes unpriced for a week while everyone assumes somebody has it.
+     */
     priceTeamEmails: await priceTeamAddresses(db),
     liveRates,
   };
+}
+
+/**
+ * The carrier contacts ticked on this inquiry.
+ *
+ * Same shape as the agent gather above, and deliberately so: the operator
+ * chose these people on the form, and choosing them was the act of deciding
+ * who to ask.
+ */
+async function carrierContacts(db: TenantDb, inquiryId: bigint): Promise<string[]> {
+  const contacts = await db.inquiryPartyContact.findMany({
+    where: { inquiryId, carrierPicId: { not: null } },
+    select: { carrierPic: { select: { email: true } } },
+  });
+  return [
+    ...new Set(
+      contacts.map((c) => c.carrierPic?.email?.trim() ?? '').filter((email) => email !== ''),
+    ),
+  ];
 }
 
 /**

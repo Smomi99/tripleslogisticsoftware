@@ -24,12 +24,17 @@ const FEATURE = 'SETTING.NOTIFICATION';
 notificationSettingRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
   const auth = req.auth!;
   const row = await withTenant(auth.tenantId, (db) =>
-    db.notificationSetting.findFirst({ select: { priceTeamEmails: true } }),
+    db.notificationSetting.findFirst({
+      select: { priceTeamEmails: true, signatureBlock: true },
+    }),
   );
 
   const payload: ApiSuccess<NotificationSettingDto> = {
     success: true,
-    data: { priceTeamEmails: row?.priceTeamEmails ?? '' },
+    data: {
+      priceTeamEmails: row?.priceTeamEmails ?? '',
+      signatureBlock: row?.signatureBlock ?? '',
+    },
   };
   res.json(payload);
 });
@@ -45,22 +50,30 @@ notificationSettingRouter.put('/', requirePermission(`${FEATURE}.EDIT`), async (
         data: {
           tenantId: auth.tenantId,
           priceTeamEmails: input.priceTeamEmails || null,
+          signatureBlock: input.signatureBlock || null,
           createdBy: auth.userId,
           updatedBy: auth.userId,
         },
-        select: { priceTeamEmails: true },
+        select: { priceTeamEmails: true, signatureBlock: true },
       });
     }
     return db.notificationSetting.update({
       where: { id: existing.id },
-      data: { priceTeamEmails: input.priceTeamEmails || null, updatedBy: auth.userId },
-      select: { priceTeamEmails: true },
+      data: {
+        priceTeamEmails: input.priceTeamEmails || null,
+        signatureBlock: input.signatureBlock || null,
+        updatedBy: auth.userId,
+      },
+      select: { priceTeamEmails: true, signatureBlock: true },
     });
   });
 
   const payload: ApiSuccess<NotificationSettingDto> = {
     success: true,
-    data: { priceTeamEmails: saved.priceTeamEmails ?? '' },
+    data: {
+      priceTeamEmails: saved.priceTeamEmails ?? '',
+      signatureBlock: saved.signatureBlock ?? '',
+    },
   };
   res.json(payload);
 });
