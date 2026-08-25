@@ -40,7 +40,15 @@ interface SessionValue {
    * but it must still carry the bearer token and the same refresh-and-retry,
    * which is why it lives here rather than in the calling screen.
    */
-  authorizedUpload: <T>(path: string, file: File) => Promise<T>;
+  authorizedUpload: <T>(path: string, file: File, fields?: Record<string, string>) => Promise<T>;
+  /**
+   * A bearer-authenticated image, as a URL an <img> can use.
+   *
+   * Same problem authorizedDownload solves and the same answer: a browser
+   * loading an <img src> sends no Authorization header, so the bytes are
+   * fetched and handed over as an object URL. The caller revokes it.
+   */
+  authorizedObjectUrl: (path: string) => Promise<string>;
   /**
    * Downloads a bearer-authenticated file. A plain link cannot do this — a
    * browser navigation carries no Authorization header — so the response is
@@ -160,10 +168,13 @@ export function SessionProvider({
   );
 
   const authorizedUpload = useCallback(
-    async <T,>(path: string, file: File): Promise<T> =>
+    async <T,>(path: string, file: File, fields: Record<string, string> = {}): Promise<T> =>
       withRefresh(async (token) => {
         const body = new FormData();
         body.append('file', file);
+        // Alongside the file: a signature logo arrives with its alt text and
+        // the height it should be sent at.
+        for (const [key, value] of Object.entries(fields)) body.append(key, value);
         const response = await fetch(`${API_BASE}${path}`, {
           method: 'POST',
           credentials: 'include',
@@ -183,6 +194,24 @@ export function SessionProvider({
           throw new ApiError(response.status, payload.error.code, payload.error.message);
         }
         return payload.data;
+      }),
+    [withRefresh, tenantSlug],
+  );
+
+  const authorizedObjectUrl = useCallback(
+    async (path: string): Promise<string> =>
+      withRefresh(async (token) => {
+        const response = await fetch(`${API_BASE}${path}`, {
+          credentials: 'include',
+          headers: {
+            'X-Tenant-Slug': tenantSlug,
+            ...(token !== null ? { Authorization: `Bearer ${token}` } : {}),
+          },
+        });
+        if (!response.ok) {
+          throw new ApiError(response.status, 'FETCH_FAILED', 'Could not load that image.');
+        }
+        return URL.createObjectURL(await response.blob());
       }),
     [withRefresh, tenantSlug],
   );
@@ -274,8 +303,8 @@ export function SessionProvider({
   );
 
   const value = useMemo<SessionValue>(
-    () => ({ user, status, tenantSlug, signIn, signOut, authorizedRequest, authorizedList, authorizedUpload, authorizedDownload, can }),
-    [user, status, tenantSlug, signIn, signOut, authorizedRequest, authorizedList, authorizedUpload, authorizedDownload, can],
+    () => ({ user, status, tenantSlug, signIn, signOut, authorizedRequest, authorizedList, authorizedUpload, authorizedObjectUrl, authorizedDownload, can }),
+    [user, status, tenantSlug, signIn, signOut, authorizedRequest, authorizedList, authorizedUpload, authorizedObjectUrl, authorizedDownload, can],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;

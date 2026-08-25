@@ -56,6 +56,14 @@ export interface Mail {
   text: string;
   /** Optional richer part. The quotation needs it; a notification does not. */
   html?: string;
+  /**
+   * Images the HTML part refers to by cid, carried inside the message.
+   *
+   * Inline rather than linked because Outlook and Gmail block remote images
+   * from an unknown sender by default — a signature logo fetched over HTTP is
+   * a broken box to the one recipient it was meant to impress.
+   */
+  inlineImages?: { cid: string; content: Buffer; fileName: string }[];
 }
 
 export interface MailResult {
@@ -98,6 +106,18 @@ export async function sendMail(mail: Mail): Promise<MailResult> {
       subject: mail.subject,
       text: mail.text,
       ...(mail.html === undefined || mail.html === '' ? {} : { html: mail.html }),
+      ...(mail.inlineImages === undefined || mail.inlineImages.length === 0
+        ? {}
+        : {
+            attachments: mail.inlineImages.map((image) => ({
+              filename: image.fileName,
+              content: image.content,
+              cid: image.cid,
+              // Referenced by the body, so it belongs in the message rather
+              // than in the recipient's list of attachments to open.
+              contentDisposition: 'inline' as const,
+            })),
+          }),
     });
     logger.info(
       { subject: mail.subject, to: recipients.length, cc: copies.length },

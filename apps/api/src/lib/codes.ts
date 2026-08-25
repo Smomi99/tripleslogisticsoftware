@@ -23,6 +23,7 @@ import type { TenantDb } from './tenant-client';
  * it is never taken from caller input — only from this map.
  */
 const CODE_TABLES = {
+  mailSignatureLogo: 'mail_signature_logo',
   port: 'port',
   costHead: 'cost_head',
   costUnit: 'cost_unit',

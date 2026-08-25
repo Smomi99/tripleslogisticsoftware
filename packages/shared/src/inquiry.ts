@@ -567,3 +567,37 @@ export interface NotificationSettingDto {
   priceTeamEmails: string;
   signatureBlock: string;
 }
+
+/**
+ * A logo at the foot of an outgoing letter.
+ *
+ * The client's sign-off carries three: their own mark, and the BAFFA and DP
+ * Alliance memberships a carrier's pricing desk looks for before answering a
+ * stranger. They are sent inside the message rather than linked, because a
+ * remote image is blocked by default in the clients that matter.
+ */
+export const mailSignatureLogoSchema = z.object({
+  altText: z
+    .string()
+    .trim()
+    .min(1, 'Say what the logo is, for readers who block images.')
+    .max(200, 'That is too long.'),
+  /** Logos arrive at wildly different pixel sizes; this puts them on one line. */
+  heightPx: z.coerce
+    .number()
+    .int()
+    .min(8, 'Too small to read.')
+    .max(200, 'Too tall for a signature.')
+    .default(40),
+});
+
+export type MailSignatureLogoInput = z.infer<typeof mailSignatureLogoSchema>;
+
+export interface MailSignatureLogoDto {
+  id: string;
+  code: string;
+  fileName: string;
+  altText: string;
+  heightPx: number;
+  isActive: boolean;
+}

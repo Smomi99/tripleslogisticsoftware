@@ -1,5 +1,11 @@
 import { logger } from './logger';
 import { render, resolveTemplate } from './email-template';
+import {
+  loadSignatureLogos,
+  OUTWARD_TEMPLATES,
+  renderSignedHtml,
+  type SignatureLogo,
+} from './mail-signature';
 import { sendMail } from './mailer';
 import { prisma } from './prisma';
 import { withTenant } from './tenant-client';
@@ -156,11 +162,42 @@ function backoffFor(attempts: number): Date {
  * worker is the claim above.
  */
 async function deliver(row: ClaimedRow): Promise<'sent' | 'retry' | 'failed'> {
+  /*
+   * The company's sign-off, resolved at send time rather than at queue time.
+   *
+   * A letter waiting in the outbox should go out under the letterhead the
+   * company has now — if somebody replaced a logo an hour ago, the queued
+   * message is not a reason to send the old one. Only the outward-facing
+   * letters get it; an internal alert is a note between colleagues.
+   */
+  let logos: SignatureLogo[] = [];
+  let html = row.body_html;
+  if (OUTWARD_TEMPLATES.has(row.template_key)) {
+    try {
+      logos = await withTenant(row.tenant_id, (db) => loadSignatureLogos(db, row.tenant_id));
+    } catch (error) {
+      // A letterhead that cannot be read is not a reason to hold the letter.
+      logger.warn({ err: error, emailLogId: row.id.toString() }, 'signature logos unavailable');
+    }
+    if (logos.length > 0 && html === null) {
+      html = renderSignedHtml(row.body_text, logos);
+    }
+  }
+
   const result = await sendMail({
     to: row.to_addresses,
     subject: row.subject,
     text: row.body_text,
-    ...(row.body_html === null ? {} : { html: row.body_html }),
+    ...(html === null ? {} : { html }),
+    ...(logos.length > 0
+      ? {
+          inlineImages: logos.map((logo) => ({
+            cid: logo.cid,
+            content: logo.content,
+            fileName: logo.fileName,
+          })),
+        }
+      : {}),
     ...(row.cc_addresses.length > 0 ? { cc: row.cc_addresses } : {}),
   });
 
@@ -168,7 +205,15 @@ async function deliver(row: ClaimedRow): Promise<'sent' | 'retry' | 'failed'> {
     await withTenant(row.tenant_id, (db) =>
       db.emailLog.update({
         where: { id: row.id },
-        data: { status: 'SENT', sentAt: new Date(), error: null, lockedAt: null },
+        data: {
+          status: 'SENT',
+          sentAt: new Date(),
+          error: null,
+          lockedAt: null,
+          // What actually went out, so the record and the recipient's copy
+          // are the same document.
+          ...(html === null ? {} : { bodyHtml: html }),
+        },
       }),
     );
     return 'sent';

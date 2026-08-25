@@ -277,6 +277,7 @@ model Tenant {
   quotationCommodities QuotationCommodity[]
   quotationRecipients QuotationRecipient[]
   quotationFollowups  QuotationFollowup[]
+  mailSignatureLogos MailSignatureLogo[]
   @@map("tenant")
 }
 
@@ -1683,6 +1684,8 @@ model User {
   quotationRecipientsCreated QuotationRecipient[] @relation("QuotationRecipientCreatedBy")
   quotationFollowupsCreated QuotationFollowup[] @relation("QuotationFollowupCreatedBy")
   quotationFollowupsUpdated QuotationFollowup[] @relation("QuotationFollowupUpdatedBy")
+  mailSignatureLogosCreated MailSignatureLogo[] @relation("MailSignatureLogoCreatedBy")
+  mailSignatureLogosUpdated MailSignatureLogo[] @relation("MailSignatureLogoUpdatedBy")
   @@map("user")
 }
 
@@ -3425,4 +3428,43 @@ enum RecipientSource {
   MANUAL
 
   @@map("recipient_source")
+}
+
+/// A logo at the foot of an outgoing letter.
+///
+/// The client's signature carries three — their own mark, and the BAFFA and DP
+/// Alliance memberships. A carrier's pricing desk reads those before deciding
+/// whether to answer a stranger, so they are credentials rather than decoration.
+///
+/// Sent as CID inline attachments: the image travels inside the message. A
+/// hosted URL is blocked by default in Outlook and Gmail, and a data: URI is
+/// stripped outright, so neither survives the journey.
+model MailSignatureLogo {
+  tenantId  BigInt    @map("tenant_id")
+  id        BigInt    @id @default(autoincrement())
+  code      String    @db.VarChar(32)
+  /// Object storage key; the bytes never touch the database.
+  fileKey   String    @map("file_key") @db.VarChar(500)
+  /// Shown when images are blocked. Required: a blank box where a credential
+  /// was is worse than the words.
+  altText   String    @map("alt_text") @db.VarChar(200)
+  sortOrder Int       @default(0) @map("sort_order")
+  /// Rendered height, so logos of different pixel sizes sit on one line.
+  heightPx  Int       @default(40) @map("height_px")
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  createdByUser User? @relation("MailSignatureLogoCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("MailSignatureLogoUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@map("mail_signature_logo")
 }

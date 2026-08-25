@@ -10,6 +10,8 @@ import { PageHeader } from '@/components/ui/form-layout';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 
+import { SignatureLogos } from './signature-logos';
+
 const ENDPOINT = '/api/tenant/setting/notifications';
 
 /**
@@ -123,6 +125,8 @@ export default function NotificationSettingPage() {
             sign-off is the one part of a rate request that has to be yours.
           </p>
         </div>
+
+        <SignatureLogos mayEdit={mayEdit} />
 
         {mayEdit && (
           <div className="mt-4">

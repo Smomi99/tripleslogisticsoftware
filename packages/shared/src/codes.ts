@@ -43,6 +43,7 @@ export const CODE_PREFIX = {
   containerSize: 'CNT',
   containerType: 'CTY',
   emailTemplate: 'EMT',
+  mailSignatureLogo: 'MSL',
   rateTier: 'RTR',
   tos: 'TOS',
   mode: 'MOD',
