@@ -9,15 +9,23 @@ import { signAccessToken } from '../lib/jwt';
 import { expireLapsedRates, ratesExpiringSoon } from '../lib/rate-expiry';
 
 /**
- * Rate versioning and expiry (docs/MODULE_PURCHASE_SALES.md §4 rules 1, 2, 3).
+ * Editing a rate, and the expiry job (docs/MODULE_PURCHASE_SALES.md §4).
  *
- * §7 names phase G alongside phase D as mandatory-test territory. Rule 1 calls
- * mutating a published rate in place "the single most expensive mistake
- * available in this module", because a quotation issued last month must still
- * resolve to the rate that was live when it was issued.
+ * Rule 1 used to say a published rate was superseded rather than edited, on the
+ * grounds that a quotation issued last month must still resolve to the rate
+ * that was live when it was issued. Editing now edits, because that grounds is
+ * covered twice over and the versioning was buying nothing but clutter:
  *
- * So the central assertion here is not that supersede produces a new row. It is
- * that the OLD row still holds every figure it was quoted at afterwards.
+ *   audit_log        carries a trigger on freight_rate, freight_rate_line and
+ *                    rate_local_charge, so every change is recorded with its
+ *                    old and new values. That is a better history than a
+ *                    duplicate row — it says what changed.
+ *   quotation_line   snapshots its own cost head, price, currency and
+ *                    conversion rate (§2.2), so an issued quotation never reads
+ *                    the rate table and cannot move when a rate does.
+ *
+ * So the assertions here are the mirror of what they were: one row, updated,
+ * with the audit trail holding what it used to say.
  */
 
 const owner = new PrismaClient({
@@ -181,24 +189,12 @@ async function createRate(over: Record<string, unknown> = {}): Promise<string> {
   return response.body.data.id;
 }
 
-const yesterday = (): string => {
-  const d = new Date(new Date().toISOString().slice(0, 10));
-  d.setUTCDate(d.getUTCDate() - 1);
-  return d.toISOString().slice(0, 10);
-};
 
-describe('§4 rule 1 — a published rate is superseded, never overwritten', () => {
-  it('leaves the original row holding every figure it was quoted at', async () => {
+describe('editing a published rate', () => {
+  it('updates the row rather than producing a second one', async () => {
     const originalId = await createRate();
+    const before = await owner.freightRate.count({ where: { tenantId, deletedAt: null } });
 
-    const before = await owner.freightRate.findFirstOrThrow({
-      where: { id: BigInt(originalId) },
-      include: { lines: true },
-    });
-    const originalSell = before.lines[0]!.sellPrice!.toFixed(4);
-    expect(originalSell).toBe('1200.0000');
-
-    // Re-buy the lane at a higher price.
     const response = await api.patch(`/api/tenant/purchase/rates/${originalId}`).send(
       rateBody({
         validFrom: '2034-01-01',
@@ -215,34 +211,23 @@ describe('§4 rule 1 — a published rate is superseded, never overwritten', () 
     );
     expect(response.status).toBe(200);
 
-    const replacementId = response.body.data.id;
-    expect(replacementId).not.toBe(originalId);
+    // The same rate, not a replacement. This is the whole point of the change:
+    // correcting a rate used to leave a duplicate and an expired row behind.
+    expect(response.body.data.id).toBe(originalId);
+    expect(await owner.freightRate.count({ where: { tenantId, deletedAt: null } })).toBe(before);
 
-    // The old row: same prices, same transit, closed off and marked expired.
     const after = await owner.freightRate.findFirstOrThrow({
       where: { id: BigInt(originalId) },
-      include: { lines: true },
+      include: { lines: { where: { deletedAt: null } } },
     });
-    expect(after.lines).toHaveLength(1);
-    expect(after.lines[0]!.buyPrice.toFixed(4)).toBe('1000.0000');
-    expect(after.lines[0]!.sellPrice!.toFixed(4)).toBe('1200.0000');
-    expect(after.transitDays).toBe(21);
-    expect(after.status).toBe('EXPIRED');
-    expect(after.validTo.toISOString().slice(0, 10)).toBe(yesterday());
-    expect(after.supersededById).toBe(BigInt(replacementId));
-
-    // The new row carries the new figures.
-    const replacement = await owner.freightRate.findFirstOrThrow({
-      where: { id: BigInt(replacementId) },
-      include: { lines: true },
-    });
-    expect(replacement.status).toBe('PUBLISHED');
-    expect(replacement.lines[0]!.buyPrice.toFixed(4)).toBe('1500.0000');
-    expect(replacement.lines[0]!.sellPrice!.toFixed(4)).toBe('1800.0000');
-    expect(replacement.supersededById).toBeNull();
+    expect(after.status).toBe('PUBLISHED');
+    expect(after.supersededById).toBeNull();
+    expect(after.lines[0]!.buyPrice.toFixed(4)).toBe('1500.0000');
+    expect(after.lines[0]!.sellPrice!.toFixed(4)).toBe('1800.0000');
+    expect(after.validTo.toISOString().slice(0, 10)).toBe('2034-12-31');
   });
 
-  it('gives the replacement its own code, leaving the original code intact', async () => {
+  it('keeps its code, because it is the same rate', async () => {
     const originalId = await createRate();
     const originalCode = (
       await owner.freightRate.findFirstOrThrow({ where: { id: BigInt(originalId) } })
@@ -252,126 +237,154 @@ describe('§4 rule 1 — a published rate is superseded, never overwritten', () 
       .patch(`/api/tenant/purchase/rates/${originalId}`)
       .send(rateBody({ validFrom: '2034-01-01', validTo: '2034-12-31' }));
     expect(response.status).toBe(200);
-    expect(response.body.data.code).not.toBe(originalCode);
-
-    const still = await owner.freightRate.findFirstOrThrow({ where: { id: BigInt(originalId) } });
-    expect(still.code).toBe(originalCode);
+    expect(response.body.data.code).toBe(originalCode);
   });
 
-  it('supersedes twice, leaving a walkable chain', async () => {
-    const v1 = await createRate();
-    const r2 = await api
-      .patch(`/api/tenant/purchase/rates/${v1}`)
-      .send(rateBody({ validFrom: '2034-01-01', validTo: '2034-12-31' }));
-    const v2 = r2.body.data.id;
-    const r3 = await api
-      .patch(`/api/tenant/purchase/rates/${v2}`)
-      .send(rateBody({ validFrom: '2035-01-01', validTo: '2035-12-31' }));
-    const v3 = r3.body.data.id;
+  it('keeps the line ids, which rate_profit_log points at', async () => {
+    // Matched to the submitted tiers rather than cleared and rebuilt, so the
+    // margin history stays attached to the line it describes.
+    const originalId = await createRate();
+    const before = await owner.freightRateLine.findFirstOrThrow({
+      where: { rateId: BigInt(originalId), deletedAt: null },
+      select: { id: true },
+    });
 
-    expect(r3.status).toBe(200);
-    const [a, b, c] = await Promise.all(
-      [v1, v2, v3].map((id) =>
-        owner.freightRate.findFirstOrThrow({
-          where: { id: BigInt(id) },
-          select: { status: true, supersededById: true },
-        }),
-      ),
-    );
-    expect(a!.supersededById).toBe(BigInt(v2));
-    expect(b!.supersededById).toBe(BigInt(v3));
-    expect(c!.supersededById).toBeNull();
-    expect(a!.status).toBe('EXPIRED');
-    expect(b!.status).toBe('EXPIRED');
-    expect(c!.status).toBe('PUBLISHED');
-  });
-
-  it('refuses to supersede an already superseded row', async () => {
-    const v1 = await createRate();
     await api
-      .patch(`/api/tenant/purchase/rates/${v1}`)
-      .send(rateBody({ validFrom: '2034-01-01', validTo: '2034-12-31' }));
+      .patch(`/api/tenant/purchase/rates/${originalId}`)
+      .send(
+        rateBody({
+          lines: [
+            { tierId: tierId.toString(), buyPrice: '1111.0000', profitType: 'FLAT', profitValue: '0' },
+          ],
+        }),
+      )
+      .expect(200);
 
-    const again = await api
-      .patch(`/api/tenant/purchase/rates/${v1}`)
-      .send(rateBody({ validFrom: '2036-01-01', validTo: '2036-12-31' }));
-    expect(again.status).toBe(409);
+    const after = await owner.freightRateLine.findFirstOrThrow({
+      where: { rateId: BigInt(originalId), deletedAt: null },
+      select: { id: true, buyPrice: true },
+    });
+    expect(after.id).toBe(before.id);
+    expect(after.buyPrice.toFixed(4)).toBe('1111.0000');
   });
 
-  it('closes off a rate that has not started yet without breaking the date check', async () => {
-    // valid_to would have to be yesterday, which is before this rate begins.
-    const future = new Date();
-    future.setUTCFullYear(future.getUTCFullYear() + 2);
-    const startsAt = future.toISOString().slice(0, 10);
+  it('records what it used to say, in the audit trail', async () => {
+    /*
+     * The reason editing in place is safe. The old figure is not lost — it is
+     * in audit_log with who changed it and when, which answers "what did we
+     * buy this at in March" better than a second row ever did.
+     */
+    const originalId = await createRate();
+    await api
+      .patch(`/api/tenant/purchase/rates/${originalId}`)
+      .send(
+        rateBody({
+          lines: [
+            { tierId: tierId.toString(), buyPrice: '1750.0000', profitType: 'FLAT', profitValue: '0' },
+          ],
+        }),
+      )
+      .expect(200);
 
-    const id = await createRate({ validFrom: startsAt, validTo: '2037-12-31' });
+    const entries = await owner.auditLog.findMany({
+      where: { tenantId, tableName: 'freight_rate_line', action: 'UPDATE' },
+      select: { oldValues: true, newValues: true },
+      orderBy: { id: 'desc' },
+      take: 1,
+    });
+    expect(entries).toHaveLength(1);
+    expect(JSON.stringify(entries[0]!.oldValues)).toContain('1000');
+    expect(JSON.stringify(entries[0]!.newValues)).toContain('1750');
+  });
+
+  it('does not trip the one-published-rate-per-lane constraint on itself', async () => {
+    // §4 rule 8's exclusion constraint sees the row it is already looking at.
+    // Editing in place has to be allowed to leave it exactly where it was.
+    const originalId = await createRate();
+    await api
+      .patch(`/api/tenant/purchase/rates/${originalId}`)
+      .send(rateBody({ remarks: 'corrected a typo' }))
+      .expect(200);
+  });
+
+  it('still edits a DRAFT in place, as it always did', async () => {
+    const draftId = await createRate({ status: 'DRAFT' });
     const response = await api
-      .patch(`/api/tenant/purchase/rates/${id}`)
-      .send(rateBody({ validFrom: startsAt, validTo: '2038-12-31' }));
-
+      .patch(`/api/tenant/purchase/rates/${draftId}`)
+      .send(rateBody({ status: 'DRAFT', remarks: 'still a draft' }));
     expect(response.status).toBe(200);
-    const old = await owner.freightRate.findFirstOrThrow({ where: { id: BigInt(id) } });
-    // Collapsed to a single day rather than an impossible window.
-    expect(old.validTo.toISOString().slice(0, 10)).toBe(startsAt);
-    expect(old.validFrom.toISOString().slice(0, 10)).toBe(startsAt);
-    expect(old.status).toBe('EXPIRED');
-  });
-
-  it('does not trip the §4 rule 8 overlap constraint on its own successor', async () => {
-    // Both rows cover the same lane and carrier; the sequence only works
-    // because the old one is expired before the new one is inserted.
-    const id = await createRate({ validFrom: '2026-01-01', validTo: '2033-12-31' });
-    const response = await api
-      .patch(`/api/tenant/purchase/rates/${id}`)
-      .send(rateBody({ validFrom: '2026-01-01', validTo: '2033-12-31' }));
-    expect(response.status).toBe(200);
-  });
-
-  it('still edits a DRAFT in place, since nothing can reference it', async () => {
-    const id = await createRate({ status: 'DRAFT' });
-    const response = await api
-      .patch(`/api/tenant/purchase/rates/${id}`)
-      .send(rateBody({ status: 'DRAFT', transitDays: '30' }));
-
-    expect(response.status, JSON.stringify(response.body.error ?? {})).toBe(200);
-    expect(response.body.data.id).toBe(id);
-    expect(response.body.data.transitDays).toBe(30);
-
-    const count = await owner.freightRate.count({ where: { tenantId, deletedAt: null } });
-    expect(count).toBe(1);
+    expect(response.body.data.id).toBe(draftId);
   });
 
   it('refuses to edit an expired rate at all', async () => {
-    const id = await createRate();
+    // Unchanged, and for the reason it always held: an expired rate describes a
+    // period that has closed, and editing one rewrites history rather than
+    // correcting a mistake.
+    const rateId = await createRate();
     await owner.freightRate.update({
-      where: { id: BigInt(id) },
+      where: { id: BigInt(rateId) },
       data: { status: 'EXPIRED' },
     });
-
     const response = await api
-      .patch(`/api/tenant/purchase/rates/${id}`)
-      .send(rateBody({ validFrom: '2034-01-01', validTo: '2034-12-31' }));
+      .patch(`/api/tenant/purchase/rates/${rateId}`)
+      .send(rateBody({ remarks: 'too late' }));
     expect(response.status).toBe(409);
-    expect(response.body.error.message).toMatch(/expired/i);
+    expect(response.body.error.message).toContain('expired rate cannot be edited');
+  });
+
+  it('refuses to edit a row superseded before the rule changed', async () => {
+    /*
+     * Rates versioned by the old behaviour are still in the database, on the
+     * VPS as much as here. The successor carries the live figures, so editing
+     * the retired row would put two answers on one lane.
+     */
+    const oldId = await createRate();
+    const newId = await createRate({ status: 'DRAFT' });
+    await owner.freightRate.update({
+      where: { id: BigInt(oldId) },
+      data: { status: 'EXPIRED', supersededById: BigInt(newId) },
+    });
+    const response = await api
+      .patch(`/api/tenant/purchase/rates/${oldId}`)
+      .send(rateBody({ remarks: 'no' }));
+    expect(response.status).toBe(409);
   });
 });
 
-describe('§4 rule 2 — the superseded version leaves the price list', () => {
-  it('shows the replacement and not its predecessor', async () => {
+describe('§4 rule 2 — the price list shows one rate per lane', () => {
+  it('shows the edited rate once, not twice', async () => {
+    /*
+     * This is what the change is for. Editing used to leave the original on
+     * the list as an expired row beside its replacement, so a price list grew
+     * a duplicate every time somebody corrected a validity date.
+     */
     const originalId = await createRate();
     const originalCode = (
       await owner.freightRate.findFirstOrThrow({ where: { id: BigInt(originalId) } })
     ).code;
 
-    const response = await api
+    await api
       .patch(`/api/tenant/purchase/rates/${originalId}`)
-      .send(rateBody({ validFrom: '2026-01-01', validTo: '2033-12-31' }));
-    const newCode = response.body.data.code;
+      .send(rateBody({ validFrom: '2026-01-01', validTo: '2033-12-31' }))
+      .expect(200);
 
     const list = await api.get('/api/tenant/purchase/price-list?mode=SEA_FCL&limit=100');
     const codes: string[] = list.body.data.map((r: { code: string }) => r.code);
-    expect(codes).toContain(newCode);
-    expect(codes).not.toContain(originalCode);
+    expect(codes.filter((code) => code === originalCode)).toHaveLength(1);
+  });
+
+  it('still hides a rate expired the old way', async () => {
+    // Rows versioned before the rule changed stay hidden, on the VPS as here.
+    const rateId = await createRate();
+    const code = (await owner.freightRate.findFirstOrThrow({ where: { id: BigInt(rateId) } })).code;
+    await owner.freightRate.update({
+      where: { id: BigInt(rateId) },
+      data: { status: 'EXPIRED' },
+    });
+
+    const list = await api.get('/api/tenant/purchase/price-list?mode=SEA_FCL&limit=100');
+    const codes: string[] = list.body.data.map((r: { code: string }) => r.code);
+    expect(codes).not.toContain(code);
   });
 });
 

@@ -66,3 +66,20 @@ export interface PortDto {
    */
   isSystem: boolean;
 }
+
+/**
+ * How a port reads in a picker: `Chittagong - CGP`.
+ *
+ * Name first, deliberately. An operator hunting for Hamburg types "Ham", and a
+ * list that leads with the code makes them read past five characters of
+ * unfamiliar alphabet on every row to find it. The code still earns its place
+ * — two ports share a name often enough that dropping it would be worse — but
+ * it belongs after the word somebody actually knows.
+ *
+ * Here rather than at each call site because it was at each call site: some
+ * screens read `CGP — Chittagong` and others `Chittagong (CGP)`, which is how
+ * the same list ends up sorted two ways in one product.
+ */
+export function portLabel(port: { name: string; portCode: string }): string {
+  return `${port.name} - ${port.portCode}`;
+}

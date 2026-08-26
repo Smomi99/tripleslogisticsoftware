@@ -477,8 +477,16 @@ export function PriceListScreen({
                     one to open the other.
                   */
                   <tr className="bg-paper">
+                    {/*
+                      The cell has to span the table — a <td> cannot do
+                      otherwise — but the panel inside it does not. Left it
+                      stretched, four short columns were dealt across a metre of
+                      screen and the amount ended up nowhere near the head it
+                      belonged to. Capped and left-aligned, it reads as a note
+                      under the row rather than a second sheet.
+                    */}
                     <td colSpan={10 + options.tiers.length} className="px-2.5 py-3">
-                      <table className="w-full text-cell">
+                      <table className="w-full max-w-2xl text-cell">
                         <thead>
                           <tr className="border-b border-line text-left">
                             <th className="label-manifest py-1">Cost head</th>

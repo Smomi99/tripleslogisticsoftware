@@ -640,7 +640,13 @@ export function RateEntryScreen({
         </section>
       )}
 
-      <div className="flex items-center gap-2">
+      {/*
+        The count sat immediately after the checkbox and read as "Include
+        expired 1 rate" — as though one expired rate were waiting. It is the
+        total on the list. Pushed to the other end and given a verb, so the two
+        controls stop forming a sentence they never meant.
+      */}
+      <div className="flex items-center justify-between gap-2">
         <label className="flex items-center gap-2 text-body text-steel">
           <input
             type="checkbox"
@@ -654,7 +660,7 @@ export function RateEntryScreen({
           Include expired
         </label>
         <span className="text-cell text-steel">
-          {meta.total} rate{meta.total === 1 ? '' : 's'}
+          Showing {meta.total} rate{meta.total === 1 ? '' : 's'}
         </span>
       </div>
 

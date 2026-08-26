@@ -27,6 +27,7 @@ import {
   agentQuoteDecisionSchema,
   agentQuoteShortlistSchema,
   type StaffAgentQuoteDto,
+  portLabel,
 } from '@ff/shared';
 import { Router } from 'express';
 
@@ -374,7 +375,7 @@ inquiryRouter.get('/inquiry-options', requirePermission(`${FEATURE}.VIEW`), asyn
 
     const asOption = (p: { id: bigint; portCode: string; name: string }): LookupOption => ({
       id: p.id.toString(),
-      name: `${p.portCode} — ${p.name}`,
+      name: portLabel(p),
     });
 
     return {

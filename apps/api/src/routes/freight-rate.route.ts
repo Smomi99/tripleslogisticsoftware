@@ -14,6 +14,7 @@ import {
   type RateMode,
   RATE_SORT_FIELDS,
   type RateSortField,
+  portLabel,
 } from '@ff/shared';
 import { type RequestHandler, Router } from 'express';
 
@@ -589,31 +590,34 @@ freightRateRouter.get('/rates/:id', requireModePermission('VIEW'), async (req, r
 });
 
 // ===========================================================================
-// Update — §4 rule 1, "rates are versioned, never overwritten"
+// Update — edits the rate, rather than replacing it
 //
-// A DRAFT is edited in place: nothing downstream can reference it yet.
+// This used to version: a PUBLISHED rate was expired and its values copied
+// into a new row, on MODULE_PURCHASE_SALES §4 rule 1. The reasoning was that a
+// quotation issued last month must still resolve to the rate that was live
+// when it was issued.
 //
-// A PUBLISHED rate is SUPERSEDED. The old row keeps every figure it was
-// quoted at and is closed off — valid_to moves to yesterday, status becomes
-// EXPIRED, superseded_by_id points at the replacement — and the new values go
-// into a new row. The spec calls mutating these in place "the single most
-// expensive mistake available in this module", because a quotation issued last
-// month must still resolve to the rate that was live when it was issued.
+// That reasoning is now covered twice over, and the versioning was buying
+// nothing but clutter:
 //
-// Order matters inside the transaction: the old row is expired BEFORE the new
-// one is inserted, or the §4 rule 8 exclusion constraint sees two published
-// rates on one lane and refuses the write. That constraint is scoped to
-// PUBLISHED precisely so this sequence is possible.
+//   the trail     freight_rate, freight_rate_line and rate_local_charge all
+//                 carry audit triggers, so every change is already recorded
+//                 with its old and new values, who made it, and when. That is
+//                 a better history than a duplicate row, because it says what
+//                 changed rather than leaving two rows to be diffed by hand.
+//   the document  quotation_line snapshots its own cost head, price, currency
+//                 and conversion rate (§2.2). An issued quotation does not
+//                 read the rate table at all, so editing a rate cannot move a
+//                 figure a customer was given.
+//
+// What it cost was real: correcting a typo in a validity date produced a
+// second rate and an expired one, and a price list that grew a duplicate every
+// time somebody fixed anything.
+//
+// The exclusion constraint (§4 rule 8) still allows one published rate per
+// lane, so an edit that moves a rate onto a lane that already has one is
+// refused — correctly, and with the message translateWriteError gives it.
 // ===========================================================================
-
-/** Yesterday, or the rate's own start if it has not begun — the CHECK
- *  constraint requires valid_to >= valid_from, and a rate created for a future
- *  period can be superseded before it ever runs. */
-function closeOffDate(validFrom: Date, today: Date): Date {
-  const yesterday = new Date(today);
-  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
-  return yesterday < validFrom ? validFrom : yesterday;
-}
 
 freightRateRouter.patch('/rates/:id', requireModePermission('EDIT'), async (req, res) => {
   const auth = req.auth!;
@@ -629,14 +633,21 @@ freightRateRouter.patch('/rates/:id', requireModePermission('EDIT'), async (req,
     });
     if (existing === null) throw HttpError.notFound('Rate not found.');
     if (existing.status === 'EXPIRED') {
+      // An expired rate is history. Editing one would rewrite what the company
+      // was buying at during a period that has closed.
       throw HttpError.conflict(
         'An expired rate cannot be edited. Buy the lane again as a new rate.',
       );
     }
     if (existing.supersededById !== null) {
-      // Belt and braces: an EXPIRED check already covers this, but a superseded
-      // row must never sprout a second successor whatever its status says.
-      throw HttpError.conflict('That rate has already been superseded.');
+      /*
+       * A rate superseded before this route stopped versioning. Its successor
+       * carries the live figures, so editing the old row would put two answers
+       * on one lane — and the reader would have no way to tell which won.
+       */
+      throw HttpError.conflict(
+        'That rate was replaced by a newer version. Edit the current one instead.',
+      );
     }
 
     const refs = await assertReferences(db, input);
@@ -675,55 +686,7 @@ freightRateRouter.patch('/rates/:id', requireModePermission('EDIT'), async (req,
       status: input.status,
     };
 
-    // ---- §4 rule 1: supersede rather than mutate ----------------------------
-    if (existing.status === 'PUBLISHED') {
-      try {
-        // Close the old row FIRST, so the exclusion constraint sees one
-        // published rate on this lane at a time.
-        await db.freightRate.update({
-          where: { id },
-          data: {
-            validTo: closeOffDate(existing.validFrom, today),
-            status: 'EXPIRED',
-            updatedBy: auth.userId,
-          },
-        });
-
-        for (let attempt = 0; attempt < CODE_RETRY_LIMIT; attempt += 1) {
-          const code = await nextCode(db, 'freightRate', CODE_PREFIX.freightRate, auth.tenantId);
-          try {
-            const replacement = await db.freightRate.create({
-              data: {
-                tenantId: auth.tenantId,
-                code,
-                ...rateData,
-                createdBy: auth.userId,
-                updatedBy: auth.userId,
-                lines: { createMany: { data: lineData } },
-                ...(charges.length > 0 ? { localCharges: { createMany: { data: charges } } } : {}),
-              },
-              include: rateInclude,
-            });
-
-            // The old row now names its successor, so the chain is walkable.
-            await db.freightRate.update({
-              where: { id },
-              data: { supersededById: replacement.id },
-            });
-
-            return replacement;
-          } catch (error) {
-            if (isUniqueViolation(error, 'code')) continue;
-            throw error;
-          }
-        }
-        throw new HttpError(409, 'CODE_GENERATION_FAILED', 'Could not supersede the rate.');
-      } catch (error) {
-        translateWriteError(error);
-      }
-    }
-
-    // ---- DRAFT: edited in place, nothing references it yet ------------------
+    // ---- Edited in place, draft or published --------------------------------
     //
     // Lines are matched to the submitted tiers rather than cleared and
     // rebuilt. §4 rule 3 forbids hard deletes — the tenant client refuses
@@ -1298,7 +1261,7 @@ freightRateRouter.get('/rate-options', requireModePermission('VIEW'), async (req
     );
 
     return {
-      ports: ports.map((p) => ({ id: p.id.toString(), name: `${p.portCode} — ${p.name}` })),
+      ports: ports.map((p) => ({ id: p.id.toString(), name: portLabel(p) })),
       carriers: usableCarriers.map((c) => ({ id: c.id.toString(), name: c.name })),
       containerSizes: containerSizes.map((c) => ({ id: c.id.toString(), name: c.code })),
       goodsTypes: goodsTypes.map((g) => ({ id: g.id.toString(), name: g.name })),

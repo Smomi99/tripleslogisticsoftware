@@ -12,6 +12,7 @@ import {
   listQuerySchema,
   type LookupOption,
   type SelectedOption,
+  portLabel,
 } from '@ff/shared';
 
 import { Prisma } from '../generated/prisma/client';
@@ -108,7 +109,7 @@ function toDto(row: AgentRow): AgentDto {
     expertAreas: row.expertAreas.map((e) => option(e.expertArea)),
     portCoverage: row.portCoverages.map((p) => ({
       id: p.port.id.toString(),
-      name: `${p.port.name} (${p.port.portCode})`,
+      name: portLabel(p.port),
     })),
     networks: row.networkMembers.map((n) => option(n.network)),
     isActive: row.isActive,
@@ -276,7 +277,7 @@ agentRouter.get('/options', requirePermission(`${FEATURE}.VIEW`), async (req, re
     ]);
     return {
       expertAreas: expertAreas.map((e) => ({ id: e.id.toString(), name: e.name })),
-      ports: ports.map((p) => ({ id: p.id.toString(), name: `${p.name} (${p.portCode})` })),
+      ports: ports.map((p) => ({ id: p.id.toString(), name: portLabel(p) })),
       networks: networks.map((n) => ({ id: n.id.toString(), name: n.name })),
     };
   });

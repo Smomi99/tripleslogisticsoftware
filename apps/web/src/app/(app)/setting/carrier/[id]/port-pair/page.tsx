@@ -7,6 +7,7 @@ import {
   type CarrierPortPairDto,
   type CarrierPortPairInput,
   carrierPortPairInputSchema,
+  portLabel,
 } from '@ff/shared';
 import type { Route } from 'next';
 import { useParams } from 'next/navigation';
@@ -186,7 +187,7 @@ function PortPairForm({
 
   const portOptions = ports.map((p) => (
     <option key={p.id} value={p.id}>
-      {p.portCode} — {p.name}, {p.country}
+      {portLabel(p)}, {p.country}
     </option>
   ));
 
