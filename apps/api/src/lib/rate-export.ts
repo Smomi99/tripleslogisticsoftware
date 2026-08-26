@@ -103,8 +103,10 @@ export async function buildRateWorkbook(context: ExportContext): Promise<Buffer>
 
     sheet.addRow([
       rate.code,
-      `${rate.polCode} ${rate.polName}`,
-      `${rate.podCode} ${rate.podName}`,
+      // The name, not the code. Somebody reading a forwarded spreadsheet knows
+      // Chittagong and would have to look up CGP.
+      rate.polName,
+      rate.podName,
       rate.carrierName,
       rate.goodsTypeName,
       rate.currencyCode,
@@ -129,6 +131,71 @@ export async function buildRateWorkbook(context: ExportContext): Promise<Buffer>
   sheet.columns.forEach((column) => {
     column.width = Math.max(12, String(column.values?.[4] ?? '').length + 4);
   });
+
+  /*
+   * Local charges, one row each, on a sheet of their own.
+   *
+   * The main sheet keeps a total per rate because that is what makes it a
+   * price list — one row per lane, sortable and summable. The breakdown cannot
+   * live there without breaking that: charges vary in number per rate, so
+   * putting them inline turns every formula and filter into a special case.
+   *
+   * A second sheet keyed by rate code answers the same question without
+   * damaging the first, and Excel is built for exactly this — filter the sheet
+   * by a code and you have that rate's charges.
+   */
+  const charges = rates.flatMap((rate) =>
+    rate.localCharges.map((charge) => ({ rate, charge })),
+  );
+
+  if (charges.length > 0) {
+    const detail = workbook.addWorksheet('Local charges', {
+      views: [{ state: 'frozen', ySplit: 1 }],
+    });
+    detail.getRow(1).values = [
+      'Rate code',
+      'POL',
+      'POD',
+      'Carrier',
+      'Cost head',
+      'Side',
+      'Container',
+      'Unit',
+      'Amount',
+      'Currency',
+      'Remarks',
+    ];
+    detail.getRow(1).font = { bold: true };
+    detail.getRow(1).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFF4F6F5' },
+    };
+
+    for (const { rate, charge } of charges) {
+      detail.addRow([
+        rate.code,
+        rate.polName,
+        rate.podName,
+        rate.carrierName,
+        charge.costHeadName,
+        charge.side,
+        // "All" is the client's own wording for a charge that bills whatever
+        // the equipment — a documentation fee rather than a per-box one.
+        charge.containerSizeCode ?? 'All',
+        charge.costUnitName ?? '',
+        Number(charge.amount),
+        charge.currencyCode,
+        charge.remarks ?? '',
+      ]);
+    }
+
+    detail.getColumn(9).numFmt = '#,##0.0000';
+    detail.getColumn(9).alignment = { horizontal: 'right' };
+    detail.columns.forEach((column) => {
+      column.width = Math.max(12, String(column.values?.[1] ?? '').length + 6);
+    });
+  }
 
   const buffer = await workbook.xlsx.writeBuffer();
   return Buffer.from(buffer);
@@ -160,8 +227,10 @@ export function buildRatePdf(context: ExportContext): Promise<Buffer> {
 
     const columns = [
       { label: 'Code', width: 58 },
-      { label: 'POL', width: 46 },
-      { label: 'POD', width: 46 },
+      // Wider than the code columns they replace: a port name needs the room,
+      // and a reader should not have to decode CGP on a printed sheet.
+      { label: 'POL', width: 84 },
+      { label: 'POD', width: 84 },
       { label: 'Carrier', width: 92 },
       { label: 'Validity', width: 108 },
       ...tiers.map((t) => ({ label: t.code, width: 62 })),
@@ -194,6 +263,19 @@ export function buildRatePdf(context: ExportContext): Promise<Buffer> {
         .stroke();
     };
 
+    /** One indented line under a rate: what the charge is, and what it costs. */
+    const drawDetail = (label: string, amount: string, bold = false): void => {
+      if (y > doc.page.height - doc.page.margins.bottom - 20) {
+        doc.addPage();
+        y = doc.page.margins.top;
+      }
+      doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(7);
+      doc.fillColor('#6B7A88');
+      doc.text(label, startX + 16, y, { width: 320, ellipsis: true, lineBreak: false });
+      doc.text(amount, startX + 340, y, { width: 110, lineBreak: false });
+      y += 11;
+    };
+
     drawRow(
       columns.map((c) => c.label),
       true,
@@ -210,8 +292,8 @@ export function buildRatePdf(context: ExportContext): Promise<Buffer> {
       drawRow(
         [
           rate.code,
-          rate.polCode,
-          rate.podCode,
+          rate.polName,
+          rate.podName,
           rate.carrierName,
           `${rate.validFrom} – ${rate.validTo}`,
           ...tiers.map((t) => priceOf(t.id, 'sell')),
@@ -219,6 +301,25 @@ export function buildRatePdf(context: ExportContext): Promise<Buffer> {
         ],
         false,
       );
+
+      /*
+       * The local charges, indented under the rate they belong to.
+       *
+       * A PDF is read rather than filtered, so here the breakdown belongs
+       * beside its rate — the opposite call to the spreadsheet, for the
+       * opposite reason. A total with no breakdown is the thing a carrier
+       * queries first, and answering it should not mean opening the app.
+       */
+      for (const charge of rate.localCharges) {
+        drawDetail(
+          `${charge.costHeadName} · ${charge.side}` +
+            (charge.containerSizeCode === null ? '' : ` · ${charge.containerSizeCode}`),
+          `${charge.amount} ${charge.currencyCode}`,
+        );
+      }
+      if (rate.localCharges.length > 0) {
+        drawDetail('Local charges total', `${rate.localChargeTotal} ${rate.currencyCode}`, true);
+      }
     }
 
     if (rates.length === 0) {

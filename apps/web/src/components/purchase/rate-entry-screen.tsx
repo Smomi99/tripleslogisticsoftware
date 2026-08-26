@@ -694,8 +694,8 @@ export function RateEntryScreen({
                 <td className="bg-paper/40 px-2.5 py-2 font-mono text-cell tabular-nums text-hull">
                   {rate.code}
                 </td>
-                <Td>{rate.polCode}</Td>
-                <Td>{rate.podCode}</Td>
+                <Td>{rate.polName ?? rate.polCode}</Td>
+                <Td>{rate.podName ?? rate.podCode}</Td>
                 <Td>{rate.carrierName}</Td>
                 <Td>{rate.goodsTypeName}</Td>
                 {options.tiers.map((tier) => {

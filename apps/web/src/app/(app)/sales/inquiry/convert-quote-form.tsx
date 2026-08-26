@@ -275,7 +275,7 @@ export function ConvertQuoteForm({
           <dd className="text-cell text-hull">{quote.agentName}</dd>
           <dt className="label-manifest self-center">Lane</dt>
           <dd className="text-cell text-hull">
-            {inquiry.polCode ?? inquiry.polName} → {inquiry.podCode ?? inquiry.podName}
+            {inquiry.polName ?? inquiry.polCode} → {inquiry.podName ?? inquiry.podCode}
           </dd>
         </dl>
 

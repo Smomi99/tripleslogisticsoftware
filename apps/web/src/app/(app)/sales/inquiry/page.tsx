@@ -114,8 +114,10 @@ export default function InquiryListPage() {
       header: 'Shipment Type',
       cell: (r) => SHIPMENT_LABEL[r.shipmentType] ?? r.shipmentType,
     },
-    { id: 'pol', header: 'POL', numeric: true, cell: (r) => r.polCode },
-    { id: 'pod', header: 'POD', numeric: true, cell: (r) => r.podCode },
+    // The name, not the code: an operator scanning a board knows Chittagong
+    // and has to translate CGP. numeric is off because a place is not a figure.
+    { id: 'pol', header: 'POL', cell: (r) => r.polName ?? r.polCode },
+    { id: 'pod', header: 'POD', cell: (r) => r.podName ?? r.podCode },
     {
       id: 'commodity',
       header: 'Commodity',

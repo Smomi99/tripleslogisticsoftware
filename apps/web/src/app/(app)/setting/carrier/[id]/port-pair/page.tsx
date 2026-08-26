@@ -50,8 +50,8 @@ export default function CarrierPortPairPage() {
   }, [authorizedRequest, carrierId]);
 
   const columns: DataTableColumn<CarrierPortPairDto>[] = [
-    { id: 'pol', header: 'POL', sortable: true, cell: (r) => `${r.polCode} — ${r.polName}` },
-    { id: 'pod', header: 'POD', cell: (r) => `${r.podCode} — ${r.podName}` },
+    { id: 'pol', header: 'POL', sortable: true, cell: (r) => r.polName },
+    { id: 'pod', header: 'POD', cell: (r) => r.podName },
     {
       id: 'lowPricePosition',
       header: 'Low pricewise position',

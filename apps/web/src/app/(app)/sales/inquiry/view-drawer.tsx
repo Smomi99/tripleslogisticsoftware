@@ -74,8 +74,8 @@ export function ViewDrawer({
     ['Customer', inquiry.customerName],
     ['Shipment type', inquiry.shipmentType],
     ['Movement', inquiry.movementType],
-    ['POL', `${inquiry.polCode} — ${inquiry.polName}`],
-    ['POD', `${inquiry.podCode} — ${inquiry.podName}`],
+    ['POL', inquiry.polName ?? inquiry.polCode],
+    ['POD', inquiry.podName ?? inquiry.podCode],
     ['Place of receipt', inquiry.placeOfReceipt ?? '—'],
     [
       'Commodity',

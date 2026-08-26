@@ -61,8 +61,18 @@ export function PriceListScreen({
 
   const [options, setOptions] = useState<ListOptions>(EMPTY);
   const [rates, setRates] = useState<FreightRateDto[]>([]);
-  /** Rates whose local charges are open, expanded in place under their row. */
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  /**
+   * The rate whose local charges are open, shown in the panel to the right.
+   *
+   * One at a time, and beside the table rather than inside it. Expanded in
+   * place, the breakdown pushed every following rate down the screen — so
+   * comparing two rates' charges meant losing sight of the rates themselves.
+   * A panel keeps the list still and the charges next to it.
+   */
+  const [charges, setCharges] = useState<string | null>(null);
+  /* Resolved from the current page, so a reload or a filter that drops the
+     rate closes the panel rather than leaving it describing something gone. */
+  const openCharges = rates.find((r) => r.id === charges) ?? null;
   /**
    * A screen-share toggle, not a permission. Someone who can see buy prices may
    * still want them off the screen while a customer is looking at it — §4 rule 5
@@ -71,14 +81,6 @@ export function PriceListScreen({
    */
   const [hideBuyPrice, setHideBuyPrice] = useState(false);
 
-  function toggleCharges(id: string): void {
-    setExpanded((open) => {
-      const next = new Set(open);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
   const [meta, setMeta] = useState<ApiMeta>({
     page: 1,
     limit: DEFAULT_PAGE_SIZE,
@@ -369,7 +371,8 @@ export function PriceListScreen({
           }
         />
       ) : (
-        <div className="max-h-[70vh] overflow-auto rounded-manifest border border-line bg-surface shadow-manifest">
+        <div className="flex items-start gap-4">
+          <div className="max-h-[70vh] min-w-0 flex-1 overflow-auto rounded-manifest border border-line bg-surface shadow-manifest">
           <table className="w-full min-w-max border-collapse">
             <thead className="sticky top-0 z-20">
               <tr className="bg-paper text-left">
@@ -404,10 +407,10 @@ export function PriceListScreen({
                     {rate.code}
                   </StickyTd>
                   <StickyTd left="6rem" mono>
-                    {rate.polCode}
+                    {rate.polName ?? rate.polCode}
                   </StickyTd>
                   <StickyTd left="11rem" mono>
-                    {rate.podCode}
+                    {rate.podName ?? rate.podCode}
                   </StickyTd>
                   <td className="whitespace-nowrap px-2.5 py-2 text-cell text-hull">{rate.carrierName}</td>
                   <td className="whitespace-nowrap px-2.5 py-2 text-cell text-hull">{rate.goodsTypeName}</td>
@@ -444,8 +447,8 @@ export function PriceListScreen({
                       <Button
                         variant="text"
                         size="inline"
-                        aria-expanded={expanded.has(rate.id)}
-                        onClick={() => toggleCharges(rate.id)}
+                        aria-expanded={charges === rate.id}
+                        onClick={() => setCharges(charges === rate.id ? null : rate.id)}
                       >
                         {rate.localCharges.length === 1
                           ? '1 line'
@@ -469,64 +472,65 @@ export function PriceListScreen({
                     {rate.currencyCode}
                   </td>
                 </tr>
-                {expanded.has(rate.id) && (
-                  /*
-                    Shown in the table rather than in a dialog, at the client's
-                    request: the breakdown stays beside the rate it belongs to,
-                    and two rates can be compared side by side without closing
-                    one to open the other.
-                  */
-                  <tr className="bg-paper">
-                    {/*
-                      The cell has to span the table — a <td> cannot do
-                      otherwise — but the panel inside it does not. Left it
-                      stretched, four short columns were dealt across a metre of
-                      screen and the amount ended up nowhere near the head it
-                      belonged to. Capped and left-aligned, it reads as a note
-                      under the row rather than a second sheet.
-                    */}
-                    <td colSpan={10 + options.tiers.length} className="px-2.5 py-3">
-                      <table className="w-full max-w-2xl text-cell">
-                        <thead>
-                          <tr className="border-b border-line text-left">
-                            <th className="label-manifest py-1">Cost head</th>
-                            <th className="label-manifest py-1">Side</th>
-                            <th className="label-manifest py-1">Container</th>
-                            <th className="label-manifest py-1 text-right">Amount</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {rate.localCharges.map((charge) => (
-                            <tr key={charge.id} className="border-b border-line">
-                              <td className="py-1 text-hull">{charge.costHeadName}</td>
-                              <td className="py-1 text-steel">{charge.side}</td>
-                              <td className="py-1 font-mono text-steel">
-                                {charge.containerSizeCode ?? 'All'}
-                              </td>
-                              <td className="py-1 text-right font-mono tabular-nums text-hull">
-                                {charge.amount} {charge.currencyCode}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                        <tfoot>
-                          <tr>
-                            <td colSpan={3} className="py-1.5 label-manifest">
-                              Total
-                            </td>
-                            <td className="py-1.5 text-right font-mono tabular-nums text-hull">
-                              {rate.localChargeTotal} {rate.currencyCode}
-                            </td>
-                          </tr>
-                        </tfoot>
-                      </table>
-                    </td>
-                  </tr>
-                )}
               </Fragment>
               ))}
             </tbody>
           </table>
+          </div>
+
+          {/*
+            The breakdown, beside the list rather than inside it.
+            Sticky, so it stays in view while the table scrolls under it — the
+            point of a panel is that the rates it describes remain on screen.
+          */}
+          {openCharges !== null && (
+            <aside className="sticky top-4 w-80 shrink-0 rounded-manifest border border-line bg-surface shadow-manifest">
+              <div className="flex items-start justify-between gap-2 border-b border-line px-3 py-2">
+                <div>
+                  <h3 className="text-section text-hull">Local charges</h3>
+                  <p className="font-mono text-cell tabular-nums text-steel">
+                    {openCharges.code}
+                  </p>
+                  <p className="text-cell text-steel">
+                    {openCharges.polName ?? openCharges.polCode} →{' '}
+                    {openCharges.podName ?? openCharges.podCode}
+                  </p>
+                </div>
+                <Button variant="text" size="inline" onClick={() => setCharges(null)}>
+                  Close
+                </Button>
+              </div>
+
+              <ul className="flex flex-col">
+                {openCharges.localCharges.map((charge) => (
+                  <li
+                    key={charge.id}
+                    className="flex items-baseline justify-between gap-3 border-b border-line px-3 py-2 last:border-0"
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-cell text-hull">
+                        {charge.costHeadName}
+                      </span>
+                      <span className="text-cell text-steel">
+                        {charge.side}
+                        {charge.containerSizeCode !== null && ` · ${charge.containerSizeCode}`}
+                      </span>
+                    </span>
+                    <span className="whitespace-nowrap font-mono text-cell tabular-nums text-hull">
+                      {charge.amount} {charge.currencyCode}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+
+              <div className="flex items-baseline justify-between gap-3 border-t border-line px-3 py-2">
+                <span className="label-manifest">Total</span>
+                <span className="font-mono text-cell tabular-nums text-hull">
+                  {openCharges.localChargeTotal} {openCharges.currencyCode}
+                </span>
+              </div>
+            </aside>
+          )}
         </div>
       )}
 
