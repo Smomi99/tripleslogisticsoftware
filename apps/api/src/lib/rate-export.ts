@@ -28,6 +28,29 @@ function includesBuyPrice(rates: FreightRateDto[]): boolean {
   return rates.some((rate) => rate.lines.some((line) => line.buyPrice !== undefined));
 }
 
+/**
+ * One rate's local charges, written out in the cell that totals them.
+ *
+ * "Seal Charge (POL, 20STD) 13.0000 USD, ENS Charge (POL) 30.0000 USD".
+ *
+ * In the cell rather than on a sheet of its own, because a price list is read
+ * one row at a time: whoever is looking at a lane's total wants to know what
+ * makes it up without leaving the row, and a second sheet makes them find the
+ * rate again somewhere else. The numeric total keeps its own column beside
+ * this, so the sheet still sums.
+ */
+function chargeBreakdown(rate: FreightRateDto): string {
+  return rate.localCharges
+    .map((charge) => {
+      const where = [charge.side, charge.containerSizeCode]
+        .filter((part): part is string => part !== null && part !== undefined && part !== '')
+        .join(', ');
+      const label = where === '' ? charge.costHeadName : `${charge.costHeadName} (${where})`;
+      return `${label} ${charge.amount} ${charge.currencyCode}`;
+    })
+    .join(', ');
+}
+
 /** Tier columns present across the result set, in the order they appear. */
 function tierColumns(rates: FreightRateDto[]): { id: string; code: string }[] {
   const seen = new Map<string, string>();
@@ -83,6 +106,7 @@ export async function buildRateWorkbook(context: ExportContext): Promise<Buffer>
     ...tiers.map((t) => `${t.code} sell`),
     ...(showBuy ? tiers.map((t) => `${t.code} buy`) : []),
     'Local charges',
+    'Local charge total',
   ];
 
   sheet.getRow(4).values = header;
@@ -117,85 +141,32 @@ export async function buildRateWorkbook(context: ExportContext): Promise<Buffer>
       rate.status,
       ...tiers.map((t) => priceOf(t.id, 'sell')),
       ...(showBuy ? tiers.map((t) => priceOf(t.id, 'buy')) : []),
+      chargeBreakdown(rate),
       rate.localChargeCount === 0 ? '' : Number(rate.localChargeTotal),
     ]);
   }
 
-  // Numeric columns get a real number format so Excel sums them.
+  // Numeric columns get a real number format so Excel sums them. The tier
+  // prices, then the local charge TOTAL — the breakdown between them is text
+  // and must not be formatted as a number.
   const firstPriceColumn = 12;
-  const priceColumnCount = tiers.length * (showBuy ? 2 : 1) + 1;
-  for (let i = 0; i < priceColumnCount; i += 1) {
+  const tierColumnCount = tiers.length * (showBuy ? 2 : 1);
+  const totalColumn = firstPriceColumn + tierColumnCount + 1;
+  for (let i = 0; i < tierColumnCount; i += 1) {
     sheet.getColumn(firstPriceColumn + i).numFmt = '#,##0.0000';
     sheet.getColumn(firstPriceColumn + i).alignment = { horizontal: 'right' };
   }
+  sheet.getColumn(totalColumn).numFmt = '#,##0.0000';
+  sheet.getColumn(totalColumn).alignment = { horizontal: 'right' };
+
   sheet.columns.forEach((column) => {
     column.width = Math.max(12, String(column.values?.[4] ?? '').length + 4);
   });
-
-  /*
-   * Local charges, one row each, on a sheet of their own.
-   *
-   * The main sheet keeps a total per rate because that is what makes it a
-   * price list — one row per lane, sortable and summable. The breakdown cannot
-   * live there without breaking that: charges vary in number per rate, so
-   * putting them inline turns every formula and filter into a special case.
-   *
-   * A second sheet keyed by rate code answers the same question without
-   * damaging the first, and Excel is built for exactly this — filter the sheet
-   * by a code and you have that rate's charges.
-   */
-  const charges = rates.flatMap((rate) =>
-    rate.localCharges.map((charge) => ({ rate, charge })),
-  );
-
-  if (charges.length > 0) {
-    const detail = workbook.addWorksheet('Local charges', {
-      views: [{ state: 'frozen', ySplit: 1 }],
-    });
-    detail.getRow(1).values = [
-      'Rate code',
-      'POL',
-      'POD',
-      'Carrier',
-      'Cost head',
-      'Side',
-      'Container',
-      'Unit',
-      'Amount',
-      'Currency',
-      'Remarks',
-    ];
-    detail.getRow(1).font = { bold: true };
-    detail.getRow(1).fill = {
-      type: 'pattern',
-      pattern: 'solid',
-      fgColor: { argb: 'FFF4F6F5' },
-    };
-
-    for (const { rate, charge } of charges) {
-      detail.addRow([
-        rate.code,
-        rate.polName,
-        rate.podName,
-        rate.carrierName,
-        charge.costHeadName,
-        charge.side,
-        // "All" is the client's own wording for a charge that bills whatever
-        // the equipment — a documentation fee rather than a per-box one.
-        charge.containerSizeCode ?? 'All',
-        charge.costUnitName ?? '',
-        Number(charge.amount),
-        charge.currencyCode,
-        charge.remarks ?? '',
-      ]);
-    }
-
-    detail.getColumn(9).numFmt = '#,##0.0000';
-    detail.getColumn(9).alignment = { horizontal: 'right' };
-    detail.columns.forEach((column) => {
-      column.width = Math.max(12, String(column.values?.[1] ?? '').length + 6);
-    });
-  }
+  // The breakdown is a sentence, not a figure. Wide enough to read, and
+  // wrapped so a long one does not run across the sheet.
+  const breakdownColumn = sheet.getColumn(totalColumn - 1);
+  breakdownColumn.width = 52;
+  breakdownColumn.alignment = { wrapText: true, vertical: 'top' };
 
   const buffer = await workbook.xlsx.writeBuffer();
   return Buffer.from(buffer);

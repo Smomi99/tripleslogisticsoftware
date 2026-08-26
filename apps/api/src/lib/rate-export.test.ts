@@ -99,12 +99,11 @@ describe('the workbook', () => {
     expect(row).toContain('Hamburg');
   });
 
-  it('carries the local charges on a sheet of their own', async () => {
+  it('writes the charges into the cell that totals them, comma separated', async () => {
     /*
-     * Not inline on the main sheet: charges vary in number per rate, so
-     * putting them there turns every formula and filter on a price list into a
-     * special case. A second sheet answers the same question without damaging
-     * the first.
+     * In the row rather than on a sheet of its own. A price list is read one
+     * lane at a time, and whoever is looking at a total wants to know what
+     * makes it up without having to find the rate again somewhere else.
      */
     const workbook = await readWorkbook(
       await buildRateWorkbook(
@@ -121,31 +120,42 @@ describe('the workbook', () => {
       ),
     );
 
-    const detail = workbook.getWorksheet('Local charges');
-    expect(detail).toBeDefined();
-    const rows = detail!.getSheetValues();
-    const flat = JSON.stringify(rows);
-    expect(flat).toContain('Seal Charge');
-    expect(flat).toContain('ENS Charge');
-    // Keyed by the rate code, so filtering the sheet gives one rate's charges.
-    expect(flat).toContain('RATE-001');
-    // The client's own wording for a charge that bills whatever the equipment.
-    expect(flat).toContain('All');
+    const row = workbook.worksheets[0]!.getRow(5).values as unknown[];
+    const cell = row.find(
+      (value): value is string => typeof value === 'string' && value.includes('Seal Charge'),
+    );
+    expect(cell).toBeDefined();
+    expect(cell).toContain('Seal Charge (POL, 20STD) 13.0000 USD');
+    expect(cell).toContain('ENS Charge (POD) 30.0000 USD');
+    // Comma separated, in one cell.
+    expect(cell!.split(', ').length).toBeGreaterThan(1);
   });
 
-  it('keeps the total on the main sheet, so it still sums', async () => {
+  it('never opens a second sheet for them', async () => {
     const workbook = await readWorkbook(await buildRateWorkbook(context([rate()])));
-    const values = JSON.stringify(workbook.worksheets[0]!.getSheetValues());
-    expect(values).toContain('13');
+    expect(workbook.worksheets).toHaveLength(1);
+    expect(workbook.getWorksheet('Local charges')).toBeUndefined();
   });
 
-  it('adds no charges sheet when there are none', async () => {
+  it('keeps the total in its own column, so the sheet still sums', async () => {
+    // The breakdown beside it is a sentence; this stays a number.
+    const workbook = await readWorkbook(await buildRateWorkbook(context([rate()])));
+    const sheet = workbook.worksheets[0]!;
+    const header = (sheet.getRow(4).values as unknown[]).map(String);
+    expect(header).toContain('Local charges');
+    expect(header).toContain('Local charge total');
+    const totalIndex = header.indexOf('Local charge total');
+    expect(sheet.getRow(5).getCell(totalIndex).value).toBe(13);
+  });
+
+  it('leaves the cell empty when a rate has no charges', async () => {
     const workbook = await readWorkbook(
       await buildRateWorkbook(
         context([rate({ localCharges: [], localChargeCount: 0, localChargeTotal: '0.0000' })]),
       ),
     );
-    expect(workbook.getWorksheet('Local charges')).toBeUndefined();
+    const values = JSON.stringify(workbook.worksheets[0]!.getRow(5).values);
+    expect(values).not.toContain('Seal Charge');
   });
 
   it('omits the buy price entirely when it was withheld', async () => {

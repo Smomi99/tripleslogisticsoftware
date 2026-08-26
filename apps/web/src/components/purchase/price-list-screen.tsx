@@ -371,8 +371,8 @@ export function PriceListScreen({
           }
         />
       ) : (
-        <div className="flex items-start gap-4">
-          <div className="max-h-[70vh] min-w-0 flex-1 overflow-auto rounded-manifest border border-line bg-surface shadow-manifest">
+        <div className="flex flex-col gap-3">
+          <div className="max-h-[70vh] overflow-auto rounded-manifest border border-line bg-surface shadow-manifest">
           <table className="w-full min-w-max border-collapse">
             <thead className="sticky top-0 z-20">
               <tr className="bg-paper text-left">
@@ -479,12 +479,14 @@ export function PriceListScreen({
           </div>
 
           {/*
-            The breakdown, beside the list rather than inside it.
-            Sticky, so it stays in view while the table scrolls under it — the
-            point of a panel is that the rates it describes remain on screen.
+            The breakdown sits below the table, over on the right.
+            Beside it, the panel took 320px from a table that needs every pixel
+            it has (§12) — a price list is already wider than the screen. Below
+            it, the table keeps its full width and the charges are still one
+            glance away, on the side the amounts they explain are on.
           */}
           {openCharges !== null && (
-            <aside className="sticky top-4 w-80 shrink-0 rounded-manifest border border-line bg-surface shadow-manifest">
+            <aside className="ml-auto w-full max-w-sm rounded-manifest border border-line bg-surface shadow-manifest">
               <div className="flex items-start justify-between gap-2 border-b border-line px-3 py-2">
                 <div>
                   <h3 className="text-section text-hull">Local charges</h3>
