@@ -57,6 +57,8 @@ async function cleanup(): Promise<void> {
   );
   await owner.$executeRawUnsafe(`DELETE FROM freight_rate WHERE tenant_id IN (${t})`);
   await owner.$executeRawUnsafe(`DELETE FROM "user" WHERE tenant_id IN (${t})`);
+  // The local charge tests give this workspace cost heads of its own.
+  await owner.$executeRawUnsafe(`DELETE FROM cost_head WHERE tenant_id IN (${t})`);
   await owner.$executeRawUnsafe(`DELETE FROM tenant WHERE slug = '${SLUG}'`);
   await owner.$executeRawUnsafe(`DELETE FROM rate_tier WHERE code LIKE '${PREFIX}%'`);
   await owner.$executeRawUnsafe(`DELETE FROM goods_type WHERE code LIKE '${PREFIX}%'`);
@@ -189,6 +191,161 @@ async function createRate(over: Record<string, unknown> = {}): Promise<string> {
   return response.body.data.id;
 }
 
+
+describe('editing a rate that carries local charges', () => {
+  /*
+   * Reported from use: "edit purchase price and add local charge and update"
+   * came back 400, "Some fields need attention."
+   *
+   * Three things had to line up for that, and all three were wrong.
+   */
+  let costHeadA: bigint;
+  let costHeadB: bigint;
+  let sizeA: bigint;
+  let sizeB: bigint;
+
+  beforeAll(async () => {
+    const unit = await owner.costUnit.findFirstOrThrow({ select: { id: true } });
+    costHeadA = (
+      await owner.costHead.create({
+        data: { tenantId, code: 'VCH-A', name: 'THC', category: 'SERVICE', unitId: unit.id },
+        select: { id: true },
+      })
+    ).id;
+    costHeadB = (
+      await owner.costHead.create({
+        data: { tenantId, code: 'VCH-B', name: 'Seal Charge', category: 'SERVICE', unitId: unit.id },
+        select: { id: true },
+      })
+    ).id;
+    const sizes = await owner.containerSize.findMany({ select: { id: true }, take: 2 });
+    sizeA = sizes[0]!.id;
+    sizeB = sizes[1]!.id;
+  });
+
+  const charge = (over: Record<string, unknown> = {}) => ({
+    costHeadId: costHeadA.toString(),
+    side: 'POL',
+    containerSizeId: sizeA.toString(),
+    amount: '13.0000',
+    currencyId: currencyId.toString(),
+    ...over,
+  });
+
+  it('accepts two charges that differ only by container size', async () => {
+    // THC on a 20ft and THC on a 40ft are two lines, not a duplicate.
+    const rateId = await createRate({
+      localCharges: [charge(), charge({ containerSizeId: sizeB.toString(), amount: '26.0000' })],
+    });
+    const res = await api.get(`/api/tenant/purchase/rates/${rateId}?mode=SEA_FCL`).expect(200);
+    expect(res.body.data.localCharges).toHaveLength(2);
+  });
+
+  it('takes its own answer back unchanged', async () => {
+    /*
+     * The screen loads a rate and sends it back. The DTO returns null for a
+     * charge with no size and null for empty remarks, and the schema refused
+     * both — so a form that had touched nothing was rejected for echoing what
+     * the API had just said.
+     */
+    const rateId = await createRate({
+      localCharges: [charge({ containerSizeId: null, remarks: null })],
+    });
+    const loaded = await api.get(`/api/tenant/purchase/rates/${rateId}?mode=SEA_FCL`).expect(200);
+
+    const echoed = await api.patch(`/api/tenant/purchase/rates/${rateId}`).send(
+      rateBody({
+        localCharges: loaded.body.data.localCharges.map(
+          (c: Record<string, unknown>) => ({
+            costHeadId: c['costHeadId'],
+            side: c['side'],
+            containerSizeId: c['containerSizeId'],
+            amount: c['amount'],
+            currencyId: c['currencyId'],
+            remarks: c['remarks'],
+          }),
+        ),
+      }),
+    );
+    expect(echoed.status, JSON.stringify(echoed.body.error ?? {})).toBe(200);
+  });
+
+  it('adds a charge to a rate that already has two sized ones', async () => {
+    // The reported case, end to end.
+    const rateId = await createRate({
+      localCharges: [charge(), charge({ containerSizeId: sizeB.toString(), amount: '26.0000' })],
+    });
+
+    const res = await api.patch(`/api/tenant/purchase/rates/${rateId}`).send(
+      rateBody({
+        localCharges: [
+          charge(),
+          charge({ containerSizeId: sizeB.toString(), amount: '26.0000' }),
+          charge({ costHeadId: costHeadB.toString(), containerSizeId: '', amount: '30.0000' }),
+        ],
+      }),
+    );
+    expect(res.status, JSON.stringify(res.body.error ?? {})).toBe(200);
+    expect(res.body.data.localCharges).toHaveLength(3);
+  });
+
+  it('keeps both sizes rather than folding one onto the other', async () => {
+    /*
+     * The API matched existing charges on cost head and side alone, while the
+     * table's key includes the size. Editing a rate with THC-20 and THC-40
+     * therefore overwrote one with the other and retired whichever lost.
+     */
+    const rateId = await createRate({
+      localCharges: [charge({ amount: '13.0000' }), charge({ containerSizeId: sizeB.toString(), amount: '26.0000' })],
+    });
+
+    await api
+      .patch(`/api/tenant/purchase/rates/${rateId}`)
+      .send(
+        rateBody({
+          localCharges: [
+            charge({ amount: '15.0000' }),
+            charge({ containerSizeId: sizeB.toString(), amount: '26.0000' }),
+          ],
+        }),
+      )
+      .expect(200);
+
+    const res = await api.get(`/api/tenant/purchase/rates/${rateId}?mode=SEA_FCL`).expect(200);
+    const amounts = res.body.data.localCharges
+      .map((c: { amount: string }) => c.amount)
+      .sort();
+    expect(amounts).toEqual(['15.0000', '26.0000']);
+  });
+
+  it('lets a removed charge be added back', async () => {
+    /*
+     * Soft delete leaves the row, and both unique indexes counted the retired
+     * ones — so a cost head taken off a rate could never go back on it, and the
+     * second attempt surfaced as a 500 nobody could act on.
+     */
+    const rateId = await createRate({ localCharges: [charge()] });
+
+    await api
+      .patch(`/api/tenant/purchase/rates/${rateId}`)
+      .send(rateBody({ localCharges: [] }))
+      .expect(200);
+
+    const back = await api
+      .patch(`/api/tenant/purchase/rates/${rateId}`)
+      .send(rateBody({ localCharges: [charge()] }));
+    expect(back.status, JSON.stringify(back.body.error ?? {})).toBe(200);
+    expect(back.body.data.localCharges).toHaveLength(1);
+  });
+
+  it('still refuses a real duplicate', async () => {
+    const res = await api.post('/api/tenant/purchase/rates').send(
+      rateBody({ localCharges: [charge({ containerSizeId: '' }), charge({ containerSizeId: '' })] }),
+    );
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(res.body.error.fields)).toContain('once per side');
+  });
+});
 
 describe('editing a published rate', () => {
   it('updates the row rather than producing a second one', async () => {

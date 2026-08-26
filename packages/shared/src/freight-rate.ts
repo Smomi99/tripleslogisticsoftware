@@ -87,10 +87,26 @@ export const localChargeInputSchema = z.object({
    * Which container size the charge applies to. Blank means it applies whatever
    * the equipment — the normal case for a documentation fee.
    */
-  containerSizeId: z.string().regex(/^\d*$/, 'Choose a container size.').optional(),
+  /*
+   * Nullish, not merely optional. The rate DTO returns null for a charge with
+   * no container size and null for empty remarks, so a screen that loaded a
+   * rate and sent it straight back was rejected for echoing the API's own
+   * answer. Normalised on the way in, so everything downstream still sees a
+   * string or nothing.
+   */
+  containerSizeId: z
+    .string()
+    .regex(/^\d*$/, 'Choose a container size.')
+    .nullish()
+    .transform((v) => v ?? ''),
   amount: moneyField('Enter an amount.'),
   currencyId: idField,
-  remarks: z.string().trim().max(2000, 'Remarks are too long.').optional(),
+  remarks: z
+    .string()
+    .trim()
+    .max(2000, 'Remarks are too long.')
+    .nullish()
+    .transform((v) => v ?? undefined),
 });
 
 export type LocalChargeInput = z.input<typeof localChargeInputSchema>;

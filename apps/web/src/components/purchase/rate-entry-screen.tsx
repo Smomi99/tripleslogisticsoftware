@@ -257,6 +257,17 @@ export function RateEntryScreen({
       localCharges: rate.localCharges.map((charge) => ({
         costHeadId: charge.costHeadId,
         side: charge.side,
+        /*
+         * The container size, which this used to drop.
+         *
+         * It is what makes two charges different — THC on a 20ft and THC on a
+         * 40ft are two lines, not a duplicate. Losing it meant a rate carrying
+         * both came back into the form as the same charge twice, and saving it
+         * was refused as a duplicate: "Each cost head can only appear once per
+         * side." Editing a perfectly good rate failed, and the message pointed
+         * at something the operator had not done.
+         */
+        containerSizeId: charge.containerSizeId ?? '',
         amount: charge.amount,
         currencyId: charge.currencyId,
         ...(charge.remarks === null ? {} : { remarks: charge.remarks }),

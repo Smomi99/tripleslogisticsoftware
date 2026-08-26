@@ -732,17 +732,28 @@ freightRateRouter.patch('/rates/:id', requireModePermission('EDIT'), async (req,
 
       const existingCharges = await db.rateLocalCharge.findMany({
         where: { rateId: id, deletedAt: null },
-        select: { id: true, costHeadId: true, side: true },
+        select: { id: true, costHeadId: true, side: true, containerSizeId: true },
       });
-      const chargeKey = (costHeadId: bigint | number | string, side: string): string =>
-        `${costHeadId.toString()}:${side}`;
+      /*
+       * Keyed the way the table is: UNIQUE(tenant, rate, cost head, side,
+       * container size). Matching on head and side alone folded THC-20ft and
+       * THC-40ft onto one another, so an edit overwrote one with the other and
+       * retired whichever lost.
+       */
+      const chargeKey = (
+        costHeadId: bigint | number | string,
+        side: string,
+        containerSizeId: bigint | number | string | null | undefined,
+      ): string => `${costHeadId.toString()}:${side}:${containerSizeId?.toString() ?? ''}`;
       const chargeByKey = new Map(
-        existingCharges.map((c) => [chargeKey(c.costHeadId, c.side), c.id]),
+        existingCharges.map((c) => [chargeKey(c.costHeadId, c.side, c.containerSizeId), c.id]),
       );
-      const submittedCharges = new Set(charges.map((c) => chargeKey(c.costHeadId!, c.side!)));
+      const submittedCharges = new Set(
+        charges.map((c) => chargeKey(c.costHeadId!, c.side!, c.containerSizeId)),
+      );
 
       for (const charge of charges) {
-        const key = chargeKey(charge.costHeadId!, charge.side!);
+        const key = chargeKey(charge.costHeadId!, charge.side!, charge.containerSizeId);
         const existingChargeId = chargeByKey.get(key);
         if (existingChargeId === undefined) {
           await db.rateLocalCharge.create({
@@ -763,7 +774,9 @@ freightRateRouter.patch('/rates/:id', requireModePermission('EDIT'), async (req,
         }
       }
       for (const charge of existingCharges) {
-        if (!submittedCharges.has(chargeKey(charge.costHeadId, charge.side))) {
+        if (
+          !submittedCharges.has(chargeKey(charge.costHeadId, charge.side, charge.containerSizeId))
+        ) {
           await db.rateLocalCharge.update({
             where: { id: charge.id },
             data: { deletedAt: new Date(), isActive: false, updatedBy: auth.userId },
