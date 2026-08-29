@@ -7,9 +7,10 @@ import {
   CUSTOMER_TYPES,
   type CustomerDto,
   type CustomerSortField,
+  type LookupOption,
 } from '@ff/shared';
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -29,6 +30,14 @@ const ENDPOINT = '/api/tenant/crm/customers';
 export default function CustomerPage() {
   const { authorizedRequest, can } = useSession();
   const list = useMasterList<CustomerDto, CustomerSortField>(ENDPOINT, 'name');
+
+  /* The commodity categories, for the filter beside the type. */
+  const [sectors, setSectors] = useState<LookupOption[]>([]);
+  useEffect(() => {
+    void authorizedRequest<LookupOption[]>(`${ENDPOINT}/sectors`)
+      .then(setSectors)
+      .catch(() => setSectors([]));
+  }, [authorizedRequest]);
 
   const [toToggle, setToToggle] = useState<CustomerDto | null>(null);
   const [isToggling, setToggling] = useState(false);
@@ -150,6 +159,24 @@ export default function CustomerPage() {
           {BUSINESS_AREAS.map((a) => (
             <option key={a} value={a}>
               {BUSINESS_AREA_LABEL[a]}
+            </option>
+          ))}
+        </Select>
+        {/*
+          The commodity, which the client asked to filter by. It is the
+          industry sector the form already calls Commodity category, so the
+          label here follows the form rather than the column name.
+        */}
+        <Select
+          aria-label="Filter by commodity"
+          value={list.filters['industrySectorId'] ?? ''}
+          onChange={(event) => list.setFilter('industrySectorId', event.target.value)}
+          className="w-52"
+        >
+          <option value="">All commodities</option>
+          {sectors.map((sector) => (
+            <option key={sector.id} value={sector.id}>
+              {sector.name}
             </option>
           ))}
         </Select>

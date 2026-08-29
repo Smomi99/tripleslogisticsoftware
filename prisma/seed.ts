@@ -189,7 +189,27 @@ const SYSTEM_LOOKUPS = {
   costUnit: ['Container', 'HBL', 'HAWB', 'MBL', 'MAWB', 'CBM', 'Trip', 'Contract', 'M.Ton', 'KG'],
   carrierType: ['MLO', 'NVOCC', 'Airline', 'SOC'],
   vendorType: ['LCL', 'Air-Master Coloader'],
-  expertArea: ['Sea-FCL', 'Sea-LCL', 'Air-General', 'Air-DG', 'Sea-DG', 'Project', 'SCM'],
+  /*
+   * Appended only, never reordered. The seeder keys these by a code derived
+   * from the array index (EXA-001, EXA-002...) and renames whatever holds that
+   * code — so inserting one in the middle would silently retitle every expert
+   * area after it, on a production database, under agents already tagged with
+   * them.
+   */
+  expertArea: [
+    'Sea-FCL',
+    'Sea-LCL',
+    'Air-General',
+    'Air-DG',
+    'Sea-DG',
+    'Project',
+    'SCM',
+    // Added 2026-08-29 at the client's request.
+    'Door 2 Door',
+    'Customs Clearance',
+    'Trucking',
+    'Courier - Parcel',
+  ],
   network: ['WCA', 'JCtrans', 'GLA', 'OLO'],
 } as const;
 

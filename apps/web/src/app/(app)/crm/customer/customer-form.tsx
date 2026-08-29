@@ -35,6 +35,7 @@ export function CustomerForm({ customer }: { customer: CustomerDto | null }) {
   const router = useRouter();
   const [sectors, setSectors] = useState<LookupOption[]>([]);
   const [currencies, setCurrencies] = useState<LookupOption[]>([]);
+  const [salesmen, setSalesmen] = useState<LookupOption[]>([]);
   const [formError, setFormError] = useState<string | null>(null);
 
   const {
@@ -58,6 +59,8 @@ export function CustomerForm({ customer }: { customer: CustomerDto | null }) {
       imAirVolumeKgMonth: '',
       openingBalance: '',
       openingCurrencyId: '',
+      notes: '',
+      salesmanId: '',
     },
   });
 
@@ -68,6 +71,9 @@ export function CustomerForm({ customer }: { customer: CustomerDto | null }) {
       void authorizedRequest<LookupOption[]>('/api/tenant/crm/customers/currencies')
       .then(setCurrencies)
       .catch(() => setCurrencies([]));
+    void authorizedRequest<LookupOption[]>('/api/tenant/crm/customers/salesmen')
+      .then(setSalesmen)
+      .catch(() => setSalesmen([]));
   }, [authorizedRequest]);
 
   useEffect(() => {
@@ -85,6 +91,8 @@ export function CustomerForm({ customer }: { customer: CustomerDto | null }) {
       imAirVolumeKgMonth: customer.imAirVolumeKgMonth ?? '',
       openingBalance: customer.openingBalance ?? '',
       openingCurrencyId: customer.openingCurrencyId ?? '',
+      notes: customer.notes ?? '',
+      salesmanId: customer.salesmanId ?? '',
     });
   }, [customer, reset]);
 
@@ -223,6 +231,38 @@ export function CustomerForm({ customer }: { customer: CustomerDto | null }) {
             </option>
           ))}
         </Select>
+      </Field>
+
+      {/* Asked for by the client on 2026-08-29. */}
+      <Field
+        id="salesmanId"
+        label="Assigned salesman"
+        hint="Who owns this account. Their inquiries already name a salesman; this says whose customer it is."
+        error={errors.salesmanId?.message}
+      >
+        <Select id="salesmanId" {...register('salesmanId')}>
+          <option value="">Unassigned</option>
+          {salesmen.map((employee) => (
+            <option key={employee.id} value={employee.id}>
+              {employee.name}
+            </option>
+          ))}
+        </Select>
+      </Field>
+
+      <Field
+        id="notes"
+        label="Notes"
+        hint="Anything about the account the rest of the form has no room for."
+        error={errors.notes?.message}
+        wide
+      >
+        <textarea
+          id="notes"
+          rows={4}
+          {...register('notes')}
+          className="w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-body text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour"
+        />
       </Field>
     </FormLayout>
   );

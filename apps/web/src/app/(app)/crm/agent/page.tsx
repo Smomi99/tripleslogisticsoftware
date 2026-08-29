@@ -14,6 +14,8 @@ import { ConfirmDialog } from '@/components/ui/modal';
 import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
+
+import { AgentDetailDrawer } from './agent-detail-drawer';
 import { useMasterList } from '@/lib/use-master-list';
 
 /** CRM → Agent (CLAUDE.md §6, §8). */
@@ -23,6 +25,8 @@ export default function AgentPage() {
   const { authorizedRequest, can } = useSession();
   const list = useMasterList<AgentDto, AgentSortField>(ENDPOINT, 'name');
 
+  /** The agent whose details are open. Read-only; editing is its own route. */
+  const [viewing, setViewing] = useState<AgentDto | null>(null);
   const [toToggle, setToToggle] = useState<AgentDto | null>(null);
   const [isToggling, setToggling] = useState(false);
   // CR-002. Deactivate retires a record that was real; Delete removes one
@@ -32,7 +36,23 @@ export default function AgentPage() {
 
   const columns: DataTableColumn<AgentDto>[] = useMemo(
     () => [
-      { id: 'name', header: 'Agent', sortable: true, cell: (r) => r.name },
+      {
+        id: 'name',
+        header: 'Agent',
+        sortable: true,
+        // The name opens the agent. A list this wide cannot carry expert
+        // areas, port coverage and networks as columns, and those are what
+        // somebody choosing who to send an RFQ to actually needs.
+        cell: (r) => (
+          <button
+            type="button"
+            onClick={() => setViewing(r)}
+            className="text-left text-harbour hover:underline"
+          >
+            {r.name}
+          </button>
+        ),
+      },
       { id: 'country', header: 'Country', sortable: true, cell: (r) => r.country },
       { id: 'agentType', header: 'Type', cell: (r) => AGENT_TYPE_LABEL[r.agentType] },
       {
@@ -264,6 +284,7 @@ export default function AgentPage() {
         isPending={isDeleting}
         onConfirm={() => void confirmDelete()}
       />
+      <AgentDetailDrawer agent={viewing} onClose={() => setViewing(null)} />
     </div>
   );
 }

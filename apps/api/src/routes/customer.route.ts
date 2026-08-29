@@ -54,6 +54,9 @@ const SELECT = {
   openingBalance: true,
   openingCurrencyId: true,
   openingCurrency: { select: { code: true } },
+  notes: true,
+  salesmanId: true,
+  salesman: { select: { name: true } },
   isActive: true,
   industrySector: { select: { name: true } },
   _count: { select: { pics: true } },
@@ -75,6 +78,9 @@ type CustomerRow = {
   openingBalance: Prisma.Decimal | null;
   openingCurrencyId: bigint | null;
   openingCurrency: { code: string } | null;
+  notes: string | null;
+  salesmanId: bigint | null;
+  salesman: { name: string } | null;
   isActive: boolean;
   industrySector: { name: string };
   _count: { pics: number };
@@ -101,6 +107,9 @@ function toDto(row: CustomerRow): CustomerDto {
     openingBalance: money(row.openingBalance),
     openingCurrencyId: row.openingCurrencyId?.toString() ?? null,
     openingCurrencyCode: row.openingCurrency?.code ?? null,
+    notes: row.notes,
+    salesmanId: row.salesmanId?.toString() ?? null,
+    salesmanName: row.salesman?.name ?? null,
     isActive: row.isActive,
     picCount: row._count.pics,
   };
@@ -126,6 +135,11 @@ customerRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (req, res) =
       deletedAt: null,
       ...(query.isActive !== undefined ? { isActive: query.isActive } : {}),
       ...(query.customerType !== undefined ? { customerType: query.customerType } : {}),
+      // The client calls the commodity category "commodity"; it is the same
+      // industry_sector the form already asks for.
+      ...(query.industrySectorId !== undefined
+        ? { industrySectorId: BigInt(query.industrySectorId) }
+        : {}),
       ...(query.businessArea !== undefined ? { businessArea: query.businessArea } : {}),
       ...(query.search !== undefined
         ? {
@@ -180,6 +194,30 @@ customerRouter.get('/currencies', requirePermission(`${FEATURE}.VIEW`), async (r
   const payload: ApiSuccess<LookupOption[]> = {
     success: true,
     data: rows.map((c) => ({ id: c.id.toString(), name: c.currency })),
+  };
+  res.json(payload);
+});
+
+/**
+ * The employees a customer can be assigned to.
+ *
+ * Behind CRM.CUSTOMER.VIEW rather than the employee feature: this is a picker
+ * on the customer form, and whoever may open that form has to be able to fill
+ * it in. It returns names and nothing else, so it discloses no more than the
+ * customer list already does.
+ */
+customerRouter.get('/salesmen', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
+  const auth = req.auth!;
+  const employees = await withTenant(auth.tenantId, (db) =>
+    db.employee.findMany({
+      where: { deletedAt: null, isActive: true },
+      select: { id: true, name: true },
+      orderBy: { name: 'asc' },
+    }),
+  );
+  const payload: ApiSuccess<LookupOption[]> = {
+    success: true,
+    data: employees.map((e) => ({ id: e.id.toString(), name: e.name })),
   };
   res.json(payload);
 });
@@ -256,6 +294,8 @@ customerRouter.post('/', requirePermission(`${FEATURE}.CREATE`), async (req, res
             imAirVolumeKgMonth: volume(input.imAirVolumeKgMonth),
             openingBalance: moneyIn(input.openingBalance),
             openingCurrencyId: refIn(input.openingCurrencyId),
+            notes: input.notes || null,
+            salesmanId: refIn(input.salesmanId),
             createdBy: auth.userId,
             updatedBy: auth.userId,
           },
@@ -302,6 +342,8 @@ customerRouter.patch('/:id', requirePermission(`${FEATURE}.EDIT`), async (req, r
         imAirVolumeKgMonth: volume(input.imAirVolumeKgMonth),
         openingBalance: moneyIn(input.openingBalance),
         openingCurrencyId: refIn(input.openingCurrencyId),
+        notes: input.notes || null,
+        salesmanId: refIn(input.salesmanId),
         updatedBy: auth.userId,
       },
       select: SELECT,

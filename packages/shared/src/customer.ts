@@ -60,6 +60,17 @@ export const customerInputSchema = z.object({
   /** Opening figures for the accounts ledger. Positive is owed to us. */
   openingBalance: signedMoneyField('Enter an opening balance, or leave it blank.'),
   openingCurrencyId: openingCurrencyField,
+  /**
+   * Two fields the client asked for on 2026-08-29. Neither is in §6, so both
+   * are recorded in §11 rather than quietly assumed into the spec.
+   */
+  notes: z.string().trim().max(4000, 'Notes are too long.').optional(),
+  /** The employee who owns this account. Blank until somebody is assigned. */
+  salesmanId: z
+    .string()
+    .trim()
+    .regex(/^\d*$/, 'Choose a salesman.')
+    .optional(),
 }).refine((v) => currencyRequiredFor([v.openingBalance], v.openingCurrencyId), {
   message: 'Choose the currency the opening balance is in.',
   path: ['openingCurrencyId'],
@@ -74,6 +85,8 @@ export const customerListQuerySchema = listQuerySchema.extend({
   sortBy: z.enum(CUSTOMER_SORT_FIELDS).default('name'),
   customerType: z.enum(CUSTOMER_TYPES).optional(),
   businessArea: z.enum(BUSINESS_AREAS).optional(),
+  /** Narrow to one commodity category — the client calls it the commodity. */
+  industrySectorId: z.string().regex(/^\d+$/).optional(),
 });
 
 export interface CustomerDto {
@@ -93,6 +106,9 @@ export interface CustomerDto {
   openingBalance: string | null;
   openingCurrencyId: string | null;
   openingCurrencyCode: string | null;
+  notes: string | null;
+  salesmanId: string | null;
+  salesmanName: string | null;
   isActive: boolean;
   picCount: number;
 }
