@@ -22,6 +22,8 @@ import { ConfirmDialog } from '@/components/ui/modal';
 import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
+
+import { CustomerDetailDrawer } from './customer-detail-drawer';
 import { useMasterList } from '@/lib/use-master-list';
 
 /** CRM → Customer (CLAUDE.md §6, §8). */
@@ -39,6 +41,8 @@ export default function CustomerPage() {
       .catch(() => setSectors([]));
   }, [authorizedRequest]);
 
+  /** The customer whose details are open. Read-only; editing is its own route. */
+  const [viewing, setViewing] = useState<CustomerDto | null>(null);
   const [toToggle, setToToggle] = useState<CustomerDto | null>(null);
   const [isToggling, setToggling] = useState(false);
   // CR-002. Deactivate retires a record that was real; Delete removes one
@@ -48,7 +52,23 @@ export default function CustomerPage() {
 
   const columns: DataTableColumn<CustomerDto>[] = useMemo(
     () => [
-      { id: 'name', header: 'Customer', sortable: true, cell: (r) => r.name },
+      {
+        id: 'name',
+        header: 'Customer',
+        sortable: true,
+        // The name opens the customer. Six columns cannot carry the volumes,
+        // the opening balance, the salesman and the notes, and reading them
+        // through the edit form is how a record gets changed by accident.
+        cell: (r) => (
+          <button
+            type="button"
+            onClick={() => setViewing(r)}
+            className="text-left text-harbour hover:underline"
+          >
+            {r.name}
+          </button>
+        ),
+      },
       { id: 'country', header: 'Country', sortable: true, cell: (r) => r.country },
       {
         id: 'customerType',
@@ -291,6 +311,7 @@ export default function CustomerPage() {
         isPending={isDeleting}
         onConfirm={() => void confirmDelete()}
       />
+      <CustomerDetailDrawer customer={viewing} onClose={() => setViewing(null)} />
     </div>
   );
 }
