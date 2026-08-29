@@ -6,6 +6,9 @@ import {
   CODE_PREFIX,
   type CustomerDto,
   customerInputSchema,
+  CUSTOMER_TYPE_LABEL,
+  CUSTOMER_TYPES,
+  type CustomerType,
   customerListQuerySchema,
   type CustomerPicDto,
   customerPicInputSchema,
@@ -126,6 +129,30 @@ async function assertSectorVisible(db: TenantDb, id: bigint): Promise<void> {
   if (sector === null) throw HttpError.badRequest('That commodity category is not available.');
 }
 
+/**
+ * The customer types a search term names.
+ *
+ * Type is an enum column, so `contains` cannot reach it — Postgres will not
+ * pattern-match an enum, and casting it in a Prisma filter is not expressible.
+ * Matching the term against the values here and passing the survivors as an
+ * `in` gets the same answer with a plain equality test.
+ *
+ * Both the stored value and the label are matched: an operator looking for
+ * exporters types "export", not "EXPORTER", and would be equally right either
+ * way. An empty result means the term names no type, and the caller leaves the
+ * clause out rather than passing `in: []`, which would match nothing at all and
+ * quietly break the other search terms beside it.
+ */
+function typesMatching(term: string): CustomerType[] {
+  const needle = term.trim().toLowerCase();
+  if (needle === '') return [];
+  return CUSTOMER_TYPES.filter(
+    (type) =>
+      type.toLowerCase().includes(needle) ||
+      CUSTOMER_TYPE_LABEL[type].toLowerCase().includes(needle),
+  );
+}
+
 customerRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
   const auth = req.auth!;
   const query = customerListQuerySchema.parse(req.query);
@@ -141,12 +168,26 @@ customerRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (req, res) =
         ? { industrySectorId: BigInt(query.industrySectorId) }
         : {}),
       ...(query.businessArea !== undefined ? { businessArea: query.businessArea } : {}),
+      /*
+       * The search box reaches the type and the commodity as well as the name,
+       * because that is what an operator types into it: "garments", or
+       * "exporter", expecting the list to narrow. The dropdowns beside it stay
+       * — they are for picking one exactly, this is for finding.
+       */
       ...(query.search !== undefined
         ? {
             OR: [
               { name: { contains: query.search, mode: 'insensitive' as const } },
               { code: { contains: query.search, mode: 'insensitive' as const } },
               { country: { contains: query.search, mode: 'insensitive' as const } },
+              {
+                industrySector: {
+                  name: { contains: query.search, mode: 'insensitive' as const },
+                },
+              },
+              ...(typesMatching(query.search).length > 0
+                ? [{ customerType: { in: typesMatching(query.search) } }]
+                : []),
             ],
           }
         : {}),

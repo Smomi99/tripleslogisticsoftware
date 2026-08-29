@@ -130,7 +130,7 @@ export default function CustomerPage() {
       <div className="flex flex-wrap items-center gap-2">
         <Input
           type="search"
-          placeholder="Search name, code or country"
+          placeholder="Search name, code, country, type or commodity"
           aria-label="Search customers"
           value={list.searchInput}
           onChange={(event) => list.setSearchInput(event.target.value)}

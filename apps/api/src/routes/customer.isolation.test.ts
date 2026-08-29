@@ -285,6 +285,42 @@ describe('customer isolation', () => {
     expect(names).not.toContain('Someone Else');
   });
 
+  it('searches the commodity from the search box', async () => {
+    // Not only the dropdown: an operator types "garments" expecting the list
+    // to narrow, and a search that ignored it would look broken.
+    const res = await A('get', '/api/tenant/crm/customers?limit=100&search=Alpha%20Sector');
+    expect(res.status).toBe(200);
+    const names = res.body.data.map((r: { name: string }) => r.name);
+    expect(names).toContain('Alpha Customer');
+  });
+
+  it('searches the type from the search box', async () => {
+    const res = await A('get', '/api/tenant/crm/customers?limit=100&search=export');
+    expect(res.status).toBe(200);
+    for (const row of res.body.data) expect(row.customerType).toBe('EXPORTER');
+    expect(res.body.data.length).toBeGreaterThan(0);
+  });
+
+  it('still finds a name that names no type or commodity', async () => {
+    /*
+     * The awkward case. Type is an enum, so it is matched by listing the
+     * values a term names and passing them as an `in` — and a term that names
+     * none has to drop the clause rather than pass an empty list, which would
+     * match nothing and take the name search down with it.
+     */
+    const res = await A('get', '/api/tenant/crm/customers?limit=100&search=Alpha%20Customer');
+    expect(res.status).toBe(200);
+    const names = res.body.data.map((r: { name: string }) => r.name);
+    expect(names).toContain('Alpha Customer');
+  });
+
+  it('does not reach across workspaces through the search', async () => {
+    const res = await A('get', '/api/tenant/crm/customers?limit=100&search=import');
+    expect(res.status).toBe(200);
+    const names = res.body.data.map((r: { name: string }) => r.name);
+    expect(names).not.toContain('Beta Customer');
+  });
+
   it('guards every route with a permission', async () => {
     const noPerm = await request(app)
       .get('/api/tenant/crm/customers')
