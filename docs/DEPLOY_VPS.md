@@ -479,12 +479,33 @@ docker volume ls | grep ff-erp
 cd /srv/ff-erp
 git pull
 $COMPOSE run --rm tools pnpm db:deploy    # migrations first, always
+$COMPOSE run --rm tools pnpm db:seed      # lookup values the release adds
 $COMPOSE up -d --build
+$COMPOSE run --rm tools pnpm exec tsx apps/api/src/scripts/doctor.mts
 ```
 
 Migrations before the new containers, because a new image may expect a column
 the old schema does not have. `prisma migrate deploy` never resets and never
 prompts — it applies pending migrations and stops.
+
+The seed carries lookup values, not business data. It only creates rows it has
+not seen and refreshes the product's own default email templates; it never
+touches a workspace's records. Skipping it does not break the site, but a
+dropdown a release adds will be empty and nobody will know why.
+
+**Run the doctor last, and read it.** It compares every table and column the
+deployed code expects against the database and names anything missing:
+
+```
+=== does the database have what the code selects? ===
+  FAIL  column missing: customer.notes
+  FAIL  column missing: customer.salesman_id
+```
+
+That is what a skipped migration looks like from the outside — the browser only
+ever shows 500, because the API cannot select a column that is not there. The
+doctor is read-only and safe to run against production at any time, so run it
+whenever a screen starts failing and you are not sure why.
 
 If the server is too small to build (§1), build on your laptop and push:
 
