@@ -70,6 +70,15 @@ export interface ChildScreenProps<TRow extends ChildRow> {
   conflictOpensRow?: (error: ApiError) => string | null;
   /** Extra sentence on the deactivate confirmation — what else it affects. */
   deactivateWarning?: (row: TRow) => string | null;
+  /**
+   * Offers Delete alongside Deactivate (CR-002).
+   *
+   * Opt-in rather than inferred from the permission, because holding
+   * CRM.EMPLOYEE.DELETE does not mean the CV screen has a DELETE endpoint —
+   * that combination would render a button whose only outcome is a 404. Set it
+   * where the child route actually implements the delete.
+   */
+  deletable?: boolean;
 }
 
 export function ChildScreen<TRow extends ChildRow>({
@@ -90,6 +99,7 @@ export function ChildScreen<TRow extends ChildRow>({
   describeRow,
   conflictOpensRow,
   deactivateWarning,
+  deletable = false,
 }: ChildScreenProps<TRow>) {
   const { authorizedRequest, can } = useSession();
   const list = useMasterList<TRow, string>(childEndpoint, defaultSort);
@@ -100,6 +110,10 @@ export function ChildScreen<TRow extends ChildRow>({
   const [isFormOpen, setFormOpen] = useState(false);
   const [toToggle, setToToggle] = useState<TRow | null>(null);
   const [isToggling, setToggling] = useState(false);
+  // CR-002, as on the parent lists: Deactivate retires a row that was real,
+  // Delete removes one that never was. The server refuses if anything uses it.
+  const [toDelete, setToDelete] = useState<TRow | null>(null);
+  const [isDeleting, setDeleting] = useState(false);
 
   useEffect(() => {
     void authorizedRequest<{ name: string }>(`${parentEndpoint}/summary`)
@@ -150,6 +164,23 @@ export function ChildScreen<TRow extends ChildRow>({
       toast.error(error instanceof ApiError ? error.message : 'Could not change the status.');
     } finally {
       setToggling(false);
+    }
+  }
+
+  async function confirmDelete(): Promise<void> {
+    if (toDelete === null) return;
+    setDeleting(true);
+    try {
+      await authorizedRequest(`${childEndpoint}/${toDelete.id}`, { method: 'DELETE' });
+      toast.success(`${noun.charAt(0).toUpperCase()}${noun.slice(1)} deleted`);
+      setToDelete(null);
+      await list.reload();
+    } catch (error) {
+      // The refusal names what still uses it, which is the point.
+      toast.error(error instanceof ApiError ? error.message : 'Could not delete it.');
+      setToDelete(null);
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -254,6 +285,11 @@ export function ChildScreen<TRow extends ChildRow>({
                 {row.isActive ? 'Deactivate' : 'Activate'}
               </Button>
             )}
+            {deletable && can(`${feature}.DELETE`) && (
+              <Button variant="destructive" size="inline" onClick={() => setToDelete(row)}>
+                Delete
+              </Button>
+            )}
           </>
         )}
         empty={
@@ -328,6 +364,24 @@ export function ChildScreen<TRow extends ChildRow>({
         destructive={toToggle?.isActive === true}
         isPending={isToggling}
         onConfirm={() => void confirmToggle()}
+      />
+
+      <ConfirmDialog
+        open={toDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setToDelete(null);
+        }}
+        title={`Delete this ${noun}?`}
+        message={
+          toDelete === null
+            ? ''
+            : `${describeRow(toDelete)} will be removed from this list for good. This is for a ${noun} ` +
+              `added by mistake — if it has ever been used, deactivate it instead and nothing here will change.`
+        }
+        confirmLabel="Delete"
+        destructive
+        isPending={isDeleting}
+        onConfirm={() => void confirmDelete()}
       />
     </div>
   );

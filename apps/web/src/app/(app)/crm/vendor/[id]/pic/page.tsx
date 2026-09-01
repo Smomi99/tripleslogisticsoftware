@@ -45,6 +45,7 @@ export default function VendorPicPage() {
       emptyTitle="No contacts yet"
       emptyDescription="Add the people you deal with at this vendor, so purchases and payables can reach them."
       describeRow={(r) => r.name}
+      deletable
       renderForm={({ row, onSubmit, onCancel }) => (
         <VendorPicForm pic={row} onSubmit={onSubmit} onCancel={onCancel} />
       )}

@@ -567,6 +567,47 @@ carrierRouter.post(
   },
 );
 
+/**
+ * DELETE /api/tenant/.../:id/pics/:picId — CR-002, extended to the contacts.
+ *
+ * Deactivate retires a contact who was real and has left; Delete removes one
+ * that never was — the typo, the duplicate line. Soft, like every delete here
+ * (§4 rule 3), so the audit trail and any historical foreign key survive, and
+ * refused outright while anything still points at the row: a contact an RFQ
+ * was addressed to is part of that record and stays.
+ */
+carrierRouter.delete(
+  '/:id/pics/:picId',
+  requirePermission(`${FEATURE}.DELETE`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const carrierId = parseId(req.params.id, 'carrier');
+    const picId = parseId(req.params.picId, 'contact');
+
+    await withTenant(auth.tenantId, async (db) => {
+      const existing = await db.carrierPic.findFirst({
+        where: { id: picId, carrierId, deletedAt: null },
+        select: { id: true, tenantId: true, name: true },
+      });
+      await assertRowDeletable(
+        db,
+        'carrier_pic',
+        picId,
+        existing === null ? null : { tenantId: existing.tenantId, name: existing.name },
+        'Contact not found.',
+      );
+
+      await db.carrierPic.update({
+        where: { id: picId },
+        data: { deletedAt: new Date(), isActive: false, updatedBy: auth.userId },
+      });
+    });
+
+    const payload: ApiSuccess<{ deleted: true }> = { success: true, data: { deleted: true } };
+    res.json(payload);
+  },
+);
+
 // ===========================================================================
 // Carrier → Service Port
 // ===========================================================================

@@ -71,6 +71,18 @@ interface ForeignKeyEdge {
   has_deleted_at: boolean;
 }
 
+/*
+ * §4 rule 10 makes almost every foreign key composite:
+ * `(tenant_id, customer_id) REFERENCES customer(tenant_id, id)`. Walking
+ * `conkey` alone yields two edges from one constraint, and the tenant_id one
+ * is nonsense here — it would count `WHERE tenant_id = <the row's id>`, which
+ * silently reports every row in the workspace the day a record's id happens to
+ * equal the tenant's. Tenant 1 plus customer 1 is what a fresh install makes,
+ * so this was a bogus "in use" refusal waiting for the first delete on a new
+ * server. Pairing `conkey` with `confkey` and keeping only the leg that points
+ * at `id` leaves exactly the one edge that means anything.
+ */
+
 /**
  * Plural labels for the tables an operator may be told about.
  *
@@ -95,6 +107,7 @@ const TABLE_LABEL: Record<string, string> = {
   freight_rate_tier: 'rate tiers',
   inquiry: 'inquiries',
   inquiry_followup: 'inquiry follow-ups',
+  inquiry_party_contact: 'rate requests',
   inquiry_rate: 'inquiry rates',
   inquiry_volume: 'inquiry volumes',
   quotation: 'quotations',
@@ -116,7 +129,15 @@ function labelFor(table: string, count: number): string {
   return `1 ${singular}`;
 }
 
-/** `"a b"` — identifiers come from pg_catalog, but quote them anyway. */
+/**
+ * `"a b"` — identifiers come from pg_catalog, but quote them anyway.
+ *
+ * Fed from `pg_class.relname`, which is the bare name. `conrelid::regclass`
+ * looks equivalent and is not: it quotes a reserved word for you, and `user`
+ * is a table here — so it returned `"user"`, this added a second pair, and
+ * deleting a customer with a login attached died on a syntax error instead of
+ * refusing politely.
+ */
 function quoteIdent(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
 }
@@ -135,7 +156,7 @@ export async function findBlockingReferences(
   id: bigint,
 ): Promise<BlockingReference[]> {
   const edges = await db.$queryRaw<ForeignKeyEdge[]>`
-    SELECT con.conrelid::regclass::text AS child_table,
+    SELECT child.relname                 AS child_table,
            att.attname                  AS child_column,
            EXISTS (
              SELECT 1 FROM pg_attribute d
@@ -144,13 +165,16 @@ export async function findBlockingReferences(
                AND NOT d.attisdropped
            ) AS has_deleted_at
     FROM pg_constraint con
+    JOIN pg_class child    ON child.oid = con.conrelid
     JOIN pg_class ref      ON ref.oid = con.confrelid
     JOIN pg_namespace rn   ON rn.oid = ref.relnamespace
-    JOIN unnest(con.conkey) WITH ORDINALITY k(attnum, ord) ON TRUE
+    JOIN unnest(con.conkey, con.confkey) WITH ORDINALITY k(attnum, refattnum, ord) ON TRUE
     JOIN pg_attribute att  ON att.attrelid = con.conrelid AND att.attnum = k.attnum
+    JOIN pg_attribute refatt ON refatt.attrelid = con.confrelid AND refatt.attnum = k.refattnum
     WHERE con.contype = 'f'
       AND rn.nspname = 'public'
       AND ref.relname = ${table}
+      AND refatt.attname = 'id'
     ORDER BY child_table, child_column
   `;
 

@@ -41,6 +41,7 @@ export default function AgentPicPage() {
       emptyTitle="No contacts yet"
       emptyDescription="Add the people you deal with at this agent, so shipment handovers can reach them."
       describeRow={(r) => r.name}
+      deletable
       renderForm={({ row, onSubmit, onCancel }) => (
         <AgentPicForm pic={row} onSubmit={onSubmit} onCancel={onCancel} />
       )}

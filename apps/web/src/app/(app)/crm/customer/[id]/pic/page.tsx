@@ -41,6 +41,7 @@ export default function CustomerPicPage() {
       emptyTitle="No contacts yet"
       emptyDescription="Add the people you deal with at this customer, so inquiries and quotations can reach them."
       describeRow={(r) => r.name}
+      deletable
       renderForm={({ row, onSubmit, onCancel }) => (
         <CustomerPicForm pic={row} onSubmit={onSubmit} onCancel={onCancel} />
       )}

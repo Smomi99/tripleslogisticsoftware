@@ -496,6 +496,47 @@ vendorRouter.post(
 );
 
 /**
+ * DELETE /api/tenant/.../:id/pics/:picId — CR-002, extended to the contacts.
+ *
+ * Deactivate retires a contact who was real and has left; Delete removes one
+ * that never was — the typo, the duplicate line. Soft, like every delete here
+ * (§4 rule 3), so the audit trail and any historical foreign key survive, and
+ * refused outright while anything still points at the row: a contact an RFQ
+ * was addressed to is part of that record and stays.
+ */
+vendorRouter.delete(
+  '/:id/pics/:picId',
+  requirePermission(`${FEATURE}.DELETE`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const vendorId = parseId(req.params.id, 'vendor');
+    const picId = parseId(req.params.picId, 'contact');
+
+    await withTenant(auth.tenantId, async (db) => {
+      const existing = await db.vendorPic.findFirst({
+        where: { id: picId, vendorId, deletedAt: null },
+        select: { id: true, tenantId: true, name: true },
+      });
+      await assertRowDeletable(
+        db,
+        'vendor_pic',
+        picId,
+        existing === null ? null : { tenantId: existing.tenantId, name: existing.name },
+        'Contact not found.',
+      );
+
+      await db.vendorPic.update({
+        where: { id: picId },
+        data: { deletedAt: new Date(), isActive: false, updatedBy: auth.userId },
+      });
+    });
+
+    const payload: ApiSuccess<{ deleted: true }> = { success: true, data: { deleted: true } };
+    res.json(payload);
+  },
+);
+
+/**
  * DELETE /api/tenant/.../:id — CR-002.
  *
  * A soft delete: it sets `deleted_at`, so §4 rule 3 holds and every foreign key
