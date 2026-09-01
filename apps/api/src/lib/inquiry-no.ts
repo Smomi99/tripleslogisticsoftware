@@ -20,6 +20,8 @@ import type { TenantDb } from './tenant-client';
 
 export const INQUIRY_PREFIX = 'INQ';
 export const QUOTATION_PREFIX = 'QTN';
+/** The booking number, BKG-2026-000001 (MODULE_BOOKING_CARGO.md §4.1). */
+export const BOOKING_PREFIX = 'BKG';
 /** Six digits, as §3.3 writes it. Grows past six rather than wrapping. */
 const SEQUENCE_WIDTH = 6;
 
@@ -79,6 +81,38 @@ export async function nextQuotationNo(
 
   const current = rows[0]?.max_seq ?? 0;
   return formatQuotationNo(year, current + 1);
+}
+
+export function formatBookingNo(year: number, sequence: number): string {
+  return formatDocumentNo(BOOKING_PREFIX, year, sequence);
+}
+
+/**
+ * The next booking number.
+ *
+ * MAX over every row, unlike the quotation's DISTINCT: a booking number is not
+ * shared by revisions, so each row is its own document. §9 Q10 asked whether
+ * Sea and Air want separate series; unanswered, so one series covers both —
+ * which is also the harder thing to undo in the wrong direction, since two
+ * series can be split out of one but not merged back.
+ */
+export async function nextBookingNo(
+  db: TenantDb,
+  tenantId: bigint,
+  year: number,
+): Promise<string> {
+  const pattern = `${BOOKING_PREFIX}-${year}-%`;
+
+  const rows = await db.$queryRaw<{ max_seq: number | null }[]>`
+    SELECT MAX((regexp_replace(code, '^.*-', ''))::int) AS max_seq
+      FROM shipment
+     WHERE tenant_id = ${tenantId}
+       AND series_year = ${year}
+       AND code LIKE ${pattern}
+  `;
+
+  const current = rows[0]?.max_seq ?? 0;
+  return formatBookingNo(year, current + 1);
 }
 
 /** The year a document belongs to — its own date, not today's. */

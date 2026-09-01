@@ -62,6 +62,8 @@ const ACTION_LABEL: Record<Action, string> = {
   ATTACH_PRICE: 'Attach price',
   CONVERT_QUOTE: 'Quote',
   QUOTE: 'Quote',
+  SUBMIT: 'Submit',
+  CANCEL: 'Cancel',
   SET_OUTCOME: 'Won / lost',
   PRICE_CHECK: 'Price check',
   SEND: 'Send',

@@ -21,6 +21,7 @@ import { currencyRouter } from './currency.route';
 import { freightRateRouter } from './freight-rate.route';
 import { inquiryRouter } from './inquiry.route';
 import { quotationRouter } from './quotation.route';
+import { shipmentRouter } from './shipment.route';
 import { salesLeadRouter } from './sales-lead.route';
 import { portRouter } from './port.route';
 import { notificationSettingRouter } from './notification-setting.route';
@@ -61,6 +62,8 @@ tenantRouter.use('/purchase', freightRateRouter);
 // Sales — inquiry capture (MODULE_PURCHASE_SALES §5.4).
 tenantRouter.use('/sales', inquiryRouter);
 tenantRouter.use('/cs', quotationRouter);
+// Customer Service — the shipment file (MODULE_BOOKING_CARGO.md §6.1).
+tenantRouter.use('/cs', shipmentRouter);
 tenantRouter.use('/sales', salesLeadRouter);
 
 // CRM.

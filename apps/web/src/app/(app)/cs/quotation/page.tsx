@@ -29,9 +29,9 @@ import { FollowupDrawer } from './followup-drawer';
  * list is the screen the feature opens on; a new quotation is raised from the
  * Add button, the same way Live Inquiry works.
  *
- * Booking is the hand-off to the next module. It is wired and it routes
- * nowhere yet, which the spec asks for explicitly — a button that does nothing
- * is better than a column of them appearing all at once later.
+ * Booking is the hand-off to the next module, and it now goes somewhere:
+ * MODULE_BOOKING_CARGO.md §6.1's screen, against this quotation. It stays
+ * disabled until the customer has accepted, because §1's flow starts there.
  */
 
 const TONE: Record<QuotationStatus, 'active' | 'pending' | 'inactive' | 'overdue'> = {
@@ -262,23 +262,26 @@ export default function QuotationListPage() {
                 Follow up
               </Button>
             )}
-            {/* §6.7: wired, routed to a placeholder. Shipment Booking is the
-                next module and this is where it starts. */}
-            <Button
-              variant="text"
-              size="inline"
-              disabled={row.status !== 'ACCEPTED'}
-              title={
-                row.status === 'ACCEPTED'
-                  ? 'Start a shipment booking'
-                  : 'Available once the customer has accepted this quotation'
-              }
-              onClick={() =>
-                toast.info('Shipment Booking is the next module. This quotation is ready for it.')
-              }
-            >
-              Booking
-            </Button>
+            {/* §6.7's hand-off into MODULE_BOOKING_CARGO.md §6.1. */}
+            {can('CUSTOMER_SERVICE.CARGO_BOOKING.CREATE') &&
+              (row.status === 'ACCEPTED' ? (
+                <Link
+                  href={{ pathname: '/cs/shipment-booking/new', query: { quotationId: row.id } }}
+                  className="text-body text-harbour hover:underline"
+                  title="Start a shipment booking"
+                >
+                  Booking
+                </Link>
+              ) : (
+                <Button
+                  variant="text"
+                  size="inline"
+                  disabled
+                  title="Available once the customer has accepted this quotation"
+                >
+                  Booking
+                </Button>
+              ))}
           </span>
         )}
       />

@@ -63,6 +63,19 @@ export const ACTIONS = [
   // the inquiry is still open. Separate from CREATE/EDIT because it is not the
   // inquiry being written — it is an answer to one.
   'QUOTE',
+  /*
+   * The booking's two workflow actions (MODULE_BOOKING_CARGO.md §7).
+   *
+   * SUBMIT is separate from CREATE for the reason §5.2 rule 4 implies: a
+   * booking is assembled over several sittings and then handed to operations,
+   * and the hand-off is the act that starts a shipment file moving.
+   *
+   * CANCEL is §5.1's `any -> CANCELLED`, which the spec marks privileged and
+   * requires a reason for. It is the retirement path a booking has INSTEAD of
+   * DELETE — see the note on CARGO_BOOKING below.
+   */
+  'SUBMIT',
+  'CANCEL',
 ] as const;
 
 export type Action = (typeof ACTIONS)[number];
@@ -260,7 +273,29 @@ export const FEATURES: readonly FeatureDefinition[] = [
     // no VIEW, and nothing for the sidebar to render.
     columnLevel: true,
   },
-  { module: 'CUSTOMER_SERVICE', feature: 'CUSTOMER_SERVICE.CARGO_BOOKING', label: 'Cargo Booking', actions: MASTER },
+  /*
+    * The shipment file (docs/MODULE_BOOKING_CARGO.md). CLAUDE.md §3 called this
+    * menu item Cargo Booking and §3 of the module spec renames it to Shipment
+    * Booking - Sea / - Air; the label follows the rename, the key does not,
+    * because the key is what production's role_permission rows point at.
+    *
+    * One feature for both menu items, as §3 asks: "Build one component driven
+    * by shipment_type, and route both menu items to it."
+    *
+    * §7 of the module spec lists DELETE here and it is deliberately absent.
+    * CR-002 drew the boundary first and named this case: master data can be
+    * removed, "a quotation, a booking or an invoice never can, because it is
+    * business history retired by its own status". §5.1 gives a booking that
+    * status — CANCELLED, privileged, reason mandatory — which is CANCEL below.
+    * The grid's per-row Edit | Delete (§5.2 rule 3) is composing a draft, and
+    * rides on EDIT.
+    */
+  {
+    module: 'CUSTOMER_SERVICE',
+    feature: 'CUSTOMER_SERVICE.CARGO_BOOKING',
+    label: 'Shipment Booking',
+    actions: [...MASTER, 'VIEW_ALL', 'SUBMIT', 'CANCEL'],
+  },
   { module: 'CUSTOMER_SERVICE', feature: 'CUSTOMER_SERVICE.SHIPMENT_APPROVAL', label: 'Shipment Approval', actions: MASTER_APPROVE },
   { module: 'CUSTOMER_SERVICE', feature: 'CUSTOMER_SERVICE.SHIPPING_ORDER', label: 'Shipping Order', actions: MASTER },
 

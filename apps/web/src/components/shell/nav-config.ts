@@ -69,6 +69,19 @@ const ROUTES: Record<string, Route> = {
   'ADMIN.ROLE': '/admin/role',
 };
 
+/**
+ * Paths a permission guards but the sidebar does not link to.
+ *
+ * The booking form is the live case: it opens from the Booking action on a
+ * quotation and always needs one, so there is nothing for a menu item to point
+ * at until the Booking List lands. Without this, §7 layer 4 would have a hole
+ * exactly where the URL is easiest to guess — the API still refuses, but the
+ * screen would render its shell first and look broken rather than forbidden.
+ */
+const UNLISTED_ROUTES: Record<string, string> = {
+  'CUSTOMER_SERVICE.CARGO_BOOKING': '/cs/shipment-booking',
+};
+
 export interface NavItem {
   feature: string;
   label: string;
@@ -111,7 +124,7 @@ export function buildNav(): NavGroup[] {
  */
 export function viewPermissionForPath(pathname: string): string | null {
   let best: { route: string; feature: string } | null = null;
-  for (const [feature, route] of Object.entries(ROUTES)) {
+  for (const [feature, route] of [...Object.entries(ROUTES), ...Object.entries(UNLISTED_ROUTES)]) {
     if (pathname !== route && !pathname.startsWith(`${route}/`)) continue;
     if (best === null || route.length > best.route.length) best = { route, feature };
   }
