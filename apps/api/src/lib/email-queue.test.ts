@@ -18,7 +18,14 @@ import { PrismaClient } from '../generated/prisma/client';
  */
 
 let behaviour: 'ok' | 'fail' | 'unconfigured' = 'ok';
-const sent: { to: string[]; subject: string; text: string; html?: string }[] = [];
+const sent: {
+  to: string[];
+  cc?: string[];
+  bcc?: string[];
+  subject: string;
+  text: string;
+  html?: string;
+}[] = [];
 
 vi.mock('./mailer', () => ({
   sendMail: (mail: { to: string[]; subject: string; text: string; html?: string }) => {
@@ -47,7 +54,8 @@ let tenantB: bigint;
 
 async function cleanup(): Promise<void> {
   const scope = `(SELECT id FROM tenant WHERE slug IN ('${SLUG_A}', '${SLUG_B}'))`;
-  for (const table of ['audit_log', 'email_log', 'email_template']) {
+  // notification_setting: the blind-copy tests give these workspaces one.
+  for (const table of ['audit_log', 'email_log', 'email_template', 'notification_setting']) {
     await owner.$executeRawUnsafe(`DELETE FROM ${table} WHERE tenant_id IN ${scope}`);
   }
   await owner.$executeRawUnsafe(
@@ -170,6 +178,106 @@ describe('queueing', () => {
     expect(rows[0]?.bodyText).toBe('Inquiry INQ-1 needs a price.');
 
     await owner.emailTemplate.deleteMany({ where: { tenantId: tenantA } });
+  });
+});
+
+describe('the standing blind copy', () => {
+  /*
+   * Asked for on 2026-09-01 with two reasons given together: somebody wants to
+   * see that a message actually left, and the pricing team wants to be on every
+   * rate request without being told to be.
+   *
+   * The property that matters most is the one the recipient cannot check — an
+   * agent must not learn from a rate request that anyone else is reading it.
+   */
+  async function setBcc(tenantId: bigint, value: string | null): Promise<void> {
+    const existing = await owner.notificationSetting.findFirst({
+      where: { tenantId },
+      select: { id: true },
+    });
+    if (existing === null) {
+      await owner.notificationSetting.create({ data: { tenantId, bccAddresses: value } });
+    } else {
+      await owner.notificationSetting.update({
+        where: { id: existing.id },
+        data: { bccAddresses: value },
+      });
+    }
+  }
+
+  it('adds the workspace address to a message that asked for none', async () => {
+    await setBcc(tenantA, 'tsl.pricing@example.test');
+    await queueOne(tenantA, { to: ['agent@x.test'] });
+
+    const rows = await outbox(tenantA);
+    // Recorded on the outbox row, because that record is the evidence the
+    // message went at all.
+    expect(rows[0]?.bccAddresses).toEqual(['tsl.pricing@example.test']);
+
+    await drainMine(tenantA);
+    const message = sent.find((m) => m.to.includes('agent@x.test'));
+    expect(message?.bcc).toEqual(['tsl.pricing@example.test']);
+    await setBcc(tenantA, null);
+  });
+
+  it('keeps it off the visible lines', async () => {
+    // The whole meaning of blind. To and Cc are what the recipient sees.
+    await setBcc(tenantA, 'watcher@example.test');
+    await queueOne(tenantA, { to: ['agent@x.test'] });
+
+    const rows = await outbox(tenantA);
+    expect(rows[0]?.toAddresses).toEqual(['agent@x.test']);
+    expect(rows[0]?.ccAddresses).toEqual([]);
+    await setBcc(tenantA, null);
+  });
+
+  it('takes several addresses, however they are separated', async () => {
+    await setBcc(tenantA, 'one@example.test, two@example.test\nthree@example.test');
+    await queueOne(tenantA, { to: ['agent@x.test'] });
+
+    const rows = await outbox(tenantA);
+    expect(rows[0]?.bccAddresses).toEqual([
+      'one@example.test',
+      'two@example.test',
+      'three@example.test',
+    ]);
+    await setBcc(tenantA, null);
+  });
+
+  it('does not copy somebody who is already on the message', async () => {
+    /*
+     * A second copy of a mail you already have, arriving invisibly, reads as a
+     * fault rather than a feature — and on a rate request it would tell the
+     * recipient they are being watched by looking at their own inbox.
+     */
+    await setBcc(tenantA, 'agent@x.test, pricing@example.test');
+    await queueOne(tenantA, { to: ['agent@x.test'] });
+
+    const rows = await outbox(tenantA);
+    expect(rows[0]?.bccAddresses).toEqual(['pricing@example.test']);
+    await setBcc(tenantA, null);
+  });
+
+  it('sends nothing extra when the workspace has set none', async () => {
+    await setBcc(tenantA, null);
+    await queueOne(tenantA, { to: ['agent@x.test'] });
+
+    const rows = await outbox(tenantA);
+    expect(rows[0]?.bccAddresses).toEqual([]);
+
+    await drainMine(tenantA);
+    const message = sent.find((m) => m.to.includes('agent@x.test'));
+    expect(message?.bcc).toBeUndefined();
+  });
+
+  it('stays inside its own workspace', async () => {
+    // One company's standing copy must never ride on another's mail.
+    await setBcc(tenantA, 'only-a@example.test');
+    await queueOne(tenantB, { to: ['someone@b.test'] });
+
+    const rows = await outbox(tenantB);
+    expect(rows[0]?.bccAddresses).toEqual([]);
+    await setBcc(tenantA, null);
   });
 });
 

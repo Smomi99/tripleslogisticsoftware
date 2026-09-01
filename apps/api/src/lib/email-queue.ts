@@ -6,7 +6,7 @@ import {
   renderSignedHtml,
   type SignatureLogo,
 } from './mail-signature';
-import { sendMail } from './mailer';
+import { parseAddressList, sendMail } from './mailer';
 import { prisma } from './prisma';
 import { withTenant } from './tenant-client';
 
@@ -44,6 +44,11 @@ export interface QueueMailInput {
   templateKey: string;
   to: string[];
   cc?: string[];
+  /**
+   * Blind copies for this message alone. The workspace's standing BCC is added
+   * on top of these, so a caller never has to remember it.
+   */
+  bcc?: string[];
   /** Substituted into the template. */
   variables: Record<string, string | number | null | undefined>;
   /** What the message is about, for the record it will appear on. */
@@ -82,6 +87,27 @@ export async function queueMail(input: QueueMailInput): Promise<QueueMailResult>
   // tenant-scoped, and the read is meaningless without a tenant in scope.
   const { row, usedTemplate } = await withTenant(input.tenantId, async (db) => {
     const template = await resolveTemplate(db, input.templateKey);
+
+    /*
+     * The workspace's standing blind copy, resolved here rather than at send
+     * time so the outbox row records who the message actually went to. That
+     * record is half the point of the feature: "did it send" is answered by
+     * looking at what was sent, not by trusting that a setting was read later.
+     *
+     * Anyone already on To or Cc is dropped — a second copy of the same message
+     * is noise, and to a recipient it looks like a mistake.
+     */
+    const setting = await db.notificationSetting.findFirst({
+      select: { bccAddresses: true },
+    });
+    const visible = new Set([...to, ...cc].map((a) => a.toLowerCase()));
+    const bcc = [
+      ...new Set(
+        [...(input.bcc ?? []), ...parseAddressList(setting?.bccAddresses ?? '')]
+          .map((a) => a.trim())
+          .filter((a) => a !== '' && !visible.has(a.toLowerCase())),
+      ),
+    ];
     const rendered =
       template === null
         ? { subject: input.fallback.subject, bodyText: input.fallback.bodyText, bodyHtml: null }
@@ -93,6 +119,7 @@ export async function queueMail(input: QueueMailInput): Promise<QueueMailResult>
         templateKey: input.templateKey,
         toAddresses: to,
         ccAddresses: cc,
+        bccAddresses: bcc,
         subject: rendered.subject,
         bodyText: rendered.bodyText,
         bodyHtml: rendered.bodyHtml,
@@ -127,6 +154,7 @@ interface ClaimedRow {
   template_key: string;
   to_addresses: string[];
   cc_addresses: string[];
+  bcc_addresses: string[];
   subject: string;
   body_text: string;
   body_html: string | null;
@@ -199,6 +227,7 @@ async function deliver(row: ClaimedRow): Promise<'sent' | 'retry' | 'failed'> {
         }
       : {}),
     ...(row.cc_addresses.length > 0 ? { cc: row.cc_addresses } : {}),
+    ...(row.bcc_addresses.length > 0 ? { bcc: row.bcc_addresses } : {}),
   });
 
   if (result.sent) {

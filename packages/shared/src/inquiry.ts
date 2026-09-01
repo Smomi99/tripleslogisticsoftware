@@ -561,11 +561,34 @@ export const notificationSettingSchema = z.object({
    * another company's letter is the leak §7A rule 7 is about.
    */
   signatureBlock: z.string().trim().max(2000, 'That signature is too long.').default(''),
+  /**
+   * Blind-copied on every message this workspace sends.
+   *
+   * Validated as a list for the same reason the price team addresses are:
+   * people separate them with commas, semicolons or newlines, and rejecting
+   * the wrong separator would be pedantry.
+   */
+  bccAddresses: z
+    .string()
+    .trim()
+    .max(2000, 'That list is too long.')
+    .refine(
+      (v) =>
+        v === '' ||
+        v
+          .split(/[,;\n]/)
+          .map((a) => a.trim())
+          .filter((a) => a !== '')
+          .every((a) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(a)),
+      'One of those is not an email address.',
+    )
+    .default(''),
 });
 
 export interface NotificationSettingDto {
   priceTeamEmails: string;
   signatureBlock: string;
+  bccAddresses: string;
 }
 
 /**

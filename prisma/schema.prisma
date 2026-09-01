@@ -1879,6 +1879,9 @@ model EmailLog {
   templateKey   String      @map("template_key") @db.VarChar(64)
   toAddresses   String[]    @map("to_addresses")
   ccAddresses   String[]    @default([]) @map("cc_addresses")
+  /// Who was blind-copied. Recorded because the outbox is the evidence that a
+  /// message went, and a copy invisible in the record proves nothing.
+  bccAddresses  String[]    @default([]) @map("bcc_addresses")
   /// Rendered when queued, not when sent: what went out has to be what the
   /// record shows, even if the template is edited an hour later.
   subject       String      @db.Text
@@ -2676,6 +2679,10 @@ model NotificationSetting {
   /// company's address under another company's rate request is exactly the
   /// leak §7A rule 7 is about.
   signatureBlock  String? @map("signature_block") @db.Text
+  /// Blind-copied on every message this workspace sends. The client's reason
+  /// for it: somebody can see that mail actually left, and the pricing team is
+  /// on every rate request without being told to be.
+  bccAddresses    String? @map("bcc_addresses") @db.Text
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)

@@ -25,6 +25,7 @@ export default function NotificationSettingPage() {
   const { authorizedRequest, can } = useSession();
   const [priceTeamEmails, setPriceTeamEmails] = useState('');
   const [signatureBlock, setSignatureBlock] = useState('');
+  const [bccAddresses, setBccAddresses] = useState('');
   const [isLoading, setLoading] = useState(true);
   const [isSaving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -36,6 +37,7 @@ export default function NotificationSettingPage() {
         if (!cancelled) {
           setPriceTeamEmails(data.priceTeamEmails);
           setSignatureBlock(data.signatureBlock);
+          setBccAddresses(data.bccAddresses);
         }
       })
       .catch(() => undefined)
@@ -48,7 +50,11 @@ export default function NotificationSettingPage() {
   }, [authorizedRequest]);
 
   async function save(): Promise<void> {
-    const parsed = notificationSettingSchema.safeParse({ priceTeamEmails, signatureBlock });
+    const parsed = notificationSettingSchema.safeParse({
+      priceTeamEmails,
+      signatureBlock,
+      bccAddresses,
+    });
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? 'Check the addresses.');
       return;
@@ -98,6 +104,30 @@ export default function NotificationSettingPage() {
           An inbound inquiry goes to the agent contacts chosen on it instead, and nothing is sent
           at all when the lane already has a live rate — there is nothing to ask for.
         </p>
+
+        {/* Asked for by the client on 2026-09-01. */}
+        <div className="mt-5 border-t border-line pt-4">
+          <Field
+            id="bccAddresses"
+            label="Blind copy every message to"
+            hint="Copied on everything the software sends — rate requests, quotations, alerts. The recipient never sees it. Separate addresses with commas."
+            wide
+          >
+            <Input
+              id="bccAddresses"
+              value={bccAddresses}
+              disabled={isLoading || !mayEdit}
+              placeholder="pricing@example.com"
+              onChange={(e) => setBccAddresses(e.target.value)}
+            />
+          </Field>
+          <p className="mt-2 text-cell text-steel">
+            Two jobs at once: a copy in your own inbox is how you know a message actually left,
+            and it puts the pricing team on every rate request without anybody having to remember
+            to add them. Each address appears on the outbox record, so what was sent stays
+            answerable later.
+          </p>
+        </div>
 
         <div className="mt-5 border-t border-line pt-4">
           <Field

@@ -36,7 +36,7 @@ notificationSettingRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (
   const auth = req.auth!;
   const row = await withTenant(auth.tenantId, (db) =>
     db.notificationSetting.findFirst({
-      select: { priceTeamEmails: true, signatureBlock: true },
+      select: { priceTeamEmails: true, signatureBlock: true, bccAddresses: true },
     }),
   );
 
@@ -45,6 +45,7 @@ notificationSettingRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (
     data: {
       priceTeamEmails: row?.priceTeamEmails ?? '',
       signatureBlock: row?.signatureBlock ?? '',
+      bccAddresses: row?.bccAddresses ?? '',
     },
   };
   res.json(payload);
@@ -62,10 +63,11 @@ notificationSettingRouter.put('/', requirePermission(`${FEATURE}.EDIT`), async (
           tenantId: auth.tenantId,
           priceTeamEmails: input.priceTeamEmails || null,
           signatureBlock: input.signatureBlock || null,
+          bccAddresses: input.bccAddresses || null,
           createdBy: auth.userId,
           updatedBy: auth.userId,
         },
-        select: { priceTeamEmails: true, signatureBlock: true },
+        select: { priceTeamEmails: true, signatureBlock: true, bccAddresses: true },
       });
     }
     return db.notificationSetting.update({
@@ -73,9 +75,10 @@ notificationSettingRouter.put('/', requirePermission(`${FEATURE}.EDIT`), async (
       data: {
         priceTeamEmails: input.priceTeamEmails || null,
         signatureBlock: input.signatureBlock || null,
+        bccAddresses: input.bccAddresses || null,
         updatedBy: auth.userId,
       },
-      select: { priceTeamEmails: true, signatureBlock: true },
+      select: { priceTeamEmails: true, signatureBlock: true, bccAddresses: true },
     });
   });
 
@@ -84,6 +87,7 @@ notificationSettingRouter.put('/', requirePermission(`${FEATURE}.EDIT`), async (
     data: {
       priceTeamEmails: saved.priceTeamEmails ?? '',
       signatureBlock: saved.signatureBlock ?? '',
+      bccAddresses: saved.bccAddresses ?? '',
     },
   };
   res.json(payload);

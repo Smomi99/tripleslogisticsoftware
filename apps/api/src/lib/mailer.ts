@@ -54,6 +54,12 @@ export interface Mail {
    * still gets the other.
    */
   text: string;
+  /**
+   * Blind copies. Separate from cc because the recipient must not see them —
+   * an agent reading a rate request should not learn that the pricing team is
+   * watching, and a carrier should not learn the agent exists.
+   */
+  bcc?: string[];
   /** Optional richer part. The quotation needs it; a notification does not. */
   html?: string;
   /**
@@ -84,6 +90,10 @@ export async function sendMail(mail: Mail): Promise<MailResult> {
   const copies = [...new Set((mail.cc ?? []).map((a) => a.trim()).filter((a) => a !== ''))]
     // Somebody on both lines gets one copy, not two.
     .filter((a) => !recipients.includes(a));
+  const blind = [...new Set((mail.bcc ?? []).map((a) => a.trim()).filter((a) => a !== ''))]
+    // Same rule, and it matters more here: a blind copy of a message somebody
+    // already has, arriving invisibly, reads as a fault rather than a feature.
+    .filter((a) => !recipients.includes(a) && !copies.includes(a));
   if (recipients.length === 0) {
     logger.info({ subject: mail.subject }, 'mail skipped: no recipients');
     return { sent: false, reason: 'no-recipients' };
@@ -103,6 +113,7 @@ export async function sendMail(mail: Mail): Promise<MailResult> {
       from: MAIL_CONFIG.from,
       to: recipients.join(', '),
       ...(copies.length > 0 ? { cc: copies.join(', ') } : {}),
+      ...(blind.length > 0 ? { bcc: blind.join(', ') } : {}),
       subject: mail.subject,
       text: mail.text,
       ...(mail.html === undefined || mail.html === '' ? {} : { html: mail.html }),
