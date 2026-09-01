@@ -89,6 +89,13 @@ export const TENANT_OWNED_MODELS = [
   'RolePermission',
   'SalesLead',
   'SalesLeadFollowup',
+  // The shipment file (docs/MODULE_BOOKING_CARGO.md §2.1). Staff-only: a row
+  // carries the customer, the exporter and the importer together, and §7 says
+  // an agent never learns the customer's identity.
+  'Shipment',
+  'ShipmentCommodity',
+  'ShipmentPo',
+  'ShipmentCargoLine',
   'TenantMasterOverride',
   'User',
   'UserPermission',
