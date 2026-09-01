@@ -20,6 +20,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Input, Select } from '@/components/ui/field';
+import { MultiSelect } from '@/components/ui/multi-select';
 import { PageHeader } from '@/components/ui/form-layout';
 import { ConfirmDialog } from '@/components/ui/modal';
 import { Status } from '@/components/ui/status';
@@ -136,6 +137,27 @@ export function RateEntryScreen({
   });
   const [page, setPage] = useState(1);
   const [includeExpired, setIncludeExpired] = useState(false);
+  /*
+   * The same filters the price list carries. These screens are where rates are
+   * bought, and a buyer works one lane at a time — without them, finding the
+   * Chittagong–Hamburg rate to correct meant paging through every rate in the
+   * mode.
+   */
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [polIds, setPolIds] = useState<string[]>([]);
+  const [podIds, setPodIds] = useState<string[]>([]);
+  const [carrierId, setCarrierId] = useState('');
+  const [goodsTypeId, setGoodsTypeId] = useState('');
+
+  // Debounced, like every other search box in the product (§8).
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearch(searchInput.trim());
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
   const [isPending, setPending] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -192,6 +214,11 @@ export function RateEntryScreen({
       sortOrder: 'desc',
       includeExpired: String(includeExpired),
     });
+    if (search !== '') params.set('search', search);
+    if (polIds.length > 0) params.set('polIds', polIds.join(','));
+    if (podIds.length > 0) params.set('podIds', podIds.join(','));
+    if (carrierId !== '') params.set('carrierId', carrierId);
+    if (goodsTypeId !== '') params.set('goodsTypeId', goodsTypeId);
     try {
       const response = await authorizedList<FreightRateDto[]>(
         `/api/tenant/purchase/rates?${params.toString()}`,
@@ -206,7 +233,17 @@ export function RateEntryScreen({
     } finally {
       if (requestId === requestIdRef.current) setPending(false);
     }
-  }, [authorizedList, includeExpired, mode, page]);
+  }, [
+    authorizedList,
+    carrierId,
+    goodsTypeId,
+    includeExpired,
+    mode,
+    page,
+    podIds,
+    polIds,
+    search,
+  ]);
 
   useEffect(() => {
     void load();
@@ -657,6 +694,89 @@ export function RateEntryScreen({
         total on the list. Pushed to the other end and given a verb, so the two
         controls stop forming a sentence they never meant.
       */}
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="flex w-64 flex-col gap-1">
+          <span className="label-manifest">Search</span>
+          <Input
+            aria-label="Search rates"
+            placeholder="Code, port or carrier"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+          />
+        </div>
+        {/*
+          Either end takes several ports, but not both — the price list's rule,
+          for the price list's reason: a grid whose rows share neither end is a
+          search result pretending to be a comparison.
+        */}
+        <div className="flex w-56 flex-col gap-1">
+          <span className="label-manifest">POL</span>
+          <MultiSelect
+            id={`${mode}-entry-pol`}
+            options={options.ports}
+            value={polIds}
+            onChange={(next) => {
+              setPolIds(next);
+              if (next.length > 1 && podIds.length > 1) setPodIds(podIds.slice(0, 1));
+              setPage(1);
+            }}
+            placeholder="All origins"
+            searchPlaceholder="Filter ports"
+          />
+        </div>
+        <div className="flex w-56 flex-col gap-1">
+          <span className="label-manifest">POD</span>
+          <MultiSelect
+            id={`${mode}-entry-pod`}
+            options={options.ports}
+            value={podIds}
+            onChange={(next) => {
+              setPodIds(next);
+              if (next.length > 1 && polIds.length > 1) setPolIds(polIds.slice(0, 1));
+              setPage(1);
+            }}
+            placeholder="All destinations"
+            searchPlaceholder="Filter ports"
+          />
+        </div>
+        <div className="flex w-44 flex-col gap-1">
+          <span className="label-manifest">Carrier</span>
+          <Select
+            aria-label="Filter by carrier"
+            value={carrierId}
+            onChange={(e) => {
+              setCarrierId(e.target.value);
+              setPage(1);
+            }}
+          >
+            <option value="">All</option>
+            {options.carriers.map((carrier) => (
+              <option key={carrier.id} value={carrier.id}>
+                {carrier.name}
+              </option>
+            ))}
+          </Select>
+        </div>
+        <div className="flex w-44 flex-col gap-1">
+          <span className="label-manifest">Goods type</span>
+          <Select
+            aria-label="Filter by goods type"
+            value={goodsTypeId}
+            onChange={(e) => {
+              setGoodsTypeId(e.target.value);
+              setPage(1);
+            }}
+          >
+            <option value="">All</option>
+            {options.goodsTypes.map((goods) => (
+              <option key={goods.id} value={goods.id}>
+                {goods.name}
+              </option>
+            ))}
+          </Select>
+        </div>
+      </div>
+
       <div className="flex items-center justify-between gap-2">
         <label className="flex items-center gap-2 text-body text-steel">
           <input

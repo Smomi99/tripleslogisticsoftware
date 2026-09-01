@@ -192,6 +192,86 @@ async function createRate(over: Record<string, unknown> = {}): Promise<string> {
 }
 
 
+describe('filtering the price list by several ports', () => {
+  /*
+   * Asked for on 2026-09-01: several loading ports at once, the way several
+   * discharge ports already worked — but only at one end. A price list is read
+   * one-sidedly, and a grid whose rows share neither end is a search result
+   * pretending to be a comparison.
+   */
+  let otherPolId: bigint;
+
+  beforeAll(async () => {
+    otherPolId = (
+      // Shared, like the other ports this file makes: the teardown drops the
+      // tenant before it drops these by code, so a tenant-owned one would
+      // block it.
+      await owner.port.create({
+        data: {
+          code: `${PREFIX}POL2`,
+          name: 'Second Origin',
+          portCode: 'VRPOL2',
+          country: 'Bangladesh',
+          type: 'SEAPORT',
+        },
+        select: { id: true },
+      })
+    ).id;
+  });
+
+  const list = (query: string) => api.get(`/api/tenant/purchase/price-list?mode=SEA_FCL&${query}`);
+
+  it('takes several loading ports', async () => {
+    await createRate();
+    const res = await list(`polIds=${polId},${otherPolId}`);
+    expect(res.status, JSON.stringify(res.body.error ?? {})).toBe(200);
+    expect(res.body.data.length).toBeGreaterThan(0);
+  });
+
+  it('still takes several discharge ports', async () => {
+    const res = await list(`podIds=${podId}`);
+    expect(res.status).toBe(200);
+  });
+
+  it('refuses several at both ends', async () => {
+    // The UI collapses one side when the other grows, but a query parameter is
+    // not the UI, so the rule is enforced here too.
+    const res = await list(`polIds=${polId},${otherPolId}&podIds=${podId},${otherPolId}`);
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(res.body.error)).toMatch(/not both/i);
+  });
+
+  it('allows several on one side with exactly one on the other', async () => {
+    const res = await list(`polIds=${polId},${otherPolId}&podIds=${podId}`);
+    expect(res.status).toBe(200);
+  });
+
+  it('narrows to nothing when the lane has no rates', async () => {
+    const res = await list(`polIds=${otherPolId}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveLength(0);
+  });
+
+  it('still honours the older single polId parameter', async () => {
+    /*
+     * Kept so a bookmark or an integration written against it still resolves.
+     * On its own lane, and last: one published rate per lane means whatever a
+     * sibling test left on the shared lane is not dependable.
+     */
+    const id = await createRate({ polId: otherPolId.toString() });
+    const code = (
+      await owner.freightRate.findFirstOrThrow({
+        where: { id: BigInt(id) },
+        select: { code: true },
+      })
+    ).code;
+
+    const res = await list(`polId=${otherPolId}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.map((r: { code: string }) => r.code)).toContain(code);
+  });
+});
+
 describe('editing a rate that carries local charges', () => {
   /*
    * Reported from use: "edit purchase price and add local charge and update"

@@ -244,10 +244,18 @@ function rateWhere(
   return {
     deletedAt: null,
     mode: query.mode,
-    ...(query.polId !== undefined && query.polId !== ''
-      ? { polId: BigInt(query.polId) }
-      : {}),
-    // §4 rule 7: many PODs at once.
+    /*
+     * §4 rule 7: many ports at once, at either end.
+     *
+     * polIds wins over polId when both arrive — the multi-select is what the
+     * screens send now, and the single parameter is kept only so an older
+     * bookmark or an integration still resolves.
+     */
+    ...(query.polIds !== undefined
+      ? { polId: { in: query.polIds.map(BigInt) } }
+      : query.polId !== undefined && query.polId !== ''
+        ? { polId: BigInt(query.polId) }
+        : {}),
     ...(query.podIds !== undefined ? { podId: { in: query.podIds.map(BigInt) } } : {}),
     ...(query.carrierId !== undefined && query.carrierId !== ''
       ? { carrierId: BigInt(query.carrierId) }

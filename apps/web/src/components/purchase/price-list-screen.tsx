@@ -89,7 +89,7 @@ export function PriceListScreen({
 
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
-  const [polId, setPolId] = useState('');
+  const [polIds, setPolIds] = useState<string[]>([]);
   const [podIds, setPodIds] = useState<string[]>([]);
   const [carrierId, setCarrierId] = useState('');
   const [goodsTypeId, setGoodsTypeId] = useState('');
@@ -124,13 +124,13 @@ export function PriceListScreen({
   const filterParams = useCallback((): URLSearchParams => {
     const params = new URLSearchParams({ mode });
     if (search !== '') params.set('search', search);
-    if (polId !== '') params.set('polId', polId);
+    if (polIds.length > 0) params.set('polIds', polIds.join(','));
     if (podIds.length > 0) params.set('podIds', podIds.join(','));
     if (carrierId !== '') params.set('carrierId', carrierId);
     if (goodsTypeId !== '') params.set('goodsTypeId', goodsTypeId);
     if (includeExpired) params.set('includeExpired', 'true');
     return params;
-  }, [carrierId, goodsTypeId, includeExpired, mode, podIds, search]);
+  }, [carrierId, goodsTypeId, includeExpired, mode, polIds, podIds, search]);
 
   const requestIdRef = useRef(0);
 
@@ -183,7 +183,7 @@ export function PriceListScreen({
 
   const hasFilters =
     search !== '' ||
-    polId !== '' ||
+    polIds.length > 0 ||
     podIds.length > 0 ||
     carrierId !== '' ||
     goodsTypeId !== '' ||
@@ -191,7 +191,7 @@ export function PriceListScreen({
 
   function clearFilters(): void {
     setSearchInput('');
-    setPolId('');
+    setPolIds([]);
     setPodIds([]);
     setCarrierId('');
     setGoodsTypeId('');
@@ -251,23 +251,33 @@ export function PriceListScreen({
             onChange={(e) => setSearchInput(e.target.value)}
           />
         </div>
-        <div className="flex w-44 flex-col gap-1">
+        {/*
+          Either end may take several ports, but not both at once.
+          A price list is read one-sidedly — these origins into one port, or
+          one origin out to these — and a grid whose rows share neither end is
+          a search result pretending to be a comparison. So picking a second
+          port on one side collapses the other to the single port it already
+          had, and the hint below says so before it happens rather than after.
+        */}
+        <div className="flex w-64 flex-col gap-1">
           <span className="label-manifest">POL</span>
-          <Select
-            aria-label="Port of loading"
-            value={polId}
-            onChange={(e) => {
-              setPolId(e.target.value);
+          <MultiSelect
+            id="price-list-pol"
+            options={options.ports}
+            value={polIds}
+            onChange={(next) => {
+              setPolIds(next);
+              // Two origins means one destination. Keeping the first is the
+              // least surprising choice: it is the one they picked first.
+              if (next.length > 1 && podIds.length > 1) setPodIds(podIds.slice(0, 1));
               setPage(1);
             }}
-          >
-            <option value="">All</option>
-            {options.ports.map((port) => (
-              <option key={port.id} value={port.id}>
-                {port.name}
-              </option>
-            ))}
-          </Select>
+            placeholder="All origins"
+            searchPlaceholder="Filter ports"
+          />
+          {polIds.length > 1 && (
+            <span className="text-cell text-steel">One discharge port at a time.</span>
+          )}
         </div>
         <div className="flex w-64 flex-col gap-1">
           <span className="label-manifest">POD</span>
@@ -277,11 +287,15 @@ export function PriceListScreen({
             value={podIds}
             onChange={(next) => {
               setPodIds(next);
+              if (next.length > 1 && polIds.length > 1) setPolIds(polIds.slice(0, 1));
               setPage(1);
             }}
             placeholder="All destinations"
             searchPlaceholder="Filter ports"
           />
+          {podIds.length > 1 && (
+            <span className="text-cell text-steel">One loading port at a time.</span>
+          )}
         </div>
         <div className="flex w-40 flex-col gap-1">
           <span className="label-manifest">Carrier</span>

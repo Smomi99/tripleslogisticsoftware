@@ -250,19 +250,34 @@ export interface FreightRateDto {
 
 // ---------------------------------------------------------------- list query
 
+/** A comma-joined or repeated id parameter, as a list or nothing. */
+const idListField = z
+  .union([z.string(), z.array(z.string())])
+  .optional()
+  .transform((v) => {
+    if (v === undefined) return undefined;
+    const raw = Array.isArray(v) ? v : v.split(',');
+    const ids = raw.map((s) => s.trim()).filter((s) => /^\d+$/.test(s));
+    return ids.length > 0 ? ids : undefined;
+  });
+
 export const freightRateListQuerySchema = listQuerySchema.extend({
   mode: z.enum(RATE_MODES),
+  /**
+   * Kept alongside polIds because other screens still send a single polId, and
+   * a query parameter that silently stopped working would be a poor trade for
+   * a name.
+   */
   polId: optionalIdField,
-  /** §4 rule 7: the Add-on and Price List screens filter many PODs at once. */
-  podIds: z
-    .union([z.string(), z.array(z.string())])
-    .optional()
-    .transform((v) => {
-      if (v === undefined) return undefined;
-      const raw = Array.isArray(v) ? v : v.split(',');
-      const ids = raw.map((s) => s.trim()).filter((s) => /^\d+$/.test(s));
-      return ids.length > 0 ? ids : undefined;
-    }),
+  /**
+   * §4 rule 7: the Add-on and Price List screens filter many ports at once.
+   *
+   * Either end may be a list, but not both — see the refine below. A price
+   * list is read as "these origins into one port" or "one origin out to
+   * these", and a grid of both is a matrix nobody can scan.
+   */
+  polIds: idListField,
+  podIds: idListField,
   carrierId: optionalIdField,
   goodsTypeId: optionalIdField,
   status: z.enum(RATE_STATUSES).optional(),
@@ -274,7 +289,23 @@ export const freightRateListQuerySchema = listQuerySchema.extend({
     .enum(['true', 'false'])
     .transform((v) => v === 'true')
     .default(false),
-});
+}).refine(
+  /*
+   * One end may be a list, never both.
+   *
+   * A price list answers "what does it cost from here to there", and the
+   * comparison people actually make is one-sided: several origins into one
+   * port, or one origin out to several. Allowing both produces a grid whose
+   * rows share neither end, which is not a comparison — it is a search result
+   * pretending to be one. The UI enforces this too, but a query parameter is
+   * not the UI, so it is refused here as well.
+   */
+  (v) => (v.polIds ?? []).length < 2 || (v.podIds ?? []).length < 2,
+  {
+    message: 'Choose several loading ports or several discharge ports, not both.',
+    path: ['polIds'],
+  },
+);
 
 export type FreightRateListQuery = z.infer<typeof freightRateListQuerySchema>;
 
