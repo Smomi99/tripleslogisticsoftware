@@ -267,7 +267,16 @@ export function ShipmentBookingList({ mode }: { mode: 'SEA' | 'AIR' }) {
                 // A terminal booking's next action IS View, which the link
                 // above already is — drawing it twice would say nothing twice.
                 next.label !== 'View' &&
-                can(next.permission) && (
+                can(next.permission) &&
+                (next.permission === 'CUSTOMER_SERVICE.SCHEDULE.CREATE' ? (
+                  // §6.4's screen, which phase E built.
+                  <Link
+                    href={`/cs/shipment-booking/${row.id}/schedule`}
+                    className="text-body text-harbour hover:underline"
+                  >
+                    {next.label}
+                  </Link>
+                ) : (
                   <Button
                     variant="text"
                     size="inline"
@@ -276,7 +285,7 @@ export function ShipmentBookingList({ mode }: { mode: 'SEA' | 'AIR' }) {
                   >
                     {next.label}
                   </Button>
-                )
+                ))
               )}
             </>
           );

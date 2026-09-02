@@ -22,6 +22,7 @@ import { freightRateRouter } from './freight-rate.route';
 import { inquiryRouter } from './inquiry.route';
 import { quotationRouter } from './quotation.route';
 import { shipmentRouter } from './shipment.route';
+import { shipmentScheduleRouter } from './shipment-schedule.route';
 import { salesLeadRouter } from './sales-lead.route';
 import { portRouter } from './port.route';
 import { notificationSettingRouter } from './notification-setting.route';
@@ -64,6 +65,7 @@ tenantRouter.use('/sales', inquiryRouter);
 tenantRouter.use('/cs', quotationRouter);
 // Customer Service — the shipment file (MODULE_BOOKING_CARGO.md §6.1).
 tenantRouter.use('/cs', shipmentRouter);
+tenantRouter.use('/cs', shipmentScheduleRouter);
 tenantRouter.use('/sales', salesLeadRouter);
 
 // CRM.

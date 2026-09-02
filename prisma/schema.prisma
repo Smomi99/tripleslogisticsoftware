@@ -277,6 +277,8 @@ model Tenant {
   shipmentCommodities  ShipmentCommodity[]
   shipmentPos          ShipmentPo[]
   shipmentCargoLines   ShipmentCargoLine[]
+  shipmentSchedules    ShipmentSchedule[]
+  shipmentScheduleLegs ShipmentScheduleLeg[]
   mailSignatureLogos   MailSignatureLogo[]
 
   @@index([slug])
@@ -392,12 +394,14 @@ model Port {
   // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
   // prisma migrate owns them — an appendix-only constraint is dropped by the
   // next migrate dev, which is how this was found.
-  createdByUser User?       @relation("PortCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
-  updatedByUser User?       @relation("PortUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
-  quotationsPol Quotation[] @relation("QuotationPol")
-  quotationsPod Quotation[] @relation("QuotationPod")
-  shipmentsPol  Shipment[]  @relation("ShipmentPol")
-  shipmentsPod  Shipment[]  @relation("ShipmentPod")
+  createdByUser           User?                 @relation("PortCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser           User?                 @relation("PortUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  quotationsPol           Quotation[]           @relation("QuotationPol")
+  quotationsPod           Quotation[]           @relation("QuotationPod")
+  shipmentsPol            Shipment[]            @relation("ShipmentPol")
+  shipmentsPod            Shipment[]            @relation("ShipmentPod")
+  scheduleLegOrigins      ShipmentScheduleLeg[] @relation("ShipmentScheduleLegOrigin")
+  scheduleLegDestinations ShipmentScheduleLeg[] @relation("ShipmentScheduleLegDestination")
 
   @@unique([tenantId, code])
   /// The natural key (tenant_id, port_code) is UNIQUE only over live rows, and
@@ -620,9 +624,10 @@ model Carrier {
   createdByUser User? @relation("CarrierCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User? @relation("CarrierUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
-  inquiryParties InquiryParty[]
-  quotations     Quotation[]    @relation("QuotationCarrier")
-  shipments      Shipment[]     @relation("ShipmentCarrier")
+  inquiryParties    InquiryParty[]
+  quotations        Quotation[]        @relation("QuotationCarrier")
+  shipments         Shipment[]         @relation("ShipmentCarrier")
+  shipmentSchedules ShipmentSchedule[] @relation("ShipmentScheduleCarrier")
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -795,9 +800,10 @@ model Vessel {
   // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
   // prisma migrate owns them — an appendix-only constraint is dropped by the
   // next migrate dev, which is how this was found.
-  createdByUser User?       @relation("VesselCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
-  updatedByUser User?       @relation("VesselUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  createdByUser User?                 @relation("VesselCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User?                 @relation("VesselUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
   quotations    Quotation[]
+  scheduleLegs  ShipmentScheduleLeg[] @relation("ShipmentScheduleLegVessel")
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -1676,33 +1682,39 @@ model User {
   createdNotificationSettings NotificationSetting[] @relation("NotificationSettingCreatedBy")
   updatedNotificationSettings NotificationSetting[] @relation("NotificationSettingUpdatedBy")
 
-  submittedAgentQuotes       AgentQuote[]         @relation("AgentQuoteSubmittedBy")
-  createdAgentQuoteOptions   AgentQuoteOption[]   @relation("AgentQuoteOptionCreatedBy")
-  updatedAgentQuoteOptions   AgentQuoteOption[]   @relation("AgentQuoteOptionUpdatedBy")
-  createdAgentQuoteLines     AgentQuoteLine[]     @relation("AgentQuoteLineCreatedBy")
-  updatedAgentQuoteLines     AgentQuoteLine[]     @relation("AgentQuoteLineUpdatedBy")
-  authoredAgentQuoteComments AgentQuoteComment[]  @relation("AgentQuoteCommentAuthor")
-  createdAgentQuotes         AgentQuote[]         @relation("AgentQuoteCreatedBy")
-  updatedAgentQuotes         AgentQuote[]         @relation("AgentQuoteUpdatedBy")
-  quotationsSent             Quotation[]          @relation("QuotationSentBy")
-  quotationsCreated          Quotation[]          @relation("QuotationCreatedBy")
-  quotationsUpdated          Quotation[]          @relation("QuotationUpdatedBy")
-  quotationLinesCreated      QuotationLine[]      @relation("QuotationLineCreatedBy")
-  quotationLinesUpdated      QuotationLine[]      @relation("QuotationLineUpdatedBy")
-  quotationRecipientsCreated QuotationRecipient[] @relation("QuotationRecipientCreatedBy")
-  quotationFollowupsCreated  QuotationFollowup[]  @relation("QuotationFollowupCreatedBy")
-  quotationFollowupsUpdated  QuotationFollowup[]  @relation("QuotationFollowupUpdatedBy")
-  shipmentsSubmitted         Shipment[]           @relation("ShipmentSubmittedBy")
-  shipmentsCancelled         Shipment[]           @relation("ShipmentCancelledBy")
-  shipmentsCreated           Shipment[]           @relation("ShipmentCreatedBy")
-  shipmentsUpdated           Shipment[]           @relation("ShipmentUpdatedBy")
-  shipmentPosApproved        ShipmentPo[]         @relation("ShipmentPoApprovedBy")
-  shipmentPosCreated         ShipmentPo[]         @relation("ShipmentPoCreatedBy")
-  shipmentPosUpdated         ShipmentPo[]         @relation("ShipmentPoUpdatedBy")
-  shipmentCargoLinesCreated  ShipmentCargoLine[]  @relation("ShipmentCargoLineCreatedBy")
-  shipmentCargoLinesUpdated  ShipmentCargoLine[]  @relation("ShipmentCargoLineUpdatedBy")
-  mailSignatureLogosCreated  MailSignatureLogo[]  @relation("MailSignatureLogoCreatedBy")
-  mailSignatureLogosUpdated  MailSignatureLogo[]  @relation("MailSignatureLogoUpdatedBy")
+  submittedAgentQuotes        AgentQuote[]          @relation("AgentQuoteSubmittedBy")
+  createdAgentQuoteOptions    AgentQuoteOption[]    @relation("AgentQuoteOptionCreatedBy")
+  updatedAgentQuoteOptions    AgentQuoteOption[]    @relation("AgentQuoteOptionUpdatedBy")
+  createdAgentQuoteLines      AgentQuoteLine[]      @relation("AgentQuoteLineCreatedBy")
+  updatedAgentQuoteLines      AgentQuoteLine[]      @relation("AgentQuoteLineUpdatedBy")
+  authoredAgentQuoteComments  AgentQuoteComment[]   @relation("AgentQuoteCommentAuthor")
+  createdAgentQuotes          AgentQuote[]          @relation("AgentQuoteCreatedBy")
+  updatedAgentQuotes          AgentQuote[]          @relation("AgentQuoteUpdatedBy")
+  quotationsSent              Quotation[]           @relation("QuotationSentBy")
+  quotationsCreated           Quotation[]           @relation("QuotationCreatedBy")
+  quotationsUpdated           Quotation[]           @relation("QuotationUpdatedBy")
+  quotationLinesCreated       QuotationLine[]       @relation("QuotationLineCreatedBy")
+  quotationLinesUpdated       QuotationLine[]       @relation("QuotationLineUpdatedBy")
+  quotationRecipientsCreated  QuotationRecipient[]  @relation("QuotationRecipientCreatedBy")
+  quotationFollowupsCreated   QuotationFollowup[]   @relation("QuotationFollowupCreatedBy")
+  quotationFollowupsUpdated   QuotationFollowup[]   @relation("QuotationFollowupUpdatedBy")
+  shipmentsSubmitted          Shipment[]            @relation("ShipmentSubmittedBy")
+  shipmentsCancelled          Shipment[]            @relation("ShipmentCancelledBy")
+  shipmentsCreated            Shipment[]            @relation("ShipmentCreatedBy")
+  shipmentsUpdated            Shipment[]            @relation("ShipmentUpdatedBy")
+  shipmentPosApproved         ShipmentPo[]          @relation("ShipmentPoApprovedBy")
+  shipmentPosCreated          ShipmentPo[]          @relation("ShipmentPoCreatedBy")
+  shipmentPosUpdated          ShipmentPo[]          @relation("ShipmentPoUpdatedBy")
+  shipmentCargoLinesCreated   ShipmentCargoLine[]   @relation("ShipmentCargoLineCreatedBy")
+  shipmentCargoLinesUpdated   ShipmentCargoLine[]   @relation("ShipmentCargoLineUpdatedBy")
+  shipmentSchedulesProposed   ShipmentSchedule[]    @relation("ShipmentScheduleProposedBy")
+  shipmentSchedulesDecided    ShipmentSchedule[]    @relation("ShipmentScheduleDecidedBy")
+  shipmentSchedulesCreated    ShipmentSchedule[]    @relation("ShipmentScheduleCreatedBy")
+  shipmentSchedulesUpdated    ShipmentSchedule[]    @relation("ShipmentScheduleUpdatedBy")
+  shipmentScheduleLegsCreated ShipmentScheduleLeg[] @relation("ShipmentScheduleLegCreatedBy")
+  shipmentScheduleLegsUpdated ShipmentScheduleLeg[] @relation("ShipmentScheduleLegUpdatedBy")
+  mailSignatureLogosCreated   MailSignatureLogo[]   @relation("MailSignatureLogoCreatedBy")
+  mailSignatureLogosUpdated   MailSignatureLogo[]   @relation("MailSignatureLogoUpdatedBy")
 
   @@unique([tenantId, username])
   @@unique([tenantId, email])
@@ -3643,6 +3655,7 @@ model Shipment {
   commodities ShipmentCommodity[]
   pos         ShipmentPo[]
   cargoLines  ShipmentCargoLine[]
+  schedules   ShipmentSchedule[]
 
   @@unique([tenantId, code])
   /// §4 rule 10: a composite foreign key needs this to point at.
@@ -3806,4 +3819,121 @@ model ShipmentCargoLine {
   @@index([shipmentId])
   @@index([shipmentPoId])
   @@map("shipment_cargo_line")
+}
+
+/// §4.2's schedule lifecycle. A rejected version is superseded, never rewritten.
+enum ScheduleStatus {
+  PROPOSED
+  APPROVED
+  REJECTED
+  SUPERSEDED
+
+  @@map("schedule_status")
+}
+
+/// The vessel or flight schedule put to the customer (§4.2, §6.4).
+///
+/// One table for both modes, because the shape is identical — legs with a
+/// sequence, an origin, a destination and timings. Direct is one leg; indirect
+/// is two or three (§6.4). The mode decides which columns on a LEG are filled,
+/// not which table it lives in.
+///
+/// §4.2 is emphatic that a rejected schedule is never edited in place: C/S
+/// proposes version 2, version 1 stays REJECTED with its comments, and the
+/// customer can still see what they turned down and why.
+model ShipmentSchedule {
+  tenantId   BigInt @map("tenant_id")
+  id         BigInt @id @default(autoincrement())
+  code       String @db.VarChar(32)
+  shipmentId BigInt @map("shipment_id")
+  carrierId  BigInt @map("carrier_id")
+
+  cutOffDate DateTime? @map("cut_off_date") @db.Timestamptz(6)
+  /// §9 Q4, open: VGM is a sea-container concept and the client drew it on the
+  /// Flight Booking screen too. The column is here; the screen shows it on sea
+  /// only until they answer.
+  vgmDate    DateTime? @map("vgm_date") @db.Date
+  siDate     DateTime? @map("si_date") @db.Date
+
+  transitType TransitType    @map("transit_type")
+  versionNo   Int            @default(1) @map("version_no")
+  status      ScheduleStatus @default(PROPOSED)
+
+  proposedBy        BigInt?   @map("proposed_by")
+  proposedAt        DateTime  @default(now()) @map("proposed_at") @db.Timestamptz(6)
+  decidedBy         BigInt?   @map("decided_by")
+  decidedAt         DateTime? @map("decided_at") @db.Timestamptz(6)
+  rejectionComments String?   @map("rejection_comments") @db.Text
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  shipment Shipment @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict)
+  /// Carrier is system-capable (§7A rule 7): single column plus the guard.
+  carrier  Carrier  @relation("ShipmentScheduleCarrier", fields: [carrierId], references: [id], onDelete: Restrict)
+
+  proposedByUser User? @relation("ShipmentScheduleProposedBy", fields: [proposedBy], references: [id], onDelete: Restrict)
+  decidedByUser  User? @relation("ShipmentScheduleDecidedBy", fields: [decidedBy], references: [id], onDelete: Restrict)
+  createdByUser  User? @relation("ShipmentScheduleCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser  User? @relation("ShipmentScheduleUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  legs ShipmentScheduleLeg[]
+
+  /// §4 rule 10: a composite foreign key needs this to point at.
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([shipmentId])
+  @@index([carrierId])
+  @@index([status])
+  @@map("shipment_schedule")
+}
+
+/// One leg of a schedule (§4.2). Sea fills vessel and voyage; air fills flight
+/// number and time. §6.4 validates that leg 2 starts where leg 1 ended and that
+/// each departure follows the previous arrival — a schedule that cannot
+/// physically happen should not reach the customer.
+model ShipmentScheduleLeg {
+  tenantId   BigInt @map("tenant_id")
+  id         BigInt @id @default(autoincrement())
+  scheduleId BigInt @map("schedule_id")
+  legNo      Int    @map("leg_no")
+
+  vesselId   BigInt? @map("vessel_id")
+  voyageNo   String? @map("voyage_no") @db.Text
+  flightNo   String? @map("flight_no") @db.Text
+  flightTime String? @map("flight_time") @db.Text
+
+  originPortId      BigInt @map("origin_port_id")
+  destinationPortId BigInt @map("destination_port_id")
+
+  etd DateTime? @db.Timestamptz(6)
+  eta DateTime? @db.Timestamptz(6)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  schedule ShipmentSchedule @relation(fields: [tenantId, scheduleId], references: [tenantId, id], onDelete: Restrict)
+
+  vessel          Vessel? @relation("ShipmentScheduleLegVessel", fields: [vesselId], references: [id], onDelete: Restrict)
+  originPort      Port    @relation("ShipmentScheduleLegOrigin", fields: [originPortId], references: [id], onDelete: Restrict)
+  destinationPort Port    @relation("ShipmentScheduleLegDestination", fields: [destinationPortId], references: [id], onDelete: Restrict)
+
+  createdByUser User? @relation("ShipmentScheduleLegCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("ShipmentScheduleLegUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([scheduleId])
+  @@index([vesselId])
+  @@map("shipment_schedule_leg")
 }

@@ -541,3 +541,169 @@ export const shipmentCancelSchema = z.object({
 });
 
 export type ShipmentCancelInput = z.infer<typeof shipmentCancelSchema>;
+
+// --------------------------------------------------------------- schedule
+
+export const SCHEDULE_STATUSES = ['PROPOSED', 'APPROVED', 'REJECTED', 'SUPERSEDED'] as const;
+export type ScheduleStatus = (typeof SCHEDULE_STATUSES)[number];
+
+export const SCHEDULE_STATUS_LABEL: Record<ScheduleStatus, string> = {
+  PROPOSED: 'Proposed',
+  APPROVED: 'Approved',
+  REJECTED: 'Rejected',
+  SUPERSEDED: 'Superseded',
+};
+
+/**
+ * How many legs each transit type allows (§6.4).
+ *
+ * "Direct allows one leg. Indirect allows two or three." The database's CHECK
+ * is wider (1..5, as §4.2 writes it) on purpose: the table holds what the spec
+ * wrote, and this is the rule the screen and the route enforce.
+ */
+export const LEGS_ALLOWED: Record<(typeof TRANSIT_TYPES)[number], readonly number[]> = {
+  DIRECT: [1],
+  INDIRECT: [2, 3],
+};
+
+export interface ShipmentScheduleLegDto {
+  id: string;
+  legNo: number;
+  vesselId: string | null;
+  vesselName: string | null;
+  voyageNo: string | null;
+  flightNo: string | null;
+  flightTime: string | null;
+  originPortId: string;
+  originPortName: string;
+  destinationPortId: string;
+  destinationPortName: string;
+  /** ISO datetime — a leg departs and arrives at a time, not on a day. */
+  etd: string | null;
+  eta: string | null;
+}
+
+export interface ShipmentScheduleDto {
+  id: string;
+  code: string;
+  shipmentId: string;
+  versionNo: number;
+  status: ScheduleStatus;
+  carrierId: string;
+  carrierName: string;
+  cutOffDate: string | null;
+  vgmDate: string | null;
+  siDate: string | null;
+  transitType: (typeof TRANSIT_TYPES)[number];
+  proposedAt: string;
+  decidedAt: string | null;
+  rejectionComments: string | null;
+  legs: ShipmentScheduleLegDto[];
+}
+
+// -------------------------------------------------------------------- input
+
+const isoDateTime = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((v) => !Number.isNaN(Date.parse(v)), 'Use the date and time picker.');
+
+export const scheduleLegInputSchema = z.object({
+  legNo: z.number().int().min(1, 'Legs start at 1.').max(5, 'Five legs is the most (§4.2).'),
+  vesselId: z.string().nullish(),
+  voyageNo: z.string().trim().max(100, 'That voyage number is too long.').nullish(),
+  flightNo: z.string().trim().max(100, 'That flight number is too long.').nullish(),
+  flightTime: z.string().trim().max(100, 'That is too long.').nullish(),
+  originPortId: z.string().min(1, 'Choose where this leg starts.'),
+  destinationPortId: z.string().min(1, 'Choose where this leg ends.'),
+  etd: isoDateTime.nullish(),
+  eta: isoDateTime.nullish(),
+});
+
+export type ScheduleLegInput = z.infer<typeof scheduleLegInputSchema>;
+
+/**
+ * The continuity §6.4 asks for, as one function both sides call.
+ *
+ * "Validate leg continuity: leg 2's origin must equal leg 1's destination, and
+ * each ETD must follow the previous ETA. A schedule that cannot physically
+ * happen should not reach the customer."
+ *
+ * Returns the problems rather than throwing, so the screen can mark the leg
+ * that is wrong and the route can answer with all of them at once.
+ */
+export interface LegProblem {
+  legNo: number;
+  message: string;
+}
+
+export function checkLegContinuity(
+  transitType: (typeof TRANSIT_TYPES)[number],
+  legs: readonly ScheduleLegInput[],
+): LegProblem[] {
+  const problems: LegProblem[] = [];
+  const allowed = LEGS_ALLOWED[transitType];
+
+  if (!allowed.includes(legs.length)) {
+    problems.push({
+      legNo: 0,
+      message:
+        transitType === 'DIRECT'
+          ? 'A direct sailing has one leg. Switch to Indirect to add another.'
+          : 'An indirect sailing has two or three legs.',
+    });
+  }
+
+  const ordered = [...legs].sort((a, b) => a.legNo - b.legNo);
+  for (const [index, leg] of ordered.entries()) {
+    if (leg.originPortId === leg.destinationPortId) {
+      problems.push({ legNo: leg.legNo, message: 'A leg cannot start and end at the same port.' });
+    }
+    if (leg.etd != null && leg.eta != null && Date.parse(leg.eta) < Date.parse(leg.etd)) {
+      problems.push({ legNo: leg.legNo, message: 'This leg arrives before it departs.' });
+    }
+
+    const previous = index === 0 ? null : ordered[index - 1]!;
+    if (previous === null) continue;
+
+    if (previous.destinationPortId !== leg.originPortId) {
+      problems.push({
+        legNo: leg.legNo,
+        message: `Leg ${leg.legNo} starts somewhere leg ${previous.legNo} did not end. Cargo cannot teleport between them.`,
+      });
+    }
+    if (previous.eta != null && leg.etd != null && Date.parse(leg.etd) < Date.parse(previous.eta)) {
+      problems.push({
+        legNo: leg.legNo,
+        message: `Leg ${leg.legNo} departs before leg ${previous.legNo} has arrived.`,
+      });
+    }
+  }
+
+  return problems;
+}
+
+export const shipmentScheduleInputSchema = z
+  .object({
+    carrierId: z.string().min(1, 'Choose the carrier.'),
+    cutOffDate: isoDateTime.nullish(),
+    vgmDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use the date picker.').nullish(),
+    siDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use the date picker.').nullish(),
+    transitType: z.enum(TRANSIT_TYPES),
+    legs: z.array(scheduleLegInputSchema).min(1, 'A schedule needs at least one leg.'),
+  })
+  .superRefine((value, ctx) => {
+    // §6.4's rule, checked here so the client and the server refuse the same
+    // schedules — a schedule that cannot physically happen should not reach
+    // the customer, and should not depend on which side is asked.
+    for (const problem of checkLegContinuity(value.transitType, value.legs)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: problem.legNo === 0 ? ['legs'] : ['legs', problem.legNo - 1],
+        message: problem.message,
+      });
+    }
+  });
+
+export type ShipmentScheduleInput = z.infer<typeof shipmentScheduleInputSchema>;

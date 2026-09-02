@@ -17,6 +17,7 @@ import {
 
 import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
 import { Prisma } from '../generated/prisma/client';
+import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import { renderVolumes } from '../lib/render-volumes';
 import { HttpError } from '../lib/http-error';
 import { nextBookingNo, seriesYearOf } from '../lib/inquiry-no';
@@ -474,16 +475,46 @@ shipmentRouter.get('/booking-options', requirePermission(`${FEATURE}.VIEW`), asy
 
   const data = await withTenant(auth.tenantId, async (db) => {
     const active = { deletedAt: null, isActive: true } as const;
-    const [carriers, ports, goodsTypes, tos, modes] = await Promise.all([
-      db.carrier.findMany({ where: active, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
+    /*
+     * §7A rule 7: a workspace cannot deactivate a SHARED row, so switching one
+     * off writes a tenant_master_override instead and `is_active` on the row
+     * never changes. Filtering on is_active alone would offer eleven seaports
+     * this workspace had already turned off — the exact bug master-visibility
+     * was written for, and one this endpoint reintroduced until now.
+     */
+    const inactive = await inactiveMasters(db);
+    const [carriers, ports, goodsTypes, tos, modes, vessels] = await Promise.all([
+      db.carrier.findMany({
+        where: { ...excludeInactive(inactive, 'carrier'), ...active },
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      }),
       db.port.findMany({
-        where: active,
+        where: { ...excludeInactive(inactive, 'port'), ...active },
         select: { id: true, name: true, portCode: true },
         orderBy: { name: 'asc' },
       }),
-      db.goodsType.findMany({ where: active, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
-      db.tos.findMany({ where: active, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
-      db.mode.findMany({ where: active, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
+      db.goodsType.findMany({
+        where: { ...excludeInactive(inactive, 'goods_type'), ...active },
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      }),
+      db.tos.findMany({
+        where: { ...excludeInactive(inactive, 'tos'), ...active },
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      }),
+      db.mode.findMany({
+        where: { ...excludeInactive(inactive, 'mode'), ...active },
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      }),
+      // §6.4's leg grid names a vessel per leg.
+      db.vessel.findMany({
+        where: { ...excludeInactive(inactive, 'vessel'), ...active },
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      }),
     ]);
 
     const plain = (rows: { id: bigint; name: string }[]) =>
@@ -495,6 +526,7 @@ shipmentRouter.get('/booking-options', requirePermission(`${FEATURE}.VIEW`), asy
       goodsTypes: plain(goodsTypes),
       tos: plain(tos),
       modes: plain(modes),
+      vessels: plain(vessels),
     };
   });
 

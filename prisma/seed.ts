@@ -564,6 +564,40 @@ const EMAIL_TEMPLATES = [
     ].join('\n'),
     variables: ['agentName', 'code', 'link'],
   },
+  {
+    // MODULE_BOOKING_CARGO.md §6.4: "Save -> status VESSEL_PROPOSED, notify the
+    // customer by email." The schedule itself is on the record rather than in
+    // the letter — a sailing changes, and a mail nobody can correct is how a
+    // customer ends up holding a date we no longer offer.
+    key: 'SHIPMENT_SCHEDULE_PROPOSED',
+    name: 'Booking — vessel or flight schedule proposed',
+    subject: 'Schedule proposed for booking {{bookingNo}}',
+    bodyText: [
+      'Dear {{customerName}},',
+      '',
+      'We have proposed a {{modeWord}} schedule for your booking {{bookingNo}}.',
+      '',
+      'Carrier: {{carrierName}}',
+      'Routing: {{routing}}',
+      'Departure: {{etd}}',
+      'Arrival: {{eta}}',
+      '',
+      'Please review and approve it here: {{link}}',
+      '',
+      'If the schedule does not suit, reject it with your comments and we will',
+      'propose another.',
+    ].join('\n'),
+    variables: [
+      'customerName',
+      'bookingNo',
+      'modeWord',
+      'carrierName',
+      'routing',
+      'etd',
+      'eta',
+      'link',
+    ],
+  },
 ] as const;
 
 /**

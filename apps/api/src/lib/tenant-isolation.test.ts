@@ -204,8 +204,8 @@ describe('model tier registry', () => {
     expect(missingFromRegistry, `tables absent from tenancy.ts: ${missingFromRegistry.join(', ')}`).toEqual([]);
     expect(missingFromDb, `registry names with no table: ${missingFromDb.join(', ')}`).toEqual([]);
     // 64 + the five quotation tables + mail_signature_logo + the four
-    // shipment tables.
-    expect(known.length).toBe(74);
+    // shipment tables + the two schedule tables.
+    expect(known.length).toBe(76);
   });
 
   it('applies the caller row level security to every view', async () => {

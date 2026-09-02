@@ -47,6 +47,7 @@ const CODE_TABLES = {
   employee: 'employee',
   freightRate: 'freight_rate',
   salesLead: 'sales_lead',
+  shipmentSchedule: 'shipment_schedule',
   role: 'role',
   user: 'user',
 } as const;

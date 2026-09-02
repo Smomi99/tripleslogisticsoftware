@@ -70,6 +70,9 @@ export const CODE_PREFIX = {
   // Customer Service. The quotation itself uses the yearly series
   // QTN-2026-000001 rather than this padder — see lib/document-no.
   quotationFollowup: 'QFU',
+  // The booking module. The booking itself uses the yearly series
+  // BKG-2026-000001; a schedule is internal, so the plain padder does.
+  shipmentSchedule: 'SCH',
 
   // §7 RBAC
   role: 'ROL',
