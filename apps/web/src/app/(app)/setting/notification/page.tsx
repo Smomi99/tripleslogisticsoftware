@@ -25,6 +25,7 @@ export default function NotificationSettingPage() {
   const { authorizedRequest, can } = useSession();
   const [priceTeamEmails, setPriceTeamEmails] = useState('');
   const [signatureBlock, setSignatureBlock] = useState('');
+  const [quotationNotes, setQuotationNotes] = useState('');
   const [bccAddresses, setBccAddresses] = useState('');
   const [isLoading, setLoading] = useState(true);
   const [isSaving, setSaving] = useState(false);
@@ -37,6 +38,7 @@ export default function NotificationSettingPage() {
         if (!cancelled) {
           setPriceTeamEmails(data.priceTeamEmails);
           setSignatureBlock(data.signatureBlock);
+          setQuotationNotes(data.quotationNotes);
           setBccAddresses(data.bccAddresses);
         }
       })
@@ -53,6 +55,7 @@ export default function NotificationSettingPage() {
     const parsed = notificationSettingSchema.safeParse({
       priceTeamEmails,
       signatureBlock,
+      quotationNotes,
       bccAddresses,
     });
     if (!parsed.success) {
@@ -153,6 +156,39 @@ export default function NotificationSettingPage() {
           <p className="mt-2 text-cell text-steel">
             Left empty, the letters still go — unsigned. Nothing is filled in for you, because a
             sign-off is the one part of a rate request that has to be yours.
+          </p>
+        </div>
+
+        {/*
+          §6.6 of the quotation module: "Standard notes, stored as editable
+          tenant text, not hardcoded." They are commercial terms — what the
+          quotation is not, who pays the tax, when payment is due — so a
+          forwarder who words them differently must be able to say so without
+          waiting for a release.
+
+          Living on this screen because notification_setting is the workspace's
+          one settings row and already carries the signature the Shipping Order
+          PDF prints. The table's name is now narrower than its contents.
+        */}
+        <div className="mt-5 border-t border-line pt-4">
+          <Field
+            id="quotationNotes"
+            label="Quotation notes"
+            hint="Printed at the foot of every quotation PDF, numbered in order. One per line."
+            wide
+          >
+            <textarea
+              id="quotationNotes"
+              rows={4}
+              value={quotationNotes}
+              disabled={isLoading || !mayEdit}
+              onChange={(e) => setQuotationNotes(e.target.value)}
+              className="w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-body text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour"
+            />
+          </Field>
+          <p className="mt-2 text-cell text-steel">
+            These start as the product&apos;s own wording. Clear them and the quotation prints no
+            notes at all — which is a choice, not an accident.
           </p>
         </div>
 

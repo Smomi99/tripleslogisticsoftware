@@ -561,6 +561,8 @@ export const notificationSettingSchema = z.object({
    * another company's letter is the leak §7A rule 7 is about.
    */
   signatureBlock: z.string().trim().max(2000, 'That signature is too long.').default(''),
+  /** §6.6 of the quotation module: the standing notes on that document. */
+  quotationNotes: z.string().trim().max(4000, 'Those notes are too long.').default(''),
   /**
    * Blind-copied on every message this workspace sends.
    *
@@ -588,6 +590,7 @@ export const notificationSettingSchema = z.object({
 export interface NotificationSettingDto {
   priceTeamEmails: string;
   signatureBlock: string;
+  quotationNotes: string;
   bccAddresses: string;
 }
 

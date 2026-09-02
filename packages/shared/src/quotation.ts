@@ -261,3 +261,36 @@ export const quotationListQuerySchema = z.object({
 });
 
 export type QuotationListQuery = z.infer<typeof quotationListQuerySchema>;
+
+/**
+ * §6.6's three standing notes, as the product's default wording.
+ *
+ * The spec says they are "stored as editable tenant text, not hardcoded", and
+ * the storage is notification_setting.quotation_notes. This is what a workspace
+ * that has never touched them is offered — a default, not a fallback nobody can
+ * reach: the settings screen pre-fills with it and the tenant edits from there.
+ *
+ * Kept here rather than in the PDF renderer so the screen that edits them and
+ * the document that prints them cannot disagree about what the default is.
+ */
+export const DEFAULT_QUOTATION_NOTES = [
+  'This is a quotation only; the final freight invoice follows the shipment.',
+  'Excludes all VAT & TAX; if TDS is deducted, 1% is added to total invoice value.',
+  'Payment before BL release by pay order, cash, or online transfer.',
+].join('\n');
+
+/**
+ * The notes to print: the tenant's own, or the product default.
+ *
+ * Null and empty are different answers. Null is a workspace that has never
+ * touched them, and gets the product's wording; an empty string is one that
+ * cleared them on purpose, and gets none. `??` rather than `||` is what keeps
+ * the two apart.
+ */
+export function quotationNotes(stored: string | null | undefined): string[] {
+  const text = stored ?? DEFAULT_QUOTATION_NOTES;
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '');
+}

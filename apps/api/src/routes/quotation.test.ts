@@ -5,6 +5,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../app';
 import { env } from '../config/env';
 import { PrismaClient } from '../generated/prisma/client';
+import { DEFAULT_QUOTATION_NOTES, quotationNotes } from '@ff/shared';
+
 import { signAccessToken } from '../lib/jwt';
 
 /**
@@ -33,6 +35,8 @@ const SLUG = 'qtn-alpha';
 
 let tenantId: bigint;
 let token: string;
+/** Holds every quotation permission except EXPORT_PDF (§7). */
+let tokenNoPdf: string;
 let inquiryId: bigint;
 let carrierId: bigint;
 let currencyId: bigint;
@@ -44,6 +48,7 @@ let size40: bigint;
 async function cleanup(): Promise<void> {
   const scope = `(SELECT id FROM tenant WHERE slug = '${SLUG}')`;
   for (const table of [
+    'notification_setting',
     'quotation_followup',
     'quotation_recipient',
     'quotation_commodity',
@@ -117,6 +122,30 @@ beforeAll(async () => {
     tenantId: tenantId.toString(),
     isSuperadmin: true,
     permissions: [],
+    tokenVersion: 0,
+  });
+
+  const limited = await owner.user.create({
+    data: {
+      tenantId,
+      code: 'USR-qtn-nopdf',
+      username: 'nopdf-qtn',
+      email: 'nopdf@qtn.test',
+      passwordHash: 'x',
+      isSuperadmin: false,
+    },
+    select: { id: true },
+  });
+  tokenNoPdf = await signAccessToken({
+    sub: limited.id.toString(),
+    tenantId: tenantId.toString(),
+    isSuperadmin: false,
+    permissions: [
+      'CUSTOMER_SERVICE.QUOTATION.VIEW',
+      'CUSTOMER_SERVICE.QUOTATION.CREATE',
+      'CUSTOMER_SERVICE.QUOTATION.EDIT',
+      'SETTING.NOTIFICATION.VIEW',
+    ],
     tokenVersion: 0,
   });
 
@@ -636,5 +665,150 @@ describe('what an agent may reach', () => {
       .set('Authorization', `Bearer ${agentToken}`)
       .set('X-Tenant-Slug', SLUG)
       .expect(403);
+  });
+});
+
+describe('the quotation PDF (§6.6)', () => {
+  /** Fetches the document as raw bytes rather than letting supertest parse it. */
+  function fetchPdf(id: string, bearer = token) {
+    return request(app)
+      .get(`/api/tenant/cs/quotations/${id}/pdf`)
+      .set('Authorization', `Bearer ${bearer}`)
+      .set('X-Tenant-Slug', SLUG)
+      .buffer(true)
+      .parse((r, cb) => {
+        const chunks: Buffer[] = [];
+        r.on('data', (c: Buffer) => chunks.push(c));
+        r.on('end', () => cb(null, Buffer.concat(chunks)));
+      });
+  }
+
+  it('prints — the phase gate', async () => {
+    const created = await create();
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const { id, code } = (created.body as { data: { id: string; code: string } }).data;
+
+    const res = await fetchPdf(id);
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('application/pdf');
+    expect(res.headers['content-disposition']).toContain(`${code}.pdf`);
+
+    const pdf = res.body as Buffer;
+    expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
+    // A page with a header, a field block, a line table and the notes on it.
+    expect(pdf.length).toBeGreaterThan(2000);
+  });
+
+  it('prints a draft too — reading it before it goes out is the point', async () => {
+    const created = await create();
+    expect((created.body as { data: { status: string } }).data.status).toBe('DRAFT');
+    const res = await fetchPdf((created.body as { data: { id: string } }).data.id);
+    expect(res.status).toBe(200);
+  });
+
+  it('refuses a user without EXPORT_PDF (§7)', async () => {
+    const created = await create();
+    const res = await fetchPdf((created.body as { data: { id: string } }).data.id, tokenNoPdf);
+    expect(res.status).toBe(403);
+  });
+
+  it('survives a workspace with no logo uploaded', async () => {
+    // §6.6 wants the logo from the tenant, and most workspaces have not
+    // uploaded one. The name carries the letterhead on its own; a missing file
+    // is never a reason to withhold the quotation.
+    const tenant = await owner.tenant.findFirstOrThrow({
+      where: { id: tenantId },
+      select: { logoFile: true },
+    });
+    expect(tenant.logoFile).toBeNull();
+
+    const created = await create();
+    const res = await fetchPdf((created.body as { data: { id: string } }).data.id);
+    expect(res.status).toBe(200);
+  });
+
+  it('survives a logo the storage cannot produce', async () => {
+    // A key pointing at nothing is the state a restored backup leaves behind.
+    await owner.tenant.update({
+      where: { id: tenantId },
+      data: { logoFile: `${tenantId}/missing-logo.png` },
+    });
+    const created = await create();
+    const res = await fetchPdf((created.body as { data: { id: string } }).data.id);
+    expect(res.status).toBe(200);
+    await owner.tenant.update({ where: { id: tenantId }, data: { logoFile: null } });
+  });
+});
+
+describe('the quotation notes (§6.6)', () => {
+  const readSettings = () => as('/api/tenant/setting/notifications');
+  const writeSettings = (quotationNotesText: string) =>
+    request(app)
+      .put('/api/tenant/setting/notifications')
+      .set('Authorization', `Bearer ${token}`)
+      .set('X-Tenant-Slug', SLUG)
+      .send({
+        priceTeamEmails: '',
+        signatureBlock: '',
+        bccAddresses: '',
+        quotationNotes: quotationNotesText,
+      });
+
+  it('starts as the product default, editable from settings', async () => {
+    const res = await readSettings();
+    expect(res.status).toBe(200);
+    const notes = (res.body as { data: { quotationNotes: string } }).data.quotationNotes;
+
+    // §6.6's three, as the wording a workspace is offered to edit from.
+    expect(notes).toBe(DEFAULT_QUOTATION_NOTES);
+    expect(quotationNotes(notes)).toHaveLength(3);
+    expect(notes).toMatch(/This is a quotation only/);
+  });
+
+  it('keeps what the workspace types instead', async () => {
+    const saved = await writeSettings('Ours only.\nAnd a second.');
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+
+    const read = await readSettings();
+    const stored = (read.body as { data: { quotationNotes: string } }).data.quotationNotes;
+    expect(quotationNotes(stored)).toEqual(['Ours only.', 'And a second.']);
+  });
+
+  it('prints none when a workspace clears them deliberately', async () => {
+    /*
+     * A cleared field is a decision, not an omission. Null means "never touched,
+     * offer the product wording"; an empty string means "we want none" — and
+     * `|| null` on the way in would have collapsed the two and made the second
+     * impossible to say, while the settings screen promises it.
+     */
+    const saved = await writeSettings('');
+    expect(saved.status).toBe(200);
+
+    const row = await owner.notificationSetting.findFirstOrThrow({
+      where: { tenantId },
+      select: { quotationNotes: true },
+    });
+    expect(row.quotationNotes).toBe('');
+    expect(quotationNotes(row.quotationNotes)).toEqual([]);
+
+    // ...while a workspace that has never saved still gets the default.
+    expect(quotationNotes(null)).toHaveLength(3);
+  });
+
+  it('still prints with no notes at all', async () => {
+    await writeSettings('');
+    const created = await create();
+    const res = await request(app)
+      .get(`/api/tenant/cs/quotations/${(created.body as { data: { id: string } }).data.id}/pdf`)
+      .set('Authorization', `Bearer ${token}`)
+      .set('X-Tenant-Slug', SLUG)
+      .buffer(true)
+      .parse((r, cb) => {
+        const chunks: Buffer[] = [];
+        r.on('data', (c: Buffer) => chunks.push(c));
+        r.on('end', () => cb(null, Buffer.concat(chunks)));
+      });
+    expect(res.status).toBe(200);
+    expect((res.body as Buffer).subarray(0, 5).toString()).toBe('%PDF-');
   });
 });

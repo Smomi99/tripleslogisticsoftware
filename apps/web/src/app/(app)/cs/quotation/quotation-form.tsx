@@ -50,6 +50,7 @@ export interface QuotationOptions {
   canAddCharge: boolean;
   canTypePrice: boolean;
   canSend: boolean;
+  canExportPdf: boolean;
 }
 
 /** A line as the grid edits it. Strings throughout — money is never a float. */
@@ -112,7 +113,7 @@ export function QuotationForm({
   options: QuotationOptions;
   onSaved: (next: QuotationDto) => void;
 }) {
-  const { authorizedRequest, can } = useSession();
+  const { authorizedRequest, authorizedObjectUrl, can } = useSession();
 
   const editable = quotationIsEditable(quotation.status) && can('CUSTOMER_SERVICE.QUOTATION.EDIT');
   const [lines, setLines] = useState<LineDraft[]>(quotation.lines.map(toDraft));
@@ -125,6 +126,18 @@ export function QuotationForm({
   const [busy, setBusy] = useState(false);
   const [sending, setSending] = useState(false);
   const [emails, setEmails] = useState(quotation.recipients.map((r) => r.email).join(', '));
+
+  /** §6.6's document, opened in a tab. */
+  async function openPdf(): Promise<void> {
+    try {
+      const url = await authorizedObjectUrl(`/api/tenant/cs/quotations/${quotation.id}/pdf`);
+      window.open(url, '_blank', 'noopener');
+    } catch (error) {
+      toast.error(
+        error instanceof ApiError ? error.message : 'Could not open the quotation.',
+      );
+    }
+  }
 
   const standard = lines.filter((l) => l.lineGroup === 'STANDARD');
   const additional = lines.filter((l) => l.lineGroup === 'ADDITIONAL');
@@ -434,6 +447,15 @@ export function QuotationForm({
           {options.canSend && quotation.status === 'DRAFT' && (
             <Button variant="primary" onClick={() => void send()} disabled={sending}>
               {sending ? 'Sending…' : 'Save & Send'}
+            </Button>
+          )}
+          {/*
+            §6.6's document. Offered on a draft too — reading the page before it
+            goes to a customer is the point of having one.
+          */}
+          {options.canExportPdf && (
+            <Button variant="secondary" onClick={() => void openPdf()}>
+              Print quotation
             </Button>
           )}
           {quotation.status === 'SENT' && (

@@ -14,6 +14,7 @@ import {
   quotationSendSchema,
   type QuotationStatus,
   quotationUpdateSchema,
+  quotationNotes,
 } from '@ff/shared';
 import { Router } from 'express';
 
@@ -26,7 +27,9 @@ import { HttpError } from '../lib/http-error';
 import { Prisma } from '../generated/prisma/client';
 import { pullQuotationLines } from '../lib/quotation-pull';
 import { parseId, parseRefId } from '../lib/request';
+import { renderQuotationPdf } from '../lib/quotation-pdf';
 import { renderVolumes } from '../lib/render-volumes';
+import { openFile } from '../lib/storage';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
 import { type AuthContext, authenticate } from '../middleware/authenticate';
 import { requirePermission } from '../middleware/require-permission';
@@ -545,6 +548,7 @@ quotationRouter.get(
         canTypePrice:
           auth.isSuperadmin || auth.permissions.has(`${LINE_FEATURE}.MANUAL_PRICE`),
         canSend: auth.isSuperadmin || auth.permissions.has(`${FEATURE}.SEND`),
+        canExportPdf: auth.isSuperadmin || auth.permissions.has(`${FEATURE}.EXPORT_PDF`),
       };
     });
 
@@ -972,6 +976,119 @@ quotationRouter.patch('/quotations/:id', requirePermission(`${FEATURE}.EDIT`), a
   const payload: ApiSuccess<QuotationDto> = { success: true, data: toDto(row) };
   res.json(payload);
 });
+
+/**
+ * GET /api/tenant/cs/quotations/:id/pdf — §6.6's document.
+ *
+ * §6.6's one structural instruction: the header "must come from the tenant, not
+ * be hardcoded". So the name, the logo and the standing notes are all read from
+ * the workspace here and handed to a renderer that knows nothing about any
+ * particular forwarder.
+ *
+ * §2.2's rule holds too: every figure printed is the one the row stored. The
+ * totals, the frozen conversion rate and the words are read, never recomputed —
+ * a document that disagrees with the record behind it is worse than none.
+ */
+quotationRouter.get(
+  '/quotations/:id/pdf',
+  requirePermission(`${FEATURE}.EXPORT_PDF`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'quotation');
+
+    const { pdf, code } = await withTenant(auth.tenantId, async (db) => {
+      // Scoped like every other read of a quotation (§4 rule 10's row scope).
+      const row = await findScoped(db, auth, id);
+      const dto = toDto(row);
+
+      const [settings, tenant, customer, inquiry] = await Promise.all([
+        db.notificationSetting.findFirst({
+          select: { signatureBlock: true, quotationNotes: true },
+        }),
+        db.tenant.findFirst({
+          where: { id: auth.tenantId },
+          select: { name: true, logoFile: true },
+        }),
+        db.customer.findFirst({
+          where: { id: BigInt(dto.customerId) },
+          select: { address: true },
+        }),
+        db.inquiry.findFirst({
+          where: { id: BigInt(dto.inquiryId) },
+          select: { inquiryDate: true },
+        }),
+      ]);
+
+      // §6.6's logo. A workspace that has not uploaded one still gets a
+      // letterhead — the name carries it — so a missing or unreadable file is
+      // never a reason to withhold the quotation.
+      let logo: Buffer | null = null;
+      if (tenant?.logoFile != null && tenant.logoFile !== '') {
+        try {
+          const file = await openFile(auth.tenantId, tenant.logoFile);
+          const parts: Buffer[] = [];
+          for await (const chunk of file.stream) {
+            parts.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          }
+          logo = Buffer.concat(parts);
+        } catch {
+          logo = null;
+        }
+      }
+
+      const isAir = dto.shipmentType === 'AIR';
+      const pdfBuffer = await renderQuotationPdf({
+        companyName: tenant?.name ?? 'Freight Forwarder',
+        companyAddress: settings?.signatureBlock ?? null,
+        logo,
+        inquiryNo: dto.inquiryCode,
+        inquiryDate: inquiry?.inquiryDate.toISOString().slice(0, 10) ?? null,
+        quotationNo: dto.code,
+        revisionNo: dto.revisionNo,
+        quotationDate: dto.quotationDate,
+        validTill: dto.validityDate,
+        customerName: dto.customerName,
+        customerAddress: customer?.address ?? null,
+        shipmentType: isAir ? 'Air' : 'Sea',
+        isAir,
+        polName: dto.polName ?? '—',
+        podName: dto.podName ?? '—',
+        goodsTypeName: dto.goodsTypeName,
+        commodity: dto.commodities.map((c) => c.commodityName).join(', ') || '—',
+        loadingType: dto.loadingType,
+        tosName: dto.tosName,
+        modeName: dto.modeName,
+        carrierName: dto.carrierName,
+        firstVesselName: dto.firstVesselName,
+        transitType: dto.transitType,
+        etd: dto.etd,
+        eta: dto.eta,
+        conversionRate: dto.conversionRate,
+        localCurrencyCode: dto.localCurrencyCode ?? 'BDT',
+        lines: dto.lines.map((line) => ({
+          description: line.costHeadName,
+          containerSize: line.containerSizeName,
+          unit: line.unitName,
+          quantity: line.quantity,
+          sellingPrice: line.sellingPrice,
+          total: line.totalAmount,
+          currencyCode: line.currencyCode,
+        })),
+        totalUsd: dto.totalAmountUsd ?? '0.0000',
+        totalLocal: dto.totalAmountLocal ?? '0.0000',
+        // §5.3 rule 7 generated these words on save; printing them is reading.
+        amountInWords: dto.amountInWords ?? amountInWords(dto.totalAmountUsd ?? '0'),
+        notes: quotationNotes(settings?.quotationNotes),
+      });
+
+      return { pdf: pdfBuffer, code: dto.code };
+    });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${code}.pdf"`);
+    res.send(pdf);
+  },
+);
 
 /**
  * POST /api/tenant/cs/quotations/:id/send

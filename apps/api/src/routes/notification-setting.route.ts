@@ -7,6 +7,7 @@ import {
   mailSignatureLogoSchema,
   type NotificationSettingDto,
   notificationSettingSchema,
+  DEFAULT_QUOTATION_NOTES,
 } from '@ff/shared';
 
 import { CODE_RETRY_LIMIT, isUniqueViolation, nextCode } from '../lib/codes';
@@ -36,7 +37,12 @@ notificationSettingRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (
   const auth = req.auth!;
   const row = await withTenant(auth.tenantId, (db) =>
     db.notificationSetting.findFirst({
-      select: { priceTeamEmails: true, signatureBlock: true, bccAddresses: true },
+      select: {
+        priceTeamEmails: true,
+        signatureBlock: true,
+        bccAddresses: true,
+        quotationNotes: true,
+      },
     }),
   );
 
@@ -46,6 +52,9 @@ notificationSettingRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (
       priceTeamEmails: row?.priceTeamEmails ?? '',
       signatureBlock: row?.signatureBlock ?? '',
       bccAddresses: row?.bccAddresses ?? '',
+      // Null means the workspace has never touched them, so the screen is
+      // offered the product's own wording to edit from (§6.6).
+      quotationNotes: row?.quotationNotes ?? DEFAULT_QUOTATION_NOTES,
     },
   };
   res.json(payload);
@@ -64,10 +73,19 @@ notificationSettingRouter.put('/', requirePermission(`${FEATURE}.EDIT`), async (
           priceTeamEmails: input.priceTeamEmails || null,
           signatureBlock: input.signatureBlock || null,
           bccAddresses: input.bccAddresses || null,
+          // NOT `|| null`. Null means "never touched, offer the default";
+          // empty means "we want none". Collapsing them would make the second
+          // impossible to say, and the settings screen promises it.
+          quotationNotes: input.quotationNotes,
           createdBy: auth.userId,
           updatedBy: auth.userId,
         },
-        select: { priceTeamEmails: true, signatureBlock: true, bccAddresses: true },
+        select: {
+          priceTeamEmails: true,
+          signatureBlock: true,
+          bccAddresses: true,
+          quotationNotes: true,
+        },
       });
     }
     return db.notificationSetting.update({
@@ -76,9 +94,17 @@ notificationSettingRouter.put('/', requirePermission(`${FEATURE}.EDIT`), async (
         priceTeamEmails: input.priceTeamEmails || null,
         signatureBlock: input.signatureBlock || null,
         bccAddresses: input.bccAddresses || null,
+        // NOT `|| null`. Null means "never touched, offer the default"; empty
+        // means "we want none", and the PDF then prints none.
+        quotationNotes: input.quotationNotes,
         updatedBy: auth.userId,
       },
-      select: { priceTeamEmails: true, signatureBlock: true, bccAddresses: true },
+      select: {
+        priceTeamEmails: true,
+        signatureBlock: true,
+        bccAddresses: true,
+        quotationNotes: true,
+      },
     });
   });
 
@@ -88,6 +114,7 @@ notificationSettingRouter.put('/', requirePermission(`${FEATURE}.EDIT`), async (
       priceTeamEmails: saved.priceTeamEmails ?? '',
       signatureBlock: saved.signatureBlock ?? '',
       bccAddresses: saved.bccAddresses ?? '',
+      quotationNotes: saved.quotationNotes ?? DEFAULT_QUOTATION_NOTES,
     },
   };
   res.json(payload);

@@ -2730,6 +2730,11 @@ model NotificationSetting {
   /// on every rate request without being told to be.
   bccAddresses    String? @map("bcc_addresses") @db.Text
 
+  /// §6.6's standing notes on the quotation PDF — "stored as editable tenant
+  /// text, not hardcoded". Null means the product's own default wording; a
+  /// workspace that clears them deliberately gets none.
+  quotationNotes String? @map("quotation_notes") @db.Text
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy BigInt?  @map("created_by")
