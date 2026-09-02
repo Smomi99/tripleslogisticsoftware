@@ -472,6 +472,63 @@ describe('submitting', () => {
   });
 });
 
+describe('cancelling (§5.1)', () => {
+  it('refuses without a reason, and says so on the field', async () => {
+    const booking = await createBooking([{ poNo: 'PO-CAN-1', itemCode: 'ITEM', ctnQty: 1 }]);
+    const res = await as(token).post(`/api/tenant/cs/bookings/${booking.id}/cancel`).send({});
+    expect(res.status).toBe(400);
+  });
+
+  it('cancels with one, and the record says why', async () => {
+    const booking = await createBooking([{ poNo: 'PO-CAN-2', itemCode: 'ITEM', ctnQty: 1 }]);
+    const res = await as(token)
+      .post(`/api/tenant/cs/bookings/${booking.id}/cancel`)
+      .send({ reason: 'Customer withdrew the order.' });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const data = (res.body as { data: { status: string; cancelReason: string | null } }).data;
+    expect(data.status).toBe('CANCELLED');
+    expect(data.cancelReason).toBe('Customer withdrew the order.');
+  });
+
+  it('refuses a user who may edit the booking but not cancel it', async () => {
+    // §7 marks CANCEL privileged: it stops work somebody else is doing.
+    const booking = await createBooking([{ poNo: 'PO-CAN-3', itemCode: 'ITEM', ctnQty: 1 }]);
+    const res = await as(tokenNoSubmit)
+      .post(`/api/tenant/cs/bookings/${booking.id}/cancel`)
+      .send({ reason: 'Nope.' });
+    expect(res.status).toBe(403);
+  });
+
+  it('will not cancel the same booking twice', async () => {
+    const booking = await createBooking([{ poNo: 'PO-CAN-4', itemCode: 'ITEM', ctnQty: 1 }]);
+    const cancel = () =>
+      as(token).post(`/api/tenant/cs/bookings/${booking.id}/cancel`).send({ reason: 'Void.' });
+
+    expect((await cancel()).status).toBe(200);
+    const again = await cancel();
+    expect(again.status).toBe(409);
+    expect((again.body as { error: { message: string } }).error.message).toMatch(
+      /Nothing follows it/i,
+    );
+  });
+
+  it('stops a cancelled booking being edited', async () => {
+    const booking = await createBooking([{ poNo: 'PO-CAN-5', itemCode: 'ITEM', ctnQty: 1 }]);
+    await as(token).post(`/api/tenant/cs/bookings/${booking.id}/cancel`).send({ reason: 'Void.' });
+
+    const res = await as(token)
+      .patch(`/api/tenant/cs/bookings/${booking.id}`)
+      .send({
+        carrierId: carrierId.toString(),
+        polId: portId.toString(),
+        podId: portId.toString(),
+        cargoLines: [{ poNo: 'PO-CAN-5', itemCode: 'CHANGED', ctnQty: 9 }],
+      });
+    expect(res.status).toBe(409);
+  });
+});
+
 describe('the browser and the database agree (§2.3)', () => {
   it('previews exactly what Postgres stores', async () => {
     /*

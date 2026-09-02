@@ -296,6 +296,22 @@ export const FEATURES: readonly FeatureDefinition[] = [
     label: 'Shipment Booking',
     actions: [...MASTER, 'VIEW_ALL', 'SUBMIT', 'CANCEL'],
   },
+  /*
+   * MODULE_BOOKING_CARGO.md §7's CS.SCHEDULE — the Vessel / Flight Booking
+   * screen (§6.4). A child screen: it is reached from the Action button on a
+   * booking and needs that booking's id, so it has a permission but nothing
+   * for the sidebar to link to.
+   *
+   * Separate from CARGO_BOOKING because proposing a sailing is a different job
+   * from taking the booking, and §7 gives it its own three actions.
+   */
+  {
+    module: 'CUSTOMER_SERVICE',
+    feature: 'CUSTOMER_SERVICE.SCHEDULE',
+    label: 'Vessel / Flight Booking',
+    actions: ['VIEW', 'CREATE', 'EDIT'],
+    childScreen: true,
+  },
   { module: 'CUSTOMER_SERVICE', feature: 'CUSTOMER_SERVICE.SHIPMENT_APPROVAL', label: 'Shipment Approval', actions: MASTER_APPROVE },
   { module: 'CUSTOMER_SERVICE', feature: 'CUSTOMER_SERVICE.SHIPPING_ORDER', label: 'Shipping Order', actions: MASTER },
 

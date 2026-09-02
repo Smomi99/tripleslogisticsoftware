@@ -1693,6 +1693,7 @@ model User {
   quotationFollowupsCreated  QuotationFollowup[]  @relation("QuotationFollowupCreatedBy")
   quotationFollowupsUpdated  QuotationFollowup[]  @relation("QuotationFollowupUpdatedBy")
   shipmentsSubmitted         Shipment[]           @relation("ShipmentSubmittedBy")
+  shipmentsCancelled         Shipment[]           @relation("ShipmentCancelledBy")
   shipmentsCreated           Shipment[]           @relation("ShipmentCreatedBy")
   shipmentsUpdated           Shipment[]           @relation("ShipmentUpdatedBy")
   shipmentPosApproved        ShipmentPo[]         @relation("ShipmentPoApprovedBy")
@@ -3604,6 +3605,14 @@ model Shipment {
   submittedBy BigInt?   @map("submitted_by")
   submittedAt DateTime? @map("submitted_at") @db.Timestamptz(6)
 
+  /// §5.1: "any -> CANCELLED (privileged, reason mandatory)". §4.1's column
+  /// list has no home for that reason, so these three are shaped like its own
+  /// submission columns above — who, when, and for this one, why. A CHECK
+  /// constraint holds the rule at the database as well as in the service.
+  cancelledAt  DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  cancelledBy  BigInt?   @map("cancelled_by")
+  cancelReason String?   @map("cancel_reason") @db.Text
+
   isActive  Boolean   @default(true) @map("is_active")
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -3627,6 +3636,7 @@ model Shipment {
   mode      Mode?      @relation(fields: [modeId], references: [id], onDelete: Restrict)
 
   submittedByUser User? @relation("ShipmentSubmittedBy", fields: [submittedBy], references: [id], onDelete: Restrict)
+  cancelledByUser User? @relation("ShipmentCancelledBy", fields: [cancelledBy], references: [id], onDelete: Restrict)
   createdByUser   User? @relation("ShipmentCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser   User? @relation("ShipmentUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
@@ -3642,6 +3652,7 @@ model Shipment {
   @@index([tenantId, quotationId])
   @@index([customerId])
   @@index([carrierId])
+  @@index([cancelledBy])
   @@map("shipment")
 }
 

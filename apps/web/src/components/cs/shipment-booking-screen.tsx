@@ -19,7 +19,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/form-layout';
-import { ConfirmDialog } from '@/components/ui/modal';
+import { ConfirmDialog, Modal } from '@/components/ui/modal';
 import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
@@ -119,6 +119,11 @@ export function ShipmentBookingScreen({
   const [formError, setFormError] = useState<string | null>(null);
   const [isPending, setPending] = useState(false);
   const [confirmSubmit, setConfirmSubmit] = useState(false);
+  // §5.1's cancellation. The reason is not a formality — it is the only record
+  // of why work somebody paid for was stopped, so the dialog will not close
+  // without one.
+  const [cancelOpen, setCancelOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
 
   // Header, all editable per §5.2 rule 2.
   const [exporterName, setExporterName] = useState('');
@@ -377,6 +382,32 @@ export function ShipmentBookingScreen({
     }
   }
 
+  async function onCancel(): Promise<void> {
+    if (booking === null) return;
+    if (cancelReason.trim() === '') {
+      setFormError('Say why this booking is being cancelled.');
+      return;
+    }
+    setPending(true);
+    try {
+      const cancelled = await authorizedRequest<ShipmentDto>(
+        `/api/tenant/cs/bookings/${booking.id}/cancel`,
+        { method: 'POST', body: { reason: cancelReason.trim() } },
+      );
+      setBooking(cancelled);
+      setCancelOpen(false);
+      setCancelReason('');
+      setFormError(null);
+      toast.success(`Booking ${cancelled.code} cancelled`);
+    } catch (error) {
+      setFormError(
+        error instanceof ApiError ? error.message : 'Could not cancel this booking.',
+      );
+    } finally {
+      setPending(false);
+    }
+  }
+
   if (loadError !== null) {
     return (
       <div className="flex flex-col gap-4">
@@ -431,11 +462,17 @@ export function ShipmentBookingScreen({
         </div>
       </div>
 
-      {!editable && (
-        <p className="rounded-manifest border border-signal/30 bg-signal/5 px-3 py-2 text-body text-hull">
-          This booking has moved on and can no longer be edited. Its schedule or shipping order
-          depends on these figures.
+      {booking?.status === 'CANCELLED' ? (
+        <p className="rounded-manifest border border-alert/30 bg-alert/5 px-3 py-2 text-body text-hull">
+          <span className="font-medium">Cancelled.</span> {booking.cancelReason}
         </p>
+      ) : (
+        !editable && (
+          <p className="rounded-manifest border border-signal/30 bg-signal/5 px-3 py-2 text-body text-hull">
+            This booking has moved on and can no longer be edited. Its schedule or shipping order
+            depends on these figures.
+          </p>
+        )
       )}
 
       {/* ------------------------------------------------------------ header */}
@@ -1011,6 +1048,21 @@ export function ShipmentBookingScreen({
           ← Back to quotation list
         </Link>
         <div className="flex items-center gap-2">
+          {booking !== null &&
+            booking.status !== 'CANCELLED' &&
+            can('CUSTOMER_SERVICE.CARGO_BOOKING.CANCEL') && (
+              <Button
+                variant="destructive"
+                disabled={isPending}
+                onClick={() => {
+                  setCancelReason('');
+                  setFormError(null);
+                  setCancelOpen(true);
+                }}
+              >
+                Cancel booking
+              </Button>
+            )}
           {canEdit && (
             <Button variant="secondary" disabled={isPending} onClick={() => void onSave()}>
               {isPending ? 'Saving…' : 'Save booking'}
@@ -1033,6 +1085,47 @@ export function ShipmentBookingScreen({
         isPending={isPending}
         onConfirm={() => void onSubmit()}
       />
+
+      {/*
+        A confirmation would not do here: §5.1 makes the reason mandatory, so
+        the dialog has to collect something rather than only ask twice.
+      */}
+      <Modal
+        open={cancelOpen}
+        onOpenChange={(open) => {
+          setCancelOpen(open);
+          if (!open) setCancelReason('');
+        }}
+        title="Cancel this booking?"
+      >
+        <div className="flex flex-col gap-4">
+          <p className="text-body text-steel">
+            {booking?.code} stops here and nothing further can be done with it. Say why — this is
+            the only record of it, and it is what accounts and the customer will read later.
+          </p>
+          <Field id="cancelReason" label="Reason" required>
+            <Input
+              id="cancelReason"
+              autoFocus
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              placeholder="Customer withdrew the order"
+            />
+          </Field>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setCancelOpen(false)}>
+              Keep it
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={isPending || cancelReason.trim() === ''}
+              onClick={() => void onCancel()}
+            >
+              {isPending ? 'Cancelling…' : 'Cancel booking'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

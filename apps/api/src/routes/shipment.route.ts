@@ -4,6 +4,7 @@ import {
   type ApiSuccess,
   type ShipmentCargoLineDto,
   type ShipmentCargoLineInput,
+  shipmentCancelSchema,
   shipmentCreateSchema,
   type ShipmentDto,
   SHIPMENT_EDITABLE,
@@ -16,6 +17,7 @@ import { Prisma } from '../generated/prisma/client';
 import { HttpError } from '../lib/http-error';
 import { nextBookingNo, seriesYearOf } from '../lib/inquiry-no';
 import { parseId, parseRefId } from '../lib/request';
+import { transitionShipment } from '../lib/shipment-status';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
 import { authenticate } from '../middleware/authenticate';
 import { requirePermission } from '../middleware/require-permission';
@@ -117,6 +119,8 @@ function toDto(row: ShipmentRow): ShipmentDto {
     seriesYear: row.seriesYear,
     status: row.status,
     submittedAt: row.submittedAt === null ? null : row.submittedAt.toISOString(),
+    cancelledAt: row.cancelledAt === null ? null : row.cancelledAt.toISOString(),
+    cancelReason: row.cancelReason,
 
     quotationId: row.quotationId.toString(),
     quotationCode: row.quotation.code,
@@ -593,6 +597,41 @@ shipmentRouter.post(
       await db.shipment.update({
         where: { id },
         data: { submittedAt: new Date(), submittedBy: auth.userId, updatedBy: auth.userId },
+      });
+      return loadShipment(db, id);
+    });
+
+    const payload: ApiSuccess<ShipmentDto> = { success: true, data };
+    res.json(payload);
+  },
+);
+
+/**
+ * POST /:id/cancel — §5.1's `any -> CANCELLED`.
+ *
+ * The only status transition with a trigger today; the rest arrive with the
+ * screens that cause them (a schedule in phase E, an approval in G, a shipping
+ * order in H, a receipt in I). All of them will come through the same service,
+ * because §5.1's "never let the frontend decide what the next state is" is only
+ * true if there is exactly one place that decides.
+ *
+ * CANCEL is its own permission for §7's reason — it is marked privileged, and
+ * it stops a booking somebody else is working on.
+ */
+shipmentRouter.post(
+  '/bookings/:id/cancel',
+  requirePermission(`${FEATURE}.CANCEL`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'booking');
+    const input = shipmentCancelSchema.parse(req.body);
+
+    const data = await withTenant(auth.tenantId, async (db) => {
+      await transitionShipment(db, {
+        shipmentId: id,
+        to: 'CANCELLED',
+        userId: auth.userId,
+        reason: input.reason,
       });
       return loadShipment(db, id);
     });

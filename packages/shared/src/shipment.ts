@@ -59,6 +59,98 @@ export const PO_APPROVAL_STATUS_LABEL: Record<PoApprovalStatus, string> = {
  */
 export const SHIPMENT_EDITABLE: readonly ShipmentStatus[] = ['BOOKING_RECEIVED'];
 
+// --------------------------------------------------------- the status machine
+
+/**
+ * §5.1's transition table, verbatim, and the only definition of it.
+ *
+ * The spec is emphatic about two things and this constant is how both hold:
+ * the state is an explicit enum with guarded transitions rather than a set of
+ * booleans, and "never let the frontend decide what the next state is". So the
+ * API refuses anything not listed here, and the screens read the same table to
+ * work out which button to draw — the button is derived from the status, never
+ * stored.
+ *
+ * `CANCELLED` is reachable from everywhere, which is §5.1's "any -> CANCELLED".
+ * Read literally, including from the states where the cargo has already
+ * arrived: a shipment can be received and the booking behind it still voided,
+ * and the spec does not carve that out. The one exclusion is CANCELLED itself,
+ * because cancelling twice is a mistake rather than a transition.
+ */
+export const SHIPMENT_TRANSITIONS: Record<ShipmentStatus, readonly ShipmentStatus[]> = {
+  // C/S saves a schedule.
+  BOOKING_RECEIVED: ['VESSEL_PROPOSED', 'CANCELLED'],
+  // The customer approves or rejects what was proposed.
+  VESSEL_PROPOSED: ['APPROVED_FOR_SHIPMENT', 'REJECTED', 'CANCELLED'],
+  // C/S proposes a new version; §4.2 keeps the rejected one.
+  REJECTED: ['VESSEL_PROPOSED', 'CANCELLED'],
+  // §5.4 rule 3: inbound skips the shipping order entirely.
+  APPROVED_FOR_SHIPMENT: ['SO_ISSUED', 'SO_SKIPPED', 'CANCELLED'],
+  SO_ISSUED: ['PART_RECEIVED', 'CARGO_RECEIVED', 'CANCELLED'],
+  SO_SKIPPED: ['PART_RECEIVED', 'CARGO_RECEIVED', 'CANCELLED'],
+  // §5.5 rule 4: a booking may have several receipts, so this one loops.
+  PART_RECEIVED: ['PART_RECEIVED', 'CARGO_RECEIVED', 'SHORT_CLOSED', 'CANCELLED'],
+  CARGO_RECEIVED: ['CANCELLED'],
+  SHORT_CLOSED: ['CANCELLED'],
+  CANCELLED: [],
+};
+
+export function canTransition(from: ShipmentStatus, to: ShipmentStatus): boolean {
+  return SHIPMENT_TRANSITIONS[from].includes(to);
+}
+
+/**
+ * Transitions that cannot be made without saying why.
+ *
+ * §5.1 marks CANCELLED "reason mandatory" and §5.5 rule 5 does the same for a
+ * short close — both write off work somebody paid for, and the trail is what
+ * accounts and the customer will argue over later.
+ */
+export const SHIPMENT_REASON_REQUIRED: readonly ShipmentStatus[] = ['CANCELLED', 'SHORT_CLOSED'];
+
+/**
+ * The Action button §6.2 draws for a booking, derived from its status.
+ *
+ * §5.1: "The Action button on the Booking List is derived from status, never
+ * stored." Sea and air differ only in the word, the way §3 asks.
+ */
+export interface ShipmentAction {
+  label: string;
+  /** The permission the button needs, or null when it is only a statement. */
+  permission: string | null;
+}
+
+export function shipmentAction(
+  status: ShipmentStatus,
+  shipmentType: (typeof SHIPMENT_TYPES)[number],
+): ShipmentAction {
+  switch (status) {
+    case 'BOOKING_RECEIVED':
+      return {
+        label: shipmentType === 'AIR' ? 'Flight Booking' : 'Vsl Booking',
+        permission: 'CUSTOMER_SERVICE.SCHEDULE.CREATE',
+      };
+    case 'VESSEL_PROPOSED':
+      // A statement, not an action: the customer is the one who acts next.
+      return { label: 'Awaiting Shipment Approval', permission: null };
+    case 'REJECTED':
+      return {
+        label: shipmentType === 'AIR' ? 'Re-propose Flight' : 'Re-propose Vessel',
+        permission: 'CUSTOMER_SERVICE.SCHEDULE.CREATE',
+      };
+    case 'APPROVED_FOR_SHIPMENT':
+      return { label: 'Issue S/O', permission: 'CUSTOMER_SERVICE.SHIPPING_ORDER.VIEW' };
+    case 'SO_ISSUED':
+    case 'SO_SKIPPED':
+    case 'PART_RECEIVED':
+      return { label: 'Cargo Receipt', permission: 'OPERATION.CARGO_RECEIPT.VIEW' };
+    case 'CARGO_RECEIVED':
+    case 'SHORT_CLOSED':
+    case 'CANCELLED':
+      return { label: 'View', permission: 'CUSTOMER_SERVICE.CARGO_BOOKING.VIEW' };
+  }
+}
+
 // ------------------------------------------------------------- measurements
 
 /**
@@ -220,6 +312,9 @@ export interface ShipmentDto {
   seriesYear: number;
   status: ShipmentStatus;
   submittedAt: string | null;
+  /** §5.1: set together with CANCELLED, and never without a reason. */
+  cancelledAt: string | null;
+  cancelReason: string | null;
 
   quotationId: string;
   quotationCode: string;
@@ -387,3 +482,17 @@ export const shipmentUpdateSchema = z
   .refine(datesInOrder, { message: 'The ETA is before the ETD.', path: ['eta'] });
 
 export type ShipmentUpdateInput = z.infer<typeof shipmentUpdateSchema>;
+
+/**
+ * §5.1's cancellation. The reason is not optional and not a formality — it is
+ * the only record of why work somebody paid for was stopped.
+ */
+export const shipmentCancelSchema = z.object({
+  reason: z
+    .string()
+    .trim()
+    .min(1, 'Say why this booking is being cancelled.')
+    .max(2000, 'That reason is too long.'),
+});
+
+export type ShipmentCancelInput = z.infer<typeof shipmentCancelSchema>;
