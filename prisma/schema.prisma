@@ -1704,6 +1704,7 @@ model User {
   quotationFollowupsUpdated   QuotationFollowup[]   @relation("QuotationFollowupUpdatedBy")
   shipmentsSubmitted          Shipment[]            @relation("ShipmentSubmittedBy")
   shipmentsCancelled          Shipment[]            @relation("ShipmentCancelledBy")
+  shipmentsShortClosed        Shipment[]            @relation("ShipmentShortClosedBy")
   shipmentsCreated            Shipment[]            @relation("ShipmentCreatedBy")
   shipmentsUpdated            Shipment[]            @relation("ShipmentUpdatedBy")
   shipmentPosApproved         ShipmentPo[]          @relation("ShipmentPoApprovedBy")
@@ -3637,6 +3638,17 @@ model Shipment {
   cancelledBy  BigInt?   @map("cancelled_by")
   cancelReason String?   @map("cancel_reason") @db.Text
 
+  /// §5.5 rule 5: somebody stopped waiting for the rest of the cargo, and said
+  /// why. The balance itself is never written off — it stays derivable from
+  /// booked minus received, because "this is what accounts and the customer
+  /// will argue about later, and the trail is the answer".
+  ///
+  /// §9 Q11, answered 2026-09-02: the shortfall is recorded and the money is
+  /// decided later, so nothing here prices it.
+  shortClosedAt    DateTime? @map("short_closed_at") @db.Timestamptz(6)
+  shortClosedBy    BigInt?   @map("short_closed_by")
+  shortCloseReason String?   @map("short_close_reason") @db.Text
+
   isActive  Boolean   @default(true) @map("is_active")
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -3659,10 +3671,11 @@ model Shipment {
   tos       Tos?       @relation(fields: [tosId], references: [id], onDelete: Restrict)
   mode      Mode?      @relation(fields: [modeId], references: [id], onDelete: Restrict)
 
-  submittedByUser User? @relation("ShipmentSubmittedBy", fields: [submittedBy], references: [id], onDelete: Restrict)
-  cancelledByUser User? @relation("ShipmentCancelledBy", fields: [cancelledBy], references: [id], onDelete: Restrict)
-  createdByUser   User? @relation("ShipmentCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
-  updatedByUser   User? @relation("ShipmentUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  submittedByUser   User? @relation("ShipmentSubmittedBy", fields: [submittedBy], references: [id], onDelete: Restrict)
+  cancelledByUser   User? @relation("ShipmentCancelledBy", fields: [cancelledBy], references: [id], onDelete: Restrict)
+  shortClosedByUser User? @relation("ShipmentShortClosedBy", fields: [shortClosedBy], references: [id], onDelete: Restrict)
+  createdByUser     User? @relation("ShipmentCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser     User? @relation("ShipmentUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   commodities    ShipmentCommodity[]
   pos            ShipmentPo[]
@@ -3680,6 +3693,7 @@ model Shipment {
   @@index([customerId])
   @@index([carrierId])
   @@index([cancelledBy])
+  @@index([shortClosedBy])
   @@map("shipment")
 }
 

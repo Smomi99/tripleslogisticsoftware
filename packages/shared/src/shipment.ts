@@ -329,6 +329,9 @@ export interface ShipmentDto {
   /** §5.1: set together with CANCELLED, and never without a reason. */
   cancelledAt: string | null;
   cancelReason: string | null;
+  /** §5.5 rule 5: the balance was written off, and the record says why. */
+  shortClosedAt: string | null;
+  shortCloseReason: string | null;
 
   quotationId: string;
   quotationCode: string;
@@ -1009,3 +1012,35 @@ export const cargoReceiptSaveSchema = z.object({
 });
 
 export type CargoReceiptSaveInput = z.infer<typeof cargoReceiptSaveSchema>;
+
+/**
+ * §5.5 rule 5's short close.
+ *
+ * "A privileged user may close the remaining balance with a reason, setting
+ * SHORT_CLOSED. The balance stays visible on the record — never delete it."
+ *
+ * §9 Q11, answered 2026-09-02: the shortfall is recorded and what happens to
+ * the money is decided later, so nothing here prices it.
+ */
+export const shortCloseSchema = z.object({
+  reason: z
+    .string()
+    .trim()
+    .min(1, 'Say why the rest of this cargo is not coming.')
+    .max(2000, 'That reason is too long.'),
+});
+
+export type ShortCloseInput = z.infer<typeof shortCloseSchema>;
+
+/** What a short close leaves behind, for §6.7's strip and the record. */
+export function describeShortClose(rows: readonly ReceiptGridRow[], reason: string): string {
+  let cartons = 0;
+  const pos = new Set<string>();
+  for (const row of rows) {
+    if (row.balanceCtnQty <= 0) continue;
+    cartons += row.balanceCtnQty;
+    pos.add(row.poNo);
+  }
+  if (cartons === 0) return 'Nothing was outstanding when this was closed.';
+  return `${cartons} CTN across ${pos.size} PO${pos.size === 1 ? '' : 's'} short-closed — ${reason}`;
+}

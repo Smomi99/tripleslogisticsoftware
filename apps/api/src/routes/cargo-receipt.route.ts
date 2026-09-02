@@ -4,7 +4,9 @@ import {
   type ApiSuccess,
   type CargoReceiptDto,
   cargoReceiptSaveSchema,
+  describeShortClose,
   type ReceiptGridRow,
+  shortCloseSchema,
 } from '@ff/shared';
 
 import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
@@ -491,6 +493,83 @@ cargoReceiptRouter.post(
     });
 
     const payload: ApiSuccess<CargoReceiptDto> = { success: true, data };
+    res.json(payload);
+  },
+);
+
+/**
+ * POST /bookings/:id/short-close — §5.5 rule 5.
+ *
+ * "A privileged user may close the remaining balance with a reason, setting
+ * SHORT_CLOSED. The balance stays visible on the record — never delete it."
+ *
+ * So this writes nothing to the cargo lines. The outstanding quantity stays
+ * exactly where it was and stays derivable forever; all that changes is that
+ * somebody has said the shipment is not waiting for it any more. §5.5 is
+ * explicit about why: "this is what accounts and the customer will argue about
+ * later, and the trail is the answer".
+ *
+ * SHORT_CLOSE is its own permission because §7 says so in as many words — it
+ * writes off cargo the customer paid to move, and belongs with a supervisor
+ * rather than the warehouse clerk.
+ */
+cargoReceiptRouter.post(
+  '/bookings/:id/short-close',
+  requirePermission(`${FEATURE}.SHORT_CLOSE`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const shipmentId = parseId(req.params.id, 'booking');
+    const input = shortCloseSchema.parse(req.body);
+
+    const data = await withTenant(auth.tenantId, async (db) => {
+      const shipment = await assertBooking(db, shipmentId);
+
+      const open = await db.cargoReceipt.findFirst({
+        where: { shipmentId, deletedAt: null, status: 'DRAFT' },
+        select: { code: true },
+      });
+      if (open !== null) {
+        throw new HttpError(
+          409,
+          'RECEIPT_OPEN',
+          `${open.code} is still open. Confirm or clear it before closing the balance — ` +
+            'what it holds would change the shortfall.',
+        );
+      }
+
+      const rows = await buildRows(db, shipmentId, null);
+      const outstanding = rows.reduce((n, r) => n + r.balanceCtnQty, 0);
+      if (outstanding === 0) {
+        throw new HttpError(
+          409,
+          'NOTHING_OUTSTANDING',
+          `Everything booked on ${shipment.code} has arrived. There is no balance to close.`,
+        );
+      }
+
+      // §5.1 refuses this from anywhere but PART_RECEIVED, which is the only
+      // state where a balance can meaningfully be outstanding.
+      await transitionShipment(db, {
+        shipmentId,
+        to: 'SHORT_CLOSED',
+        userId: auth.userId,
+        reason: input.reason,
+        data: {
+          shortClosedAt: new Date(),
+          shortClosedBy: auth.userId,
+          shortCloseReason: input.reason,
+        },
+      });
+
+      return {
+        shortClosed: outstanding,
+        summary: describeShortClose(rows, input.reason),
+        // Still derivable, still whole — nothing was written off.
+        rows,
+      };
+    });
+
+    const payload: ApiSuccess<typeof data> = { success: true, data };
     res.json(payload);
   },
 );

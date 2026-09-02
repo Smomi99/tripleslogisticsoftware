@@ -1372,3 +1372,322 @@ describe('cargo receipt (§4.4, §5.5, §6.7)', () => {
     expect(Number(line.receivedVolumeCbm)).toBe(7.2);
   });
 });
+
+/**
+ * §5.5's balance arithmetic — phase J.
+ *
+ * §8 names this one of the three places to write tests, and gives the reason:
+ * "the balance arithmetic — three places where a silent error becomes a billing
+ * dispute rather than a visible bug." The phase is done when balances reconcile
+ * to zero, so most of what follows is arithmetic checked from both ends.
+ */
+describe('part-delivery balances (§5.5)', () => {
+  /** A booking with an issued S/O, ready to receive against. */
+  async function ready(count = 1) {
+    const { id } = await approved(count);
+    const res = await as(token).post(`/api/tenant/cs/bookings/${id}/shipping-order`).send({});
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const lines = await owner.shipmentCargoLine.findMany({
+      where: { shipmentId: id, deletedAt: null },
+      orderBy: { id: 'asc' },
+      select: { id: true },
+    });
+    return { id, lineIds: lines.map((l) => l.id.toString()) };
+  }
+
+  interface Row {
+    poNo: string;
+    bookedCtnQty: number;
+    previouslyReceivedCtnQty: number;
+    balanceCtnQty: number;
+  }
+
+  async function grid(id: bigint): Promise<Row[]> {
+    const res = await as(token).get(`/api/tenant/ops/bookings/${id}/cargo-receipts`);
+    return (res.body as { data: { grid: Row[] } }).data.grid;
+  }
+
+  /** Records and confirms one receipt. */
+  async function receive(
+    id: bigint,
+    lines: { cargoLineId: string; receivedCtnQty: number; lineStatus?: string; declineReason?: string }[],
+  ): Promise<void> {
+    const saved = await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/cargo-receipts`)
+      .send({ receiveDate: '2026-11-05', lines });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    const res = await as(token).post(
+      `/api/tenant/ops/bookings/${id}/cargo-receipts/${(saved.body as { data: { id: string } }).data.id}/confirm`,
+    );
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+  }
+
+  it('reconciles to zero over four receipts — the phase gate', async () => {
+    /*
+     * The arithmetic from both ends: what came in must equal what was booked,
+     * and the balance must land exactly on nought rather than near it.
+     */
+    const { id, lineIds } = await ready(1);
+    for (const qty of [10, 25, 40, 25]) {
+      await receive(id, [{ cargoLineId: lineIds[0]!, receivedCtnQty: qty }]);
+    }
+
+    const rows = await grid(id);
+    expect(rows[0]?.previouslyReceivedCtnQty).toBe(100);
+    expect(rows[0]?.balanceCtnQty).toBe(0);
+
+    // ...and the sum of the receipts equals the booked figure exactly.
+    const total = await owner.cargoReceiptLine.aggregate({
+      where: {
+        lineStatus: 'ACCEPTED',
+        deletedAt: null,
+        receipt: { shipmentId: id, status: 'CONFIRMED' },
+      },
+      _sum: { receivedCtnQty: true },
+    });
+    expect(total._sum.receivedCtnQty).toBe(rows[0]?.bookedCtnQty);
+
+    const shipment = await owner.shipment.findFirstOrThrow({
+      where: { id },
+      select: { status: true },
+    });
+    expect(shipment.status).toBe('CARGO_RECEIVED');
+  });
+
+  it('reconciles across several POs independently', async () => {
+    const { id, lineIds } = await ready(3);
+    await receive(id, [
+      { cargoLineId: lineIds[0]!, receivedCtnQty: 100 },
+      { cargoLineId: lineIds[1]!, receivedCtnQty: 30 },
+    ]);
+
+    let rows = await grid(id);
+    expect(rows.map((r) => r.balanceCtnQty)).toEqual([0, 70, 100]);
+
+    await receive(id, [
+      { cargoLineId: lineIds[1]!, receivedCtnQty: 70 },
+      { cargoLineId: lineIds[2]!, receivedCtnQty: 100 },
+    ]);
+
+    rows = await grid(id);
+    expect(rows.map((r) => r.balanceCtnQty)).toEqual([0, 0, 0]);
+    expect(rows.reduce((n, r) => n + r.balanceCtnQty, 0)).toBe(0);
+  });
+
+  it('holds the booking open until the LAST carton arrives', async () => {
+    const { id, lineIds } = await ready(2);
+    await receive(id, [
+      { cargoLineId: lineIds[0]!, receivedCtnQty: 100 },
+      { cargoLineId: lineIds[1]!, receivedCtnQty: 99 },
+    ]);
+
+    // One carton short of the whole booking.
+    let shipment = await owner.shipment.findFirstOrThrow({
+      where: { id },
+      select: { status: true },
+    });
+    expect(shipment.status).toBe('PART_RECEIVED');
+
+    await receive(id, [{ cargoLineId: lineIds[1]!, receivedCtnQty: 1 }]);
+    shipment = await owner.shipment.findFirstOrThrow({
+      where: { id },
+      select: { status: true },
+    });
+    expect(shipment.status).toBe('CARGO_RECEIVED');
+  });
+
+  it('does not let a declined line close the balance (§5.5 rule 2)', async () => {
+    const { id, lineIds } = await ready(1);
+    await receive(id, [
+      {
+        cargoLineId: lineIds[0]!,
+        receivedCtnQty: 100,
+        lineStatus: 'DECLINED',
+        declineReason: 'Water damage.',
+      },
+    ]);
+
+    const rows = await grid(id);
+    expect(rows[0]?.balanceCtnQty).toBe(100);
+
+    // ...and accepting the replacement afterwards does close it.
+    await receive(id, [{ cargoLineId: lineIds[0]!, receivedCtnQty: 100 }]);
+    expect((await grid(id))[0]?.balanceCtnQty).toBe(0);
+  });
+
+  it('leaves a draft out of the balance until it is confirmed', async () => {
+    // A balance that moved on a half-typed receipt would be a figure that is
+    // only true if somebody presses a button.
+    const { id, lineIds } = await ready(1);
+    await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/cargo-receipts`)
+      .send({
+        receiveDate: '2026-11-05',
+        lines: [{ cargoLineId: lineIds[0]!, receivedCtnQty: 40 }],
+      });
+
+    expect((await grid(id))[0]?.previouslyReceivedCtnQty).toBe(0);
+    expect((await grid(id))[0]?.balanceCtnQty).toBe(100);
+  });
+});
+
+describe('short close (§5.5 rule 5)', () => {
+  async function partlyReceived() {
+    const { id } = await approved(2);
+    await as(token).post(`/api/tenant/cs/bookings/${id}/shipping-order`).send({});
+    const lines = await owner.shipmentCargoLine.findMany({
+      where: { shipmentId: id, deletedAt: null },
+      orderBy: { id: 'asc' },
+      select: { id: true },
+    });
+    const saved = await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/cargo-receipts`)
+      .send({
+        receiveDate: '2026-11-05',
+        lines: [{ cargoLineId: lines[0]!.id.toString(), receivedCtnQty: 60 }],
+      });
+    await as(token).post(
+      `/api/tenant/ops/bookings/${id}/cargo-receipts/${(saved.body as { data: { id: string } }).data.id}/confirm`,
+    );
+    return { id, lineIds: lines.map((l) => l.id.toString()) };
+  }
+
+  it('closes the balance and says why', async () => {
+    const { id } = await partlyReceived();
+    const res = await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/short-close`)
+      .send({ reason: 'Exporter could not fill the container.' });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const data = (res.body as { data: { shortClosed: number; summary: string } }).data;
+    expect(data.shortClosed).toBe(140);
+    expect(data.summary).toMatch(/140 CTN across 2 POs short-closed/);
+    expect(data.summary).toMatch(/Exporter could not fill the container\./);
+
+    const shipment = await owner.shipment.findFirstOrThrow({
+      where: { id },
+      select: { status: true, shortCloseReason: true, shortClosedAt: true, shortClosedBy: true },
+    });
+    expect(shipment.status).toBe('SHORT_CLOSED');
+    expect(shipment.shortCloseReason).toBe('Exporter could not fill the container.');
+    expect(shipment.shortClosedAt).not.toBeNull();
+    expect(shipment.shortClosedBy).not.toBeNull();
+  });
+
+  it('never deletes the balance — it stays visible on the record', async () => {
+    /*
+     * §5.5 rule 5's own sentence: "The balance stays visible on the record —
+     * never delete it. This is what accounts and the customer will argue about
+     * later, and the trail is the answer."
+     */
+    const { id, lineIds } = await partlyReceived();
+    await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/short-close`)
+      .send({ reason: 'Season closed.' });
+
+    const res = await as(token).get(`/api/tenant/ops/bookings/${id}/cargo-receipts`);
+    const rows = (res.body as {
+      data: { grid: { bookedCtnQty: number; previouslyReceivedCtnQty: number; balanceCtnQty: number }[] };
+    }).data.grid;
+
+    expect(rows[0]?.bookedCtnQty).toBe(100);
+    expect(rows[0]?.previouslyReceivedCtnQty).toBe(60);
+    expect(rows[0]?.balanceCtnQty).toBe(40);
+    expect(rows[1]?.balanceCtnQty).toBe(100);
+
+    // The booked lines were not touched either.
+    const booked = await owner.shipmentCargoLine.findFirstOrThrow({
+      where: { id: BigInt(lineIds[0]!) },
+      select: { ctnQty: true },
+    });
+    expect(booked.ctnQty).toBe(100);
+  });
+
+  it('refuses without a reason', async () => {
+    const { id } = await partlyReceived();
+    const res = await as(token).post(`/api/tenant/ops/bookings/${id}/short-close`).send({ reason: '  ' });
+    expect(res.status).toBe(400);
+
+    const shipment = await owner.shipment.findFirstOrThrow({
+      where: { id },
+      select: { status: true },
+    });
+    expect(shipment.status).toBe('PART_RECEIVED');
+  });
+
+  it('refuses a warehouse clerk (§7 puts it with a supervisor)', async () => {
+    const { id } = await partlyReceived();
+    const res = await request(app)
+      .post(`/api/tenant/ops/bookings/${id}/short-close`)
+      .set('Authorization', `Bearer ${tokenReceiver}`)
+      .set('X-Tenant-Slug', SLUG)
+      .send({ reason: 'Trying it on.' });
+    expect(res.status).toBe(403);
+  });
+
+  it('refuses when nothing is outstanding', async () => {
+    const { id } = await approved(1);
+    await as(token).post(`/api/tenant/cs/bookings/${id}/shipping-order`).send({});
+    const lines = await owner.shipmentCargoLine.findMany({
+      where: { shipmentId: id, deletedAt: null },
+      select: { id: true },
+    });
+    const saved = await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/cargo-receipts`)
+      .send({
+        receiveDate: '2026-11-05',
+        lines: [{ cargoLineId: lines[0]!.id.toString(), receivedCtnQty: 100 }],
+      });
+    await as(token).post(
+      `/api/tenant/ops/bookings/${id}/cargo-receipts/${(saved.body as { data: { id: string } }).data.id}/confirm`,
+    );
+
+    const res = await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/short-close`)
+      .send({ reason: 'Nothing left to close.' });
+    expect(res.status).toBe(409);
+  });
+
+  it('refuses while a receipt is still open', async () => {
+    // What the draft holds would change the shortfall, so the figure being
+    // written off would be one nobody had agreed to.
+    const { id, lineIds } = await partlyReceived();
+    await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/cargo-receipts`)
+      .send({
+        receiveDate: '2026-11-06',
+        lines: [{ cargoLineId: lineIds[1]!.toString(), receivedCtnQty: 20 }],
+      });
+
+    const res = await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/short-close`)
+      .send({ reason: 'Season closed.' });
+    expect(res.status).toBe(409);
+    expect((res.body as { error: { message: string } }).error.message).toMatch(/still open/i);
+  });
+
+  it('cannot be short-closed twice', async () => {
+    const { id } = await partlyReceived();
+    await as(token).post(`/api/tenant/ops/bookings/${id}/short-close`).send({ reason: 'Done.' });
+    const again = await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/short-close`)
+      .send({ reason: 'Again.' });
+    // §5.1: SHORT_CLOSED leads only to CANCELLED.
+    expect(again.status).toBe(409);
+  });
+
+  it('records it on the trail as its own event', async () => {
+    const { id } = await partlyReceived();
+    await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/short-close`)
+      .send({ reason: 'Exporter short-shipped.' });
+
+    const res = await as(token).get(`/api/tenant/cs/bookings/${id}/activities`);
+    const events = (res.body as { data: { summary: string; detail: string | null }[] }).data;
+    const change = events.find((e) => e.detail?.includes('Short closed') === true);
+    expect(change).toBeDefined();
+    expect(change?.detail).toMatch(/Part received → Short closed/);
+    // §5.5 rule 5: "the trail is the answer", so it carries the reason too.
+    expect(change?.detail).toMatch(/Exporter short-shipped\./);
+  });
+});

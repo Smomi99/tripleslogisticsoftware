@@ -12,7 +12,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Input } from '@/components/ui/field';
-import { ConfirmDialog } from '@/components/ui/modal';
+import { ConfirmDialog, Modal } from '@/components/ui/modal';
 import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
@@ -97,6 +97,10 @@ export function CargoReceiptTab({
   const [isPending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
+  // §5.5 rule 5. The reason is the whole point of the record, so the dialog
+  // collects one rather than only asking twice.
+  const [closing, setClosing] = useState(false);
+  const [closeReason, setCloseReason] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -205,6 +209,27 @@ export function CargoReceiptTab({
     } finally {
       setPending(false);
       setConfirming(false);
+    }
+  }
+
+  async function shortClose(): Promise<void> {
+    if (closeReason.trim() === '') return;
+    setPending(true);
+    try {
+      const result = await authorizedRequest<{ summary: string }>(
+        `/api/tenant/ops/bookings/${booking.id}/short-close`,
+        { method: 'POST', body: { reason: closeReason.trim() } },
+      );
+      toast.success(result.summary);
+      setClosing(false);
+      setCloseReason('');
+      await load();
+      onChanged();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not close the balance.');
+      setClosing(false);
+    } finally {
+      setPending(false);
     }
   }
 
@@ -428,10 +453,39 @@ export function CargoReceiptTab({
           </table>
         </div>
 
-        {/* §6.7's balance strip. */}
-        <p className="border-t border-line bg-paper px-4 py-3 text-body text-hull">
-          {describeBalance(grid)}
-        </p>
+        {/* §6.7's balance strip, and §5.5 rule 5's way out of it. */}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line bg-paper px-4 py-3">
+          <p className="text-body text-hull">
+            {booking.status === 'SHORT_CLOSED' ? (
+              <>
+                <span className="font-medium">Short closed.</span> {booking.shortCloseReason}
+                {' — '}
+                {describeBalance(grid)}
+              </>
+            ) : (
+              describeBalance(grid)
+            )}
+          </p>
+          {/*
+            §5.5 rule 5: a privileged user, and only while something is still
+            owed. §7 keeps SHORT_CLOSE away from the warehouse clerk.
+          */}
+          {booking.status === 'PART_RECEIVED' &&
+            grid.some((r) => r.balanceCtnQty > 0) &&
+            can('OPERATION.CARGO_RECEIPT.SHORT_CLOSE') && (
+              <Button
+                variant="destructive"
+                size="inline"
+                onClick={() => {
+                  setCloseReason('');
+                  setError(null);
+                  setClosing(true);
+                }}
+              >
+                Short close
+              </Button>
+            )}
+        </div>
       </section>
 
       {error !== null && (
@@ -469,6 +523,37 @@ export function CargoReceiptTab({
         isPending={isPending}
         onConfirm={() => void save(true)}
       />
+
+      <Modal open={closing} onOpenChange={setClosing} title="Close the outstanding balance?">
+        <div className="flex flex-col gap-4">
+          <p className="text-body text-steel">
+            {describeBalance(grid)} It stays on the record — nothing is deleted — but this
+            booking stops waiting for it. Say why: this is what accounts and the customer will
+            read later.
+          </p>
+          <Field id="closeReason" label="Reason" required>
+            <Input
+              id="closeReason"
+              autoFocus
+              value={closeReason}
+              onChange={(e) => setCloseReason(e.target.value)}
+              placeholder="Exporter could not fill the container"
+            />
+          </Field>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setClosing(false)}>
+              Keep waiting
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={isPending || closeReason.trim() === ''}
+              onClick={() => void shortClose()}
+            >
+              {isPending ? 'Closing…' : 'Short close'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   );
 }

@@ -68,7 +68,14 @@ function describe(row: AuditRow): { summary: string; detail: string | null } {
 
       const moved = statusChange(row);
       if (moved !== null) {
-        const reason = str(row.new_values, 'cancel_reason');
+        /*
+         * Whichever reason the new status carries. §5.1's cancellation and
+         * §5.5 rule 5's short close each have their own column, and the trail
+         * is where both are read from — §5.5 says of the short close in as many
+         * words that "the trail is the answer".
+         */
+        const reason =
+          str(row.new_values, 'cancel_reason') ?? str(row.new_values, 'short_close_reason');
         return { summary: `Status changed`, detail: reason === null ? moved : `${moved} — ${reason}` };
       }
       const submitted =

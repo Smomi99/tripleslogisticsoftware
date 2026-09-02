@@ -130,6 +130,8 @@ function toDto(row: ShipmentRow): ShipmentDto {
     submittedAt: row.submittedAt === null ? null : row.submittedAt.toISOString(),
     cancelledAt: row.cancelledAt === null ? null : row.cancelledAt.toISOString(),
     cancelReason: row.cancelReason,
+    shortClosedAt: row.shortClosedAt === null ? null : row.shortClosedAt.toISOString(),
+    shortCloseReason: row.shortCloseReason,
 
     quotationId: row.quotationId.toString(),
     quotationCode: row.quotation.code,
