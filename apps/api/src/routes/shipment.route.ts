@@ -2,18 +2,22 @@ import { Router } from 'express';
 
 import {
   type ApiSuccess,
+  buildMeta,
   type ShipmentCargoLineDto,
   type ShipmentCargoLineInput,
   shipmentCancelSchema,
   shipmentCreateSchema,
   type ShipmentDto,
   SHIPMENT_EDITABLE,
+  type ShipmentListRow,
+  shipmentListQuerySchema,
   type ShipmentPrefillDto,
   shipmentUpdateSchema,
 } from '@ff/shared';
 
 import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
 import { Prisma } from '../generated/prisma/client';
+import { renderVolumes } from '../lib/render-volumes';
 import { HttpError } from '../lib/http-error';
 import { nextBookingNo, seriesYearOf } from '../lib/inquiry-no';
 import { parseId, parseRefId } from '../lib/request';
@@ -303,6 +307,160 @@ async function reconcileCargo(
 }
 
 /**
+ * §4 rule 10's row scope, the shape quotation already uses, one hop further.
+ *
+ * A booking reaches its salesman through its quotation's inquiry. Without
+ * VIEW_ALL you see the bookings you raised and the ones on your own inquiries;
+ * with it, the team's. Someone with no employee record still sees their own,
+ * which fails closed in the only direction a visibility rule safely can.
+ */
+async function scopeFor(
+  db: TenantDb,
+  auth: { userId: bigint; isSuperadmin: boolean; permissions: ReadonlySet<string> },
+  requested: 'OWN' | 'ALL' = 'ALL',
+): Promise<Prisma.ShipmentWhereInput> {
+  const maySeeAll = auth.isSuperadmin || auth.permissions.has(`${FEATURE}.VIEW_ALL`);
+  if (requested === 'ALL' && maySeeAll) return {};
+
+  const user = await db.user.findFirst({
+    where: { id: auth.userId },
+    select: { employeeId: true },
+  });
+  if (user?.employeeId == null) return { createdBy: auth.userId };
+  return {
+    OR: [
+      { createdBy: auth.userId },
+      { quotation: { inquiry: { salesmanId: user.employeeId } } },
+    ],
+  };
+}
+
+/**
+ * GET /bookings — the Booking List (§6.2).
+ *
+ * The client's columns in the client's order. What is NOT returned is the
+ * Action: §5.1 makes it derived from the status, so the screen computes it from
+ * the same table the API guards transitions with. A column the server sent
+ * would be the server deciding what the operator may do next.
+ */
+shipmentRouter.get('/bookings', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
+  const auth = req.auth!;
+  const query = shipmentListQuerySchema.parse(req.query);
+
+  const { rows, total } = await withTenant(auth.tenantId, async (db) => {
+    const scope = await scopeFor(db, auth, query.scope);
+
+    const where: Prisma.ShipmentWhereInput = {
+      deletedAt: null,
+      ...scope,
+      ...(query.shipmentType === undefined ? {} : { shipmentType: query.shipmentType }),
+      ...(query.status === undefined ? {} : { status: query.status }),
+      ...(query.isActive === undefined ? {} : { isActive: query.isActive }),
+      // §8's Search box, over the two numbers on the row and the customer —
+      // which is what an operator has in their hand when they come looking.
+      ...(query.search === undefined
+        ? {}
+        : {
+            OR: [
+              { code: { contains: query.search, mode: 'insensitive' } },
+              { quotation: { code: { contains: query.search, mode: 'insensitive' } } },
+              { customer: { name: { contains: query.search, mode: 'insensitive' } } },
+              { exporterName: { contains: query.search, mode: 'insensitive' } },
+            ],
+          }),
+    };
+
+    const sortable: Record<string, Prisma.ShipmentOrderByWithRelationInput> = {
+      code: { code: query.sortOrder },
+      etd: { etd: query.sortOrder },
+      eta: { eta: query.sortOrder },
+      status: { status: query.sortOrder },
+      goodsHandoverDate: { goodsHandoverDate: query.sortOrder },
+      customer: { customer: { name: query.sortOrder } },
+    };
+    // Newest first by default: a booking list is worked from the top.
+    const orderBy = sortable[query.sortBy ?? ''] ?? { id: 'desc' as const };
+
+    const [found, count] = await Promise.all([
+      db.shipment.findMany({
+        where,
+        orderBy,
+        skip: (query.page - 1) * query.limit,
+        take: query.limit,
+        select: {
+          id: true,
+          code: true,
+          shipmentType: true,
+          status: true,
+          transitType: true,
+          goodsHandoverDate: true,
+          etd: true,
+          eta: true,
+          cancelReason: true,
+          customer: { select: { name: true } },
+          pol: { select: { name: true, portCode: true } },
+          pod: { select: { name: true, portCode: true } },
+          commodities: {
+            where: { isActive: true },
+            select: { commodityItem: { select: { name: true } } },
+          },
+          quotation: {
+            select: {
+              code: true,
+              inquiry: {
+                select: {
+                  volumes: {
+                    where: { deletedAt: null },
+                    select: {
+                      quantity: true,
+                      cbm: true,
+                      weightKg: true,
+                      containerSizeNote: true,
+                      containerSize: { select: { name: true } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+      db.shipment.count({ where }),
+    ]);
+
+    return { rows: found, total: count };
+  });
+
+  const data: ShipmentListRow[] = rows.map((row) => ({
+    id: row.id.toString(),
+    quotationCode: row.quotation.code,
+    code: row.code,
+    customerName: row.customer.name,
+    commodity:
+      row.commodities.map((c) => c.commodityItem.name).join(', ') || '—',
+    shipmentType: row.shipmentType,
+    polName: row.pol.name,
+    polCode: row.pol.portCode,
+    podName: row.pod.name,
+    podCode: row.pod.portCode,
+    requiredContainer: renderVolumes(row.quotation.inquiry.volumes),
+    transitType: row.transitType,
+    goodsHandoverDate: dateOut(row.goodsHandoverDate),
+    etd: dateOut(row.etd),
+    eta: dateOut(row.eta),
+    status: row.status,
+    cancelReason: row.cancelReason,
+  }));
+
+  const payload: ApiSuccess<ShipmentListRow[]> = {
+    success: true,
+    data,
+    meta: buildMeta(query.page, query.limit, total),
+  };
+  res.json(payload);
+});
+
+/**
  * GET /booking-options — the lookups §6.1's header selects from.
  *
  * Its own endpoint rather than borrowing the purchase or quotation one: those
@@ -420,7 +578,19 @@ shipmentRouter.get(
 shipmentRouter.get('/bookings/:id', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
   const auth = req.auth!;
   const id = parseId(req.params.id, 'booking');
-  const data = await withTenant(auth.tenantId, (db) => loadShipment(db, id));
+
+  const data = await withTenant(auth.tenantId, async (db) => {
+    // The row scope applies to a typed URL as much as to the list. Checked
+    // separately from loadShipment, which is also how a route reads back what
+    // it has just written — and you can always see your own work.
+    const visible = await db.shipment.findFirst({
+      where: { id, deletedAt: null, ...(await scopeFor(db, auth)) },
+      select: { id: true },
+    });
+    if (visible === null) throw HttpError.notFound('Booking not found.');
+    return loadShipment(db, id);
+  });
+
   const payload: ApiSuccess<ShipmentDto> = { success: true, data };
   res.json(payload);
 });

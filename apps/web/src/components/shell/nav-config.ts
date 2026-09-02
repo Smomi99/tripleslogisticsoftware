@@ -31,7 +31,17 @@ export const MODULE_LABEL: Record<Module, string> = {
  * added here that does not resolve to a real page fails the build rather than
  * 404ing for an operator.
  */
-const ROUTES: Record<string, Route> = {
+/**
+ * One feature can own more than one menu item.
+ *
+ * §3 of the booking module splits Shipment Booking into "- Sea" and "- Air"
+ * while §7 keeps them one permission, because they are one screen with
+ * mode-conditional fields. A second entry carries its own label and its own
+ * path; everything else about it is the feature's.
+ */
+type RouteEntry = Route | readonly { readonly label: string; readonly href: Route }[];
+
+const ROUTES: Record<string, RouteEntry> = {
   // All nine purchase screens run on three components (phase F).
   'PURCHASE.SEA_FREIGHT_FCL': '/purchase/sea-freight-fcl',
   'PURCHASE.SEA_FREIGHT_LCL': '/purchase/sea-freight-lcl',
@@ -67,6 +77,11 @@ const ROUTES: Record<string, Route> = {
   'CRM.EMPLOYEE': '/crm/employee',
   'CRM.USER': '/crm/user',
   'ADMIN.ROLE': '/admin/role',
+  // §3: two menu items, one screen, one permission.
+  'CUSTOMER_SERVICE.CARGO_BOOKING': [
+    { label: 'Shipment Booking - Sea', href: '/cs/shipment-booking-sea' },
+    { label: 'Shipment Booking - Air', href: '/cs/shipment-booking-air' },
+  ],
 };
 
 /**
@@ -103,12 +118,25 @@ export function buildNav(): NavGroup[] {
     // Column-level features (PURCHASE.RATE) gate data inside other screens, and
     // child screens (SETTING.CARRIER_PORT_PAIR) need a parent id in their route.
     // Neither has anything the sidebar could link to.
-    items: FEATURES.filter((f) => f.module === module && isNavFeature(f)).map((f) => ({
-      feature: f.feature,
-      label: f.label,
-      href: ROUTES[f.feature] ?? null,
-      viewPermission: `${f.feature}.VIEW`,
-    })),
+    items: FEATURES.filter((f) => f.module === module && isNavFeature(f)).flatMap((f) => {
+      const route = ROUTES[f.feature];
+      if (Array.isArray(route)) {
+        return route.map((entry) => ({
+          feature: f.feature,
+          label: entry.label,
+          href: entry.href,
+          viewPermission: `${f.feature}.VIEW`,
+        }));
+      }
+      return [
+        {
+          feature: f.feature,
+          label: f.label,
+          href: (route as Route | undefined) ?? null,
+          viewPermission: `${f.feature}.VIEW`,
+        },
+      ];
+    }),
   })).filter((group) => group.items.length > 0);
 }
 
@@ -124,7 +152,14 @@ export function buildNav(): NavGroup[] {
  */
 export function viewPermissionForPath(pathname: string): string | null {
   let best: { route: string; feature: string } | null = null;
-  for (const [feature, route] of [...Object.entries(ROUTES), ...Object.entries(UNLISTED_ROUTES)]) {
+  const all: [string, string][] = [];
+  for (const [feature, route] of Object.entries(ROUTES)) {
+    if (Array.isArray(route)) for (const entry of route) all.push([feature, entry.href]);
+    else all.push([feature, route as string]);
+  }
+  all.push(...Object.entries(UNLISTED_ROUTES));
+
+  for (const [feature, route] of all) {
     if (pathname !== route && !pathname.startsWith(`${route}/`)) continue;
     if (best === null || route.length > best.route.length) best = { route, feature };
   }

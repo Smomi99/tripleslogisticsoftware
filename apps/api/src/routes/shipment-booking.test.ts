@@ -472,6 +472,110 @@ describe('submitting', () => {
   });
 });
 
+describe('the Booking List (§6.2)', () => {
+  interface ListBody {
+    data: {
+      id: string;
+      code: string;
+      quotationCode: string;
+      customerName: string;
+      commodity: string;
+      shipmentType: string;
+      polName: string;
+      podName: string;
+      requiredContainer: string;
+      status: string;
+    }[];
+    meta: { total: number; page: number; limit: number };
+  }
+
+  async function list(query = ''): Promise<ListBody> {
+    const res = await as(token).get(`/api/tenant/cs/bookings${query}`);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    return res.body as ListBody;
+  }
+
+  it('returns the client’s columns', async () => {
+    const booking = await createBooking([{ poNo: 'PO-LIST-1', itemCode: 'ITEM', ctnQty: 3 }]);
+    const body = await list(`?search=${booking.code}`);
+
+    const row = body.data.find((r) => r.id === booking.id);
+    expect(row).toBeDefined();
+    expect(row?.quotationCode).toBe('BK-QTN-1');
+    expect(row?.customerName).toBe('Booking Customer');
+    expect(row?.commodity).toBe('Knit Tops');
+    expect(row?.shipmentType).toBe('AIR');
+    expect(row?.polName).toBe('Booking Port');
+    expect(row?.status).toBe('BOOKING_RECEIVED');
+  });
+
+  it('splits sea from air, which is all the two menu items are (§3)', async () => {
+    // Every booking in this suite is AIR, because its quotation is.
+    const air = await list('?shipmentType=AIR');
+    const sea = await list('?shipmentType=SEA');
+
+    expect(air.meta.total).toBeGreaterThan(0);
+    expect(sea.meta.total).toBe(0);
+    expect(air.data.every((r) => r.shipmentType === 'AIR')).toBe(true);
+  });
+
+  it('filters by status', async () => {
+    const booking = await createBooking([{ poNo: 'PO-LIST-2', itemCode: 'ITEM', ctnQty: 1 }]);
+    await owner.shipment.update({
+      where: { id: BigInt(booking.id) },
+      data: { status: 'APPROVED_FOR_SHIPMENT' },
+    });
+
+    const approved = await list('?status=APPROVED_FOR_SHIPMENT');
+    expect(approved.data.map((r) => r.id)).toContain(booking.id);
+    expect(approved.data.every((r) => r.status === 'APPROVED_FOR_SHIPMENT')).toBe(true);
+
+    const received = await list('?status=BOOKING_RECEIVED');
+    expect(received.data.map((r) => r.id)).not.toContain(booking.id);
+  });
+
+  it('searches the two numbers and the customer', async () => {
+    const booking = await createBooking([{ poNo: 'PO-LIST-3', itemCode: 'ITEM', ctnQty: 1 }]);
+
+    // What an operator actually has in their hand when they come looking.
+    expect((await list(`?search=${booking.code}`)).data.map((r) => r.id)).toContain(booking.id);
+    expect((await list('?search=BK-QTN-1')).data.map((r) => r.id)).toContain(booking.id);
+    expect((await list('?search=Booking Customer')).data.map((r) => r.id)).toContain(booking.id);
+    expect((await list('?search=nothing-like-this')).data).toHaveLength(0);
+  });
+
+  it('paginates', async () => {
+    const first = await list('?limit=1&page=1');
+    expect(first.data).toHaveLength(1);
+    expect(first.meta.total).toBeGreaterThan(1);
+
+    const second = await list('?limit=1&page=2');
+    expect(second.data[0]?.id).not.toBe(first.data[0]?.id);
+  });
+
+  it('sorts by a column the screen offers', async () => {
+    const asc = await list('?sortBy=code&sortOrder=asc');
+    const desc = await list('?sortBy=code&sortOrder=desc');
+    expect(asc.data[0]?.code).not.toBe(desc.data[0]?.code);
+    // ...and an unknown sortBy falls back rather than 400ing on an operator.
+    const odd = await list('?sortBy=nonsense');
+    expect(odd.data.length).toBeGreaterThan(0);
+  });
+
+  it('shows a user without VIEW_ALL only their own (§7)', async () => {
+    // tokenNoSubmit holds VIEW, CREATE and EDIT — not VIEW_ALL. The bookings
+    // in this suite were all raised by the superadmin.
+    const mine = await as(tokenNoSubmit).get('/api/tenant/cs/bookings');
+    expect(mine.status).toBe(200);
+    expect((mine.body as ListBody).meta.total).toBe(0);
+
+    // And the same user cannot open one by typing its URL either.
+    const booking = await createBooking([{ poNo: 'PO-SCOPE', itemCode: 'ITEM', ctnQty: 1 }]);
+    const direct = await as(tokenNoSubmit).get(`/api/tenant/cs/bookings/${booking.id}`);
+    expect(direct.status).toBe(404);
+  });
+});
+
 describe('cancelling (§5.1)', () => {
   it('refuses without a reason, and says so on the field', async () => {
     const booking = await createBooking([{ poNo: 'PO-CAN-1', itemCode: 'ITEM', ctnQty: 1 }]);

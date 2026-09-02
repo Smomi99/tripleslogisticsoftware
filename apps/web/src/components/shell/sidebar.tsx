@@ -145,8 +145,10 @@ export function Sidebar() {
                         {item.label}
                       </span>
                     );
+                    // Keyed on the path, not the feature: one feature can own
+                    // two menu items (§3's Shipment Booking - Sea / - Air).
                     return (
-                      <li key={item.feature}>
+                      <li key={item.href ?? item.label}>
                         {item.href === null ? (
                           <span title="Not built yet">{content}</span>
                         ) : (

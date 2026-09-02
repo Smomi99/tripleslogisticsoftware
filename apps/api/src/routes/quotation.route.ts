@@ -26,6 +26,7 @@ import { HttpError } from '../lib/http-error';
 import { Prisma } from '../generated/prisma/client';
 import { pullQuotationLines } from '../lib/quotation-pull';
 import { parseId, parseRefId } from '../lib/request';
+import { renderVolumes } from '../lib/render-volumes';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
 import { type AuthContext, authenticate } from '../middleware/authenticate';
 import { requirePermission } from '../middleware/require-permission';
@@ -647,30 +648,6 @@ quotationRouter.get('/quotations', requirePermission(`${FEATURE}.VIEW`), async (
   res.json(payload);
 });
 
-/** "20STD(1) + 40HC(1)", or "200 Kg" — the client's own rendering (§6.7). */
-function renderVolumes(
-  volumes: {
-    quantity: number | null;
-    cbm: Prisma.Decimal | null;
-    weightKg: Prisma.Decimal | null;
-    containerSizeNote: string | null;
-    containerSize: { name: string } | null;
-  }[],
-): string {
-  const trim = (value: Prisma.Decimal) => value.toString().replace(/\.?0+$/, '');
-  const parts = volumes
-    .map((v) => {
-      const box = v.containerSize?.name ?? v.containerSizeNote;
-      if (box !== null && box !== undefined && box !== '') {
-        return v.quantity === null ? box : `${box}(${v.quantity})`;
-      }
-      if (v.weightKg !== null) return `${trim(v.weightKg)} Kg`;
-      if (v.cbm !== null) return `${trim(v.cbm)} CBM`;
-      return null;
-    })
-    .filter((p): p is string => p !== null);
-  return parts.length === 0 ? '—' : parts.join(' + ');
-}
 
 /** GET /api/tenant/cs/quotations/:id */
 quotationRouter.get('/quotations/:id', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {

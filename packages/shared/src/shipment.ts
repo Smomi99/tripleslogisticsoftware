@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { listQuerySchema } from './api';
+
 import { LOADING_TYPES, SHIPMENT_TYPES } from './inquiry';
 import { TRANSIT_TYPES } from './quotation';
 
@@ -357,6 +359,49 @@ export interface ShipmentDto {
   pos: ShipmentPoDto[];
   cargoLines: ShipmentCargoLineDto[];
 }
+
+/**
+ * One row of the Booking List (§6.2), in the client's own columns and order.
+ *
+ * The Action column is not here: §5.1 says it is derived from the status, and
+ * `shipmentAction` is where that happens. A column the server sent would be a
+ * decision the server made about what the operator may do next.
+ */
+export interface ShipmentListRow {
+  id: string;
+  quotationCode: string;
+  code: string;
+  customerName: string;
+  /** The commodities, joined — the column is one cell wide. */
+  commodity: string;
+  shipmentType: (typeof SHIPMENT_TYPES)[number];
+  polName: string;
+  polCode: string;
+  podName: string;
+  podCode: string;
+  /** "20STD(1) + 40HC(1)", or "200 Kg" for air, from the inquiry's volumes. */
+  requiredContainer: string;
+  transitType: (typeof TRANSIT_TYPES)[number] | null;
+  goodsHandoverDate: string | null;
+  etd: string | null;
+  eta: string | null;
+  status: ShipmentStatus;
+  /** Drawn on the list so an operator can see why one stopped (§5.1). */
+  cancelReason: string | null;
+}
+
+export const shipmentListQuerySchema = listQuerySchema.extend({
+  /**
+   * §3 splits the menu into Shipment Booking - Sea and - Air. One screen, one
+   * set of routes; the mode is a filter rather than a fork.
+   */
+  shipmentType: z.enum(SHIPMENT_TYPES).optional(),
+  status: z.enum(SHIPMENT_STATUSES).optional(),
+  /** §7's VIEW_ALL: your own bookings by default, the team's with it. */
+  scope: z.enum(['OWN', 'ALL']).default('ALL'),
+});
+
+export type ShipmentListQuery = z.infer<typeof shipmentListQuerySchema>;
 
 /** What the form loads before anything has been typed (§5.2 rule 2). */
 export interface ShipmentPrefillDto {
