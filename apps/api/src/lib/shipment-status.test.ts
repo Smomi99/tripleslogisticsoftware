@@ -46,8 +46,11 @@ const SPEC: Record<ShipmentStatus, ShipmentStatus[]> = {
   VESSEL_PROPOSED: ['APPROVED_FOR_SHIPMENT', 'REJECTED'],
   REJECTED: ['VESSEL_PROPOSED'],
   APPROVED_FOR_SHIPMENT: ['SO_ISSUED', 'SO_SKIPPED'],
-  SO_ISSUED: ['PART_RECEIVED', 'CARGO_RECEIVED'],
-  SO_SKIPPED: ['PART_RECEIVED', 'CARGO_RECEIVED'],
+  // The APPROVED_FOR_SHIPMENT entries come from §5.4 rule 2 rather than §5.1's
+  // table: cancelling an issued S/O has to leave the booking somewhere one can
+  // be issued from, or "cancelled and reissued" is impossible.
+  SO_ISSUED: ['PART_RECEIVED', 'CARGO_RECEIVED', 'APPROVED_FOR_SHIPMENT'],
+  SO_SKIPPED: ['PART_RECEIVED', 'CARGO_RECEIVED', 'APPROVED_FOR_SHIPMENT'],
   PART_RECEIVED: ['PART_RECEIVED', 'CARGO_RECEIVED', 'SHORT_CLOSED'],
   CARGO_RECEIVED: [],
   SHORT_CLOSED: [],

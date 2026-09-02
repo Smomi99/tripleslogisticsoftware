@@ -279,6 +279,7 @@ model Tenant {
   shipmentCargoLines   ShipmentCargoLine[]
   shipmentSchedules    ShipmentSchedule[]
   shipmentScheduleLegs ShipmentScheduleLeg[]
+  shippingOrders       ShippingOrder[]
   mailSignatureLogos   MailSignatureLogo[]
 
   @@index([slug])
@@ -800,10 +801,11 @@ model Vessel {
   // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
   // prisma migrate owns them — an appendix-only constraint is dropped by the
   // next migrate dev, which is how this was found.
-  createdByUser User?                 @relation("VesselCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
-  updatedByUser User?                 @relation("VesselUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
-  quotations    Quotation[]
-  scheduleLegs  ShipmentScheduleLeg[] @relation("ShipmentScheduleLegVessel")
+  createdByUser  User?                 @relation("VesselCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser  User?                 @relation("VesselUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  quotations     Quotation[]
+  scheduleLegs   ShipmentScheduleLeg[] @relation("ShipmentScheduleLegVessel")
+  shippingOrders ShippingOrder[]       @relation("ShippingOrderFirstVessel")
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -1713,6 +1715,9 @@ model User {
   shipmentSchedulesUpdated    ShipmentSchedule[]    @relation("ShipmentScheduleUpdatedBy")
   shipmentScheduleLegsCreated ShipmentScheduleLeg[] @relation("ShipmentScheduleLegCreatedBy")
   shipmentScheduleLegsUpdated ShipmentScheduleLeg[] @relation("ShipmentScheduleLegUpdatedBy")
+  shippingOrdersIssued        ShippingOrder[]       @relation("ShippingOrderIssuedBy")
+  shippingOrdersCreated       ShippingOrder[]       @relation("ShippingOrderCreatedBy")
+  shippingOrdersUpdated       ShippingOrder[]       @relation("ShippingOrderUpdatedBy")
   mailSignatureLogosCreated   MailSignatureLogo[]   @relation("MailSignatureLogoCreatedBy")
   mailSignatureLogosUpdated   MailSignatureLogo[]   @relation("MailSignatureLogoUpdatedBy")
 
@@ -3652,10 +3657,11 @@ model Shipment {
   createdByUser   User? @relation("ShipmentCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser   User? @relation("ShipmentUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
-  commodities ShipmentCommodity[]
-  pos         ShipmentPo[]
-  cargoLines  ShipmentCargoLine[]
-  schedules   ShipmentSchedule[]
+  commodities    ShipmentCommodity[]
+  pos            ShipmentPo[]
+  cargoLines     ShipmentCargoLine[]
+  schedules      ShipmentSchedule[]
+  shippingOrders ShippingOrder[]
 
   @@unique([tenantId, code])
   /// §4 rule 10: a composite foreign key needs this to point at.
@@ -3888,7 +3894,8 @@ model ShipmentSchedule {
   createdByUser  User? @relation("ShipmentScheduleCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser  User? @relation("ShipmentScheduleUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
-  legs ShipmentScheduleLeg[]
+  legs           ShipmentScheduleLeg[]
+  shippingOrders ShippingOrder[]
 
   /// §4 rule 10: a composite foreign key needs this to point at.
   @@unique([tenantId, id])
@@ -3942,4 +3949,78 @@ model ShipmentScheduleLeg {
   @@index([scheduleId])
   @@index([vesselId])
   @@map("shipment_schedule_leg")
+}
+
+/// §5.4 rule 2: no DRAFT. A row exists because an S/O was issued, or because
+/// one was deliberately skipped (§5.4 rule 3). Correcting one means a new row.
+enum ShippingOrderStatus {
+  ISSUED
+  SKIPPED
+  CANCELLED
+
+  @@map("shipping_order_status")
+}
+
+/// The shipping order (§4.3, §6.6) — the instruction the warehouse works to.
+///
+/// §5.4 rule 2 makes it a document rather than a record: numbered on issue,
+/// never on draft, and a mistake is cancelled and reissued with a new number.
+/// So the vessel and the timings are SNAPSHOTTED here rather than joined from
+/// the schedule — a printed page that changes when somebody edits a sailing is
+/// not a document.
+model ShippingOrder {
+  tenantId   BigInt  @map("tenant_id")
+  id         BigInt  @id @default(autoincrement())
+  code       String  @db.VarChar(32)
+  seriesYear Int     @map("series_year")
+  shipmentId BigInt  @map("shipment_id")
+  /// Null on a SKIPPED row: nothing was approved because nothing was proposed.
+  scheduleId BigInt? @map("schedule_id")
+
+  issueDate DateTime? @map("issue_date") @db.Date
+  issuedBy  BigInt?   @map("issued_by")
+
+  /// §6.6's "First Vessel or Airlines", snapshotted at issue.
+  firstVesselId   BigInt? @map("first_vessel_id")
+  firstVesselName String? @map("first_vessel_name") @db.Text
+  firstFlightNo   String? @map("first_flight_no") @db.Text
+
+  cutOff       DateTime? @map("cut_off") @db.Timestamptz(6)
+  etd          DateTime? @db.Timestamptz(6)
+  eta          DateTime? @db.Timestamptz(6)
+  warehouseCfs String?   @map("warehouse_cfs") @db.Text
+
+  /// §9 Q5, answered 2026-09-02: a compact offline payload, so a warehouse gate
+  /// with no signal can still scan it. Stored rather than rebuilt, so the code
+  /// on a printed page always matches the one the record holds.
+  qrPayload String? @map("qr_payload") @db.Text
+
+  status       ShippingOrderStatus @default(ISSUED)
+  skipReason   String?             @map("skip_reason") @db.Text
+  cancelReason String?             @map("cancel_reason") @db.Text
+  pdfFile      String?             @map("pdf_file") @db.Text
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant      Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  shipment    Shipment          @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict)
+  schedule    ShipmentSchedule? @relation(fields: [tenantId, scheduleId], references: [tenantId, id], onDelete: Restrict)
+  /// Vessel is system-capable (§7A rule 7): single column plus the guard.
+  firstVessel Vessel?           @relation("ShippingOrderFirstVessel", fields: [firstVesselId], references: [id], onDelete: Restrict)
+
+  issuedByUser  User? @relation("ShippingOrderIssuedBy", fields: [issuedBy], references: [id], onDelete: Restrict)
+  createdByUser User? @relation("ShippingOrderCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("ShippingOrderUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([shipmentId])
+  @@index([status])
+  @@index([firstVesselId])
+  @@map("shipping_order")
 }

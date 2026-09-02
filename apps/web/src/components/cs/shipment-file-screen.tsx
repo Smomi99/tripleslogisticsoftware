@@ -18,6 +18,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { ApprovalTab } from '@/components/cs/approval-tab';
 import { ScheduleScreen } from '@/components/cs/schedule-screen';
+import { ShippingOrderTab } from '@/components/cs/shipping-order-tab';
 import { ShipmentBookingScreen } from '@/components/cs/shipment-booking-screen';
 import { EmptyState } from '@/components/ui/empty-state';
 import { PageHeader } from '@/components/ui/form-layout';
@@ -256,14 +257,7 @@ export function ShipmentFileScreen({ shipmentId }: { shipmentId: string }) {
 
       {/* ---------------------------------------------------- shipping order */}
       {tab === 'shipping-order' && (
-        <EmptyState
-          title="No shipping order yet"
-          description={
-            booking.status === 'APPROVED_FOR_SHIPMENT'
-              ? 'This booking is approved and ready for one. Issuing it arrives with the Shipping Order screen.'
-              : 'A shipping order is issued once the customer has approved the schedule.'
-          }
-        />
+        <ShippingOrderTab booking={booking} onChanged={() => void load()} />
       )}
 
       {/* ------------------------------------------------------ cargo receipt */}

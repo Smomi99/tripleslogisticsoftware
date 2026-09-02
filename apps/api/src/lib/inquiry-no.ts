@@ -22,6 +22,8 @@ export const INQUIRY_PREFIX = 'INQ';
 export const QUOTATION_PREFIX = 'QTN';
 /** The booking number, BKG-2026-000001 (MODULE_BOOKING_CARGO.md §4.1). */
 export const BOOKING_PREFIX = 'BKG';
+/** The shipping order, SO-2026-000001 (MODULE_BOOKING_CARGO.md §4.3). */
+export const SHIPPING_ORDER_PREFIX = 'SO';
 /** Six digits, as §3.3 writes it. Grows past six rather than wrapping. */
 const SEQUENCE_WIDTH = 6;
 
@@ -113,6 +115,36 @@ export async function nextBookingNo(
 
   const current = rows[0]?.max_seq ?? 0;
   return formatBookingNo(year, current + 1);
+}
+
+export function formatShippingOrderNo(year: number, sequence: number): string {
+  return formatDocumentNo(SHIPPING_ORDER_PREFIX, year, sequence);
+}
+
+/**
+ * The next shipping order number.
+ *
+ * §5.4 rule 2: numbered on issue, never on draft, and a cancelled one keeps its
+ * number forever — so MAX over every row including the cancelled ones. Reusing
+ * a number a warehouse has already seen is the one thing this must not do.
+ */
+export async function nextShippingOrderNo(
+  db: TenantDb,
+  tenantId: bigint,
+  year: number,
+): Promise<string> {
+  const pattern = `${SHIPPING_ORDER_PREFIX}-${year}-%`;
+
+  const rows = await db.$queryRaw<{ max_seq: number | null }[]>`
+    SELECT MAX((regexp_replace(code, '^.*-', ''))::int) AS max_seq
+      FROM shipping_order
+     WHERE tenant_id = ${tenantId}
+       AND series_year = ${year}
+       AND code LIKE ${pattern}
+  `;
+
+  const current = rows[0]?.max_seq ?? 0;
+  return formatShippingOrderNo(year, current + 1);
 }
 
 /** The year a document belongs to — its own date, not today's. */

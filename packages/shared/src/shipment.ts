@@ -88,8 +88,17 @@ export const SHIPMENT_TRANSITIONS: Record<ShipmentStatus, readonly ShipmentStatu
   REJECTED: ['VESSEL_PROPOSED', 'CANCELLED'],
   // §5.4 rule 3: inbound skips the shipping order entirely.
   APPROVED_FOR_SHIPMENT: ['SO_ISSUED', 'SO_SKIPPED', 'CANCELLED'],
-  SO_ISSUED: ['PART_RECEIVED', 'CARGO_RECEIVED', 'CANCELLED'],
-  SO_SKIPPED: ['PART_RECEIVED', 'CARGO_RECEIVED', 'CANCELLED'],
+  /*
+   * The two APPROVED_FOR_SHIPMENT entries are not in §5.1's table, and are
+   * required by §5.4 rule 2: "Issuing is a one-way action; a mistake is
+   * cancelled and reissued with a new number." Reissuing means being back in
+   * the state an S/O is issued from, so cancelling one has to return the
+   * booking there. The two sections have to be reconciled and §5.4 is the more
+   * specific statement; without this, a wrong shipping order could be
+   * cancelled and never replaced.
+   */
+  SO_ISSUED: ['PART_RECEIVED', 'CARGO_RECEIVED', 'APPROVED_FOR_SHIPMENT', 'CANCELLED'],
+  SO_SKIPPED: ['PART_RECEIVED', 'CARGO_RECEIVED', 'APPROVED_FOR_SHIPMENT', 'CANCELLED'],
   // §5.5 rule 4: a booking may have several receipts, so this one loops.
   PART_RECEIVED: ['PART_RECEIVED', 'CARGO_RECEIVED', 'SHORT_CLOSED', 'CANCELLED'],
   CARGO_RECEIVED: ['CANCELLED'],
@@ -799,3 +808,77 @@ export function describeApproval(approved: number, total: number): string {
   const held = total - approved;
   return `${approved} of ${total} POs approved. ${held} will not ship on this vessel.`;
 }
+
+// ---------------------------------------------------------- shipping order
+
+export const SHIPPING_ORDER_STATUSES = ['ISSUED', 'SKIPPED', 'CANCELLED'] as const;
+export type ShippingOrderStatus = (typeof SHIPPING_ORDER_STATUSES)[number];
+
+export const SHIPPING_ORDER_STATUS_LABEL: Record<ShippingOrderStatus, string> = {
+  ISSUED: 'Issued',
+  SKIPPED: 'Skipped',
+  CANCELLED: 'Cancelled',
+};
+
+export interface ShippingOrderDto {
+  id: string;
+  code: string;
+  status: ShippingOrderStatus;
+  issueDate: string | null;
+  issuedByName: string | null;
+  firstVesselName: string | null;
+  firstFlightNo: string | null;
+  cutOff: string | null;
+  etd: string | null;
+  eta: string | null;
+  warehouseCfs: string | null;
+  qrPayload: string | null;
+  skipReason: string | null;
+  cancelReason: string | null;
+  /** §5.4 rule 1: only the approved POs travel on it. */
+  poNumbers: string[];
+}
+
+/**
+ * §9 Q5, answered 2026-09-02: the QR carries the S/O number and the key
+ * figures, compact enough to scan offline.
+ *
+ * A warehouse gate in a yard has no signal, and a tracking URL there is a
+ * picture of a link nobody can follow. This is short, fixed-format, and a
+ * receiver can check the cartons in front of them against it without logging
+ * into anything.
+ */
+export function shippingOrderQrPayload(input: {
+  soNo: string;
+  bookingNo: string;
+  carrierName: string;
+  ctnQty: number;
+  grossWeightKg: number;
+  volumeCbm: number;
+}): string {
+  return [
+    `SO:${input.soNo}`,
+    `BKG:${input.bookingNo}`,
+    `CAR:${input.carrierName}`,
+    `CTN:${input.ctnQty}`,
+    `GWT:${input.grossWeightKg.toFixed(WEIGHT_DECIMALS)}`,
+    `CBM:${input.volumeCbm.toFixed(CBM_DECIMALS)}`,
+  ].join('\n');
+}
+
+export const shippingOrderIssueSchema = z.object({
+  warehouseCfs: z.string().trim().max(1000, 'That is too long.').nullish(),
+});
+
+export type ShippingOrderIssueInput = z.infer<typeof shippingOrderIssueSchema>;
+
+/** §5.4 rule 3: inbound skips the S/O, and a skip is a decision with a reason. */
+export const shippingOrderSkipSchema = z.object({
+  reason: z
+    .string()
+    .trim()
+    .min(1, 'Say why this shipment needs no shipping order.')
+    .max(2000, 'That reason is too long.'),
+});
+
+export type ShippingOrderSkipInput = z.infer<typeof shippingOrderSkipSchema>;

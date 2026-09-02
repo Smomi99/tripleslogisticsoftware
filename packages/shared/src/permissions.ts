@@ -83,6 +83,15 @@ export const ACTIONS = [
    * approval simply lets the shipment carry on.
    */
   'REJECT',
+  /*
+   * §7's CS.SHIPPING_ORDER. ISSUE is separate from CREATE because §5.4 rule 2
+   * makes it one-way: the number is allocated, the warehouse works to the page,
+   * and a mistake costs a cancellation rather than an edit. SKIP is separate
+   * again — deciding a shipment needs no document at all is not the same act as
+   * producing one.
+   */
+  'ISSUE',
+  'SKIP',
 ] as const;
 
 export type Action = (typeof ACTIONS)[number];
@@ -330,7 +339,17 @@ export const FEATURES: readonly FeatureDefinition[] = [
     label: 'Shipment Approval',
     actions: [...MASTER_APPROVE, 'REJECT'],
   },
-  { module: 'CUSTOMER_SERVICE', feature: 'CUSTOMER_SERVICE.SHIPPING_ORDER', label: 'Shipping Order', actions: MASTER },
+  /*
+    * §6.6's document. §7 lists CS.SHIPPING_ORDER as
+    * VIEW ISSUE SKIP CANCEL EXPORT_PDF; the MASTER actions stay because
+    * production's permission rows point at them and the seed prunes nothing.
+    */
+  {
+    module: 'CUSTOMER_SERVICE',
+    feature: 'CUSTOMER_SERVICE.SHIPPING_ORDER',
+    label: 'Shipping Order',
+    actions: [...MASTER, 'ISSUE', 'SKIP', 'CANCEL', 'EXPORT_PDF'],
+  },
 
   // -- 4. Operation ----------------------------------------------------------
   { module: 'OPERATION', feature: 'OPERATION.CARGO_RECEIPT', label: 'Cargo Receipt', actions: MASTER },

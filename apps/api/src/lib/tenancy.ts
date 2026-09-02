@@ -98,6 +98,7 @@ export const TENANT_OWNED_MODELS = [
   'ShipmentCargoLine',
   'ShipmentSchedule',
   'ShipmentScheduleLeg',
+  'ShippingOrder',
   'TenantMasterOverride',
   'User',
   'UserPermission',

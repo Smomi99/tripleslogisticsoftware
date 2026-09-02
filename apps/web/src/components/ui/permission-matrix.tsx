@@ -65,6 +65,8 @@ const ACTION_LABEL: Record<Action, string> = {
   SUBMIT: 'Submit',
   CANCEL: 'Cancel',
   REJECT: 'Reject',
+  ISSUE: 'Issue',
+  SKIP: 'Skip',
   SET_OUTCOME: 'Won / lost',
   PRICE_CHECK: 'Price check',
   SEND: 'Send',

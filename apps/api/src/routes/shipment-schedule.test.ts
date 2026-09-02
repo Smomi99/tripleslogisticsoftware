@@ -140,6 +140,7 @@ function oneLeg(): Leg[] {
 async function cleanup(): Promise<void> {
   const scope = `(SELECT id FROM tenant WHERE slug = '${SLUG}')`;
   for (const table of [
+    'shipping_order',
     'shipment_schedule_leg',
     'shipment_schedule',
     'shipment_cargo_line',
@@ -749,6 +750,256 @@ describe('shipment approval (§5.3, §6.5)', () => {
         decisions: [{ poId: poIds[0]!, decision: 'REJECTED', comments: 'No.' }],
         onBehalfOfCustomer: false,
       });
+    expect(res.status).toBe(403);
+  });
+});
+
+describe('the shipping order (§4.3, §5.4, §6.6)', () => {
+  /** A booking approved and ready for an S/O, with `count` approved POs. */
+  async function approved(count: number, movement: 'OUTBOUND' | 'INBOUND' = 'OUTBOUND') {
+    const bookingId = await makeBooking();
+    if (movement === 'INBOUND') {
+      // The movement lives on the quotation, so a second one is needed for it.
+      const inbound = await owner.quotation.create({
+        data: {
+          tenantId,
+          code: `SC-QTN-IN-${bookingId}`,
+          seriesYear: 2026,
+          inquiryId: (
+            await owner.quotation.findFirstOrThrow({
+              where: { id: quotationId },
+              select: { inquiryId: true },
+            })
+          ).inquiryId,
+          quotationDate: new Date('2026-09-02'),
+          customerId: (
+            await owner.quotation.findFirstOrThrow({
+              where: { id: quotationId },
+              select: { customerId: true },
+            })
+          ).customerId,
+          shipmentType: 'SEA',
+          movementType: 'INBOUND',
+          polId: chittagong,
+          podId: hamburg,
+          carrierId,
+          localCurrencyId: (await owner.currency.findFirstOrThrow({ select: { id: true } })).id,
+          conversionRate: '122.0000',
+        },
+        select: { id: true },
+      });
+      await owner.shipment.update({
+        where: { id: bookingId },
+        data: { quotationId: inbound.id },
+      });
+    }
+
+    const poIds: bigint[] = [];
+    for (let i = 1; i <= count; i += 1) {
+      const po = await owner.shipmentPo.create({
+        data: { tenantId, shipmentId: bookingId, poNo: `PO-SO-${bookingId}-${i}` },
+        select: { id: true },
+      });
+      poIds.push(po.id);
+      await owner.shipmentCargoLine.create({
+        data: {
+          tenantId,
+          shipmentId: bookingId,
+          shipmentPoId: po.id,
+          itemCode: `ITEM-${i}`,
+          ctnQty: 100,
+          grossWeightKg: '900',
+          cartonLengthCm: '60',
+          cartonWidthCm: '40',
+          cartonHeightCm: '30',
+        },
+      });
+    }
+
+    /*
+     * Inbound skips the DOCUMENT (§5.4 rule 3), not the approval. §5.1 reaches
+     * SO_SKIPPED from APPROVED_FOR_SHIPMENT just as it reaches SO_ISSUED, so an
+     * inbound booking still gets a schedule and a decision.
+     */
+    await as(token).post(`/api/tenant/cs/bookings/${bookingId}/schedules`).send(body('DIRECT', oneLeg()));
+    await as(token)
+      .post(`/api/tenant/cs/bookings/${bookingId}/approval`)
+      .send({
+        decisions: poIds.map((id) => ({ poId: id.toString(), decision: 'APPROVED' })),
+        onBehalfOfCustomer: false,
+      });
+    return { id: bookingId, poIds };
+  }
+
+  it('issues a numbered order and moves the booking — the phase gate', async () => {
+    const { id } = await approved(2);
+    const res = await as(token)
+      .post(`/api/tenant/cs/bookings/${id}/shipping-order`)
+      .send({ warehouseCfs: 'Pangaon ICT' });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const so = (res.body as { data: { code: string; status: string; poNumbers: string[] } }).data;
+    expect(so.code).toMatch(/^SO-\d{4}-\d{6}$/);
+    expect(so.status).toBe('ISSUED');
+    expect(so.poNumbers).toHaveLength(2);
+
+    const shipment = await owner.shipment.findFirstOrThrow({
+      where: { id },
+      select: { status: true },
+    });
+    expect(shipment.status).toBe('SO_ISSUED');
+  });
+
+  it('prints (§6.6) — a real PDF with the QR in it', async () => {
+    const { id } = await approved(1);
+    await as(token).post(`/api/tenant/cs/bookings/${id}/shipping-order`).send({});
+
+    const res = await as(token)
+      .get(`/api/tenant/cs/bookings/${id}/shipping-order/pdf`)
+      .buffer(true)
+      .parse((r, cb) => {
+        const chunks: Buffer[] = [];
+        r.on('data', (c: Buffer) => chunks.push(c));
+        r.on('end', () => cb(null, Buffer.concat(chunks)));
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toContain('application/pdf');
+    const pdf = res.body as Buffer;
+    expect(pdf.subarray(0, 5).toString()).toBe('%PDF-');
+    // A QR is an image, and an image makes the file substantial. An empty
+    // document would sail through a "did it return 200" test.
+    expect(pdf.length).toBeGreaterThan(4000);
+  });
+
+  it('carries only the approved POs (§5.4 rule 1)', async () => {
+    const { id, poIds } = await approved(3);
+    // Hold one back after the fact, as a customer amending their mind would.
+    await owner.shipmentPo.update({
+      where: { id: poIds[2]! },
+      data: { approvalStatus: 'PENDING', approvedBy: null, approvedAt: null },
+    });
+
+    const res = await as(token).post(`/api/tenant/cs/bookings/${id}/shipping-order`).send({});
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect((res.body as { data: { poNumbers: string[] } }).data.poNumbers).toHaveLength(2);
+  });
+
+  it('builds the offline QR payload the client asked for (§9 Q5)', async () => {
+    const { id } = await approved(1);
+    await as(token).post(`/api/tenant/cs/bookings/${id}/shipping-order`).send({});
+
+    const so = await owner.shippingOrder.findFirstOrThrow({
+      where: { shipmentId: id },
+      select: { qrPayload: true, code: true },
+    });
+    expect(so.qrPayload).toMatch(new RegExp(`^SO:${so.code}`));
+    expect(so.qrPayload).toMatch(/BKG:BKG-2026-/);
+    expect(so.qrPayload).toMatch(/CTN:100/);
+    expect(so.qrPayload).toMatch(/CBM:7\.2000/);
+    // Short enough to scan off a printed page in a yard.
+    expect((so.qrPayload ?? '').length).toBeLessThan(160);
+  });
+
+  it('snapshots the vessel, so editing the schedule cannot rewrite the paper', async () => {
+    // §5.4 rule 2 makes this a document. A page a warehouse is holding must not
+    // change because somebody corrected a sailing afterwards.
+    const { id } = await approved(1);
+    await as(token).post(`/api/tenant/cs/bookings/${id}/shipping-order`).send({});
+
+    const before = await owner.shippingOrder.findFirstOrThrow({
+      where: { shipmentId: id },
+      select: { firstVesselName: true },
+    });
+    expect(before.firstVesselName).toBe('MV Schedule');
+
+    await owner.vessel.update({ where: { id: vesselId }, data: { name: 'MV Renamed' } });
+    const after = await owner.shippingOrder.findFirstOrThrow({
+      where: { shipmentId: id },
+      select: { firstVesselName: true },
+    });
+    expect(after.firstVesselName).toBe('MV Schedule');
+    await owner.vessel.update({ where: { id: vesselId }, data: { name: 'MV Schedule' } });
+  });
+
+  it('refuses a second order while one is live (§5.4 rule 2)', async () => {
+    const { id } = await approved(1);
+    expect((await as(token).post(`/api/tenant/cs/bookings/${id}/shipping-order`).send({})).status).toBe(201);
+    const again = await as(token).post(`/api/tenant/cs/bookings/${id}/shipping-order`).send({});
+    expect(again.status).toBe(409);
+  });
+
+  it('refuses before the customer has approved anything', async () => {
+    const bookingId = await makeBooking();
+    await owner.shipmentPo.create({
+      data: { tenantId, shipmentId: bookingId, poNo: 'PO-EARLY' },
+    });
+    const res = await as(token).post(`/api/tenant/cs/bookings/${bookingId}/shipping-order`).send({});
+    expect(res.status).toBe(409);
+  });
+
+  it('cancels without reusing the number (§5.4 rule 2)', async () => {
+    const { id } = await approved(1);
+    const first = await as(token).post(`/api/tenant/cs/bookings/${id}/shipping-order`).send({});
+    const firstCode = (first.body as { data: { code: string } }).data.code;
+
+    const cancelled = await as(token)
+      .post(`/api/tenant/cs/bookings/${id}/shipping-order/cancel`)
+      .send({ reason: 'Wrong vessel on the order.' });
+    expect(cancelled.status).toBe(200);
+
+    // Back where it was, so a corrected one can be issued.
+    const shipment = await owner.shipment.findFirstOrThrow({
+      where: { id },
+      select: { status: true },
+    });
+    expect(shipment.status).toBe('APPROVED_FOR_SHIPMENT');
+
+    const second = await as(token).post(`/api/tenant/cs/bookings/${id}/shipping-order`).send({});
+    expect(second.status).toBe(201);
+    const secondCode = (second.body as { data: { code: string } }).data.code;
+    expect(secondCode).not.toBe(firstCode);
+  });
+
+  it('skips the order on an inbound shipment (§5.4 rule 3)', async () => {
+    const { id } = await approved(1, 'INBOUND');
+    const res = await as(token)
+      .post(`/api/tenant/cs/bookings/${id}/shipping-order/skip`)
+      .send({ reason: 'Inbound shipment — no S/O required.' });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect((res.body as { data: { status: string } }).data.status).toBe('SKIPPED');
+
+    const shipment = await owner.shipment.findFirstOrThrow({
+      where: { id },
+      select: { status: true },
+    });
+    expect(shipment.status).toBe('SO_SKIPPED');
+  });
+
+  it('refuses to skip an outbound shipment', async () => {
+    const { id } = await approved(1);
+    const res = await as(token)
+      .post(`/api/tenant/cs/bookings/${id}/shipping-order/skip`)
+      .send({ reason: 'Trying it on.' });
+    expect(res.status).toBe(409);
+  });
+
+  it('refuses to skip without a reason', async () => {
+    const { id } = await approved(1, 'INBOUND');
+    const res = await as(token)
+      .post(`/api/tenant/cs/bookings/${id}/shipping-order/skip`)
+      .send({ reason: '   ' });
+    expect(res.status).toBe(400);
+  });
+
+  it('refuses a user who may view an order but not issue one', async () => {
+    const { id } = await approved(1);
+    const res = await request(app)
+      .post(`/api/tenant/cs/bookings/${id}/shipping-order`)
+      .set('Authorization', `Bearer ${tokenReadOnly}`)
+      .set('X-Tenant-Slug', SLUG)
+      .send({});
     expect(res.status).toBe(403);
   });
 });
