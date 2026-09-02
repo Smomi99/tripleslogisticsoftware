@@ -88,7 +88,9 @@ const shipmentArgs = {
       poNo: true,
       approvalStatus: true,
       approvedAt: true,
+      approvedOnBehalf: true,
       rejectionComments: true,
+      approvedByUser: { select: { username: true } },
     },
   },
   cargoLines: {
@@ -179,6 +181,8 @@ function toDto(row: ShipmentRow): ShipmentDto {
       approvalStatus: p.approvalStatus,
       approvedAt: p.approvedAt === null ? null : p.approvedAt.toISOString(),
       rejectionComments: p.rejectionComments,
+      approvedByName: p.approvedByUser?.username ?? null,
+      approvedOnBehalf: p.approvedOnBehalf,
     })),
     cargoLines: row.cargoLines.map(
       (l): ShipmentCargoLineDto => ({

@@ -598,6 +598,34 @@ const EMAIL_TEMPLATES = [
       'link',
     ],
   },
+  {
+    // MODULE_BOOKING_CARGO.md §6.5: "On decision: update PO statuses,
+    // transition the shipment, email the C/S team." The summary is §5.3's own
+    // sentence, because the number that matters is how many POs will actually
+    // ship — not whether somebody clicked approve.
+    key: 'SHIPMENT_APPROVAL_DECIDED',
+    name: 'Booking — customer decided on the schedule',
+    subject: 'Booking {{bookingNo}} — schedule {{outcome}}',
+    bodyText: [
+      '{{customerName}} has {{outcome}} the proposed schedule for {{bookingNo}}.',
+      '',
+      '{{summary}}',
+      '',
+      'Recorded by: {{decidedBy}}',
+      'Comments: {{comments}}',
+      '',
+      'Open the booking here: {{link}}',
+    ].join('\n'),
+    variables: [
+      'customerName',
+      'bookingNo',
+      'outcome',
+      'summary',
+      'decidedBy',
+      'comments',
+      'link',
+    ],
+  },
 ] as const;
 
 /**

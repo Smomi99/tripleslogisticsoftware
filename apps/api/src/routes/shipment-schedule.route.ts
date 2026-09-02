@@ -3,6 +3,8 @@ import { Router } from 'express';
 import {
   type ApiSuccess,
   CODE_PREFIX,
+  describeApproval,
+  shipmentApprovalSchema,
   type ShipmentScheduleDto,
   shipmentScheduleInputSchema,
 } from '@ff/shared';
@@ -33,6 +35,7 @@ export const shipmentScheduleRouter: Router = Router();
 
 const FEATURE = 'CUSTOMER_SERVICE.SCHEDULE';
 const BOOKING_FEATURE = 'CUSTOMER_SERVICE.CARGO_BOOKING';
+const APPROVAL_FEATURE = 'CUSTOMER_SERVICE.SHIPMENT_APPROVAL';
 
 shipmentScheduleRouter.use(authenticate);
 
@@ -305,6 +308,176 @@ shipmentScheduleRouter.post(
 
     const payload: ApiSuccess<ShipmentScheduleDto> = { success: true, data };
     res.status(201).json(payload);
+  },
+);
+
+/**
+ * POST /bookings/:id/approval — §6.5's decision, §5.3's rules.
+ *
+ * §5.3 is what makes this more than a status flip: "approval is per PO, not per
+ * booking", and "the shipment reaches APPROVED_FOR_SHIPMENT when at least one
+ * PO is approved; unapproved POs stay PENDING and are excluded from the
+ * shipping order". So the decision is a list, one submission can approve two
+ * POs and reject a third, and what happens to the SHIPMENT is derived from how
+ * many survived rather than sent by the client.
+ *
+ * §9 Q6, answered 2026-09-02: a customer approves their own and C/S may record
+ * one that arrived by phone. Both are allowed; the record says which.
+ */
+shipmentScheduleRouter.post(
+  '/bookings/:id/approval',
+  requirePermission(`${APPROVAL_FEATURE}.APPROVE`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const shipmentId = parseId(req.params.id, 'booking');
+    const input = shipmentApprovalSchema.parse(req.body);
+
+    // Rejecting is its own permission (§7). Approving some and rejecting others
+    // in one submission needs both, which is the honest reading of a screen
+    // that does both at once.
+    const rejecting = input.decisions.some((d) => d.decision === 'REJECTED');
+    if (rejecting && !auth.isSuperadmin && !auth.permissions.has(`${APPROVAL_FEATURE}.REJECT`)) {
+      throw HttpError.forbidden('You may approve a PO but not reject one.');
+    }
+
+    const { data, mail } = await withTenant(auth.tenantId, async (db) => {
+      const shipment = await db.shipment.findFirst({
+        where: { id: shipmentId, deletedAt: null },
+        select: { id: true, code: true, shipmentType: true, customer: { select: { name: true } } },
+      });
+      if (shipment === null) throw HttpError.notFound('Booking not found.');
+
+      const schedule = await db.shipmentSchedule.findFirst({
+        where: { shipmentId, deletedAt: null, status: 'PROPOSED' },
+        select: { id: true, versionNo: true, proposedBy: true },
+      });
+      if (schedule === null) {
+        throw new HttpError(
+          409,
+          'NO_PROPOSAL',
+          `${shipment.code} has no proposed schedule waiting for a decision.`,
+        );
+      }
+
+      const decidedAt = new Date();
+      const decidedIds = input.decisions.map((d) => parseRefId(d.poId, 'PO'));
+      const owned = await db.shipmentPo.findMany({
+        where: { id: { in: decidedIds }, shipmentId, deletedAt: null },
+        select: { id: true },
+      });
+      if (owned.length !== decidedIds.length) {
+        throw HttpError.notFound('One of those POs is not on this booking.');
+      }
+
+      for (const decision of input.decisions) {
+        await db.shipmentPo.update({
+          where: { id: parseRefId(decision.poId, 'PO') },
+          data: {
+            approvalStatus: decision.decision,
+            approvedBy: auth.userId,
+            approvedAt: decidedAt,
+            approvedOnBehalf: input.onBehalfOfCustomer,
+            rejectionComments:
+              decision.decision === 'REJECTED' ? (decision.comments ?? null) : null,
+            updatedBy: auth.userId,
+          },
+        });
+      }
+
+      // §5.3: what happens to the shipment follows from how many POs survived.
+      // Counted over every live PO, not only the ones just decided — a PO left
+      // PENDING is neither approved nor a reason to stop.
+      const [approvedCount, totalCount] = await Promise.all([
+        db.shipmentPo.count({ where: { shipmentId, deletedAt: null, approvalStatus: 'APPROVED' } }),
+        db.shipmentPo.count({ where: { shipmentId, deletedAt: null } }),
+      ]);
+
+      const accepted = approvedCount > 0;
+      const rejectionText = input.decisions
+        .filter((d) => d.decision === 'REJECTED')
+        .map((d) => (d.comments ?? '').trim())
+        .filter((c) => c !== '')
+        .join(' ');
+
+      await db.shipmentSchedule.update({
+        where: { id: schedule.id },
+        data: {
+          status: accepted ? 'APPROVED' : 'REJECTED',
+          decidedBy: auth.userId,
+          decidedAt,
+          decidedOnBehalf: input.onBehalfOfCustomer,
+          // The CHECK refuses a REJECTED schedule with no reason, which is the
+          // same rule §5.3 states — so the PO comments carry up to it.
+          rejectionComments: accepted ? null : rejectionText || 'No PO was approved.',
+          updatedBy: auth.userId,
+        },
+      });
+
+      await transitionShipment(db, {
+        shipmentId,
+        to: accepted ? 'APPROVED_FOR_SHIPMENT' : 'REJECTED',
+        userId: auth.userId,
+      });
+
+      // §6.5: "email the C/S team". The person who proposed the sailing is the
+      // one waiting on the answer; the workspace's standing BCC catches anyone
+      // else who needs to know.
+      const proposer =
+        schedule.proposedBy === null
+          ? null
+          : await db.user.findFirst({
+              where: { id: schedule.proposedBy },
+              select: { email: true },
+            });
+
+      const decidedByWords = input.onBehalfOfCustomer
+        ? 'Customer Service, on the customer behalf'
+        : 'the customer';
+
+      return {
+        data: {
+          approved: approvedCount,
+          total: totalCount,
+          summary: describeApproval(approvedCount, totalCount),
+          shipmentStatus: accepted ? 'APPROVED_FOR_SHIPMENT' : 'REJECTED',
+          scheduleStatus: accepted ? 'APPROVED' : 'REJECTED',
+        },
+        mail:
+          proposer?.email == null
+            ? null
+            : {
+                to: [proposer.email],
+                variables: {
+                  bookingNo: shipment.code,
+                  customerName: shipment.customer.name,
+                  outcome: accepted ? 'approved' : 'rejected',
+                  summary: describeApproval(approvedCount, totalCount),
+                  comments: rejectionText === '' ? '—' : rejectionText,
+                  decidedBy: decidedByWords,
+                  link: `/cs/shipment-booking/${shipmentId.toString()}?tab=approval`,
+                },
+              },
+      };
+    });
+
+    if (mail !== null) {
+      await queueMail({
+        tenantId: auth.tenantId,
+        templateKey: 'SHIPMENT_APPROVAL_DECIDED',
+        to: mail.to,
+        variables: mail.variables,
+        relatedType: 'shipment',
+        relatedId: shipmentId,
+        actorId: auth.userId,
+        fallback: {
+          subject: `Booking ${String(mail.variables.bookingNo)} — schedule ${String(mail.variables.outcome)}`,
+          bodyText: String(mail.variables.summary),
+        },
+      });
+    }
+
+    const payload: ApiSuccess<typeof data> = { success: true, data };
+    res.json(payload);
   },
 );
 

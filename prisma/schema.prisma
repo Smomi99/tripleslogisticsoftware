@@ -3705,6 +3705,10 @@ model ShipmentPo {
   approvalStatus    PoApprovalStatus @default(PENDING) @map("approval_status")
   approvedBy        BigInt?          @map("approved_by")
   approvedAt        DateTime?        @map("approved_at") @db.Timestamptz(6)
+  /// §9 Q6, answered 2026-09-02: both a customer and C/S may approve, and the
+  /// record has to say which. "Approved by Rahim" reads as the customer having
+  /// agreed when Rahim is our own desk.
+  approvedOnBehalf  Boolean          @default(false) @map("approved_on_behalf")
   rejectionComments String?          @map("rejection_comments") @db.Text
 
   isActive  Boolean   @default(true) @map("is_active")
@@ -3863,6 +3867,8 @@ model ShipmentSchedule {
   proposedAt        DateTime  @default(now()) @map("proposed_at") @db.Timestamptz(6)
   decidedBy         BigInt?   @map("decided_by")
   decidedAt         DateTime? @map("decided_at") @db.Timestamptz(6)
+  /// §9 Q6: as on shipment_po — who clicked, and on whose behalf.
+  decidedOnBehalf   Boolean   @default(false) @map("decided_on_behalf")
   rejectionComments String?   @map("rejection_comments") @db.Text
 
   isActive  Boolean   @default(true) @map("is_active")

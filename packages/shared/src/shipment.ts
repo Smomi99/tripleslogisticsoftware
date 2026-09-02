@@ -299,6 +299,9 @@ export interface ShipmentPoDto {
   approvalStatus: PoApprovalStatus;
   approvedAt: string | null;
   rejectionComments: string | null;
+  /** Who decided, and whether they were speaking for the customer (§9 Q6). */
+  approvedByName: string | null;
+  approvedOnBehalf: boolean;
 }
 
 export interface ShipmentCommodityDto {
@@ -750,4 +753,49 @@ export type ShipmentTabId = (typeof SHIPMENT_TABS)[number]['id'];
 
 export function isShipmentTab(value: string): value is ShipmentTabId {
   return SHIPMENT_TABS.some((tab) => tab.id === value);
+}
+
+// ----------------------------------------------------------------- approval
+
+/**
+ * §5.3: approval is per PO, not per booking.
+ *
+ * "Single PO can be approved / Multiple can be approved." So a decision is a
+ * list, and one submission can approve two POs and reject a third — which is
+ * why rejection comments hang off the PO rather than the schedule.
+ */
+export const poDecisionSchema = z
+  .object({
+    poId: z.string().min(1),
+    decision: z.enum(['APPROVED', 'REJECTED']),
+    comments: z.string().trim().max(2000, 'That comment is too long.').nullish(),
+  })
+  .refine(
+    (v) => v.decision !== 'REJECTED' || (v.comments ?? '').trim() !== '',
+    // §5.3: "Rejection requires a comment, shown back to the C/S team." A
+    // rejection with no reason is a decision nobody can act on.
+    { message: 'Say why this PO is being rejected.', path: ['comments'] },
+  );
+
+export type PoDecisionInput = z.infer<typeof poDecisionSchema>;
+
+export const shipmentApprovalSchema = z.object({
+  decisions: z.array(poDecisionSchema).min(1, 'Decide on at least one PO.'),
+  /**
+   * §9 Q6, answered 2026-09-02: C/S may record a decision the customer made by
+   * phone or email. The record says which, because "approved by Rahim" reads as
+   * the customer having agreed when Rahim is our own desk.
+   */
+  onBehalfOfCustomer: z.boolean().default(false),
+});
+
+export type ShipmentApprovalInput = z.infer<typeof shipmentApprovalSchema>;
+
+/** §5.3's summary line: "3 of 5 POs approved. 2 will not ship on this vessel." */
+export function describeApproval(approved: number, total: number): string {
+  if (total === 0) return 'No POs on this booking.';
+  if (approved === 0) return `None of the ${total} PO(s) approved. Nothing ships on this vessel.`;
+  if (approved === total) return `All ${total} PO(s) approved.`;
+  const held = total - approved;
+  return `${approved} of ${total} POs approved. ${held} will not ship on this vessel.`;
 }

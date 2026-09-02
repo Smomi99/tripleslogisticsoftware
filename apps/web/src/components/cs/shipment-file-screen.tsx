@@ -1,7 +1,6 @@
 'use client';
 
 import {
-  PO_APPROVAL_STATUS_LABEL,
   SHIPMENT_STATUS_LABEL,
   SHIPMENT_TABS,
   type ShipmentActivityDto,
@@ -17,6 +16,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 
+import { ApprovalTab } from '@/components/cs/approval-tab';
 import { ScheduleScreen } from '@/components/cs/schedule-screen';
 import { ShipmentBookingScreen } from '@/components/cs/shipment-booking-screen';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -251,56 +251,7 @@ export function ShipmentFileScreen({ shipmentId }: { shipmentId: string }) {
 
       {/* ---------------------------------------------------------- approval */}
       {tab === 'approval' && (
-        <section className="rounded-manifest border border-line bg-surface p-4 shadow-manifest">
-          <h2 className="mb-3 text-section text-hull">Purchase orders</h2>
-          {booking.pos.length === 0 ? (
-            <EmptyState
-              title="No POs on this booking"
-              description="POs come from the cargo grid on the Booking tab."
-            />
-          ) : (
-            <>
-              <table className="w-full border-collapse text-cell">
-                <thead>
-                  <tr className="border-b border-line bg-paper">
-                    <th className="label-manifest px-2 py-2 text-left">PO</th>
-                    <th className="label-manifest px-2 py-2 text-left">Status</th>
-                    <th className="label-manifest px-2 py-2 text-left">Comments</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {booking.pos.map((po) => (
-                    <tr key={po.id} className="border-b border-line/60">
-                      <td className="px-2 py-1 font-mono tabular-nums text-hull">{po.poNo}</td>
-                      <td className="px-2 py-1">
-                        <Status
-                          tone={
-                            po.approvalStatus === 'APPROVED'
-                              ? 'active'
-                              : po.approvalStatus === 'REJECTED'
-                                ? 'overdue'
-                                : 'pending'
-                          }
-                        >
-                          {PO_APPROVAL_STATUS_LABEL[po.approvalStatus]}
-                        </Status>
-                      </td>
-                      <td className="px-2 py-1 text-steel">{po.rejectionComments ?? '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {/*
-                §5.3's per-PO approve and reject is phase G. The state is real
-                and shown now; only the buttons are missing, which is a more
-                honest thing to say than an empty tab.
-              */}
-              <p className="mt-3 text-body text-steel">
-                Approving and rejecting a PO arrives with the Shipment Approval screen.
-              </p>
-            </>
-          )}
-        </section>
+        <ApprovalTab booking={booking} schedule={live} onDecided={() => void load()} />
       )}
 
       {/* ---------------------------------------------------- shipping order */}

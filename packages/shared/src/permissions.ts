@@ -76,6 +76,13 @@ export const ACTIONS = [
    */
   'SUBMIT',
   'CANCEL',
+  /*
+   * §7's CS.APPROVAL. REJECT is its own action rather than half of APPROVE
+   * because turning a sailing down is the decision with consequences — §5.3
+   * makes the comment mandatory and the C/S team has to act on it, while an
+   * approval simply lets the shipment carry on.
+   */
+  'REJECT',
 ] as const;
 
 export type Action = (typeof ACTIONS)[number];
@@ -312,7 +319,17 @@ export const FEATURES: readonly FeatureDefinition[] = [
     actions: ['VIEW', 'CREATE', 'EDIT'],
     childScreen: true,
   },
-  { module: 'CUSTOMER_SERVICE', feature: 'CUSTOMER_SERVICE.SHIPMENT_APPROVAL', label: 'Shipment Approval', actions: MASTER_APPROVE },
+  /*
+    * §6.5's screen. §7 lists CS.APPROVAL as VIEW APPROVE REJECT; the extra
+    * MASTER actions are kept because production's permission rows already point
+    * at them and the seed prunes nothing — they are simply unused by the routes.
+    */
+  {
+    module: 'CUSTOMER_SERVICE',
+    feature: 'CUSTOMER_SERVICE.SHIPMENT_APPROVAL',
+    label: 'Shipment Approval',
+    actions: [...MASTER_APPROVE, 'REJECT'],
+  },
   { module: 'CUSTOMER_SERVICE', feature: 'CUSTOMER_SERVICE.SHIPPING_ORDER', label: 'Shipping Order', actions: MASTER },
 
   // -- 4. Operation ----------------------------------------------------------

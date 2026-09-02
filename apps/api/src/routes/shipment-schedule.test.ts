@@ -31,6 +31,8 @@ let tenantId: bigint;
 let token: string;
 /** May view a schedule but not propose one. */
 let tokenReadOnly: string;
+/** May approve a PO but not reject one (§7 splits them). */
+let tokenApproveOnly: string;
 let carrierId: bigint;
 let vesselId: bigint;
 let chittagong: bigint;
@@ -204,6 +206,28 @@ beforeAll(async () => {
     tenantId: tenantId.toString(),
     isSuperadmin: false,
     permissions: ['CUSTOMER_SERVICE.SCHEDULE.VIEW', 'CUSTOMER_SERVICE.CARGO_BOOKING.VIEW'],
+    tokenVersion: 0,
+  });
+
+  const approver = await owner.user.create({
+    data: {
+      tenantId,
+      code: 'USR-sched-ap',
+      username: 'approver-sched',
+      email: 'approver@sched.test',
+      passwordHash: 'x',
+      isSuperadmin: false,
+    },
+    select: { id: true },
+  });
+  tokenApproveOnly = await signAccessToken({
+    sub: approver.id.toString(),
+    tenantId: tenantId.toString(),
+    isSuperadmin: false,
+    permissions: [
+      'CUSTOMER_SERVICE.SHIPMENT_APPROVAL.VIEW',
+      'CUSTOMER_SERVICE.SHIPMENT_APPROVAL.APPROVE',
+    ],
     tokenVersion: 0,
   });
 
@@ -536,5 +560,195 @@ describe('the read-only header §6.4 draws', () => {
     expect((ctx.cargo as { ctnQty: string }).ctnQty).toBe('100');
     // The generated column, summed — not recomputed here.
     expect(Number((ctx.cargo as { volumeCbm: string }).volumeCbm)).toBe(7.2);
+  });
+});
+
+describe('shipment approval (§5.3, §6.5)', () => {
+  /** A booking with `count` POs and a schedule waiting for a decision. */
+  async function readyForDecision(count: number): Promise<{ id: bigint; poIds: string[] }> {
+    const bookingId = await makeBooking();
+    const poIds: string[] = [];
+    for (let i = 1; i <= count; i += 1) {
+      const po = await owner.shipmentPo.create({
+        data: { tenantId, shipmentId: bookingId, poNo: `PO-${bookingId}-${i}` },
+        select: { id: true },
+      });
+      poIds.push(po.id.toString());
+    }
+    const res = await as(token)
+      .post(`/api/tenant/cs/bookings/${bookingId}/schedules`)
+      .send(body('DIRECT', oneLeg()));
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    return { id: bookingId, poIds };
+  }
+
+  async function decide(
+    id: bigint,
+    decisions: { poId: string; decision: 'APPROVED' | 'REJECTED'; comments?: string }[],
+    onBehalfOfCustomer = false,
+  ) {
+    return as(token)
+      .post(`/api/tenant/cs/bookings/${id}/approval`)
+      .send({ decisions, onBehalfOfCustomer });
+  }
+
+  it('approves some POs and holds the rest — the phase gate', async () => {
+    /*
+     * §5.3: "the shipment reaches APPROVED_FOR_SHIPMENT when at least one PO is
+     * approved; unapproved POs stay PENDING and are excluded from the shipping
+     * order". Three POs, two approved, one rejected.
+     */
+    const { id, poIds } = await readyForDecision(3);
+    const res = await decide(id, [
+      { poId: poIds[0]!, decision: 'APPROVED' },
+      { poId: poIds[1]!, decision: 'APPROVED' },
+      { poId: poIds[2]!, decision: 'REJECTED', comments: 'Not ready for this sailing.' },
+    ]);
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const data = (res.body as { data: { approved: number; total: number; summary: string } }).data;
+    expect(data.approved).toBe(2);
+    expect(data.total).toBe(3);
+    expect(data.summary).toBe('2 of 3 POs approved. 1 will not ship on this vessel.');
+
+    const shipment = await owner.shipment.findFirstOrThrow({
+      where: { id },
+      select: { status: true },
+    });
+    expect(shipment.status).toBe('APPROVED_FOR_SHIPMENT');
+
+    const pos = await owner.shipmentPo.findMany({
+      where: { shipmentId: id },
+      orderBy: { poNo: 'asc' },
+      select: { approvalStatus: true, rejectionComments: true },
+    });
+    expect(pos.map((p) => p.approvalStatus)).toEqual(['APPROVED', 'APPROVED', 'REJECTED']);
+    expect(pos[2]?.rejectionComments).toBe('Not ready for this sailing.');
+  });
+
+  it('leaves an undecided PO PENDING without stopping the shipment', async () => {
+    const { id, poIds } = await readyForDecision(3);
+    await decide(id, [{ poId: poIds[0]!, decision: 'APPROVED' }]);
+
+    const pending = await owner.shipmentPo.count({
+      where: { shipmentId: id, approvalStatus: 'PENDING' },
+    });
+    expect(pending).toBe(2);
+
+    const shipment = await owner.shipment.findFirstOrThrow({
+      where: { id },
+      select: { status: true },
+    });
+    expect(shipment.status).toBe('APPROVED_FOR_SHIPMENT');
+  });
+
+  it('rejects the whole schedule when no PO survives (§5.1)', async () => {
+    const { id, poIds } = await readyForDecision(2);
+    const res = await decide(id, [
+      { poId: poIds[0]!, decision: 'REJECTED', comments: 'Too late for our season.' },
+      { poId: poIds[1]!, decision: 'REJECTED', comments: 'Same.' },
+    ]);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+
+    const shipment = await owner.shipment.findFirstOrThrow({
+      where: { id },
+      select: { status: true },
+    });
+    expect(shipment.status).toBe('REJECTED');
+
+    // §4.2: the schedule keeps the reason, so C/S can answer it.
+    const schedule = await owner.shipmentSchedule.findFirstOrThrow({
+      where: { shipmentId: id },
+      select: { status: true, rejectionComments: true },
+    });
+    expect(schedule.status).toBe('REJECTED');
+    expect(schedule.rejectionComments).toMatch(/Too late for our season/);
+  });
+
+  it('refuses a rejection with no comment (§5.3)', async () => {
+    const { id, poIds } = await readyForDecision(1);
+    const res = await decide(id, [{ poId: poIds[0]!, decision: 'REJECTED' }]);
+    expect(res.status).toBe(400);
+
+    // ...and nothing moved.
+    const shipment = await owner.shipment.findFirstOrThrow({
+      where: { id },
+      select: { status: true },
+    });
+    expect(shipment.status).toBe('VESSEL_PROPOSED');
+  });
+
+  it('records who decided, and on whose behalf (§9 Q6)', async () => {
+    const { id, poIds } = await readyForDecision(1);
+    await decide(id, [{ poId: poIds[0]!, decision: 'APPROVED' }], true);
+
+    const po = await owner.shipmentPo.findFirstOrThrow({
+      where: { shipmentId: id },
+      select: { approvedBy: true, approvedAt: true, approvedOnBehalf: true },
+    });
+    expect(po.approvedBy).not.toBeNull();
+    expect(po.approvedAt).not.toBeNull();
+    expect(po.approvedOnBehalf).toBe(true);
+
+    const schedule = await owner.shipmentSchedule.findFirstOrThrow({
+      where: { shipmentId: id },
+      select: { decidedOnBehalf: true },
+    });
+    expect(schedule.decidedOnBehalf).toBe(true);
+  });
+
+  it('defaults to the customer deciding for themselves', async () => {
+    const { id, poIds } = await readyForDecision(1);
+    await decide(id, [{ poId: poIds[0]!, decision: 'APPROVED' }]);
+
+    const po = await owner.shipmentPo.findFirstOrThrow({
+      where: { shipmentId: id },
+      select: { approvedOnBehalf: true },
+    });
+    expect(po.approvedOnBehalf).toBe(false);
+  });
+
+  it('emails whoever proposed the sailing (§6.5)', async () => {
+    const { id, poIds } = await readyForDecision(1);
+    await decide(id, [{ poId: poIds[0]!, decision: 'APPROVED' }]);
+
+    const mail = await owner.emailLog.findFirst({
+      where: { tenantId, relatedType: 'shipment', relatedId: id },
+      orderBy: { id: 'desc' },
+      select: { subject: true, toAddresses: true },
+    });
+    expect(mail?.subject).toMatch(/approved/i);
+    expect(mail?.toAddresses).toEqual(['admin@sched.test']);
+  });
+
+  it('refuses when nothing has been proposed', async () => {
+    const bookingId = await makeBooking();
+    const po = await owner.shipmentPo.create({
+      data: { tenantId, shipmentId: bookingId, poNo: 'PO-NOSCHED' },
+      select: { id: true },
+    });
+    const res = await decide(bookingId, [{ poId: po.id.toString(), decision: 'APPROVED' }]);
+    expect(res.status).toBe(409);
+  });
+
+  it('refuses a PO that belongs to another booking', async () => {
+    const mine = await readyForDecision(1);
+    const theirs = await readyForDecision(1);
+    const res = await decide(mine.id, [{ poId: theirs.poIds[0]!, decision: 'APPROVED' }]);
+    expect(res.status).toBe(404);
+  });
+
+  it('refuses a user who may approve but not reject', async () => {
+    // §7 splits them: turning a sailing down is the decision with consequences.
+    const { id, poIds } = await readyForDecision(1);
+    const res = await request(app)
+      .post(`/api/tenant/cs/bookings/${id}/approval`)
+      .set('Authorization', `Bearer ${tokenApproveOnly}`)
+      .set('X-Tenant-Slug', SLUG)
+      .send({
+        decisions: [{ poId: poIds[0]!, decision: 'REJECTED', comments: 'No.' }],
+        onBehalfOfCustomer: false,
+      });
+    expect(res.status).toBe(403);
   });
 });
