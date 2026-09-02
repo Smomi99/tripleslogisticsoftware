@@ -882,3 +882,130 @@ export const shippingOrderSkipSchema = z.object({
 });
 
 export type ShippingOrderSkipInput = z.infer<typeof shippingOrderSkipSchema>;
+
+// ------------------------------------------------------------ cargo receipt
+
+export const CARGO_RECEIPT_STATUSES = ['DRAFT', 'CONFIRMED'] as const;
+export type CargoReceiptStatus = (typeof CARGO_RECEIPT_STATUSES)[number];
+
+export const RECEIPT_LINE_STATUSES = ['ACCEPTED', 'DECLINED'] as const;
+export type ReceiptLineStatus = (typeof RECEIPT_LINE_STATUSES)[number];
+
+/**
+ * One row of §6.7's grid: the same PO line seen three times.
+ *
+ * §2.4 is the reason all three travel together. "Booked quantity,
+ * shipping-order quantity, and received quantity are three different numbers on
+ * the same PO line, and the gap between them is the business." §5.5 rule 1 adds
+ * why they sit side by side on screen: "a receiver who cannot see the gap
+ * cannot flag it."
+ */
+export interface ReceiptGridRow {
+  /** The booked line this is about. */
+  cargoLineId: string;
+  poNo: string;
+  itemCode: string;
+  sku: string | null;
+
+  /** What the customer booked (§2.4). Never overwritten. */
+  bookedCtnQty: number;
+  bookedPcsQty: number | null;
+  bookedGrossWeightKg: string | null;
+  bookedVolumeCbm: string | null;
+
+  /** What the shipping order authorised. Null before one is issued. */
+  soCtnQty: number | null;
+
+  /** Already accepted on earlier receipts (§5.5 rule 4). */
+  previouslyReceivedCtnQty: number;
+  /** booked − everything accepted so far. What is still outstanding. */
+  balanceCtnQty: number;
+
+  /** This receipt's own figures, when it has a line for this one. */
+  receiptLineId: string | null;
+  receivedCtnQty: number | null;
+  receivedPcsQty: number | null;
+  receivedNetWeightKg: string | null;
+  receivedGrossWeightKg: string | null;
+  cartonLengthCm: string | null;
+  cartonWidthCm: string | null;
+  cartonHeightCm: string | null;
+  receivedVolumeCbm: string | null;
+  lineStatus: ReceiptLineStatus | null;
+  declineReason: string | null;
+  remarks: string | null;
+  overReceiptReason: string | null;
+}
+
+export interface CargoReceiptDto {
+  id: string;
+  code: string;
+  status: CargoReceiptStatus;
+  receiptSeq: number;
+  receiveDate: string;
+  unloadLocation: string | null;
+  efrNo: string | null;
+  shippingOrderCode: string | null;
+  receivedByName: string | null;
+  confirmedAt: string | null;
+  rows: ReceiptGridRow[];
+}
+
+/** §6.7's balance strip: "Balance 40 CTN across 2 POs". */
+export function describeBalance(rows: readonly ReceiptGridRow[]): string {
+  let cartons = 0;
+  const pos = new Set<string>();
+  for (const row of rows) {
+    if (row.balanceCtnQty <= 0) continue;
+    cartons += row.balanceCtnQty;
+    pos.add(row.poNo);
+  }
+  if (cartons === 0) return 'Nothing outstanding. Every booked carton has been received.';
+  return `Balance ${cartons} CTN across ${pos.size} PO${pos.size === 1 ? '' : 's'}.`;
+}
+
+// -------------------------------------------------------------------- input
+
+const receiptMeasure = z
+  .string()
+  .trim()
+  .regex(/^\d{1,10}(\.\d{1,3})?$/, 'Use digits, up to three decimal places.')
+  .nullish()
+  .transform((v) => (v === '' ? undefined : (v ?? undefined)));
+
+export const receiptLineInputSchema = z
+  .object({
+    cargoLineId: z.string().min(1),
+    receivedCtnQty: z
+      .number()
+      .int('Whole cartons only.')
+      .min(0, 'A negative quantity is not a receipt.'),
+    receivedPcsQty: z.number().int().min(0).nullish(),
+    receivedNetWeightKg: receiptMeasure,
+    receivedGrossWeightKg: receiptMeasure,
+    cartonLengthCm: receiptMeasure,
+    cartonWidthCm: receiptMeasure,
+    cartonHeightCm: receiptMeasure,
+    lineStatus: z.enum(RECEIPT_LINE_STATUSES).default('ACCEPTED'),
+    declineReason: z.string().trim().max(2000, 'That reason is too long.').nullish(),
+    remarks: z.string().trim().max(2000, 'That is too long.').nullish(),
+    /** §5.5 rule 6: more arrived than was booked, and here is why. */
+    overReceiptReason: z.string().trim().max(2000, 'That reason is too long.').nullish(),
+  })
+  .refine(
+    (v) => v.lineStatus !== 'DECLINED' || (v.declineReason ?? '').trim() !== '',
+    // §5.5 rule 2: declined lines carry a reason, the same rule §5.3 puts on a
+    // rejected PO — a refusal nobody can act on is not one.
+    { message: 'Say why this line is being declined.', path: ['declineReason'] },
+  );
+
+export type ReceiptLineInput = z.infer<typeof receiptLineInputSchema>;
+
+export const cargoReceiptSaveSchema = z.object({
+  receiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use the date picker.'),
+  unloadLocation: z.string().trim().max(1000, 'That is too long.').nullish(),
+  efrNo: z.string().trim().max(100, 'That is too long.').nullish(),
+  lines: z.array(receiptLineInputSchema),
+});
+
+export type CargoReceiptSaveInput = z.infer<typeof cargoReceiptSaveSchema>;

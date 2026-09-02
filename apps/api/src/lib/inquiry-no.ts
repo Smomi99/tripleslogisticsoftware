@@ -24,6 +24,8 @@ export const QUOTATION_PREFIX = 'QTN';
 export const BOOKING_PREFIX = 'BKG';
 /** The shipping order, SO-2026-000001 (MODULE_BOOKING_CARGO.md §4.3). */
 export const SHIPPING_ORDER_PREFIX = 'SO';
+/** The cargo receipt, CR-2026-000001 (MODULE_BOOKING_CARGO.md §4.4). */
+export const CARGO_RECEIPT_PREFIX = 'CR';
 /** Six digits, as §3.3 writes it. Grows past six rather than wrapping. */
 const SEQUENCE_WIDTH = 6;
 
@@ -145,6 +147,37 @@ export async function nextShippingOrderNo(
 
   const current = rows[0]?.max_seq ?? 0;
   return formatShippingOrderNo(year, current + 1);
+}
+
+export function formatCargoReceiptNo(year: number, sequence: number): string {
+  return formatDocumentNo(CARGO_RECEIPT_PREFIX, year, sequence);
+}
+
+/**
+ * The next cargo receipt number.
+ *
+ * §5.5 rule 4: "A booking may have several receipts; each is numbered and
+ * kept." The number is per workspace per year, while receipt_seq is that
+ * receipt's place in ITS booking — two different counts, and conflating them
+ * would make the second receipt on the tenth booking read as CR-…-000002.
+ */
+export async function nextCargoReceiptNo(
+  db: TenantDb,
+  tenantId: bigint,
+  year: number,
+): Promise<string> {
+  const pattern = `${CARGO_RECEIPT_PREFIX}-${year}-%`;
+
+  const rows = await db.$queryRaw<{ max_seq: number | null }[]>`
+    SELECT MAX((regexp_replace(code, '^.*-', ''))::int) AS max_seq
+      FROM cargo_receipt
+     WHERE tenant_id = ${tenantId}
+       AND series_year = ${year}
+       AND code LIKE ${pattern}
+  `;
+
+  const current = rows[0]?.max_seq ?? 0;
+  return formatCargoReceiptNo(year, current + 1);
 }
 
 /** The year a document belongs to — its own date, not today's. */

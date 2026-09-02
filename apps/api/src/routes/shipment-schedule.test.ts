@@ -33,6 +33,8 @@ let token: string;
 let tokenReadOnly: string;
 /** May approve a PO but not reject one (§7 splits them). */
 let tokenApproveOnly: string;
+/** A warehouse clerk: may record a receipt, but §7 keeps OVERRIDE_QTY away. */
+let tokenReceiver: string;
 let carrierId: bigint;
 let vesselId: bigint;
 let chittagong: bigint;
@@ -140,6 +142,8 @@ function oneLeg(): Leg[] {
 async function cleanup(): Promise<void> {
   const scope = `(SELECT id FROM tenant WHERE slug = '${SLUG}')`;
   for (const table of [
+    'cargo_receipt_line',
+    'cargo_receipt',
     'shipping_order',
     'shipment_schedule_leg',
     'shipment_schedule',
@@ -228,6 +232,30 @@ beforeAll(async () => {
     permissions: [
       'CUSTOMER_SERVICE.SHIPMENT_APPROVAL.VIEW',
       'CUSTOMER_SERVICE.SHIPMENT_APPROVAL.APPROVE',
+    ],
+    tokenVersion: 0,
+  });
+
+  const receiver = await owner.user.create({
+    data: {
+      tenantId,
+      code: 'USR-sched-rc',
+      username: 'receiver-sched',
+      email: 'receiver@sched.test',
+      passwordHash: 'x',
+      isSuperadmin: false,
+    },
+    select: { id: true },
+  });
+  tokenReceiver = await signAccessToken({
+    sub: receiver.id.toString(),
+    tenantId: tenantId.toString(),
+    isSuperadmin: false,
+    permissions: [
+      'OPERATION.CARGO_RECEIPT.VIEW',
+      'OPERATION.CARGO_RECEIPT.CREATE',
+      'OPERATION.CARGO_RECEIPT.CONFIRM',
+      'OPERATION.CARGO_RECEIPT.DECLINE_LINE',
     ],
     tokenVersion: 0,
   });
@@ -754,82 +782,87 @@ describe('shipment approval (§5.3, §6.5)', () => {
   });
 });
 
-describe('the shipping order (§4.3, §5.4, §6.6)', () => {
-  /** A booking approved and ready for an S/O, with `count` approved POs. */
-  async function approved(count: number, movement: 'OUTBOUND' | 'INBOUND' = 'OUTBOUND') {
-    const bookingId = await makeBooking();
-    if (movement === 'INBOUND') {
-      // The movement lives on the quotation, so a second one is needed for it.
-      const inbound = await owner.quotation.create({
-        data: {
-          tenantId,
-          code: `SC-QTN-IN-${bookingId}`,
-          seriesYear: 2026,
-          inquiryId: (
-            await owner.quotation.findFirstOrThrow({
-              where: { id: quotationId },
-              select: { inquiryId: true },
-            })
-          ).inquiryId,
-          quotationDate: new Date('2026-09-02'),
-          customerId: (
-            await owner.quotation.findFirstOrThrow({
-              where: { id: quotationId },
-              select: { customerId: true },
-            })
-          ).customerId,
-          shipmentType: 'SEA',
-          movementType: 'INBOUND',
-          polId: chittagong,
-          podId: hamburg,
-          carrierId,
-          localCurrencyId: (await owner.currency.findFirstOrThrow({ select: { id: true } })).id,
-          conversionRate: '122.0000',
-        },
-        select: { id: true },
-      });
-      await owner.shipment.update({
-        where: { id: bookingId },
-        data: { quotationId: inbound.id },
-      });
-    }
-
-    const poIds: bigint[] = [];
-    for (let i = 1; i <= count; i += 1) {
-      const po = await owner.shipmentPo.create({
-        data: { tenantId, shipmentId: bookingId, poNo: `PO-SO-${bookingId}-${i}` },
-        select: { id: true },
-      });
-      poIds.push(po.id);
-      await owner.shipmentCargoLine.create({
-        data: {
-          tenantId,
-          shipmentId: bookingId,
-          shipmentPoId: po.id,
-          itemCode: `ITEM-${i}`,
-          ctnQty: 100,
-          grossWeightKg: '900',
-          cartonLengthCm: '60',
-          cartonWidthCm: '40',
-          cartonHeightCm: '30',
-        },
-      });
-    }
-
-    /*
-     * Inbound skips the DOCUMENT (§5.4 rule 3), not the approval. §5.1 reaches
-     * SO_SKIPPED from APPROVED_FOR_SHIPMENT just as it reaches SO_ISSUED, so an
-     * inbound booking still gets a schedule and a decision.
-     */
-    await as(token).post(`/api/tenant/cs/bookings/${bookingId}/schedules`).send(body('DIRECT', oneLeg()));
-    await as(token)
-      .post(`/api/tenant/cs/bookings/${bookingId}/approval`)
-      .send({
-        decisions: poIds.map((id) => ({ poId: id.toString(), decision: 'APPROVED' })),
-        onBehalfOfCustomer: false,
-      });
-    return { id: bookingId, poIds };
+/*
+ * Shared by the shipping order and the cargo receipt suites: both start from a
+ * booking the customer has approved.
+ */
+/** A booking approved and ready for an S/O, with `count` approved POs. */
+async function approved(count: number, movement: 'OUTBOUND' | 'INBOUND' = 'OUTBOUND') {
+  const bookingId = await makeBooking();
+  if (movement === 'INBOUND') {
+    // The movement lives on the quotation, so a second one is needed for it.
+    const inbound = await owner.quotation.create({
+      data: {
+        tenantId,
+        code: `SC-QTN-IN-${bookingId}`,
+        seriesYear: 2026,
+        inquiryId: (
+          await owner.quotation.findFirstOrThrow({
+            where: { id: quotationId },
+            select: { inquiryId: true },
+          })
+        ).inquiryId,
+        quotationDate: new Date('2026-09-02'),
+        customerId: (
+          await owner.quotation.findFirstOrThrow({
+            where: { id: quotationId },
+            select: { customerId: true },
+          })
+        ).customerId,
+        shipmentType: 'SEA',
+        movementType: 'INBOUND',
+        polId: chittagong,
+        podId: hamburg,
+        carrierId,
+        localCurrencyId: (await owner.currency.findFirstOrThrow({ select: { id: true } })).id,
+        conversionRate: '122.0000',
+      },
+      select: { id: true },
+    });
+    await owner.shipment.update({
+      where: { id: bookingId },
+      data: { quotationId: inbound.id },
+    });
   }
+
+  const poIds: bigint[] = [];
+  for (let i = 1; i <= count; i += 1) {
+    const po = await owner.shipmentPo.create({
+      data: { tenantId, shipmentId: bookingId, poNo: `PO-SO-${bookingId}-${i}` },
+      select: { id: true },
+    });
+    poIds.push(po.id);
+    await owner.shipmentCargoLine.create({
+      data: {
+        tenantId,
+        shipmentId: bookingId,
+        shipmentPoId: po.id,
+        itemCode: `ITEM-${i}`,
+        ctnQty: 100,
+        grossWeightKg: '900',
+        cartonLengthCm: '60',
+        cartonWidthCm: '40',
+        cartonHeightCm: '30',
+      },
+    });
+  }
+
+  /*
+   * Inbound skips the DOCUMENT (§5.4 rule 3), not the approval. §5.1 reaches
+   * SO_SKIPPED from APPROVED_FOR_SHIPMENT just as it reaches SO_ISSUED, so an
+   * inbound booking still gets a schedule and a decision.
+   */
+  await as(token).post(`/api/tenant/cs/bookings/${bookingId}/schedules`).send(body('DIRECT', oneLeg()));
+  await as(token)
+    .post(`/api/tenant/cs/bookings/${bookingId}/approval`)
+    .send({
+      decisions: poIds.map((id) => ({ poId: id.toString(), decision: 'APPROVED' })),
+      onBehalfOfCustomer: false,
+    });
+  return { id: bookingId, poIds };
+}
+
+describe('the shipping order (§4.3, §5.4, §6.6)', () => {
 
   it('issues a numbered order and moves the booking — the phase gate', async () => {
     const { id } = await approved(2);
@@ -883,6 +916,16 @@ describe('the shipping order (§4.3, §5.4, §6.6)', () => {
     const res = await as(token).post(`/api/tenant/cs/bookings/${id}/shipping-order`).send({});
     expect(res.status, JSON.stringify(res.body)).toBe(201);
     expect((res.body as { data: { poNumbers: string[] } }).data.poNumbers).toHaveLength(2);
+
+    // §2.4: only the approved POs were authorised, so the held-back one keeps a
+    // null S/O quantity — nothing was authorised for it.
+    const lines = await owner.shipmentCargoLine.findMany({
+      where: { shipmentId: id, deletedAt: null },
+      orderBy: { id: 'asc' },
+      select: { soCtnQty: true },
+    });
+    expect(lines.filter((l) => l.soCtnQty !== null)).toHaveLength(2);
+    expect(lines.filter((l) => l.soCtnQty === null)).toHaveLength(1);
   });
 
   it('builds the offline QR payload the client asked for (§9 Q5)', async () => {
@@ -1001,5 +1044,331 @@ describe('the shipping order (§4.3, §5.4, §6.6)', () => {
       .set('X-Tenant-Slug', SLUG)
       .send({});
     expect(res.status).toBe(403);
+  });
+});
+
+describe('cargo receipt (§4.4, §5.5, §6.7)', () => {
+  interface Grid {
+    cargoLineId: string;
+    poNo: string;
+    itemCode: string;
+    bookedCtnQty: number;
+    soCtnQty: number | null;
+    previouslyReceivedCtnQty: number;
+    balanceCtnQty: number;
+    receivedCtnQty: number | null;
+    lineStatus: string | null;
+  }
+
+  /** A booking with an issued S/O, ready to receive against. */
+  async function readyToReceive(count = 2) {
+    const { id, poIds } = await approved(count);
+    const res = await as(token).post(`/api/tenant/cs/bookings/${id}/shipping-order`).send({});
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const lines = await owner.shipmentCargoLine.findMany({
+      where: { shipmentId: id, deletedAt: null },
+      orderBy: { id: 'asc' },
+      select: { id: true },
+    });
+    return { id, poIds, lineIds: lines.map((l) => l.id.toString()) };
+  }
+
+  async function readGrid(id: bigint): Promise<Grid[]> {
+    const res = await as(token).get(`/api/tenant/ops/bookings/${id}/cargo-receipts`);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    return (res.body as { data: { grid: Grid[] } }).data.grid;
+  }
+
+  function receiptBody(
+    lines: { cargoLineId: string; receivedCtnQty: number; lineStatus?: string; declineReason?: string }[],
+  ) {
+    return {
+      receiveDate: '2026-11-05',
+      unloadLocation: 'Pangaon ICT',
+      efrNo: 'EFR-001',
+      lines,
+    };
+  }
+
+  it('shows booked, S/O and received side by side (§5.5 rule 1)', async () => {
+    const { id } = await readyToReceive(2);
+    const grid = await readGrid(id);
+
+    expect(grid).toHaveLength(2);
+    // Every booked line appears, whether or not anything has arrived — a row
+    // that is missing shows no gap, and the gap is the point.
+    expect(grid[0]?.bookedCtnQty).toBe(100);
+    // §2.4's middle number: what the shipping order authorised, written when it
+    // was issued. Without it the S/O column on §6.7 is permanently empty.
+    expect(grid[0]?.soCtnQty).toBe(100);
+    expect(grid[0]?.balanceCtnQty).toBe(100);
+    expect(grid[0]?.previouslyReceivedCtnQty).toBe(0);
+    expect(grid[0]?.receivedCtnQty).toBeNull();
+  });
+
+  it('confirms a receipt — the phase gate', async () => {
+    const { id, lineIds } = await readyToReceive(2);
+
+    const saved = await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/cargo-receipts`)
+      .send(
+        receiptBody(lineIds.map((cargoLineId) => ({ cargoLineId, receivedCtnQty: 100 }))),
+      );
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    const receipt = (saved.body as { data: { id: string; code: string; status: string } }).data;
+    expect(receipt.code).toMatch(/^CR-\d{4}-\d{6}$/);
+    expect(receipt.status).toBe('DRAFT');
+
+    const done = await as(token).post(
+      `/api/tenant/ops/bookings/${id}/cargo-receipts/${receipt.id}/confirm`,
+    );
+    expect(done.status, JSON.stringify(done.body)).toBe(200);
+    expect((done.body as { data: { status: string } }).data.status).toBe('CONFIRMED');
+
+    // Everything booked arrived, so the booking closes (§5.5 rule 3).
+    const shipment = await owner.shipment.findFirstOrThrow({
+      where: { id },
+      select: { status: true },
+    });
+    expect(shipment.status).toBe('CARGO_RECEIVED');
+  });
+
+  it('leaves the booking open when something is still owed (§5.5 rule 3)', async () => {
+    const { id, lineIds } = await readyToReceive(2);
+    const saved = await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/cargo-receipts`)
+      .send(receiptBody([{ cargoLineId: lineIds[0]!, receivedCtnQty: 60 }]));
+    const receiptId = (saved.body as { data: { id: string } }).data.id;
+    await as(token).post(`/api/tenant/ops/bookings/${id}/cargo-receipts/${receiptId}/confirm`);
+
+    const shipment = await owner.shipment.findFirstOrThrow({
+      where: { id },
+      select: { status: true },
+    });
+    expect(shipment.status).toBe('PART_RECEIVED');
+
+    // 40 short on the first line, 100 untouched on the second.
+    const grid = await readGrid(id);
+    expect(grid[0]?.previouslyReceivedCtnQty).toBe(60);
+    expect(grid[0]?.balanceCtnQty).toBe(40);
+    expect(grid[1]?.balanceCtnQty).toBe(100);
+  });
+
+  it('never writes the received figure back onto the booked one (§2.4)', async () => {
+    const { id, lineIds } = await readyToReceive(1);
+    const saved = await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/cargo-receipts`)
+      .send(receiptBody([{ cargoLineId: lineIds[0]!, receivedCtnQty: 55 }]));
+    await as(token).post(
+      `/api/tenant/ops/bookings/${id}/cargo-receipts/${(saved.body as { data: { id: string } }).data.id}/confirm`,
+    );
+
+    const booked = await owner.shipmentCargoLine.findFirstOrThrow({
+      where: { id: BigInt(lineIds[0]!) },
+      select: { ctnQty: true },
+    });
+    expect(booked.ctnQty).toBe(100);
+  });
+
+  it('takes several receipts and adds them up (§5.5 rule 4)', async () => {
+    const { id, lineIds } = await readyToReceive(1);
+
+    async function receive(qty: number): Promise<void> {
+      const saved = await as(token)
+        .post(`/api/tenant/ops/bookings/${id}/cargo-receipts`)
+        .send(receiptBody([{ cargoLineId: lineIds[0]!, receivedCtnQty: qty }]));
+      expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+      const res = await as(token).post(
+        `/api/tenant/ops/bookings/${id}/cargo-receipts/${(saved.body as { data: { id: string } }).data.id}/confirm`,
+      );
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+    }
+
+    await receive(40);
+    expect((await readGrid(id))[0]?.balanceCtnQty).toBe(60);
+    await receive(60);
+
+    const grid = await readGrid(id);
+    expect(grid[0]?.previouslyReceivedCtnQty).toBe(100);
+    expect(grid[0]?.balanceCtnQty).toBe(0);
+
+    const shipment = await owner.shipment.findFirstOrThrow({
+      where: { id },
+      select: { status: true },
+    });
+    expect(shipment.status).toBe('CARGO_RECEIVED');
+
+    // Each one numbered and kept (§5.5 rule 4).
+    const receipts = await owner.cargoReceipt.findMany({
+      where: { shipmentId: id },
+      orderBy: { receiptSeq: 'asc' },
+      select: { code: true, receiptSeq: true, status: true },
+    });
+    expect(receipts).toHaveLength(2);
+    expect(receipts.map((r) => r.receiptSeq)).toEqual([1, 2]);
+    expect(receipts[0]?.code).not.toBe(receipts[1]?.code);
+  });
+
+  it('does not count a declined line towards the balance (§5.5 rule 2)', async () => {
+    const { id, lineIds } = await readyToReceive(1);
+    const saved = await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/cargo-receipts`)
+      .send(
+        receiptBody([
+          {
+            cargoLineId: lineIds[0]!,
+            receivedCtnQty: 100,
+            lineStatus: 'DECLINED',
+            declineReason: 'Cartons crushed in transit.',
+          },
+        ]),
+      );
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    await as(token).post(
+      `/api/tenant/ops/bookings/${id}/cargo-receipts/${(saved.body as { data: { id: string } }).data.id}/confirm`,
+    );
+
+    // It arrived and was refused, so it is still owed.
+    const grid = await readGrid(id);
+    expect(grid[0]?.previouslyReceivedCtnQty).toBe(0);
+    expect(grid[0]?.balanceCtnQty).toBe(100);
+
+    const shipment = await owner.shipment.findFirstOrThrow({
+      where: { id },
+      select: { status: true },
+    });
+    expect(shipment.status).toBe('PART_RECEIVED');
+  });
+
+  it('refuses a declined line with no reason (§5.5 rule 2)', async () => {
+    const { id, lineIds } = await readyToReceive(1);
+    const res = await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/cargo-receipts`)
+      .send(receiptBody([{ cargoLineId: lineIds[0]!, receivedCtnQty: 100, lineStatus: 'DECLINED' }]));
+    expect(res.status).toBe(400);
+  });
+
+  it('refuses an over-receipt without the permission (§5.5 rule 6)', async () => {
+    const { id, lineIds } = await readyToReceive(1);
+    const res = await request(app)
+      .post(`/api/tenant/ops/bookings/${id}/cargo-receipts`)
+      .set('Authorization', `Bearer ${tokenReceiver}`)
+      .set('X-Tenant-Slug', SLUG)
+      .send(receiptBody([{ cargoLineId: lineIds[0]!, receivedCtnQty: 120 }]));
+
+    expect(res.status).toBe(403);
+    expect((res.body as { error: { message: string } }).error.message).toMatch(/supervisor/i);
+  });
+
+  it('refuses an over-receipt with the permission but no reason', async () => {
+    const { id, lineIds } = await readyToReceive(1);
+    const res = await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/cargo-receipts`)
+      .send(receiptBody([{ cargoLineId: lineIds[0]!, receivedCtnQty: 120 }]));
+    expect(res.status).toBe(422);
+  });
+
+  it('allows an over-receipt when a supervisor says why', async () => {
+    const { id, lineIds } = await readyToReceive(1);
+    const res = await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/cargo-receipts`)
+      .send({
+        ...receiptBody([]),
+        lines: [
+          {
+            cargoLineId: lineIds[0]!,
+            receivedCtnQty: 120,
+            overReceiptReason: 'Exporter shipped 20 extra against the next order.',
+          },
+        ],
+      });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+  });
+
+  it('will not confirm an empty receipt', async () => {
+    const { id, lineIds } = await readyToReceive(1);
+    const saved = await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/cargo-receipts`)
+      .send(receiptBody([{ cargoLineId: lineIds[0]!, receivedCtnQty: 10 }]));
+    const receiptId = (saved.body as { data: { id: string } }).data.id;
+
+    // Take the line back off again, the way a receiver changing their mind would.
+    await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/cargo-receipts`)
+      .send(receiptBody([]));
+
+    const res = await as(token).post(
+      `/api/tenant/ops/bookings/${id}/cargo-receipts/${receiptId}/confirm`,
+    );
+    expect(res.status).toBe(422);
+  });
+
+  it('will not confirm the same receipt twice', async () => {
+    const { id, lineIds } = await readyToReceive(1);
+    const saved = await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/cargo-receipts`)
+      .send(receiptBody([{ cargoLineId: lineIds[0]!, receivedCtnQty: 100 }]));
+    const receiptId = (saved.body as { data: { id: string } }).data.id;
+
+    expect((await as(token).post(`/api/tenant/ops/bookings/${id}/cargo-receipts/${receiptId}/confirm`)).status).toBe(200);
+    expect((await as(token).post(`/api/tenant/ops/bookings/${id}/cargo-receipts/${receiptId}/confirm`)).status).toBe(409);
+  });
+
+  it('refuses a receipt before a shipping order exists', async () => {
+    const { id } = await approved(1);
+    const lines = await owner.shipmentCargoLine.findMany({
+      where: { shipmentId: id },
+      select: { id: true },
+    });
+    const res = await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/cargo-receipts`)
+      .send(receiptBody([{ cargoLineId: lines[0]!.id.toString(), receivedCtnQty: 10 }]));
+    expect(res.status).toBe(409);
+  });
+
+  it('works with no shipping order at all, on an inbound booking (§5.4 rule 3)', async () => {
+    const { id } = await approved(1, 'INBOUND');
+    await as(token)
+      .post(`/api/tenant/cs/bookings/${id}/shipping-order/skip`)
+      .send({ reason: 'Inbound — no S/O required.' });
+
+    const lines = await owner.shipmentCargoLine.findMany({
+      where: { shipmentId: id },
+      select: { id: true },
+    });
+    const saved = await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/cargo-receipts`)
+      .send(receiptBody([{ cargoLineId: lines[0]!.id.toString(), receivedCtnQty: 100 }]));
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+
+    const row = await owner.cargoReceipt.findFirstOrThrow({
+      where: { shipmentId: id },
+      select: { shippingOrderId: true },
+    });
+    expect(row.shippingOrderId).toBeNull();
+  });
+
+  it('computes the received volume the same way the booked one is (§2.3)', async () => {
+    const { id, lineIds } = await readyToReceive(1);
+    await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/cargo-receipts`)
+      .send({
+        ...receiptBody([]),
+        lines: [
+          {
+            cargoLineId: lineIds[0]!,
+            receivedCtnQty: 100,
+            cartonLengthCm: '60',
+            cartonWidthCm: '40',
+            cartonHeightCm: '30',
+          },
+        ],
+      });
+
+    const line = await owner.cargoReceiptLine.findFirstOrThrow({
+      where: { shipmentCargoLineId: BigInt(lineIds[0]!) },
+      select: { receivedVolumeCbm: true },
+    });
+    expect(Number(line.receivedVolumeCbm)).toBe(7.2);
   });
 });

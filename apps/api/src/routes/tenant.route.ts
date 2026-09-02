@@ -24,6 +24,7 @@ import { quotationRouter } from './quotation.route';
 import { shipmentRouter } from './shipment.route';
 import { shipmentScheduleRouter } from './shipment-schedule.route';
 import { shippingOrderRouter } from './shipping-order.route';
+import { cargoReceiptRouter } from './cargo-receipt.route';
 import { salesLeadRouter } from './sales-lead.route';
 import { portRouter } from './port.route';
 import { notificationSettingRouter } from './notification-setting.route';
@@ -68,6 +69,8 @@ tenantRouter.use('/cs', quotationRouter);
 tenantRouter.use('/cs', shipmentRouter);
 tenantRouter.use('/cs', shipmentScheduleRouter);
 tenantRouter.use('/cs', shippingOrderRouter);
+// Operation — cargo receipt (MODULE_BOOKING_CARGO.md §6.7).
+tenantRouter.use('/ops', cargoReceiptRouter);
 tenantRouter.use('/sales', salesLeadRouter);
 
 // CRM.

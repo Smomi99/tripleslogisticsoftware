@@ -17,10 +17,10 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 
 import { ApprovalTab } from '@/components/cs/approval-tab';
+import { CargoReceiptTab } from '@/components/cs/cargo-receipt-tab';
 import { ScheduleScreen } from '@/components/cs/schedule-screen';
 import { ShippingOrderTab } from '@/components/cs/shipping-order-tab';
 import { ShipmentBookingScreen } from '@/components/cs/shipment-booking-screen';
-import { EmptyState } from '@/components/ui/empty-state';
 import { PageHeader } from '@/components/ui/form-layout';
 import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
@@ -262,10 +262,7 @@ export function ShipmentFileScreen({ shipmentId }: { shipmentId: string }) {
 
       {/* ------------------------------------------------------ cargo receipt */}
       {tab === 'cargo-receipt' && (
-        <EmptyState
-          title="Nothing received yet"
-          description="Cargo receipts are recorded against the shipping order, once the cargo reaches the warehouse."
-        />
+        <CargoReceiptTab booking={booking} onChanged={() => void load()} />
       )}
 
       {/* -------------------------------------------------------- activities */}

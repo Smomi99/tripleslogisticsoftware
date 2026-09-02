@@ -92,6 +92,15 @@ export const ACTIONS = [
    */
   'ISSUE',
   'SKIP',
+  /*
+   * §7's OPS.CARGO_RECEIPT. SHORT_CLOSE and OVERRIDE_QTY are separate on the
+   * spec's own instruction: "they write off cargo the customer paid to move,
+   * and should sit with a supervisor, not the warehouse clerk."
+   */
+  'CONFIRM',
+  'DECLINE_LINE',
+  'SHORT_CLOSE',
+  'OVERRIDE_QTY',
 ] as const;
 
 export type Action = (typeof ACTIONS)[number];
@@ -352,7 +361,17 @@ export const FEATURES: readonly FeatureDefinition[] = [
   },
 
   // -- 4. Operation ----------------------------------------------------------
-  { module: 'OPERATION', feature: 'OPERATION.CARGO_RECEIPT', label: 'Cargo Receipt', actions: MASTER },
+  /*
+    * §6.7's screen. §7 lists OPS.CARGO_RECEIPT as VIEW CREATE EDIT CONFIRM
+    * DECLINE_LINE SHORT_CLOSE OVERRIDE_QTY; the MASTER actions stay because
+    * production's permission rows point at them and the seed prunes nothing.
+    */
+  {
+    module: 'OPERATION',
+    feature: 'OPERATION.CARGO_RECEIPT',
+    label: 'Cargo Receipt',
+    actions: [...MASTER, 'CONFIRM', 'DECLINE_LINE', 'SHORT_CLOSE', 'OVERRIDE_QTY'],
+  },
   { module: 'OPERATION', feature: 'OPERATION.CONTAINER_LOAD_PLAN', label: 'Container Load Plan', actions: MASTER },
   { module: 'OPERATION', feature: 'OPERATION.STUFFING', label: 'Stuffing', actions: MASTER },
   { module: 'OPERATION', feature: 'OPERATION.IGM_SUBMISSION', label: 'IGM Submission', actions: MASTER },

@@ -280,6 +280,8 @@ model Tenant {
   shipmentSchedules    ShipmentSchedule[]
   shipmentScheduleLegs ShipmentScheduleLeg[]
   shippingOrders       ShippingOrder[]
+  cargoReceipts        CargoReceipt[]
+  cargoReceiptLines    CargoReceiptLine[]
   mailSignatureLogos   MailSignatureLogo[]
 
   @@index([slug])
@@ -1718,6 +1720,11 @@ model User {
   shippingOrdersIssued        ShippingOrder[]       @relation("ShippingOrderIssuedBy")
   shippingOrdersCreated       ShippingOrder[]       @relation("ShippingOrderCreatedBy")
   shippingOrdersUpdated       ShippingOrder[]       @relation("ShippingOrderUpdatedBy")
+  cargoReceiptsReceived       CargoReceipt[]        @relation("CargoReceiptReceivedBy")
+  cargoReceiptsCreated        CargoReceipt[]        @relation("CargoReceiptCreatedBy")
+  cargoReceiptsUpdated        CargoReceipt[]        @relation("CargoReceiptUpdatedBy")
+  cargoReceiptLinesCreated    CargoReceiptLine[]    @relation("CargoReceiptLineCreatedBy")
+  cargoReceiptLinesUpdated    CargoReceiptLine[]    @relation("CargoReceiptLineUpdatedBy")
   mailSignatureLogosCreated   MailSignatureLogo[]   @relation("MailSignatureLogoCreatedBy")
   mailSignatureLogosUpdated   MailSignatureLogo[]   @relation("MailSignatureLogoUpdatedBy")
 
@@ -3662,6 +3669,7 @@ model Shipment {
   cargoLines     ShipmentCargoLine[]
   schedules      ShipmentSchedule[]
   shippingOrders ShippingOrder[]
+  cargoReceipts  CargoReceipt[]
 
   @@unique([tenantId, code])
   /// §4 rule 10: a composite foreign key needs this to point at.
@@ -3821,8 +3829,9 @@ model ShipmentCargoLine {
   shipment   Shipment   @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict)
   shipmentPo ShipmentPo @relation(fields: [tenantId, shipmentPoId], references: [tenantId, id], onDelete: Restrict)
 
-  createdByUser User? @relation("ShipmentCargoLineCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
-  updatedByUser User? @relation("ShipmentCargoLineUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  createdByUser     User?              @relation("ShipmentCargoLineCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser     User?              @relation("ShipmentCargoLineUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  cargoReceiptLines CargoReceiptLine[]
 
   @@unique([tenantId, id])
   @@index([tenantId])
@@ -4013,9 +4022,10 @@ model ShippingOrder {
   /// Vessel is system-capable (§7A rule 7): single column plus the guard.
   firstVessel Vessel?           @relation("ShippingOrderFirstVessel", fields: [firstVesselId], references: [id], onDelete: Restrict)
 
-  issuedByUser  User? @relation("ShippingOrderIssuedBy", fields: [issuedBy], references: [id], onDelete: Restrict)
-  createdByUser User? @relation("ShippingOrderCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
-  updatedByUser User? @relation("ShippingOrderUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  issuedByUser  User?          @relation("ShippingOrderIssuedBy", fields: [issuedBy], references: [id], onDelete: Restrict)
+  createdByUser User?          @relation("ShippingOrderCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User?          @relation("ShippingOrderUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  cargoReceipts CargoReceipt[]
 
   @@unique([tenantId, id])
   @@index([tenantId])
@@ -4023,4 +4033,118 @@ model ShippingOrder {
   @@index([status])
   @@index([firstVesselId])
   @@map("shipping_order")
+}
+
+enum CargoReceiptStatus {
+  DRAFT
+  CONFIRMED
+
+  @@map("cargo_receipt_status")
+}
+
+/// §5.5 rule 2: each line is accepted or declined individually, with a reason.
+enum ReceiptLineStatus {
+  ACCEPTED
+  DECLINED
+
+  @@map("receipt_line_status")
+}
+
+/// What actually arrived at the warehouse (§4.4, §6.7).
+///
+/// §2.4 is why this is its own table rather than an update to the booking:
+/// booked, authorised and received are three different numbers on the same PO
+/// line, and the gap between them is the business. §5.5 rule 4 is why it has a
+/// sequence: a booking may have several receipts over time, each one kept.
+model CargoReceipt {
+  tenantId        BigInt  @map("tenant_id")
+  id              BigInt  @id @default(autoincrement())
+  code            String  @db.VarChar(32)
+  seriesYear      Int     @map("series_year")
+  shipmentId      BigInt  @map("shipment_id")
+  /// Null when the S/O was skipped (§5.4 rule 3) — the cargo still arrives.
+  shippingOrderId BigInt? @map("shipping_order_id")
+
+  receiveDate    DateTime @map("receive_date") @db.Date
+  unloadLocation String?  @map("unload_location") @db.Text
+  /// The client's own field on the §6.7 wireframe. Meaning unstated, so text.
+  efrNo          String?  @map("efr_no") @db.Text
+  /// §5.5 rule 4: 1st, 2nd, 3rd receipt against this booking.
+  receiptSeq     Int      @map("receipt_seq")
+
+  status      CargoReceiptStatus @default(DRAFT)
+  receivedBy  BigInt?            @map("received_by")
+  confirmedAt DateTime?          @map("confirmed_at") @db.Timestamptz(6)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  shipment      Shipment       @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict)
+  shippingOrder ShippingOrder? @relation(fields: [tenantId, shippingOrderId], references: [tenantId, id], onDelete: Restrict)
+
+  receivedByUser User? @relation("CargoReceiptReceivedBy", fields: [receivedBy], references: [id], onDelete: Restrict)
+  createdByUser  User? @relation("CargoReceiptCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser  User? @relation("CargoReceiptUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  lines CargoReceiptLine[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([shipmentId])
+  @@index([shippingOrderId])
+  @@index([status])
+  @@map("cargo_receipt")
+}
+
+/// One booked line, as it actually arrived (§4.4).
+model CargoReceiptLine {
+  tenantId            BigInt @map("tenant_id")
+  id                  BigInt @id @default(autoincrement())
+  cargoReceiptId      BigInt @map("cargo_receipt_id")
+  shipmentCargoLineId BigInt @map("shipment_cargo_line_id")
+
+  receivedCtnQty        Int      @map("received_ctn_qty")
+  receivedPcsQty        Int?     @map("received_pcs_qty")
+  receivedNetWeightKg   Decimal? @map("received_net_weight_kg") @db.Decimal(18, 3)
+  receivedGrossWeightKg Decimal? @map("received_gross_weight_kg") @db.Decimal(18, 3)
+
+  /// Re-measured on arrival (§5.5 rule 1). Centimetres, like the booking.
+  cartonLengthCm Decimal? @map("carton_length_cm") @db.Decimal(10, 3)
+  cartonWidthCm  Decimal? @map("carton_width_cm") @db.Decimal(10, 3)
+  cartonHeightCm Decimal? @map("carton_height_cm") @db.Decimal(10, 3)
+
+  /// Read-only, computed by Postgres — the same expression the booked volume
+  /// uses, so the two sitting side by side on §6.7's grid are comparable.
+  receivedVolumeCbm Decimal? @default(dbgenerated()) @map("received_volume_cbm") @db.Decimal(18, 4)
+
+  lineStatus        ReceiptLineStatus @default(ACCEPTED) @map("line_status")
+  declineReason     String?           @map("decline_reason") @db.Text
+  remarks           String?           @db.Text
+  /// §5.5 rule 6: more arrived than was booked, and somebody said why.
+  overReceiptReason String?           @map("over_receipt_reason") @db.Text
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant    Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  receipt   CargoReceipt      @relation(fields: [tenantId, cargoReceiptId], references: [tenantId, id], onDelete: Restrict)
+  cargoLine ShipmentCargoLine @relation(fields: [tenantId, shipmentCargoLineId], references: [tenantId, id], onDelete: Restrict)
+
+  createdByUser User? @relation("CargoReceiptLineCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("CargoReceiptLineUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([cargoReceiptId])
+  @@index([shipmentCargoLineId])
+  @@map("cargo_receipt_line")
 }

@@ -260,6 +260,27 @@ shippingOrderRouter.post(
         throw new HttpError(500, 'CODE_EXHAUSTED', 'Could not allocate a shipping order number.');
       }
 
+      /*
+       * §2.4's middle number, finally written. "Booked quantity, shipping-order
+       * quantity, and received quantity are three different numbers on the same
+       * PO line" — and until now nothing set the middle one, so §6.7's S/O
+       * column was permanently empty.
+       *
+       * The order authorises what was booked on the POs the customer approved.
+       * A line on a held-back PO keeps a null: nothing was authorised for it.
+       */
+      await db.$executeRaw`
+        UPDATE shipment_cargo_line
+           SET so_ctn_qty = ctn_qty, updated_by = ${auth.userId}
+         WHERE shipment_id = ${shipmentId}
+           AND deleted_at IS NULL
+           AND shipment_po_id IN (
+                 SELECT id FROM shipment_po
+                  WHERE shipment_id = ${shipmentId}
+                    AND deleted_at IS NULL
+                    AND approval_status = 'APPROVED'
+               )`;
+
       await transitionShipment(db, { shipmentId, to: 'SO_ISSUED', userId: auth.userId });
       return loadLive(db, shipmentId);
     });
