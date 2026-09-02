@@ -103,11 +103,17 @@ function Figure({ value, decimals }: { value: number | string | null; decimals: 
 export function ShipmentBookingScreen({
   shipmentId,
   quotationId,
+  embedded = false,
 }: {
   /** Editing an existing booking. */
   shipmentId?: string;
   /** Creating one against this quotation (§6.1's entry from the quotation list). */
   quotationId?: string;
+  /**
+   * Rendered inside §6.3's file, which already carries the booking number, the
+   * status and the way back. Drops them here so the page has one of each.
+   */
+  embedded?: boolean;
 }) {
   const { authorizedRequest, can } = useSession();
   const router = useRouter();
@@ -437,6 +443,7 @@ export function ShipmentBookingScreen({
 
   return (
     <div className="flex flex-col gap-4">
+      {!embedded && (
       <div className="flex flex-wrap items-start justify-between gap-3">
         <PageHeader
           title="Shipment Booking"
@@ -461,6 +468,7 @@ export function ShipmentBookingScreen({
           )}
         </div>
       </div>
+      )}
 
       {booking?.status === 'CANCELLED' ? (
         <p className="rounded-manifest border border-alert/30 bg-alert/5 px-3 py-2 text-body text-hull">
@@ -1044,9 +1052,13 @@ export function ShipmentBookingScreen({
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Link href="/cs/quotation" className="text-body text-harbour hover:underline">
-          ← Back to quotation list
-        </Link>
+        {embedded ? (
+          <span />
+        ) : (
+          <Link href="/cs/quotation" className="text-body text-harbour hover:underline">
+            ← Back to quotation list
+          </Link>
+        )}
         <div className="flex items-center gap-2">
           {booking !== null &&
             booking.status !== 'CANCELLED' &&

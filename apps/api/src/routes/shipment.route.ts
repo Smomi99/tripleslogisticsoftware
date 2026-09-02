@@ -7,6 +7,7 @@ import {
   type ShipmentCargoLineInput,
   shipmentCancelSchema,
   shipmentCreateSchema,
+  type ShipmentActivityDto,
   type ShipmentDto,
   SHIPMENT_EDITABLE,
   type ShipmentListRow,
@@ -22,6 +23,7 @@ import { renderVolumes } from '../lib/render-volumes';
 import { HttpError } from '../lib/http-error';
 import { nextBookingNo, seriesYearOf } from '../lib/inquiry-no';
 import { parseId, parseRefId } from '../lib/request';
+import { shipmentActivities } from '../lib/shipment-activity';
 import { transitionShipment } from '../lib/shipment-status';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
 import { authenticate } from '../middleware/authenticate';
@@ -804,6 +806,34 @@ shipmentRouter.post(
     });
 
     const payload: ApiSuccess<ShipmentDto> = { success: true, data };
+    res.json(payload);
+  },
+);
+
+/**
+ * GET /:id/activities — §6.3's Activities tab.
+ *
+ * The audit trail this file already writes, read back as sentences. Guarded by
+ * the booking's own VIEW and scoped like every other read of it: the history of
+ * a booking is as confidential as the booking.
+ */
+shipmentRouter.get(
+  '/bookings/:id/activities',
+  requirePermission(`${FEATURE}.VIEW`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'booking');
+
+    const data = await withTenant(auth.tenantId, async (db) => {
+      const visible = await db.shipment.findFirst({
+        where: { id, deletedAt: null, ...(await scopeFor(db, auth)) },
+        select: { id: true },
+      });
+      if (visible === null) throw HttpError.notFound('Booking not found.');
+      return shipmentActivities(db, id);
+    });
+
+    const payload: ApiSuccess<ShipmentActivityDto[]> = { success: true, data };
     res.json(payload);
   },
 );

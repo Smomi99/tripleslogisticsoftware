@@ -93,7 +93,14 @@ const newLeg = (originPortId = '', destinationPortId = ''): DraftLeg => ({
 const toIso = (v: string): string | undefined =>
   v.trim() === '' ? undefined : new Date(v).toISOString();
 
-export function ScheduleScreen({ shipmentId }: { shipmentId: string }) {
+export function ScheduleScreen({
+  shipmentId,
+  embedded = false,
+}: {
+  shipmentId: string;
+  /** Inside §6.3's file, which already names the booking and shows the way back. */
+  embedded?: boolean;
+}) {
   const { authorizedRequest, can } = useSession();
   const router = useRouter();
 
@@ -213,7 +220,8 @@ export function ScheduleScreen({ shipmentId }: { shipmentId: string }) {
         },
       );
       toast.success('Schedule proposed. The customer has been notified.');
-      router.push(`/cs/shipment-booking/${shipmentId}`);
+      // Back to the file's Overview, where the new schedule is summarised.
+      router.push(`/cs/shipment-booking/${shipmentId}?tab=overview`);
     } catch (error) {
       setFormError(
         error instanceof ApiError ? error.message : 'Could not save this schedule.',
@@ -254,13 +262,15 @@ export function ScheduleScreen({ shipmentId }: { shipmentId: string }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <PageHeader
-          title={isAir ? 'Flight Booking' : 'Vessel Booking'}
-          description={`Booking ${context.code} · ${context.customerName}`}
-        />
-        <span className="font-mono tabular-nums text-body text-hull">{context.code}</span>
-      </div>
+      {!embedded && (
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <PageHeader
+            title={isAir ? 'Flight Booking' : 'Vessel Booking'}
+            description={`Booking ${context.code} · ${context.customerName}`}
+          />
+          <span className="font-mono tabular-nums text-body text-hull">{context.code}</span>
+        </div>
+      )}
 
       {/* ---------------------------------------- the booking, read-only (§6.4) */}
       <section className="rounded-manifest border border-line bg-surface p-4 shadow-manifest">
@@ -576,12 +586,16 @@ export function ScheduleScreen({ shipmentId }: { shipmentId: string }) {
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Link
-          href={`/cs/shipment-booking/${shipmentId}`}
-          className="text-body text-harbour hover:underline"
-        >
-          ← Back to the booking
-        </Link>
+        {embedded ? (
+          <span />
+        ) : (
+          <Link
+            href={`/cs/shipment-booking/${shipmentId}`}
+            className="text-body text-harbour hover:underline"
+          >
+            ← Back to the booking
+          </Link>
+        )}
         {canPropose && (
           <Button disabled={isPending || problems.length > 0} onClick={() => void save()}>
             {isPending ? 'Saving…' : 'Propose to customer'}

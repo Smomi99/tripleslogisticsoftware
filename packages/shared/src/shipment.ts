@@ -707,3 +707,47 @@ export const shipmentScheduleInputSchema = z
   });
 
 export type ShipmentScheduleInput = z.infer<typeof shipmentScheduleInputSchema>;
+
+// --------------------------------------------------------------- activities
+
+/**
+ * One line of §6.3's Activities tab — the audit trail, read as sentences.
+ *
+ * §5.1 requires every transition to be recorded and the trigger already does
+ * it, but `UPDATE` with two JSONB blobs is a developer's view of the file. The
+ * operations team needs "Status: Booking received → Vessel proposed", so the
+ * API describes the row and the screen only lays it out.
+ */
+export interface ShipmentActivityDto {
+  id: string;
+  at: string;
+  /** Null when the change had no signed-in actor — a job, a migration. */
+  actorName: string | null;
+  /** What happened, in one line. */
+  summary: string;
+  /** The before and after, when there is one worth showing. */
+  detail: string | null;
+}
+
+/** The tabs of §6.3's shipment file, in the client's own order. */
+export const SHIPMENT_TABS = [
+  { id: 'overview', label: 'Overview', live: true },
+  { id: 'booking', label: 'Booking', live: true },
+  { id: 'schedule', label: 'Vessel Schedule', live: true },
+  { id: 'approval', label: 'Approval', live: true },
+  { id: 'shipping-order', label: 'Shipping Order', live: true },
+  { id: 'cargo-receipt', label: 'Cargo Receipt', live: true },
+  { id: 'stuffing', label: 'Stuffing', live: false },
+  { id: 'shipment-advise', label: 'Shipment Advise', live: false },
+  { id: 'bl', label: 'BL', live: false },
+  { id: 'documents', label: 'Documents', live: false },
+  { id: 'tracking', label: 'Tracking', live: false },
+  { id: 'finance', label: 'Finance', live: false },
+  { id: 'activities', label: 'Activities', live: true },
+] as const;
+
+export type ShipmentTabId = (typeof SHIPMENT_TABS)[number]['id'];
+
+export function isShipmentTab(value: string): value is ShipmentTabId {
+  return SHIPMENT_TABS.some((tab) => tab.id === value);
+}

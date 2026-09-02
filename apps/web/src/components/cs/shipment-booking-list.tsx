@@ -271,7 +271,7 @@ export function ShipmentBookingList({ mode }: { mode: 'SEA' | 'AIR' }) {
                 (next.permission === 'CUSTOMER_SERVICE.SCHEDULE.CREATE' ? (
                   // §6.4's screen, which phase E built.
                   <Link
-                    href={`/cs/shipment-booking/${row.id}/schedule`}
+                    href={`/cs/shipment-booking/${row.id}?tab=schedule`}
                     className="text-body text-harbour hover:underline"
                   >
                     {next.label}

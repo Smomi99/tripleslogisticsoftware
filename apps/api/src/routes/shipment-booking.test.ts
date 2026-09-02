@@ -633,6 +633,103 @@ describe('cancelling (§5.1)', () => {
   });
 });
 
+describe('the Activities tab (§6.3)', () => {
+  interface Activity {
+    at: string;
+    actorName: string | null;
+    summary: string;
+    detail: string | null;
+  }
+
+  async function trail(id: string): Promise<Activity[]> {
+    const res = await as(token).get(`/api/tenant/cs/bookings/${id}/activities`);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    return (res.body as { data: Activity[] }).data;
+  }
+
+  it('reads the audit trail back as sentences, not JSONB', async () => {
+    /*
+     * The trigger has been writing this since the tables existed. What phase F
+     * adds is the reading: "UPDATE, old_values {...}" is a developer's view of
+     * a booking, and §6.3's tab is for the operations team.
+     */
+    const booking = await createBooking([
+      { poNo: 'PO-ACT-1', itemCode: 'WIDGET', sku: 'W-1', ctnQty: 5 },
+    ]);
+
+    const events = await trail(booking.id);
+    const summaries = events.map((e) => e.summary);
+
+    expect(summaries).toContain('Booking created');
+    expect(summaries).toContain('PO PO-ACT-1 added');
+    expect(summaries).toContain('Cargo line WIDGET / W-1 added');
+  });
+
+  it('names the actor and the moment', async () => {
+    const booking = await createBooking([{ poNo: 'PO-ACT-2', itemCode: 'ITEM', ctnQty: 1 }]);
+    const events = await trail(booking.id);
+
+    expect(events[0]?.actorName).toBe('admin-book');
+    expect(Number.isNaN(Date.parse(events[0]?.at ?? ''))).toBe(false);
+  });
+
+  it('describes a status change in words, both sides of it', async () => {
+    const booking = await createBooking([{ poNo: 'PO-ACT-3', itemCode: 'ITEM', ctnQty: 1 }]);
+    await as(token)
+      .post(`/api/tenant/cs/bookings/${booking.id}/cancel`)
+      .send({ reason: 'Customer withdrew.' });
+
+    const events = await trail(booking.id);
+    const change = events.find((e) => e.summary === 'Status changed');
+    expect(change).toBeDefined();
+    expect(change?.detail).toBe('Booking received → Cancelled — Customer withdrew.');
+  });
+
+  it('records the submission as its own event', async () => {
+    const booking = await createBooking([{ poNo: 'PO-ACT-4', itemCode: 'ITEM', ctnQty: 1 }]);
+    await as(token).post(`/api/tenant/cs/bookings/${booking.id}/submit`);
+
+    expect((await trail(booking.id)).map((e) => e.summary)).toContain('Booking submitted');
+  });
+
+  it('shows a removed cargo line as removed, not merely edited', async () => {
+    // CR-002's distinction, which app_audit_row already draws: a soft delete
+    // and a deactivation look identical in SQL and are different events.
+    const booking = await createBooking([
+      { poNo: 'PO-ACT-5', itemCode: 'KEEP', ctnQty: 1 },
+      { poNo: 'PO-ACT-5', itemCode: 'GOING', ctnQty: 1 },
+    ]);
+    const keep = booking.cargoLines.find((l) => l.itemCode === 'KEEP')!;
+    await as(token)
+      .patch(`/api/tenant/cs/bookings/${booking.id}`)
+      .send({
+        carrierId: carrierId.toString(),
+        polId: portId.toString(),
+        podId: portId.toString(),
+        cargoLines: [{ id: keep.id, poNo: 'PO-ACT-5', itemCode: 'KEEP', ctnQty: 1 }],
+      });
+
+    const summaries = (await trail(booking.id)).map((e) => e.summary);
+    expect(summaries).toContain('Cargo line GOING removed');
+  });
+
+  it('is newest first', async () => {
+    const booking = await createBooking([{ poNo: 'PO-ACT-6', itemCode: 'ITEM', ctnQty: 1 }]);
+    await as(token).post(`/api/tenant/cs/bookings/${booking.id}/submit`);
+
+    const events = await trail(booking.id);
+    expect(events[0]?.summary).toBe('Booking submitted');
+    expect(events[events.length - 1]?.summary).toBe('Booking created');
+  });
+
+  it('is as confidential as the booking itself', async () => {
+    // tokenNoSubmit holds VIEW but no VIEW_ALL, and did not raise this one.
+    const booking = await createBooking([{ poNo: 'PO-ACT-7', itemCode: 'ITEM', ctnQty: 1 }]);
+    const res = await as(tokenNoSubmit).get(`/api/tenant/cs/bookings/${booking.id}/activities`);
+    expect(res.status).toBe(404);
+  });
+});
+
 describe('the browser and the database agree (§2.3)', () => {
   it('previews exactly what Postgres stores', async () => {
     /*
