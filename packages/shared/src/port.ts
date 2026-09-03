@@ -68,6 +68,23 @@ export interface PortDto {
 }
 
 /**
+ * What a picker needs, and no more — the payload of `GET /ports/lookup`.
+ *
+ * Narrower than PortDto on purpose. The lookup is unpaginated because a picker
+ * has to offer every port, so the row it sends goes out two hundred times and
+ * the fields a list screen needs (the business code, the active flag, whether
+ * the row is shared) are all things a dropdown never shows. Its own type rather
+ * than a lie about PortDto: the endpoint really does send less.
+ */
+export interface PortLookupDto {
+  id: string;
+  name: string;
+  portCode: string;
+  country: string;
+  type: PortType;
+}
+
+/**
  * How a port reads in a picker: `Chittagong - CGP`.
  *
  * Name first, deliberately. An operator hunting for Hamburg types "Ham", and a

@@ -5,7 +5,7 @@ import {
   type CarrierServicePortDto,
   type CarrierServicePortInput,
   carrierServicePortInputSchema,
-  type PortDto,
+  type PortLookupDto,
   portLabel,
 } from '@ff/shared';
 import type { Route } from 'next';
@@ -30,14 +30,20 @@ import { useSession } from '@/lib/session';
 export default function CarrierServicePortPage() {
   const params = useParams<{ id: string }>();
   const carrierId = params.id;
-  const { authorizedList } = useSession();
-  const [ports, setPorts] = useState<PortDto[]>([]);
+  const { authorizedRequest } = useSession();
+  const [ports, setPorts] = useState<PortLookupDto[]>([]);
 
   useEffect(() => {
-    void authorizedList<PortDto[]>('/api/tenant/setting/ports?limit=100&isActive=true')
-      .then((response) => setPorts(response.data))
+    /*
+     * The unpaginated lookup, not the list. The list caps at 100 by §9's rule,
+     * which is right for a screen and wrong for a picker: a workspace with two
+     * hundred ports was offered the first hundred and told nothing about the
+     * rest.
+     */
+    void authorizedRequest<PortLookupDto[]>('/api/tenant/setting/ports/lookup')
+      .then(setPorts)
       .catch(() => setPorts([]));
-  }, [authorizedList]);
+  }, [authorizedRequest]);
 
   const columns: DataTableColumn<CarrierServicePortDto>[] = [
     { id: 'port', header: 'Port', sortable: true, cell: (r) => r.portName },
@@ -81,7 +87,7 @@ function ServicePortForm({
   onCancel,
 }: {
   servicePort: CarrierServicePortDto | null;
-  ports: PortDto[];
+  ports: PortLookupDto[];
   onSubmit: (values: unknown) => Promise<void>;
   onCancel: () => void;
 }) {

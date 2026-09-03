@@ -626,6 +626,41 @@ const EMAIL_TEMPLATES = [
       'link',
     ],
   },
+  {
+    // MODULE_INQUIRY_QUOTATION.md §6.5's "Save & Send". The figures are here
+    // because a customer reading it on a phone should not have to open
+    // anything to know what was quoted; the document itself is on the record.
+    key: 'QUOTATION_SENT',
+    name: 'Quotation — sent to the customer',
+    subject: 'Quotation {{quotationNo}} — {{polName}} to {{podName}}',
+    bodyText: [
+      'Dear {{customerName}},',
+      '',
+      'Thank you for your inquiry. Our quotation {{quotationNo}} follows.',
+      '',
+      'Routing: {{polName}} to {{podName}} ({{shipmentType}})',
+      'Commodity: {{commodity}}',
+      'Total: USD {{totalUsd}}',
+      'In word: {{amountInWords}}',
+      'Valid until: {{validityDate}}',
+      '',
+      'The full quotation, with every charge itemised, is on the record and can',
+      'be sent as a PDF on request.',
+      '',
+      'Please let us know if you would like us to proceed.',
+    ].join('\n'),
+    variables: [
+      'customerName',
+      'quotationNo',
+      'polName',
+      'podName',
+      'shipmentType',
+      'commodity',
+      'totalUsd',
+      'amountInWords',
+      'validityDate',
+    ],
+  },
 ] as const;
 
 /**

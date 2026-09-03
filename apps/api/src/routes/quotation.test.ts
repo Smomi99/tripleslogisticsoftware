@@ -62,6 +62,7 @@ async function cleanup(): Promise<void> {
     'freight_rate_line',
     'freight_rate',
     'audit_log',
+    'email_log',
     'role_permission',
     'user_permission',
     '"user"',
@@ -810,5 +811,94 @@ describe('the quotation notes (§6.6)', () => {
       });
     expect(res.status).toBe(200);
     expect((res.body as Buffer).subarray(0, 5).toString()).toBe('%PDF-');
+  });
+});
+
+/**
+ * Reported from production, 2026-09-03.
+ *
+ * Both faults had the same shape: a thing the screen plainly meant to do, which
+ * the code quietly did not do, with nothing failing to say so.
+ */
+describe('reported from production', () => {
+  it('sends the letter — Save & Send never queued one', async () => {
+    /*
+     * §5.3 rule 9 asks for an email_log row on send. The endpoint marked the
+     * quotation SENT, rewrote the recipients and answered the inquiry, and
+     * queued nothing: a customer waiting on a price got no letter, while the
+     * record said one had gone.
+     */
+    const created = await create();
+    const { id, code } = (created.body as { data: { id: string; code: string } }).data;
+
+    const res = await post(`/api/tenant/cs/quotations/${id}/send`, {
+      recipients: [
+        { email: 'buyer@qtn.test', kind: 'TO' },
+        { email: 'desk@qtn.test', kind: 'CC' },
+      ],
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+
+    const mail = await owner.emailLog.findFirst({
+      where: { tenantId, relatedType: 'quotation', relatedId: BigInt(id) },
+      select: { toAddresses: true, ccAddresses: true, subject: true, bodyText: true },
+    });
+    expect(mail).not.toBeNull();
+    expect(mail?.toAddresses).toEqual(['buyer@qtn.test']);
+    expect(mail?.ccAddresses).toEqual(['desk@qtn.test']);
+    expect(mail?.subject).toContain(code);
+    // The figures are in the letter itself, so a customer reading it on a phone
+    // knows what was quoted without opening anything.
+    expect(mail?.bodyText).toContain('Total: USD');
+    expect(mail?.bodyText).toContain('Dhaka Apparels');
+  });
+
+  it('sends again when a revision goes out', async () => {
+    /*
+     * §5.3 rule 8: editing a SENT quotation issues revision 2 and supersedes
+     * revision 1. The customer is holding a price we have just changed, so
+     * sending the revision has to mail them too — and mail them the revision,
+     * not a second copy of what they already have.
+     */
+    const created = await create();
+    const first = (created.body as { data: { id: string } }).data.id;
+    await post(`/api/tenant/cs/quotations/${first}/send`, {
+      recipients: [{ email: 'buyer@qtn.test', kind: 'TO' }],
+    });
+
+    const edited = await patch(`/api/tenant/cs/quotations/${first}`, {
+      validityDate: '2026-12-31',
+    });
+    expect(edited.status, JSON.stringify(edited.body)).toBe(200);
+    const revision = (edited.body as { data: { id: string; revisionNo: number } }).data;
+    expect(revision.revisionNo).toBe(2);
+
+    const resent = await post(`/api/tenant/cs/quotations/${revision.id}/send`, {
+      recipients: [{ email: 'buyer@qtn.test', kind: 'TO' }],
+    });
+    expect(resent.status, JSON.stringify(resent.body)).toBe(200);
+
+    const mails = await owner.emailLog.findMany({
+      where: { tenantId, relatedType: 'quotation', relatedId: BigInt(revision.id) },
+      select: { subject: true },
+    });
+    expect(mails).toHaveLength(1);
+    expect(mails[0]?.subject).toMatch(/rev 2/);
+  });
+
+  it('records nothing when every address was dropped', async () => {
+    // A send with no To is a mistake, not a message. Nothing queues, and the
+    // outbox does not gain a row claiming otherwise.
+    const created = await create();
+    const id = (created.body as { data: { id: string } }).data.id;
+    const res = await post(`/api/tenant/cs/quotations/${id}/send`, {
+      recipients: [{ email: 'watcher@qtn.test', kind: 'CC' }],
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+
+    const mails = await owner.emailLog.count({
+      where: { tenantId, relatedType: 'quotation', relatedId: BigInt(id) },
+    });
+    expect(mails).toBe(0);
   });
 });

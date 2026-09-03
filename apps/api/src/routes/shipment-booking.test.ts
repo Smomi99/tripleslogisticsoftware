@@ -843,3 +843,44 @@ describe('the browser and the database agree (§2.3)', () => {
     expect(totals.volumeCbm).toBeCloseTo(stored, 4);
   });
 });
+
+describe('the quotation this booking answers', () => {
+  /*
+   * Reported from production, 2026-09-03: the Booking action on the Quotation
+   * List was permanently greyed out. It was gated on the quotation being
+   * ACCEPTED, and nothing anywhere in the product ever wrote that status — the
+   * value sat in the enum with no route to it, so the button could not be
+   * pressed on any quotation that had ever existed.
+   *
+   * The acceptance itself arrives by phone or email; raising the booking is the
+   * moment it becomes a fact worth recording, so that is where it is recorded.
+   */
+  const oneLine = [{ poNo: 'PO-ACC', itemCode: 'ITEM', ctnQty: 1 }];
+  const statusNow = () =>
+    owner.quotation
+      .findFirstOrThrow({ where: { id: quotationId }, select: { status: true } })
+      .then((q) => q.status);
+
+  it('marks a sent quotation accepted', async () => {
+    await owner.quotation.update({ where: { id: quotationId }, data: { status: 'SENT' } });
+    await createBooking(oneLine);
+    expect(await statusNow()).toBe('ACCEPTED');
+  });
+
+  it('leaves an accepted one alone — §5.2 rule 1 allows several bookings', async () => {
+    await owner.quotation.update({ where: { id: quotationId }, data: { status: 'ACCEPTED' } });
+    await createBooking(oneLine);
+    expect(await statusNow()).toBe('ACCEPTED');
+  });
+
+  it('does not resurrect a rejected one', async () => {
+    // Only SENT advances. A quotation the customer turned down, or one that
+    // expired, goes on saying so — raising a booking against it does not
+    // rewrite the history of the negotiation.
+    await owner.quotation.update({ where: { id: quotationId }, data: { status: 'REJECTED' } });
+    await createBooking(oneLine);
+    expect(await statusNow()).toBe('REJECTED');
+
+    await owner.quotation.update({ where: { id: quotationId }, data: { status: 'DRAFT' } });
+  });
+});

@@ -5,6 +5,7 @@ import {
   buildMeta,
   CODE_PREFIX,
   type PortDto,
+  type PortLookupDto,
   portInputSchema,
   portListQuerySchema,
 } from '@ff/shared';
@@ -12,6 +13,7 @@ import {
 import { CODE_RETRY_LIMIT, codeSortSql, isUniqueViolation, nextCode } from '../lib/codes';
 import { HttpError } from '../lib/http-error';
 import { assertCustomisable, recordReplacement, repointReferences } from '../lib/customise';
+import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import { assertRowDeletable, deleteOwnedChildren } from '../lib/references';
 import { Prisma } from '../generated/prisma/client';
 import { withTenant } from '../lib/tenant-client';
@@ -68,6 +70,44 @@ function toDto(row: PortRow): PortDto {
     isSystem: row.is_system,
   };
 }
+
+/**
+ * GET /api/tenant/setting/ports/lookup — every active port, unpaginated.
+ *
+ * The list endpoint above is paginated and §9 caps `limit` at 100, which is
+ * correct for a screen somebody reads and wrong for a picker. A workspace with
+ * two hundred ports was being offered the first hundred, silently: the Carrier
+ * Service Port screen asked for `?limit=100` and simply did not know about the
+ * rest. There is no page size that fixes that — a picker needs the whole set,
+ * so it gets its own endpoint rather than a bigger number.
+ *
+ * Declared before `/:id` would be, so the word "lookup" is never read as an id.
+ */
+portRouter.get('/lookup', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
+  const auth = req.auth!;
+
+  const data = await withTenant<PortLookupDto[]>(auth.tenantId, async (db) => {
+    // §7A rule 7: a shared row a workspace switched off writes an override
+    // rather than changing is_active, so filtering on the column alone would
+    // offer ports this workspace has already hidden.
+    const inactive = await inactiveMasters(db);
+    const rows = await db.port.findMany({
+      where: { ...excludeInactive(inactive, 'port'), deletedAt: null, isActive: true },
+      select: { id: true, name: true, portCode: true, country: true, type: true },
+      orderBy: { name: 'asc' },
+    });
+    return rows.map((row) => ({
+      id: row.id.toString(),
+      name: row.name,
+      portCode: row.portCode,
+      country: row.country,
+      type: row.type,
+    }));
+  });
+
+  const payload: ApiSuccess<PortLookupDto[]> = { success: true, data };
+  res.json(payload);
+});
 
 /**
  * GET /api/tenant/setting/ports

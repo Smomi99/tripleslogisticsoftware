@@ -643,7 +643,7 @@ shipmentRouter.post('/bookings', requirePermission(`${FEATURE}.CREATE`), async (
     const quotationId = parseRefId(input.quotationId, 'quotation');
     const quotation = await db.quotation.findFirst({
       where: { id: quotationId, deletedAt: null },
-      select: { id: true, shipmentType: true, customerId: true },
+      select: { id: true, shipmentType: true, customerId: true, status: true },
     });
     if (quotation === null) throw HttpError.notFound('Quotation not found.');
 
@@ -692,6 +692,20 @@ shipmentRouter.post('/bookings', requirePermission(`${FEATURE}.CREATE`), async (
     }
     if (shipmentId === null) {
       throw new HttpError(500, 'CODE_EXHAUSTED', 'Could not allocate a booking number.');
+    }
+
+    /*
+     * Raising a booking IS the acceptance, and marking it here is what makes
+     * ACCEPTED a state the product can actually reach. Nothing else ever wrote
+     * it: the status existed in the enum, the Quotation List gated its Booking
+     * action on it, and so that button could never be pressed. Recording the
+     * fact where it happens beats adding a button somebody has to remember.
+     */
+    if (quotation.status === 'SENT') {
+      await db.quotation.update({
+        where: { id: quotation.id },
+        data: { status: 'ACCEPTED', updatedBy: auth.userId },
+      });
     }
 
     // §5.2 rule 2's commodities, inherited from the quotation.

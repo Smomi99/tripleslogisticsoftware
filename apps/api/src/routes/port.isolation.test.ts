@@ -55,7 +55,7 @@ async function makeTenantWithUser(
 
 async function cleanup(): Promise<void> {
   await owner.$executeRaw`DELETE FROM tenant_master_override WHERE tenant_id IN (SELECT id FROM tenant WHERE slug IN (${SLUG_A}, ${SLUG_B}))`;
-  await owner.$executeRaw`DELETE FROM port WHERE code LIKE 'PORTTEST-%' OR port_code IN ('AAAAAA','BBBBBB','SYSSYS','NEWNEW')`;
+  await owner.$executeRaw`DELETE FROM port WHERE code LIKE 'PORTTEST-%' OR code LIKE 'PORTTEST-BULK-%' OR port_code IN ('AAAAAA','BBBBBB','SYSSYS','NEWNEW')`;
   await owner.$executeRaw`DELETE FROM "user" WHERE tenant_id IN (SELECT id FROM tenant WHERE slug IN (${SLUG_A}, ${SLUG_B}))`;
   await owner.$executeRaw`DELETE FROM tenant WHERE slug IN (${SLUG_A}, ${SLUG_B})`;
 }
@@ -245,5 +245,114 @@ describe('§7 — every route is permission guarded', () => {
       .set('X-Tenant-Slug', SLUG_A);
 
     expect(response.status).toBe(403);
+  });
+});
+
+describe('the port picker (/ports/lookup)', () => {
+  /*
+   * Reported from production, 2026-09-03: the Carrier Service Port screen
+   * showed a fraction of the workspace's ports.
+   *
+   * It was asking the paginated list for `?limit=100`, and §9 caps limit at
+   * 100 — so a workspace holding two hundred ports was offered the first
+   * hundred, in silence, with no page control on a picker to reach the rest.
+   * No page size fixes that; a picker needs the whole set, so it gets its own
+   * unpaginated endpoint.
+   */
+  /*
+   * An earlier test in this file switches the shared port off for tenant A and
+   * leaves the override standing. These tests are about what the picker offers,
+   * so they start from a workspace that has switched nothing off.
+   */
+  beforeAll(async () => {
+    await owner.tenantMasterOverride.deleteMany({
+      where: { tenantId: tenantA, tableName: 'port', recordId: systemPort },
+    });
+  });
+
+  it('returns every active port, past any page limit', async () => {
+    const bulk = 140;
+    await owner.port.createMany({
+      data: Array.from({ length: bulk }, (_, i) => ({
+        tenantId: tenantA,
+        code: `PORTTEST-BULK-${String(i).padStart(3, '0')}`,
+        name: `Bulk Port ${String(i).padStart(3, '0')}`,
+        portCode: `ZB${String(i).padStart(4, '0')}`,
+        country: 'Testland',
+        type: 'SEAPORT' as const,
+      })),
+    });
+
+    const response = await asTenantA('/api/tenant/setting/ports/lookup');
+    expect(response.status).toBe(200);
+    const names = (response.body.data as { name: string }[]).map((p) => p.name);
+
+    expect(names.length).toBeGreaterThan(100);
+    // The whole run is there — not the first page of it.
+    for (const i of [0, 99, 100, bulk - 1]) {
+      expect(names).toContain(`Bulk Port ${String(i).padStart(3, '0')}`);
+    }
+
+    await owner.$executeRaw`DELETE FROM port WHERE code LIKE 'PORTTEST-BULK-%'`;
+  });
+
+  it('is scoped like the list it replaces', async () => {
+    // §7A rule 4 again, because a second endpoint over the same table is a
+    // second chance to leak it: tenant A's own rows and the shared rows, never
+    // tenant B's.
+    const response = await asTenantA('/api/tenant/setting/ports/lookup');
+    expect(response.status).toBe(200);
+    const ids = (response.body.data as { id: string }[]).map((p) => p.id);
+
+    expect(ids).toContain(systemPort.toString());
+    expect(ids).not.toContain(portB.toString());
+  });
+
+  it('drops a shared port this workspace switched off', async () => {
+    /*
+     * §7A rule 7: a tenant cannot deactivate a shared row, it overrides it. A
+     * picker reading is_active alone would go on offering a port the workspace
+     * has said it does not use — the bug lib/master-visibility exists to stop.
+     */
+    await owner.tenantMasterOverride.create({
+      data: { tenantId: tenantA, tableName: 'port', recordId: systemPort, isActive: false },
+    });
+
+    const response = await asTenantA('/api/tenant/setting/ports/lookup');
+    expect(response.status).toBe(200);
+    const ids = (response.body.data as { id: string }[]).map((p) => p.id);
+    expect(ids).not.toContain(systemPort.toString());
+
+    await owner.tenantMasterOverride.deleteMany({
+      where: { tenantId: tenantA, tableName: 'port', recordId: systemPort },
+    });
+  });
+
+  it('leaves out what is inactive or deleted', async () => {
+    const gone = await owner.port.create({
+      data: {
+        tenantId: tenantA,
+        code: 'PORTTEST-OFF',
+        name: 'Closed Port',
+        portCode: 'ZZOFF1',
+        country: 'Bangladesh',
+        type: 'SEAPORT',
+        isActive: false,
+      },
+      select: { id: true },
+    });
+
+    const response = await asTenantA('/api/tenant/setting/ports/lookup');
+    const ids = (response.body.data as { id: string }[]).map((p) => p.id);
+    expect(ids).not.toContain(gone.id.toString());
+
+    await owner.$executeRaw`DELETE FROM port WHERE code = 'PORTTEST-OFF'`;
+  });
+
+  it('needs the same permission as the list', async () => {
+    const response = await request(app)
+      .get('/api/tenant/setting/ports/lookup')
+      .set('X-Tenant-Slug', SLUG_A);
+    expect(response.status).toBe(401);
   });
 });

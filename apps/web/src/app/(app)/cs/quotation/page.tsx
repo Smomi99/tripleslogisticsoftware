@@ -264,7 +264,14 @@ export default function QuotationListPage() {
             )}
             {/* §6.7's hand-off into MODULE_BOOKING_CARGO.md §6.1. */}
             {can('CUSTOMER_SERVICE.CARGO_BOOKING.CREATE') &&
-              (row.status === 'ACCEPTED' ? (
+              /*
+                Offered from SENT, not only ACCEPTED. Nothing in the product
+                ever wrote ACCEPTED, so this button was permanently disabled —
+                the customer's acceptance arrives by phone or email, and
+                raising the booking is how it gets recorded. The booking route
+                marks the quotation accepted when it does.
+              */
+              (row.status === 'SENT' || row.status === 'ACCEPTED' ? (
                 <Link
                   href={{ pathname: '/cs/shipment-booking/new', query: { quotationId: row.id } }}
                   className="text-body text-harbour hover:underline"
@@ -277,7 +284,7 @@ export default function QuotationListPage() {
                   variant="text"
                   size="inline"
                   disabled
-                  title="Available once the customer has accepted this quotation"
+                  title="Available once the quotation has been sent"
                 >
                   Booking
                 </Button>

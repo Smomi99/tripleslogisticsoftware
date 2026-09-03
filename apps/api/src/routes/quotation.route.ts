@@ -27,6 +27,7 @@ import { HttpError } from '../lib/http-error';
 import { Prisma } from '../generated/prisma/client';
 import { pullQuotationLines } from '../lib/quotation-pull';
 import { parseId, parseRefId } from '../lib/request';
+import { queueMail } from '../lib/email-queue';
 import { renderQuotationPdf } from '../lib/quotation-pdf';
 import { renderVolumes } from '../lib/render-volumes';
 import { openFile } from '../lib/storage';
@@ -1158,6 +1159,51 @@ quotationRouter.post(
       });
     });
 
+    /*
+     * §6.5's "Save & Send" — the send half, which this endpoint has never done.
+     * Until now it marked the quotation SENT, rewrote the recipient list and
+     * answered the inquiry, and no letter ever left the building: a customer
+     * waiting on a price got nothing, and the record said it had gone.
+     *
+     * Queued after the transaction commits, like every other notification here.
+     * A customer told about a quotation that rolled back would be reading a
+     * letter about nothing.
+     */
+    const sent = await withTenant(auth.tenantId, (db) => findScoped(db, auth, id));
+    const dto = toDto(sent);
+    const to = input.recipients.filter((r) => r.kind === 'TO').map((r) => r.email);
+    const cc = input.recipients.filter((r) => r.kind === 'CC').map((r) => r.email);
+
+    if (to.length > 0) {
+      await queueMail({
+        tenantId: auth.tenantId,
+        templateKey: 'QUOTATION_SENT',
+        to,
+        cc,
+        variables: {
+          customerName: dto.customerName,
+          quotationNo:
+            dto.revisionNo > 1 ? `${dto.code} (rev ${dto.revisionNo})` : dto.code,
+          polName: dto.polName ?? '—',
+          podName: dto.podName ?? '—',
+          shipmentType: dto.shipmentType === 'AIR' ? 'Air' : 'Sea',
+          commodity: dto.commodities.map((c) => c.commodityName).join(', ') || '—',
+          totalUsd: dto.totalAmountUsd ?? '0.0000',
+          amountInWords: dto.amountInWords ?? '—',
+          validityDate: dto.validityDate ?? 'on request',
+        },
+        relatedType: 'quotation',
+        relatedId: id,
+        actorId: auth.userId,
+        fallback: {
+          subject: `Quotation ${dto.code}`,
+          bodyText:
+            `Our quotation ${dto.code} for ${dto.polName ?? '—'} to ${dto.podName ?? '—'} ` +
+            `comes to USD ${dto.totalAmountUsd ?? '0.0000'}.`,
+        },
+      });
+    }
+
     await recordAudit({
       tenantId: auth.tenantId,
       action: 'UPDATE',
@@ -1167,8 +1213,7 @@ quotationRouter.post(
       details: { sent: true, recipients: input.recipients.length },
     });
 
-    const row = await withTenant(auth.tenantId, (db) => findScoped(db, auth, id));
-    const payload: ApiSuccess<QuotationDto> = { success: true, data: toDto(row) };
+    const payload: ApiSuccess<QuotationDto> = { success: true, data: dto };
     res.json(payload);
   },
 );
