@@ -176,6 +176,33 @@ shipmentScheduleRouter.post(
       });
       if (shipment === null) throw HttpError.notFound('Booking not found.');
 
+      /*
+       * §9 Q4, answered 2026-09-03: VGM and SI dates are sea only.
+       *
+       * VGM is SOLAS verified gross mass, a container weight declaration, and
+       * SI is the shipping instruction that goes with a bill of lading —
+       * neither means anything on an air waybill. The client drew both on the
+       * Flight Booking wireframe and has confirmed that was a slip.
+       *
+       * Refused rather than quietly nulled: a screen that sent one would be a
+       * bug worth hearing about, and silently dropping a date somebody typed
+       * is how a cut-off gets missed.
+       */
+      if (shipment.shipmentType === 'AIR') {
+        const seaOnly = [
+          input.vgmDate == null ? null : 'VGM date',
+          input.siDate == null ? null : 'SI date',
+        ].filter((f): f is string => f !== null);
+        if (seaOnly.length > 0) {
+          throw new HttpError(
+            400,
+            'SEA_ONLY_FIELD',
+            `${seaOnly.join(' and ')} ${seaOnly.length === 1 ? 'applies' : 'apply'} to sea freight ` +
+              `only. ${shipment.code} is an air booking.`,
+          );
+        }
+      }
+
       // §4.2: supersede BEFORE inserting. The live index is partial and checked
       // per statement, so two live rows never exist even for an instant.
       await db.shipmentSchedule.updateMany({

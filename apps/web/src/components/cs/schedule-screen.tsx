@@ -213,8 +213,10 @@ export function ScheduleScreen({
             carrierId,
             transitType,
             cutOffDate: toIso(cutOffDate) ?? null,
-            vgmDate: vgmDate === '' ? null : vgmDate,
-            siDate: siDate === '' ? null : siDate,
+            // Never sent on air: the API refuses them there, so a value left
+            // in state from a sea booking must not travel.
+            vgmDate: isAir || vgmDate === '' ? null : vgmDate,
+            siDate: isAir || siDate === '' ? null : siDate,
             legs: asInput(),
           },
         },
@@ -372,30 +374,36 @@ export function ScheduleScreen({
               onChange={(e) => setCutOffDate(e.target.value)}
             />
           </Field>
-          <Field id="siDate" label="SI Date">
-            <Input
-              id="siDate"
-              type="date"
-              value={siDate}
-              disabled={!canPropose}
-              onChange={(e) => setSiDate(e.target.value)}
-            />
-          </Field>
           {/*
-            §9 Q4 is open: VGM is a sea-container concept (SOLAS verified gross
-            mass) and the client drew it on the Flight Booking screen too. Shown
-            on sea only until they answer — the column exists either way.
+            §9 Q4, answered 2026-09-03: both are sea only.
+
+            VGM is SOLAS verified gross mass, a container weight declaration,
+            and SI is the shipping instruction behind a bill of lading. The
+            client drew both on the Flight Booking wireframe and has confirmed
+            that was a slip. The columns stay — an air schedule leaves them
+            null — and the API refuses them on an air booking.
           */}
           {!isAir && (
-            <Field id="vgmDate" label="VGM Date">
-              <Input
-                id="vgmDate"
-                type="date"
-                value={vgmDate}
-                disabled={!canPropose}
-                onChange={(e) => setVgmDate(e.target.value)}
-              />
-            </Field>
+            <>
+              <Field id="siDate" label="SI Date">
+                <Input
+                  id="siDate"
+                  type="date"
+                  value={siDate}
+                  disabled={!canPropose}
+                  onChange={(e) => setSiDate(e.target.value)}
+                />
+              </Field>
+              <Field id="vgmDate" label="VGM Date">
+                <Input
+                  id="vgmDate"
+                  type="date"
+                  value={vgmDate}
+                  disabled={!canPropose}
+                  onChange={(e) => setVgmDate(e.target.value)}
+                />
+              </Field>
+            </>
           )}
         </div>
       </section>

@@ -32,6 +32,19 @@ import { useSession } from '@/lib/session';
  * so a button can never offer a move the server would refuse.
  */
 
+/**
+ * Where each next action happens.
+ *
+ * Keyed on the permission `shipmentAction` returns rather than on the label,
+ * because the label changes with the mode ("Vsl Booking" / "Flight Booking")
+ * and the permission does not.
+ */
+const TAB_FOR: Record<string, string> = {
+  'CUSTOMER_SERVICE.SCHEDULE.CREATE': 'schedule',
+  'CUSTOMER_SERVICE.SHIPPING_ORDER.VIEW': 'shipping-order',
+  'OPERATION.CARGO_RECEIPT.VIEW': 'cargo-receipt',
+};
+
 const TONE: Record<ShipmentStatus, 'active' | 'pending' | 'inactive' | 'overdue'> = {
   BOOKING_RECEIVED: 'pending',
   VESSEL_PROPOSED: 'pending',
@@ -267,25 +280,20 @@ export function ShipmentBookingList({ mode }: { mode: 'SEA' | 'AIR' }) {
                 // A terminal booking's next action IS View, which the link
                 // above already is — drawing it twice would say nothing twice.
                 next.label !== 'View' &&
-                can(next.permission) &&
-                (next.permission === 'CUSTOMER_SERVICE.SCHEDULE.CREATE' ? (
-                  // §6.4's screen, which phase E built.
+                can(next.permission) && (
+                  /*
+                    Every one of these tabs exists now, so each is a link to the
+                    one that does the work. It used to draw a disabled button
+                    saying the screen had not arrived — true when phase E
+                    shipped, and stale from phase H onward.
+                  */
                   <Link
-                    href={`/cs/shipment-booking/${row.id}?tab=schedule`}
+                    href={`/cs/shipment-booking/${row.id}?tab=${TAB_FOR[next.permission] ?? 'overview'}`}
                     className="text-body text-harbour hover:underline"
                   >
                     {next.label}
                   </Link>
-                ) : (
-                  <Button
-                    variant="text"
-                    size="inline"
-                    disabled
-                    title={`${next.label} arrives with the screen that does it`}
-                  >
-                    {next.label}
-                  </Button>
-                ))
+                )
               )}
             </>
           );

@@ -1691,3 +1691,285 @@ describe('short close (§5.5 rule 5)', () => {
     expect(change?.detail).toMatch(/Exporter short-shipped\./);
   });
 });
+
+describe('VGM and SI are sea only (§9 Q4, answered 2026-09-03)', () => {
+  /**
+   * An air booking. The quotation behind it is a sea one — the schedule route
+   * reads the shipment's own type, which is what the rule turns on.
+   */
+  async function airBooking(): Promise<bigint> {
+    bookingSeq += 1;
+    const row = await owner.shipment.create({
+      data: {
+        tenantId,
+        code: `BKG-2026-${String(bookingSeq).padStart(6, '0')}`,
+        seriesYear: 2026,
+        quotationId,
+        shipmentType: 'AIR',
+        customerId: (
+          await owner.quotation.findFirstOrThrow({
+            where: { id: quotationId },
+            select: { customerId: true },
+          })
+        ).customerId,
+        carrierId,
+        polId: chittagong,
+        podId: hamburg,
+      },
+      select: { id: true },
+    });
+    return row.id;
+  }
+
+  it('refuses a VGM date on an air schedule', async () => {
+    const id = await airBooking();
+    const res = await as(token)
+      .post(`/api/tenant/cs/bookings/${id}/schedules`)
+      .send({ ...body('DIRECT', oneLeg()), vgmDate: '2026-10-01' });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(400);
+    const error = (res.body as { error: { code: string; message: string } }).error;
+    expect(error.code).toBe('SEA_ONLY_FIELD');
+    // The message names the field and the reason, not just "invalid".
+    expect(error.message).toMatch(/VGM date applies to sea freight only/);
+  });
+
+  it('refuses an SI date on an air schedule', async () => {
+    const id = await airBooking();
+    const res = await as(token)
+      .post(`/api/tenant/cs/bookings/${id}/schedules`)
+      .send({ ...body('DIRECT', oneLeg()), siDate: '2026-10-01' });
+
+    expect(res.status).toBe(400);
+    expect((res.body as { error: { message: string } }).error.message).toMatch(/SI date applies/);
+  });
+
+  it('names both when both are sent', async () => {
+    const id = await airBooking();
+    const res = await as(token)
+      .post(`/api/tenant/cs/bookings/${id}/schedules`)
+      .send({ ...body('DIRECT', oneLeg()), vgmDate: '2026-10-01', siDate: '2026-10-02' });
+
+    expect(res.status).toBe(400);
+    expect((res.body as { error: { message: string } }).error.message).toMatch(
+      /VGM date and SI date apply to sea freight only/,
+    );
+  });
+
+  it('takes an air schedule without them', async () => {
+    const id = await airBooking();
+    const res = await as(token)
+      .post(`/api/tenant/cs/bookings/${id}/schedules`)
+      .send(body('DIRECT', oneLeg()));
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+
+    const stored = await owner.shipmentSchedule.findFirstOrThrow({
+      where: { shipmentId: id },
+      select: { vgmDate: true, siDate: true },
+    });
+    expect(stored.vgmDate).toBeNull();
+    expect(stored.siDate).toBeNull();
+  });
+
+  it('still keeps both on a sea schedule', async () => {
+    // The columns did not go anywhere — only air lost the fields.
+    const id = await makeBooking();
+    const res = await as(token)
+      .post(`/api/tenant/cs/bookings/${id}/schedules`)
+      .send({ ...body('DIRECT', oneLeg()), vgmDate: '2026-09-28', siDate: '2026-09-29' });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+
+    const stored = await owner.shipmentSchedule.findFirstOrThrow({
+      where: { shipmentId: id },
+      select: { vgmDate: true, siDate: true },
+    });
+    expect(stored.vgmDate?.toISOString().slice(0, 10)).toBe('2026-09-28');
+    expect(stored.siDate?.toISOString().slice(0, 10)).toBe('2026-09-29');
+  });
+});
+
+describe('the direct list screens (client decision, 2026-09-03)', () => {
+  /*
+   * Approval, Shipping Order and Cargo Receipt were reachable only as tabs on
+   * a booking. Each now has its own queue, and the property that matters is
+   * that the queue is derived from §5.1's status machine rather than listed
+   * separately — a booking can never sit in a worklist for a stage that has
+   * already happened to it.
+   */
+  const APPROVAL = '/api/tenant/cs/shipment-approvals';
+  const ORDERS = '/api/tenant/cs/shipping-orders';
+  const RECEIPTS = '/api/tenant/ops/cargo-receipts';
+
+  interface Row {
+    id: string;
+    code: string;
+    status: string;
+    awaiting: boolean;
+    detail: string;
+  }
+  const rowsOf = (res: { body: unknown }): Row[] => (res.body as { data: Row[] }).data;
+  const find = (res: { body: unknown }, id: bigint): Row | undefined =>
+    rowsOf(res).find((r) => r.id === id.toString());
+
+  it('shows a booking once its schedule is with the customer, and not before', async () => {
+    const id = await makeBooking();
+
+    const before = await as(token).get(APPROVAL);
+    expect(before.status, JSON.stringify(before.body)).toBe(200);
+    expect(find(before, id)).toBeUndefined();
+
+    await as(token).post(`/api/tenant/cs/bookings/${id}/schedules`).send(body('DIRECT', oneLeg()));
+
+    const after = await as(token).get(APPROVAL);
+    const row = find(after, id);
+    expect(row).toBeDefined();
+    expect(row?.status).toBe('VESSEL_PROPOSED');
+    expect(row?.awaiting).toBe(true);
+  });
+
+  it('drops it from the queue once the decision is made', async () => {
+    const { id } = await approved(2);
+
+    const awaiting = await as(token).get(APPROVAL);
+    expect(find(awaiting, id)).toBeUndefined();
+
+    // ...but it is still on the screen's own record, under All.
+    const code = (
+      await owner.shipment.findFirstOrThrow({ where: { id }, select: { code: true } })
+    ).code;
+    const all = await as(token).get(`${APPROVAL}?show=ALL&search=${code}`);
+    const row = find(all, id);
+    expect(row?.status).toBe('APPROVED_FOR_SHIPMENT');
+    expect(row?.awaiting).toBe(false);
+    expect(row?.detail).toMatch(/2 POs approved/);
+  });
+
+  it('counts the POs still awaiting a decision', async () => {
+    const id = await makeBooking();
+    for (let i = 1; i <= 3; i += 1) {
+      await owner.shipmentPo.create({
+        data: { tenantId, shipmentId: id, poNo: `PO-WL-${id}-${i}` },
+      });
+    }
+    await as(token).post(`/api/tenant/cs/bookings/${id}/schedules`).send(body('DIRECT', oneLeg()));
+
+    const res = await as(token).get(APPROVAL);
+    expect(find(res, id)?.detail).toBe('3 POs awaiting a decision');
+  });
+
+  it('hands the shipping order queue what has been cleared to ship', async () => {
+    const { id } = await approved(2);
+
+    const res = await as(token).get(ORDERS);
+    const row = find(res, id);
+    expect(row?.status).toBe('APPROVED_FOR_SHIPMENT');
+    expect(row?.awaiting).toBe(true);
+    expect(row?.detail).toBe('2 approved POs ready to instruct');
+  });
+
+  it('names the order once it is issued, and stops awaiting', async () => {
+    const { id } = await approved(1);
+    await as(token)
+      .post(`/api/tenant/cs/bookings/${id}/shipping-order`)
+      .send({ warehouseCfs: 'Pangaon ICT' });
+
+    const awaiting = await as(token).get(ORDERS);
+    expect(find(awaiting, id)).toBeUndefined();
+
+    const code = (
+      await owner.shipment.findFirstOrThrow({ where: { id }, select: { code: true } })
+    ).code;
+    const all = await as(token).get(`${ORDERS}?show=ALL&search=${code}`);
+    const row = find(all, id);
+    expect(row, `${code} not in ${JSON.stringify(rowsOf(all).map((r) => r.code))}`).toBeDefined();
+    expect(row?.awaiting).toBe(false);
+    expect(row?.detail).toMatch(/^SO-\d{4}-\d{6} issued \d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('moves it to the cargo queue, with the booked quantity', async () => {
+    const { id } = await approved(1);
+    await as(token)
+      .post(`/api/tenant/cs/bookings/${id}/shipping-order`)
+      .send({ warehouseCfs: 'Pangaon ICT' });
+
+    const res = await as(token).get(RECEIPTS);
+    const row = find(res, id);
+    expect(row?.status).toBe('SO_ISSUED');
+    expect(row?.awaiting).toBe(true);
+    // One PO of 100 cartons, from the fixture.
+    expect(row?.detail).toBe('100 CTN booked, nothing received yet');
+  });
+
+  it('works the queue oldest first — the one waiting longest is the late one', async () => {
+    const first = await makeBooking();
+    await as(token)
+      .post(`/api/tenant/cs/bookings/${first}/schedules`)
+      .send(body('DIRECT', oneLeg()));
+    const second = await makeBooking();
+    await as(token)
+      .post(`/api/tenant/cs/bookings/${second}/schedules`)
+      .send(body('DIRECT', oneLeg()));
+
+    const ids = rowsOf(await as(token).get(APPROVAL)).map((r) => r.id);
+    expect(ids.indexOf(first.toString())).toBeLessThan(ids.indexOf(second.toString()));
+  });
+
+  it('refuses a status the screen does not cover', async () => {
+    // An empty table would read as an answer. This is a mistake, so it says so.
+    const res = await as(token).get(`${ORDERS}?status=CANCELLED`);
+    expect(res.status).toBe(400);
+    const error = (res.body as { error: { code: string; message: string } }).error;
+    expect(error.code).toBe('STATUS_OUT_OF_SCOPE');
+    expect(error.message).toMatch(/does not cover CANCELLED/);
+  });
+
+  it('narrows to one status within the screen', async () => {
+    const res = await as(token).get(`${APPROVAL}?status=REJECTED`);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    for (const row of rowsOf(res)) expect(row.status).toBe('REJECTED');
+  });
+
+  describe('§7 — each queue behind its own permission', () => {
+    it('lets an approver work the approval queue without the booking list', async () => {
+      /*
+       * The reason these are three endpoints rather than one with a parameter.
+       * tokenApproveOnly holds SHIPMENT_APPROVAL.VIEW and nothing else, which
+       * is exactly the shape of a real approver.
+       */
+      const denied = await as(tokenApproveOnly).get('/api/tenant/cs/bookings');
+      expect(denied.status).toBe(403);
+
+      const allowed = await as(tokenApproveOnly).get(APPROVAL);
+      expect(allowed.status, JSON.stringify(allowed.body)).toBe(200);
+    });
+
+    it('shows an approver the whole queue, not only what they raised', async () => {
+      // A queue scoped by who created the booking would be empty for the one
+      // person the screen exists for.
+      const id = await makeBooking();
+      await as(token)
+        .post(`/api/tenant/cs/bookings/${id}/schedules`)
+        .send(body('DIRECT', oneLeg()));
+
+      const res = await as(tokenApproveOnly).get(APPROVAL);
+      expect(find(res, id)).toBeDefined();
+    });
+
+    it('keeps the approver out of the shipping order queue', async () => {
+      const res = await as(tokenApproveOnly).get(ORDERS);
+      expect(res.status).toBe(403);
+    });
+
+    it('lets a warehouse clerk work the cargo queue only', async () => {
+      expect((await as(tokenReceiver).get(RECEIPTS)).status).toBe(200);
+      expect((await as(tokenReceiver).get(APPROVAL)).status).toBe(403);
+    });
+
+    it('refuses all three without a token', async () => {
+      for (const path of [APPROVAL, ORDERS, RECEIPTS]) {
+        const res = await request(app).get(path).set('X-Tenant-Slug', SLUG);
+        expect(res.status).toBe(401);
+      }
+    });
+  });
+});

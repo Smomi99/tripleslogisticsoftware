@@ -389,6 +389,11 @@ Booking header + proposed schedule, read-only. PO grid with selection checkboxes
 `Approved` / `Reject` + `Rejection comments` (mandatory on reject).
 On decision: update PO statuses, transition the shipment, email the C/S team.
 
+**Also a direct list screen** (client decision, 2026-09-03): `Customer Service → Shipment Approval`
+lists every booking whose schedule is in front of the customer, oldest first, with the PO tally on
+each row. `Show` switches between what is awaiting a decision and everything the screen covers.
+Sea and air share it with a mode filter, the way the Booking List does.
+
 ### 6.6 Shipping Order (Sea / Air)
 
 Print-ready document: tenant letterhead and address · **QR code** · `SHIPPING ORDER` ·
@@ -408,6 +413,39 @@ Detail: `Receive Date` · `Unload Location` · `EFR No`, then the cargo grid wit
 Received** columns side by side, editable received figures, and `Accept / Declined` per line.
 A balance strip at the bottom: *"Balance 40 CTN across 2 POs"* with a `Short close` action for
 privileged users.
+
+---
+
+
+---
+
+### 6.8 The direct list screens
+
+Client decision, 2026-09-03. Approval, Shipping Order and Cargo Receipt were reachable only as tabs
+on a booking, which asks the operator to know which booking they want before the product will tell
+them anything. Each now has a menu item onto a queue.
+
+| Screen | Menu | Awaiting action | Also shows |
+|---|---|---|---|
+| Shipment Approval | Customer Service | `VESSEL_PROPOSED` | `APPROVED_FOR_SHIPMENT`, `REJECTED` |
+| Shipping Order | Customer Service | `APPROVED_FOR_SHIPMENT` | `SO_ISSUED`, `SO_SKIPPED` |
+| Cargo Receipt | Operation | `SO_ISSUED`, `SO_SKIPPED`, `PART_RECEIVED` | `CARGO_RECEIVED`, `SHORT_CLOSED` |
+
+Rules:
+
+1. **Every row is a booking**, not a new record. A worklist is the booking list narrowed to the
+   states where that stage is the next thing that happens, so it can never drift from §5.1.
+2. **Oldest first**, unlike the Booking List. A queue is worked from the longest wait, and
+   newest-first would bury the late one.
+3. **No ownership scope.** §7's `VIEW_ALL` asks whose bookings are yours to look at, which is the
+   right question for a sales list and the wrong one for a queue — the person who approves a
+   schedule is hardly ever the one who raised the booking. Holding the screen's own permission is
+   what entitles you to work its queue.
+4. **One endpoint each**, behind that screen's own §7 permission, because a permission is not
+   something to pass in a query string. An approver holding only `CS.SHIPMENT_APPROVAL.VIEW` works
+   the approval queue without any access to the Booking List.
+5. **A status outside the screen's own set is refused**, not ignored. An empty table would read as
+   an answer.
 
 ---
 
@@ -471,6 +509,10 @@ arithmetic — three places where a silent error becomes a billing dispute rathe
 4. **VGM Date and SI Date appear on the Flight Booking screen.** VGM is a sea-container concept
    (SOLAS verified gross mass). Is this a copy-paste from the sea form, or does the client use those
    fields for air too?
+   **Answered 2026-09-03: a copy-paste. Both fields are sea only.** Removed from the Flight
+   Booking screen; the columns stay on `shipment_schedule` and an air schedule leaves them null.
+   The API refuses either field on an air booking rather than dropping it silently, because a
+   screen that sent one would be a bug worth hearing about.
 5. **What should the Shipping Order QR code contain** — the S/O number, a tracking URL, or the full
    cargo summary? Affects whether it needs to be scannable offline at the warehouse gate.
 6. **Who approves the shipment?** The Booking List says *"when Customer approved the proposed vsl"*,
@@ -490,3 +532,21 @@ arithmetic — three places where a silent error becomes a billing dispute rathe
 11. **On short close, what happens to the money?** Does the customer get credited for the
     unshipped balance, or was the quotation priced per shipment regardless? This decides whether
     Accounts needs a link to `SHORT_CLOSED`.
+    **Answered 2026-09-03: nothing happens to the money.** A short close is an operational
+    statement — the shipment is no longer waiting for the balance — and never creates or modifies
+    a customer credit or any other financial adjustment. If a commercial rule for crediting an
+    unshipped balance is ever defined, it will be a separate, explicit one. The behaviour already
+    built matches this: the short close writes a status, a reason and a timestamp, touches no cargo
+    line, and leaves the outstanding quantity derivable forever.
+
+    **The booking is the source of truth for invoicing** (client decision, 2026-09-03), which
+    belongs to the Accounts module but is recorded here because it is the booking that carries it:
+
+    | Shipment | Invoice |
+    |---|---|
+    | FCL | One invoice per customer/booking, as applicable to the booking |
+    | LCL | One per booking |
+    | Air | One per booking |
+
+    Nothing in this module raises an invoice. The rule is written down so the Accounts module
+    inherits it rather than re-deciding it.

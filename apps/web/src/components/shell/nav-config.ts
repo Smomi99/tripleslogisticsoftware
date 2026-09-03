@@ -82,6 +82,18 @@ const ROUTES: Record<string, RouteEntry> = {
     { label: 'Shipment Booking - Sea', href: '/cs/shipment-booking-sea' },
     { label: 'Shipment Booking - Air', href: '/cs/shipment-booking-air' },
   ],
+  /*
+   * The direct list screens — client decision, 2026-09-03.
+   *
+   * These three stages were reachable only as tabs on a booking, which meant
+   * an operator had to already know which booking they wanted before the
+   * product would tell them anything. Each now has a menu item onto a queue of
+   * the bookings waiting on it. Sea and air share one screen with a mode
+   * filter, the way the Booking List does.
+   */
+  'CUSTOMER_SERVICE.SHIPMENT_APPROVAL': '/cs/shipment-approval',
+  'CUSTOMER_SERVICE.SHIPPING_ORDER': '/cs/shipping-order',
+  'OPERATION.CARGO_RECEIPT': '/operation/cargo-receipt',
 };
 
 /**

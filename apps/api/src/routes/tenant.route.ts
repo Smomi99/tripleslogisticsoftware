@@ -25,6 +25,7 @@ import { shipmentRouter } from './shipment.route';
 import { shipmentScheduleRouter } from './shipment-schedule.route';
 import { shippingOrderRouter } from './shipping-order.route';
 import { cargoReceiptRouter } from './cargo-receipt.route';
+import { opsWorklistRouter, shipmentWorklistRouter } from './shipment-worklist.route';
 import { salesLeadRouter } from './sales-lead.route';
 import { portRouter } from './port.route';
 import { notificationSettingRouter } from './notification-setting.route';
@@ -69,8 +70,12 @@ tenantRouter.use('/cs', quotationRouter);
 tenantRouter.use('/cs', shipmentRouter);
 tenantRouter.use('/cs', shipmentScheduleRouter);
 tenantRouter.use('/cs', shippingOrderRouter);
+// The direct list screens (client decision, 2026-09-03) — each behind its
+// own §7 permission, which is why they are not one endpoint.
+tenantRouter.use('/cs', shipmentWorklistRouter);
 // Operation — cargo receipt (MODULE_BOOKING_CARGO.md §6.7).
 tenantRouter.use('/ops', cargoReceiptRouter);
+tenantRouter.use('/ops', opsWorklistRouter);
 tenantRouter.use('/sales', salesLeadRouter);
 
 // CRM.

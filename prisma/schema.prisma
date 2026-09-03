@@ -3887,9 +3887,10 @@ model ShipmentSchedule {
   carrierId  BigInt @map("carrier_id")
 
   cutOffDate DateTime? @map("cut_off_date") @db.Timestamptz(6)
-  /// §9 Q4, open: VGM is a sea-container concept and the client drew it on the
-  /// Flight Booking screen too. The column is here; the screen shows it on sea
-  /// only until they answer.
+  /// §9 Q4, answered 2026-09-03: both are sea only. VGM is SOLAS verified
+  /// gross mass and SI is the shipping instruction behind a bill of lading —
+  /// neither means anything on an air waybill. The columns stay; an air
+  /// schedule leaves them null and the API refuses them there.
   vgmDate    DateTime? @map("vgm_date") @db.Date
   siDate     DateTime? @map("si_date") @db.Date
 

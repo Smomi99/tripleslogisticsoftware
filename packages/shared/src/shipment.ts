@@ -418,6 +418,107 @@ export const shipmentListQuerySchema = listQuerySchema.extend({
 
 export type ShipmentListQuery = z.infer<typeof shipmentListQuerySchema>;
 
+// -------------------------------------------------------------- worklists
+
+/**
+ * The direct list screens for Approval, Shipping Order and Cargo Receipt.
+ *
+ * Client decision, 2026-09-03: these three stages needed a way in from the
+ * menu, not only from a booking. Until then each was a tab you could reach
+ * solely by finding its booking first, which is the wrong way round for the
+ * question an operator actually starts with — "what is waiting on me?"
+ *
+ * A worklist is not a new record. Every row is a booking, filtered to the
+ * states where that stage is the next thing that happens to it, so nothing
+ * here can drift from the status machine that governs the tab itself.
+ *
+ * Defined once, here, because three things read it: the API decides what to
+ * return and which permission to demand, and the screen decides what to
+ * offer. A worklist whose statuses were listed on the client could be widened
+ * by anyone with a browser console.
+ */
+export const SHIPMENT_WORKLISTS = {
+  APPROVAL: {
+    label: 'Shipment Approval',
+    /** §7's feature. Its VIEW is what the endpoint requires. */
+    feature: 'CUSTOMER_SERVICE.SHIPMENT_APPROVAL',
+    /** Which tab on the shipment file this row opens. */
+    tab: 'approval',
+    /** Someone has to act on these. */
+    awaiting: ['VESSEL_PROPOSED'],
+    /*
+     * Decided, and kept in view. A rejected booking is settled as far as this
+     * screen is concerned — the next move is a fresh schedule, which belongs
+     * to the Vessel Booking screen, not to approval.
+     */
+    settled: ['APPROVED_FOR_SHIPMENT', 'REJECTED'],
+    waiting: "The customer's decision on the proposed schedule.",
+  },
+  SHIPPING_ORDER: {
+    label: 'Shipping Order',
+    feature: 'CUSTOMER_SERVICE.SHIPPING_ORDER',
+    tab: 'shipping-order',
+    awaiting: ['APPROVED_FOR_SHIPMENT'],
+    // §5.4 rule 3: an inbound shipment settles by skipping, with no document.
+    settled: ['SO_ISSUED', 'SO_SKIPPED'],
+    waiting: 'A shipping order to be issued, or skipped on an inbound.',
+  },
+  CARGO_RECEIPT: {
+    label: 'Cargo Receipt',
+    feature: 'OPERATION.CARGO_RECEIPT',
+    tab: 'cargo-receipt',
+    // §5.5 rule 4: a part-received booking is still open — more is coming.
+    awaiting: ['SO_ISSUED', 'SO_SKIPPED', 'PART_RECEIVED'],
+    settled: ['CARGO_RECEIVED', 'SHORT_CLOSED'],
+    waiting: 'Cargo to arrive against the booked quantity.',
+  },
+} as const satisfies Record<
+  string,
+  {
+    label: string;
+    feature: string;
+    tab: ShipmentTabId;
+    awaiting: readonly ShipmentStatus[];
+    settled: readonly ShipmentStatus[];
+    waiting: string;
+  }
+>;
+
+export type ShipmentWorklistId = keyof typeof SHIPMENT_WORKLISTS;
+
+export const SHIPMENT_WORKLIST_IDS = Object.keys(SHIPMENT_WORKLISTS) as ShipmentWorklistId[];
+
+/** Every status a worklist covers — what "All" means on that screen. */
+export function worklistStatuses(id: ShipmentWorklistId): ShipmentStatus[] {
+  const w = SHIPMENT_WORKLISTS[id];
+  return [...w.awaiting, ...w.settled];
+}
+
+export const shipmentWorklistQuerySchema = listQuerySchema.extend({
+  shipmentType: z.enum(SHIPMENT_TYPES).optional(),
+  /**
+   * Narrow within the worklist. Anything outside its own statuses is refused
+   * rather than ignored — a filter that silently does nothing is worse than
+   * one that says no.
+   */
+  status: z.enum(SHIPMENT_STATUSES).optional(),
+  /** Default view: only what somebody still has to act on. */
+  show: z.enum(['AWAITING', 'ALL']).default('AWAITING'),
+});
+
+export type ShipmentWorklistQuery = z.infer<typeof shipmentWorklistQuerySchema>;
+
+export interface ShipmentWorklistRow extends ShipmentListRow {
+  /** True while this stage is the next thing that happens to the booking. */
+  awaiting: boolean;
+  /**
+   * The figures that matter to THIS worklist, in words — POs decided, the
+   * order's number, cartons outstanding. One computed column beats bolting
+   * three sets of columns onto a row shape shared by every list.
+   */
+  detail: string;
+}
+
 /** What the form loads before anything has been typed (§5.2 rule 2). */
 export interface ShipmentPrefillDto {
   quotationId: string;
