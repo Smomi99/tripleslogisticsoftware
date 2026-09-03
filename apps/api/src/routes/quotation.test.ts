@@ -5,7 +5,12 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../app';
 import { env } from '../config/env';
 import { PrismaClient } from '../generated/prisma/client';
-import { DEFAULT_QUOTATION_NOTES, quotationNotes } from '@ff/shared';
+import {
+  DEFAULT_QUOTATION_NOTES,
+  isoCurrency,
+  type QuotationLineDto,
+  quotationNotes,
+} from '@ff/shared';
 
 import { signAccessToken } from '../lib/jwt';
 
@@ -79,6 +84,10 @@ async function cleanup(): Promise<void> {
   ]) {
     await owner.$executeRawUnsafe(`DELETE FROM ${table} WHERE tenant_id IN ${scope}`);
   }
+  await owner.$executeRawUnsafe(
+    `DELETE FROM tenant_master_override WHERE tenant_id IN ${scope}`,
+  );
+  await owner.$executeRawUnsafe(`DELETE FROM currency WHERE code = 'QSYS-CCY'`);
   await owner.$executeRawUnsafe(`DELETE FROM tenant WHERE slug = '${SLUG}'`);
 }
 
@@ -900,5 +909,153 @@ describe('reported from production', () => {
       where: { tenantId, relatedType: 'quotation', relatedId: BigInt(id) },
     });
     expect(mails).toBe(0);
+  });
+});
+
+describe('what a charge is priced in', () => {
+  /*
+   * Reported from production, 2026-09-03: "on the add charge of a quotation it
+   * always shows currency AED. I cannot change that even in the quotation page."
+   *
+   * Two separate faults met on that screen. The grid's Currency cell was the one
+   * cell rendered as text in every state, so no line's currency could ever be
+   * changed; and a new charge defaulted to `currencies[0]`, the head of a list
+   * ordered by name, which is AED. The server was always willing — these guard
+   * that half, since the screen's half has no test harness here.
+   */
+  let quotationId: string;
+  let usdId: string;
+
+  beforeAll(async () => {
+    const created = await create();
+    quotationId = (created.body as { data: { id: string } }).data.id;
+    usdId = (
+      await owner.currency.create({
+        data: {
+          tenantId,
+          code: 'QUSD',
+          currency: 'USD — Quote Test Dollar',
+          conversion: '120.0000',
+        },
+        select: { id: true },
+      })
+    ).id.toString();
+  });
+
+  it('accepts a line re-priced into another currency', async () => {
+    const before = await as(`/api/tenant/cs/quotations/${quotationId}`).expect(200);
+    const lines = (before.body as { data: { lines: QuotationLineDto[] } }).data.lines;
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines[0]!.currencyId).not.toBe(usdId);
+
+    const res = await patch(`/api/tenant/cs/quotations/${quotationId}`, {
+      lines: lines.map((l) => ({
+        id: l.id,
+        lineGroup: l.lineGroup,
+        costHeadId: l.costHeadId,
+        containerSizeId: l.containerSizeId,
+        costUnitId: l.costUnitId,
+        quantity: l.quantity,
+        sellingPrice: l.sellingPrice,
+        currencyId: usdId,
+        source: l.source,
+      })),
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+
+    const after = (res.body as { data: { lines: QuotationLineDto[] } }).data.lines;
+    for (const line of after) expect(line.currencyId).toBe(usdId);
+  });
+
+  it('snapshots the ISO code alongside it (§2.2)', async () => {
+    // The document has to go on saying USD after somebody renames the master
+    // row, so the code is stored on the line rather than joined at read time.
+    const stored = await owner.quotationLine.findFirstOrThrow({
+      where: { quotationId: BigInt(quotationId), deletedAt: null },
+      select: { currencyCode: true },
+    });
+    expect(stored.currencyCode).toBe('USD');
+  });
+
+  it('refuses a line with no currency at all', async () => {
+    const before = await as(`/api/tenant/cs/quotations/${quotationId}`).expect(200);
+    const lines = (before.body as { data: { lines: QuotationLineDto[] } }).data.lines;
+
+    const res = await patch(`/api/tenant/cs/quotations/${quotationId}`, {
+      lines: lines.map((l) => ({
+        id: l.id,
+        lineGroup: l.lineGroup,
+        costHeadId: l.costHeadId,
+        quantity: l.quantity,
+        sellingPrice: l.sellingPrice,
+        currencyId: '',
+        source: l.source,
+      })),
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe('isoCurrency', () => {
+  // The rule the grid now reads a currency column with, and the one the API has
+  // always snapshotted onto a line. One definition, so the two cannot drift.
+  it('takes the code off the front of the master name', () => {
+    expect(isoCurrency('USD — US Dollar')).toBe('USD');
+    expect(isoCurrency('BDT — Bangladeshi Taka')).toBe('BDT');
+  });
+
+  it('leaves a name with no separator alone', () => {
+    expect(isoCurrency('USD')).toBe('USD');
+    expect(isoCurrency('')).toBe('');
+  });
+});
+
+describe('what the quotation form offers (§7A rule 7)', () => {
+  /*
+   * A workspace cannot deactivate a shared master row — switching one off
+   * writes a tenant_master_override. quotation-options filtered on is_active
+   * alone, so Settings said a currency was off and the charge grid went on
+   * offering it. The same list feeds carrier, size, unit, TOS and mode.
+   */
+  it('drops a shared currency this workspace switched off', async () => {
+    const shared = await owner.currency.create({
+      // tenant_id NULL: a row belonging to every workspace on the server.
+      data: { code: 'QSYS-CCY', currency: 'ZZZ — Shared Test Coin', conversion: '5.0000' },
+      select: { id: true },
+    });
+
+    const before = await as('/api/tenant/cs/quotation-options').expect(200);
+    const offered = (before.body as { data: { currencies: { id: string }[] } }).data.currencies;
+    expect(offered.map((c) => c.id)).toContain(shared.id.toString());
+
+    await owner.tenantMasterOverride.create({
+      data: { tenantId, tableName: 'currency', recordId: shared.id, isActive: false },
+    });
+
+    const after = await as('/api/tenant/cs/quotation-options').expect(200);
+    const now = (after.body as { data: { currencies: { id: string }[] } }).data.currencies;
+    expect(now.map((c) => c.id)).not.toContain(shared.id.toString());
+
+    // The row itself is untouched — another workspace still sees it.
+    const row = await owner.currency.findFirstOrThrow({
+      where: { id: shared.id },
+      select: { isActive: true },
+    });
+    expect(row.isActive).toBe(true);
+
+    await owner.tenantMasterOverride.deleteMany({
+      where: { tenantId, tableName: 'currency', recordId: shared.id },
+    });
+    await owner.$executeRaw`DELETE FROM currency WHERE code = 'QSYS-CCY'`;
+  });
+
+  it('keeps offering the workspace own rows', async () => {
+    // The override only governs shared rows; a tenant-owned currency is
+    // governed by is_active as it always was.
+    const res = await as('/api/tenant/cs/quotation-options').expect(200);
+    const ids = (res.body as { data: { currencies: { id: string }[] } }).data.currencies.map(
+      (c) => c.id,
+    );
+    expect(ids).toContain(currencyId.toString());
   });
 });

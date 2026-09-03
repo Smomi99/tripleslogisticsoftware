@@ -11,6 +11,21 @@ import { listQuerySchema } from './api';
  * tenant-owned currency_rate_history. See the §5 resolution in schema.prisma.
  */
 
+/**
+ * "USD — US Dollar" -> "USD".
+ *
+ * `currency.code` is the business code (CUR-001, §4 rule 2), not the ISO code;
+ * the ISO code is the head of `currency.currency`. Tables dense enough to need
+ * a currency beside every figure cannot afford the full name.
+ *
+ * Here rather than in either app because it was in both: the API kept a copy in
+ * lib/currency-label and the web app inlined the same split in a rate panel,
+ * which is exactly the drift its own comment warned about.
+ */
+export function isoCurrency(value: string): string {
+  return (value.split('—')[0] ?? value).trim();
+}
+
 /** Money and rates are NUMERIC(18,4) (§4 rule 6) — never a float, so a string. */
 const rateSchema = z
   .string()

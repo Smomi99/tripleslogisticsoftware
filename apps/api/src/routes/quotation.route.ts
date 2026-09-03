@@ -22,6 +22,7 @@ import { amountInWords } from '../lib/amount-in-words';
 import { recordAudit } from '../lib/audit';
 import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
 import { isoCurrency } from '../lib/currency-label';
+import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import { nextQuotationNo, seriesYearOf } from '../lib/inquiry-no';
 import { HttpError } from '../lib/http-error';
 import { Prisma } from '../generated/prisma/client';
@@ -474,6 +475,19 @@ quotationRouter.get(
       const active = { deletedAt: null, isActive: true } as const;
 
       /*
+       * §7A rule 7: a workspace cannot deactivate a shared master row, so
+       * switching one off writes a tenant_master_override instead of touching
+       * is_active. Filtering on the column alone offered currencies, carriers
+       * and sizes this workspace had already turned off in Settings — the
+       * screen said inactive and the quotation grid went on listing them.
+       *
+       * Only the system-capable tables need it. Vessel and Cost Head are
+       * tenant-owned, so nothing shared exists for an override to point at.
+       */
+      const hidden = await inactiveMasters(db);
+      const visible = (table: string) => ({ ...active, ...excludeInactive(hidden, table) });
+
+      /*
        * Which inquiries this person may quote against.
        *
        * VIEW_ALL widens it to the team, exactly as it does on the inquiry list
@@ -512,18 +526,18 @@ quotationRouter.get(
               pod: { select: { portCode: true } },
             },
           }),
-          db.carrier.findMany({ where: active, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+          db.carrier.findMany({ where: visible('carrier'), orderBy: { name: 'asc' }, select: { id: true, name: true } }),
           db.vessel.findMany({ where: active, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
           db.currency.findMany({
-            where: active,
+            where: visible('currency'),
             orderBy: { currency: 'asc' },
             select: { id: true, currency: true, conversion: true },
           }),
           db.costHead.findMany({ where: active, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
-          db.containerSize.findMany({ where: active, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
-          db.costUnit.findMany({ where: active, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
-          db.tos.findMany({ where: active, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
-          db.mode.findMany({ where: active, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+          db.containerSize.findMany({ where: visible('container_size'), orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+          db.costUnit.findMany({ where: visible('cost_unit'), orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+          db.tos.findMany({ where: visible('tos'), orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+          db.mode.findMany({ where: visible('mode'), orderBy: { name: 'asc' }, select: { id: true, name: true } }),
         ]);
 
       return {

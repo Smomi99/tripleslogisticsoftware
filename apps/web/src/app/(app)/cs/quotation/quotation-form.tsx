@@ -5,6 +5,7 @@ import {
   type QuotationDto,
   type QuotationLineDto,
   type QuotationLineGroup,
+  isoCurrency,
   quotationIsEditable,
   TRANSIT_TYPES,
 } from '@ff/shared';
@@ -146,6 +147,27 @@ export function QuotationForm({
     setLines((current) => current.map((l) => (l === target ? { ...l, ...patch } : l)));
   }
 
+  /*
+   * What a new charge is priced in.
+   *
+   * It used to be `options.currencies[0]` — the head of a list sorted by name —
+   * so on a quotation with no lines yet every hand-typed charge came out in AED,
+   * because "AED — UAE Dirham" sorts first. Nobody chose that.
+   *
+   * The order that makes sense: follow the lines already on the grid, since a
+   * Seal Charge belongs in the same money as the freight above it; then §5.4's
+   * "Freight in USD"; then the quotation's own billing currency. The list's
+   * first row is the last resort, not the first.
+   */
+  function defaultCurrencyId(current: LineDraft[]): string {
+    const onGrid = current.find((l) => l.currencyId !== '')?.currencyId;
+    if (onGrid !== undefined) return onGrid;
+    const usd = options.currencies.find((c) => isoCurrency(c.label) === 'USD');
+    if (usd !== undefined) return usd.id;
+    const local = options.currencies.find((c) => c.id === quotation.localCurrencyId);
+    return local?.id ?? options.currencies[0]?.id ?? '';
+  }
+
   function addLine(group: QuotationLineGroup): void {
     setLines((current) => [
       ...current,
@@ -156,7 +178,7 @@ export function QuotationForm({
         costUnitId: '',
         quantity: '1',
         sellingPrice: '',
-        currencyId: quotation.lines[0]?.currencyId ?? options.currencies[0]?.id ?? '',
+        currencyId: defaultCurrencyId(current),
         source: 'MANUAL',
       },
     ]);
@@ -621,8 +643,25 @@ function LineGrid({
                         </span>
                       )}
                     </td>
-                    <td className="px-3 py-1.5 text-cell text-steel">
-                      {options.currencies.find((c) => c.id === line.currencyId)?.label ?? '—'}
+                    <td className="px-3 py-1.5">
+                      {editable ? (
+                        <Select
+                          value={line.currencyId}
+                          aria-label="Currency"
+                          onChange={(event) => onPatch(line, { currencyId: event.target.value })}
+                          className="min-w-24"
+                        >
+                          {options.currencies.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.label}
+                            </option>
+                          ))}
+                        </Select>
+                      ) : (
+                        <span className="text-cell text-steel">
+                          {options.currencies.find((c) => c.id === line.currencyId)?.label ?? '—'}
+                        </span>
+                      )}
                     </td>
                     <td className="px-3 py-1.5 text-right font-mono text-cell tabular-nums text-hull">
                       {shown.total}

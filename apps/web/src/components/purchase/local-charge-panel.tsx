@@ -1,6 +1,12 @@
 'use client';
 
-import { CHARGE_SIDES, type ChargeSide, type LocalChargeInput, type LookupOption } from '@ff/shared';
+import {
+  CHARGE_SIDES,
+  type ChargeSide,
+  isoCurrency,
+  type LocalChargeInput,
+  type LookupOption,
+} from '@ff/shared';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -84,11 +90,9 @@ export function LocalChargePanel({
   }
 
   const nameOf = (id: string): string => costHeads.find((h) => h.id === id)?.name ?? id;
-  /** "USD — US Dollar" reads as "USD" beside a figure. */
-  const codeOf = (id: string): string => {
-    const full = currencies.find((c) => c.id === id)?.name ?? '';
-    return (full.split('—')[0] ?? full).trim();
-  };
+  /** The shared rule: the ISO code is the head of the currency name. */
+  const codeOf = (id: string): string =>
+    isoCurrency(currencies.find((c) => c.id === id)?.name ?? '');
 
   return (
     <Modal

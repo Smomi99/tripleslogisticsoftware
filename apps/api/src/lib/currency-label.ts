@@ -1,13 +1,8 @@
 /**
- * "USD — US Dollar" -> "USD".
+ * Moved to `packages/shared` (§9: one definition, imported by both apps).
  *
- * `currency.code` is the business code (CUR-001, §4 rule 2), not the ISO code;
- * the ISO code is the head of `currency.currency`. Tables dense enough to need
- * a currency beside every figure cannot afford the full name.
- *
- * Extracted from freight-rate.route.ts when the portal needed the same rule —
- * two copies of this would drift the first time someone changed the separator.
+ * Re-exported rather than deleted so the seven call sites here keep their local
+ * import. The rule itself now has one home, which is what the note that used to
+ * live on it asked for.
  */
-export function isoCurrency(value: string): string {
-  return (value.split('—')[0] ?? value).trim();
-}
+export { isoCurrency } from '@ff/shared';
