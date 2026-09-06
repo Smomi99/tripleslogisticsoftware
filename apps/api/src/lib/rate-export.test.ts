@@ -2,7 +2,7 @@ import type { FreightRateDto } from '@ff/shared';
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
 
-import { buildRatePdf, buildRateWorkbook } from './rate-export';
+import { buildRatePdf, buildRateWorkbook, pdfColumns } from './rate-export';
 
 /**
  * The price list as a file (§5.3, §4 rule 12).
@@ -195,5 +195,143 @@ describe('the PDF', () => {
   it('survives an empty price list', async () => {
     const buffer = await buildRatePdf(context([]));
     expect(buffer.subarray(0, 5).toString()).toBe('%PDF-');
+  });
+});
+
+describe('the route column (client request, 2026-09-06)', () => {
+  it('carries the routing beside the transit time', async () => {
+    const workbook = await readWorkbook(
+      await buildRateWorkbook(context([rate({ route: 'via Singapore' })])),
+    );
+    const sheet = workbook.worksheets[0]!;
+    const header = sheet.getRow(4).values as unknown[];
+    const routeAt = header.indexOf('Route');
+    expect(routeAt).toBeGreaterThan(0);
+    // Next to Transit days, the way both screens pair them.
+    expect(header[routeAt + 1]).toBe('Transit days');
+    expect(sheet.getRow(5).getCell(routeAt).value).toBe('via Singapore');
+  });
+
+  it('leaves it blank when the buyer did not record one', async () => {
+    const workbook = await readWorkbook(
+      await buildRateWorkbook(context([rate({ route: null })])),
+    );
+    const sheet = workbook.worksheets[0]!;
+    const routeAt = (sheet.getRow(4).values as unknown[]).indexOf('Route');
+    expect(sheet.getRow(5).getCell(routeAt).value).toBeFalsy();
+  });
+
+  it('keeps the numeric formatting on the prices, not on Status', async () => {
+    /*
+     * The reason firstPriceColumn is derived rather than written as a literal.
+     * Inserting Route ahead of the prices shifted every one of them by a
+     * column; a hardcoded index would have formatted Status as a number and
+     * left the last tier unformatted, with nothing failing to say so.
+     */
+    const workbook = await readWorkbook(
+      await buildRateWorkbook(context([rate({ route: 'Direct' })])),
+    );
+    const sheet = workbook.worksheets[0]!;
+    const header = sheet.getRow(4).values as unknown[];
+    const sellAt = header.indexOf('20STD sell');
+    const statusAt = header.indexOf('Status');
+
+    expect(sheet.getColumn(sellAt).numFmt).toBe('#,##0.0000');
+    expect(sheet.getColumn(statusAt).numFmt).toBeUndefined();
+  });
+
+  it('prints in the PDF too', async () => {
+    /*
+     * Asserted on the column list rather than on the file's bytes. Once pdfkit
+     * has written the page the text is font-subset encoded, so searching the
+     * PDF for "Route" finds nothing whether or not the column is there — a
+     * check that passes and proves nothing is worse than no check.
+     */
+    const labels = pdfColumns([{ id: '1', code: '20STD' }], false).map((c) => c.label);
+    expect(labels).toContain('Route');
+    expect(labels.indexOf('Route')).toBe(labels.indexOf('Carrier') + 1);
+
+    const buffer = await buildRatePdf(context([rate({ route: 'via Colombo' })]));
+    expect(buffer.subarray(0, 5).toString()).toBe('%PDF-');
+    expect(buffer.length).toBeGreaterThan(500);
+  });
+});
+
+describe('a downloaded price list carries no cost (client decision, 2026-09-06)', () => {
+  /*
+   * The rows reaching this module have already been through
+   * lib/rate-visibility, and the price-list route now strips the cost columns
+   * for everyone rather than only for users who lack VIEW_BUY_PRICE. A file
+   * leaves the building: a spreadsheet gets forwarded to a customer and a PDF
+   * gets attached to an email, and neither carries the permission that
+   * justified showing the margin on screen.
+   *
+   * So these assert the shape of a stripped row, which is what the route now
+   * always hands over.
+   */
+  const stripped = () =>
+    rate({
+      lines: [
+        {
+          id: '1',
+          tierId: '1',
+          tierCode: '20STD',
+          tierLabel: "20' Standard",
+          sellPrice: '1200.0000',
+          minCharge: null,
+        },
+      ],
+    } as unknown as Partial<FreightRateDto>);
+
+  it('has no buy column at all — not a blank one', async () => {
+    const workbook = await readWorkbook(await buildRateWorkbook(context([stripped()])));
+    const header = (workbook.worksheets[0]!.getRow(4).values as unknown[]).filter(
+      (v): v is string => typeof v === 'string',
+    );
+
+    expect(header).toContain('20STD sell');
+    expect(header.some((h) => /buy/i.test(h))).toBe(false);
+    expect(header.some((h) => /profit/i.test(h))).toBe(false);
+  });
+
+  it('never writes the figure anywhere on the sheet', async () => {
+    // Belt and braces: the margin must not survive in a cell the header
+    // does not name either.
+    const workbook = await readWorkbook(await buildRateWorkbook(context([stripped()])));
+    const seen: unknown[] = [];
+    workbook.worksheets[0]!.eachRow((row) => {
+      (row.values as unknown[]).forEach((v) => seen.push(v));
+    });
+    expect(seen).toContain(1200);
+    expect(seen).not.toContain(1000);
+    expect(seen).not.toContain(200);
+  });
+
+  it('still prints the sell price and the charges', async () => {
+    // Stripping cost must not gut the document — this is the file sales send.
+    const workbook = await readWorkbook(await buildRateWorkbook(context([stripped()])));
+    const sheet = workbook.worksheets[0]!;
+    const header = sheet.getRow(4).values as unknown[];
+    expect(sheet.getRow(5).getCell(header.indexOf('20STD sell')).value).toBe(1200);
+    expect(String(sheet.getRow(5).getCell(header.indexOf('Local charges')).value)).toContain(
+      'Seal Charge',
+    );
+  });
+
+  it('produces a PDF with no buy column', async () => {
+    // Same reasoning as above: the column list is the checkable thing.
+    const labels = pdfColumns([{ id: '1', code: '20STD' }], false).map((c) => c.label);
+    expect(labels.some((l) => /buy/i.test(l))).toBe(false);
+    expect(labels).toContain('20STD');
+
+    const buffer = await buildRatePdf(context([stripped()]));
+    expect(buffer.subarray(0, 5).toString()).toBe('%PDF-');
+  });
+
+  it('would still print a buy column if a caller handed it one', async () => {
+    // The renderer's job is to print what it was given; the price-list route is
+    // what decides there is no cost to give it.
+    const labels = pdfColumns([{ id: '1', code: '20STD' }], true).map((c) => c.label);
+    expect(labels).toContain('20STD buy');
   });
 });

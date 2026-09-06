@@ -2239,6 +2239,12 @@ model FreightRate {
   currencyId  BigInt     @map("currency_id")
   validFrom   DateTime   @map("valid_from") @db.Date
   validTo     DateTime   @map("valid_to") @db.Date
+  /// Client request, 2026-09-06: how the cargo actually travels between POL and
+  /// POD — "Direct", "via Singapore", "CGP-SIN-RTM". Free text, because there
+  /// is no closed set of routings: it varies by carrier, by lane and by week,
+  /// and a lookup would make the buyer create a master row before they could
+  /// key in a rate. The same reasoning §11 applied to exporter and importer.
+  route       String?    @db.VarChar(200)
   transitDays Int?       @map("transit_days")
   /// §9 Q13, answered: free days at destination before demurrage starts. Sales
   /// are asked this on every call, and backfilling it would mean re-entering

@@ -401,6 +401,8 @@ export function PriceListScreen({
                   </Th>
                 ))}
                 <Th numeric>Local charges</Th>
+                {/* Beside Transit: how it travels, next to how long it takes. */}
+                <Th>Route</Th>
                 <Th numeric>Transit</Th>
                 <Th numeric>Free days</Th>
                 <Th>Validity</Th>
@@ -463,6 +465,9 @@ export function PriceListScreen({
                           : `${rate.localCharges.length} lines`}
                       </Button>
                     )}
+                  </td>
+                  <td className="whitespace-nowrap px-2.5 py-2 text-cell text-steel">
+                    {rate.route ?? '—'}
                   </td>
                   <td className="px-2.5 py-2 text-right font-mono text-cell tabular-nums text-steel">
                     {rate.transitDays ?? '—'}

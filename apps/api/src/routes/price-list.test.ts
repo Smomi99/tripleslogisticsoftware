@@ -250,7 +250,7 @@ describe('§4 rule 5 — the list itself', () => {
   });
 });
 
-describe('§4 rule 12 — the export carries the same restriction as the screen', () => {
+describe('§4 rule 12 — the export carries no cost at all', () => {
   async function workbookFrom(token: string, query = ''): Promise<ExcelJS.Workbook> {
     const response = await request(app)
       .get(`/api/tenant/purchase/price-list/export?mode=SEA_FCL&format=xlsx${query}`)
@@ -284,26 +284,42 @@ describe('§4 rule 12 — the export carries the same restriction as the screen'
     return values;
   }
 
-  it('includes the buy price column for a permitted user', async () => {
-    const workbook = await workbookFrom(tokenAll);
-    const values = cellValues(workbook);
+  /*
+   * Client decision, 2026-09-06: no buy price in a downloaded price list, for
+   * anyone — this used to assert the opposite for a permitted user.
+   *
+   * On screen §4 rule 5 still holds and a buyer with VIEW_BUY_PRICE sees what
+   * they bought at. A file is different: it leaves the building. A spreadsheet
+   * gets forwarded to a customer and a PDF gets attached to an email, and
+   * neither carries the permission that justified showing the margin.
+   */
+  it('omits the buy price even for a user who sees it on screen', async () => {
+    const onScreen = await as(tokenAll)('/api/tenant/purchase/price-list?mode=SEA_FCL&limit=100');
+    // The permission really is held — otherwise this proves nothing.
+    expect(JSON.stringify(onScreen.body)).toContain('buyPrice');
 
-    expect(values.some((v) => v.includes('buy'))).toBe(true);
-    expect(values).toContain('1000'); // the buy price, as a real number
-    expect(values).toContain('1200'); // the sell price
-  });
-
-  it('omits the buy price column entirely for a sales user', async () => {
-    const workbook = await workbookFrom(tokenSales);
-    const values = cellValues(workbook);
-
-    // No buy column header, and the cost figure appears nowhere in the file.
+    const values = cellValues(await workbookFrom(tokenAll));
     expect(values.some((v) => v.toLowerCase().includes('buy'))).toBe(false);
     expect(values).not.toContain('1000');
     expect(values).not.toContain('3000');
-    // What they are entitled to is intact.
+    // What the file is for is intact.
     expect(values).toContain('1200');
     expect(values).toContain('3500');
+  });
+
+  it('omits it for a sales user too', async () => {
+    const values = cellValues(await workbookFrom(tokenSales));
+
+    expect(values.some((v) => v.toLowerCase().includes('buy'))).toBe(false);
+    expect(values).not.toContain('1000');
+    expect(values).toContain('1200');
+  });
+
+  it('drops the profit with it — sell minus profit is the buy price', async () => {
+    const values = cellValues(await workbookFrom(tokenAll));
+    expect(values.some((v) => v.toLowerCase().includes('profit'))).toBe(false);
+    // The margin on the fixture is 200; publishing it publishes the cost.
+    expect(values).not.toContain('200');
   });
 
   it('exports exactly the filtered rows, not the whole table', async () => {

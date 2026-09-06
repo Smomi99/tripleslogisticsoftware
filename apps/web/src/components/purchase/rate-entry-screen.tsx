@@ -80,6 +80,7 @@ interface DraftRow {
   currencyId: string;
   validFrom: string;
   validTo: string;
+  route: string;
   transitDays: string;
   freeDays: string;
   status: string;
@@ -101,6 +102,7 @@ function emptyDraft(currencyId: string): DraftRow {
     currencyId,
     validFrom: '',
     validTo: '',
+    route: '',
     transitDays: '',
     freeDays: '',
     // A buyer records a rate because it has been bought, so the default is the
@@ -285,6 +287,7 @@ export function RateEntryScreen({
       currencyId: rate.currencyId,
       validFrom: rate.validFrom,
       validTo: rate.validTo,
+      route: rate.route ?? '',
       transitDays: rate.transitDays === null ? '' : String(rate.transitDays),
       freeDays: rate.freeDays === null ? '' : String(rate.freeDays),
       status: rate.status === 'EXPIRED' ? 'PUBLISHED' : rate.status,
@@ -350,6 +353,7 @@ export function RateEntryScreen({
       currencyId: draft.currencyId,
       validFrom: draft.validFrom,
       validTo: draft.validTo,
+      route: draft.route,
       transitDays: draft.transitDays,
       freeDays: draft.freeDays,
       status: draft.status,
@@ -593,6 +597,21 @@ export function RateEntryScreen({
               />
             </LabelledControl>
 
+            {/*
+              Client request, 2026-09-06. Beside Transit deliberately: how the
+              cargo travels and how long it takes are the same question to a
+              buyer, and on one lane a direct sailing and a transhipment via
+              Singapore are different products at different prices.
+            */}
+            <LabelledControl label="Route" width="w-36">
+              <Input
+                aria-label="Route"
+                placeholder="Direct, via Singapore"
+                value={draft.route}
+                onChange={(e) => setDraft({ ...draft, route: e.target.value })}
+              />
+            </LabelledControl>
+
             {/* §9 Q13: sales are asked both of these on every call. */}
             <LabelledControl label="Transit" width="w-20">
               <Input
@@ -810,6 +829,8 @@ export function RateEntryScreen({
                 </Th>
               ))}
               <Th numeric>Local</Th>
+              {/* The buyer typed it on the row above; they should see it back. */}
+              <Th>Route</Th>
               <Th>Validity</Th>
               <Th>Purchase via</Th>
               <Th>Status</Th>
@@ -863,6 +884,9 @@ export function RateEntryScreen({
                       </div>
                     </>
                   )}
+                </td>
+                <td className="whitespace-nowrap px-2.5 py-2 text-cell text-steel">
+                  {rate.route ?? '—'}
                 </td>
                 <td className="px-2.5 py-2 font-mono text-cell tabular-nums">
                   <div>{rate.validFrom}</div>

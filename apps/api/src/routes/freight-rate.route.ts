@@ -212,6 +212,7 @@ function toDto(rate: RateWithRelations, today: Date): FreightRateDto {
     currencyCode: isoCurrency(rate.currency.currency),
     validFrom: isoDate(rate.validFrom),
     validTo: isoDate(rate.validTo),
+    route: rate.route,
     transitDays: rate.transitDays,
     freeDays: rate.freeDays,
     remarks: rate.remarks,
@@ -528,6 +529,7 @@ freightRateRouter.post('/rates', requireModePermission('CREATE'), async (req, re
             currencyId: refs.currencyId,
             validFrom: new Date(input.validFrom),
             validTo: new Date(input.validTo),
+            route: input.route === undefined || input.route === '' ? null : input.route,
             transitDays:
               input.transitDays === undefined || input.transitDays === ''
                 ? null
@@ -684,6 +686,7 @@ freightRateRouter.patch('/rates/:id', requireModePermission('EDIT'), async (req,
       currencyId: refs.currencyId,
       validFrom: new Date(input.validFrom),
       validTo: new Date(input.validTo),
+      route: input.route === undefined || input.route === '' ? null : input.route,
       transitDays:
         input.transitDays === undefined || input.transitDays === ''
           ? null
@@ -1173,7 +1176,23 @@ freightRateRouter.get(
       ]);
       return {
         mode: query.mode,
-        rates,
+        /*
+         * Client decision, 2026-09-06: no buy price in a downloaded price
+         * list, for anyone.
+         *
+         * On the screen the cost columns still follow §4 rule 5 — a buyer with
+         * VIEW_BUY_PRICE sees what they bought at. A file is different: it
+         * leaves the building. A spreadsheet gets forwarded to a customer, a
+         * PDF gets attached to an email, and neither carries the permission
+         * that justified showing the margin in the first place.
+         *
+         * Stripped through the same visibility helper the routes use rather
+         * than by a flag inside rate-export, so there is still exactly one
+         * place that decides what a cost column is — and it fails closed.
+         * Profit goes with it: sell price minus profit is the buy price, so
+         * removing one without the other would publish it anyway.
+         */
+        rates: visibleRates(rates, false),
         workspaceName: tenant?.name ?? 'Workspace',
         generatedBy: user?.username ?? 'unknown',
       };

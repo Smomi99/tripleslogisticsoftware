@@ -171,7 +171,11 @@ The client's Quotation sheet stops after six fields (Inquiry No, Quotation Date,
 9. **Air mode uses airport ports and airline carriers.** Filter `port.type = 'AIRPORT'` and `carrier.type = 'Airline'`; sea modes filter SEAPORT and MLO/NVOCC/SOC. Enforce server-side — a filtered dropdown is a convenience, not a constraint.
 10. **Salesmen see their own inquiries by default.** `SALES.INQUIRY.VIEW_ALL` widens it to the whole team. This is row-level scope, not a new permission action — implement it as a reusable scope: `OWN | ALL` on the permission check, because Quotation, Shipment and Invoice will all need the same thing.
 11. Inquiry **auto-expires** when `valid_to < today` and status is still OPEN.
-12. **Export** (Price List Download) produces Excel and PDF of exactly the filtered rows the user is looking at, respecting rule 5 — never include buy price or profit in an export the user isn't permitted to see. Gate behind `.EXPORT`.
+12. **Export** (Price List Download) produces Excel and PDF of exactly the filtered rows the user is looking at. Gate behind `.EXPORT`.
+
+    **Client decision, 2026-09-06: a downloaded price list carries no cost at all — for anyone.** This narrows what rule 5 asked for. On screen rule 5 still holds and a buyer with `PURCHASE.RATE.VIEW_BUY_PRICE` sees what they bought at; a file is different, because it leaves the building. A spreadsheet gets forwarded to a customer and a PDF gets attached to an email, and neither carries the permission that justified showing the margin. Profit goes with the buy price — sell minus profit is the cost, so removing one without the other publishes it anyway. Implemented by passing the rows through `lib/rate-visibility` with the permission forced off, so there is still one place that decides what a cost column is, and it fails closed.
+
+13. **Route** (client request, 2026-09-06). Sea FCL, Sea LCL and Air Freight Purchase each carry a `Route` field: how the cargo travels between POL and POD — "Direct", "via Singapore", "CGP-SIN-RTM". Free text, because there is no closed set of routings; it varies by carrier and by week, and a lookup would force a buyer to create a master row before they could key in a rate they are reading off an email. Nullable and not backfilled — every rate entered before this existed has no routing recorded, and inventing one would put words in the buyer's mouth. It appears on the entry row, on both list tables, and in both export formats.
 
 ---
 

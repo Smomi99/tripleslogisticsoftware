@@ -15,7 +15,35 @@ import PDFDocument from 'pdfkit';
  * never whether the caller has a permission. That keeps one enforcement point
  * instead of two that can disagree — and a file is the worse place to get it
  * wrong, because a spreadsheet gets forwarded.
+ *
+ * Client decision, 2026-09-06: the price-list route now strips the cost columns
+ * for everyone, so in practice showBuy is false there. The branches below stay
+ * because this module's job is to print what it was handed, and the day another
+ * caller hands it cost data the columns should appear rather than silently
+ * vanish. That the spreadsheet gets forwarded is exactly why the caller decides
+ * and not this file.
  */
+
+/**
+ * The fixed columns before the per-tier prices, in order.
+ *
+ * Named because the numeric formatting below has to know where the prices
+ * start, and counting them by hand is how that index goes stale.
+ */
+const LEAD_COLUMNS = [
+  'Code',
+  'POL',
+  'POD',
+  'Carrier',
+  'Goods type',
+  'Currency',
+  'Route',
+  'Transit days',
+  'Free days',
+  'Valid from',
+  'Valid to',
+  'Status',
+] as const;
 
 const MODE_TITLE: Record<RateMode, string> = {
   SEA_FCL: 'Sea FCL Price List',
@@ -62,6 +90,32 @@ function tierColumns(rates: FreightRateDto[]): { id: string; code: string }[] {
   return [...seen].map(([id, code]) => ({ id, code }));
 }
 
+/**
+ * The PDF's columns, in order.
+ *
+ * Lifted out of the renderer so a test can assert what the page carries. A
+ * PDF's text is font-subset encoded once it is written, so reading the bytes
+ * back proves nothing about whether a column is present — the structure has to
+ * be checkable before it becomes glyphs.
+ */
+export function pdfColumns(
+  tiers: { id: string; code: string }[],
+  showBuy: boolean,
+): { label: string; width: number }[] {
+  return [
+    { label: 'Code', width: 58 },
+    // Wider than the code columns they replace: a port name needs the room,
+    // and a reader should not have to decode CGP on a printed sheet.
+    { label: 'POL', width: 84 },
+    { label: 'POD', width: 84 },
+    { label: 'Carrier', width: 92 },
+    { label: 'Route', width: 78 },
+    { label: 'Validity', width: 108 },
+    ...tiers.map((t) => ({ label: t.code, width: 62 })),
+    ...(showBuy ? tiers.map((t) => ({ label: `${t.code} buy`, width: 62 })) : []),
+  ];
+}
+
 export interface ExportContext {
   mode: RateMode;
   rates: FreightRateDto[];
@@ -92,17 +146,7 @@ export async function buildRateWorkbook(context: ExportContext): Promise<Buffer>
   sheet.getCell('A2').font = { size: 9, color: { argb: 'FF6B7A88' } };
 
   const header = [
-    'Code',
-    'POL',
-    'POD',
-    'Carrier',
-    'Goods type',
-    'Currency',
-    'Transit days',
-    'Free days',
-    'Valid from',
-    'Valid to',
-    'Status',
+    ...LEAD_COLUMNS,
     ...tiers.map((t) => `${t.code} sell`),
     ...(showBuy ? tiers.map((t) => `${t.code} buy`) : []),
     'Local charges',
@@ -134,6 +178,7 @@ export async function buildRateWorkbook(context: ExportContext): Promise<Buffer>
       rate.carrierName,
       rate.goodsTypeName,
       rate.currencyCode,
+      rate.route ?? '',
       rate.transitDays ?? '',
       rate.freeDays ?? '',
       rate.validFrom,
@@ -149,7 +194,12 @@ export async function buildRateWorkbook(context: ExportContext): Promise<Buffer>
   // Numeric columns get a real number format so Excel sums them. The tier
   // prices, then the local charge TOTAL — the breakdown between them is text
   // and must not be formatted as a number.
-  const firstPriceColumn = 12;
+  //
+  // Derived from LEAD_COLUMNS rather than written as a literal. It used to be
+  // a hardcoded 12, which adding one column ahead of the prices silently
+  // shifted — the formatting would have landed on Status and the last tier
+  // would have gone unformatted, with nothing to say so.
+  const firstPriceColumn = LEAD_COLUMNS.length + 1;
   const tierColumnCount = tiers.length * (showBuy ? 2 : 1);
   const totalColumn = firstPriceColumn + tierColumnCount + 1;
   for (let i = 0; i < tierColumnCount; i += 1) {
@@ -196,17 +246,7 @@ export function buildRatePdf(context: ExportContext): Promise<Buffer> {
       );
     doc.moveDown(0.8);
 
-    const columns = [
-      { label: 'Code', width: 58 },
-      // Wider than the code columns they replace: a port name needs the room,
-      // and a reader should not have to decode CGP on a printed sheet.
-      { label: 'POL', width: 84 },
-      { label: 'POD', width: 84 },
-      { label: 'Carrier', width: 92 },
-      { label: 'Validity', width: 108 },
-      ...tiers.map((t) => ({ label: t.code, width: 62 })),
-      ...(showBuy ? tiers.map((t) => ({ label: `${t.code} buy`, width: 62 })) : []),
-    ];
+    const columns = pdfColumns(tiers, showBuy);
 
     const startX = doc.page.margins.left;
     let y = doc.y;
@@ -266,6 +306,7 @@ export function buildRatePdf(context: ExportContext): Promise<Buffer> {
           rate.polName,
           rate.podName,
           rate.carrierName,
+          rate.route ?? '—',
           `${rate.validFrom} – ${rate.validTo}`,
           ...tiers.map((t) => priceOf(t.id, 'sell')),
           ...(showBuy ? tiers.map((t) => priceOf(t.id, 'buy')) : []),

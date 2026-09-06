@@ -128,6 +128,14 @@ export const freightRateInputSchema = z
     currencyId: idField,
     validFrom: dateField,
     validTo: dateField,
+    /**
+     * How the cargo travels between POL and POD (client request, 2026-09-06).
+     *
+     * "Direct", "via Singapore", "CGP-SIN-RTM". Free text: there is no closed
+     * set of routings, and a lookup would make a buyer create a master row
+     * before they could key in a rate they are reading off an email.
+     */
+    route: z.string().trim().max(200, 'That routing is too long.').optional(),
     transitDays: z
       .string()
       .trim()
@@ -235,6 +243,8 @@ export interface FreightRateDto {
   currencyCode: string;
   validFrom: string;
   validTo: string;
+  /** "Direct", "via Singapore" — null when the buyer did not record one. */
+  route: string | null;
   transitDays: number | null;
   freeDays: number | null;
   remarks: string | null;

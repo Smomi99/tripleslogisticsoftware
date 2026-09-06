@@ -476,3 +476,101 @@ describe('§7 — the nine screens are nine permissions, not one', () => {
     }
   });
 });
+
+describe('the Route field (client request, 2026-09-06)', () => {
+  /*
+   * POL and POD already say where the cargo starts and ends. None of the three
+   * purchase screens said how it gets there, and on one lane a direct sailing
+   * and a transhipment via Singapore are different products at different
+   * prices. All three screens run on one component, so this checks all three.
+   */
+  const routeFor: Record<string, string> = {
+    SEA_FCL: 'Direct',
+    SEA_LCL: 'via Singapore',
+    AIR: 'via Dubai (EK)',
+  };
+
+  async function buy(mode: (typeof MODES)[number], route?: string) {
+    const tiers = await tiersFor(mode);
+    const ports = portFor[mode]();
+    const carrier = carrierFor[mode]();
+    return api.post('/api/tenant/purchase/rates').send({
+      mode,
+      polId: ports.pol.toString(),
+      podId: ports.pod.toString(),
+      carrierId: carrier.toString(),
+      goodsTypeId: goodsTypeId.toString(),
+      purchaseSourceType: 'CARRIER',
+      purchaseCarrierId: carrier.toString(),
+      currencyId: currencyId.toString(),
+      validFrom: '2036-01-01',
+      validTo: '2036-06-30',
+      ...(route === undefined ? {} : { route }),
+      status: 'DRAFT',
+      lines: [{ tierId: tiers[0]!.id, buyPrice: '500', profitType: 'FLAT', profitValue: '50' }],
+      localCharges: [],
+    });
+  }
+
+  for (const mode of MODES) {
+    it(`${mode}: records the routing and reads it back`, async () => {
+      const response = await buy(mode, routeFor[mode]);
+      expect(response.status, JSON.stringify(response.body.error ?? {})).toBe(201);
+      expect(response.body.data.route).toBe(routeFor[mode]);
+
+      const read = await api.get(
+        `/api/tenant/purchase/rates/${response.body.data.id}?mode=${mode}`,
+      );
+      expect(read.body.data.route).toBe(routeFor[mode]);
+    });
+  }
+
+  it('is optional — a rate keyed in without one is still a rate', async () => {
+    // Every rate already in the database was entered before this field existed,
+    // so null has to mean "not recorded" rather than block the row.
+    const response = await buy('SEA_FCL');
+    expect(response.status, JSON.stringify(response.body.error ?? {})).toBe(201);
+    expect(response.body.data.route).toBeNull();
+  });
+
+  it('treats an empty box as not recorded, not as an empty routing', async () => {
+    const response = await buy('SEA_FCL', '');
+    expect(response.status).toBe(201);
+    expect(response.body.data.route).toBeNull();
+  });
+
+  it('can be added to a rate that was bought without one', async () => {
+    const created = await buy('SEA_LCL');
+    const id = created.body.data.id as string;
+
+    const dto = created.body.data;
+    const patched = await api.patch(`/api/tenant/purchase/rates/${id}`).send({
+      mode: 'SEA_LCL',
+      polId: dto.polId,
+      podId: dto.podId,
+      carrierId: dto.carrierId,
+      goodsTypeId: dto.goodsTypeId,
+      purchaseSourceType: 'CARRIER',
+      purchaseCarrierId: dto.purchaseSourceId,
+      currencyId: dto.currencyId,
+      validFrom: dto.validFrom,
+      validTo: dto.validTo,
+      route: 'via Colombo',
+      status: dto.status,
+      lines: dto.lines.map((l: { tierId: string }) => ({
+        tierId: l.tierId,
+        buyPrice: '500',
+        profitType: 'FLAT',
+        profitValue: '50',
+      })),
+      localCharges: [],
+    });
+    expect(patched.status, JSON.stringify(patched.body.error ?? {})).toBe(200);
+    expect(patched.body.data.route).toBe('via Colombo');
+  });
+
+  it('refuses a routing longer than the column', async () => {
+    const response = await buy('AIR', 'x'.repeat(201));
+    expect(response.status).toBe(400);
+  });
+});
