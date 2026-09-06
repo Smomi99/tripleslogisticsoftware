@@ -57,14 +57,7 @@ function requiredVolume(inquiry: InquiryDto): string {
       if (v.volumeKind === 'FCL') {
         return `${v.quantity ?? 0} × ${v.containerSizeCode ?? '?'}`;
       }
-      if (v.volumeKind === 'LCL') {
-        // The box too, when one was picked. A consol box is measured in CBM
-        // like LCL, so the cubic metres alone never said which box.
-        const cbm = `${v.cbm ?? '0'} CBM`;
-        return v.containerSizeNote === null || v.containerSizeNote === ''
-          ? cbm
-          : `${cbm} (${v.containerSizeNote})`;
-      }
+      if (v.volumeKind === 'LCL') return `${v.cbm ?? '0'} CBM`;
       return `${v.weightKg ?? '0'} KG`;
     })
     .join(', ');

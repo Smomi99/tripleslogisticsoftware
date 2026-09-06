@@ -891,18 +891,7 @@ function renderVolume(dto: InquiryDto): string {
       if (v.volumeKind === 'FCL') {
         return `${v.quantity ?? 0} x ${v.containerSizeCode ?? v.containerSizeNote ?? '?'}`;
       }
-      if (v.volumeKind === 'LCL') {
-        /*
-         * The box, when one was picked. A consol box is measured in CBM like
-         * LCL, so without this the list showed the cubic metres and never the
-         * size of the box they are going into — a field the salesman had just
-         * been asked to fill and would never see again.
-         */
-        const cbm = `${v.cbm ?? '0'} CBM`;
-        return v.containerSizeNote === null || v.containerSizeNote === ''
-          ? cbm
-          : `${cbm} (${v.containerSizeNote})`;
-      }
+      if (v.volumeKind === 'LCL') return `${v.cbm ?? '0'} CBM`;
       return `${v.weightKg ?? '0'} KG`;
     })
     .filter((part) => part !== '');

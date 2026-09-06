@@ -166,10 +166,7 @@ export function ViewDrawer({
                     v.volumeKind === 'FCL'
                       ? `${v.quantity ?? 0} × ${v.containerSizeCode ?? '?'}`
                       : v.volumeKind === 'LCL'
-                        ? `${v.cbm ?? '0'} CBM` +
-                          (v.containerSizeNote === null || v.containerSizeNote === ''
-                            ? ''
-                            : ` (${v.containerSizeNote})`)
+                        ? `${v.cbm ?? '0'} CBM`
                         : `${v.weightKg ?? '0'} KG`,
                   )
                   .join(', ')}

@@ -955,7 +955,17 @@ export function InquiryForm({
                   {(
                     [
                       { field: 'amount', label: shipmentType === 'AIR' ? 'Weight (kG)' : loadingType === 'LCL' ? 'Volume (CBM)' : 'Quantity', numeric: true },
-                      { field: 'note', label: 'Container size', numeric: false },
+                      /*
+                        No "Container size" row — removed at the client's
+                        request, 2026-09-06.
+                        
+                        It never earned its place. On FCL the column heading is
+                        already the size, so the row asked the same question
+                        twice and let the two disagree. On LCL and Consol Box
+                        the cargo is measured in CBM and the box is the
+                        forwarder's, not the customer's. Container type below
+                        still records the equipment where that applies.
+                      */
                       { field: 'containerTypeId', label: 'Container type', numeric: false },
                       { field: 'weightKg', label: 'Weight in Kg', numeric: true },
                       { field: 'targetPrice', label: 'Target price ($)', numeric: true },
@@ -978,37 +988,7 @@ export function InquiryForm({
                         </th>
                         {volumeColumns.map((column) => (
                           <td key={column.key} className="border border-line p-0">
-                            {row.field === 'note' ? (
-                              /*
-                                Client request, 2026-09-06: a form control, not
-                                a free-text box.
-                                
-                                It matters most on a Consol Box, where the
-                                column says CBM and nothing said whether the box
-                                is a 20ft or a 40ft. Typed by hand it was also
-                                unreportable — "40HC", "40 HC" and "40' High
-                                Cube" are three different strings for one box.
-
-                                The master's names are the options; the chosen
-                                name is what gets stored, so this needs no
-                                migration and the column keeps working for every
-                                inquiry already keyed in.
-                              */
-                              <Select
-                                id={`vol-${column.key}-${row.field}`}
-                                aria-label={`${column.label} ${row.label}`}
-                                className="border-0 text-center"
-                                value={cell(column.key).note}
-                                onChange={(e) => setCell(column.key, { note: e.target.value })}
-                              >
-                                <option value="">—</option>
-                                {options.containerSizes.map((size) => (
-                                  <option key={size.id} value={size.name}>
-                                    {size.name}
-                                  </option>
-                                ))}
-                              </Select>
-                            ) : row.field === 'containerTypeId' ? (
+                            {row.field === 'containerTypeId' ? (
                               <Select
                                 id={`vol-${column.key}-${row.field}`}
                                 aria-label={`${column.label} ${row.label}`}
