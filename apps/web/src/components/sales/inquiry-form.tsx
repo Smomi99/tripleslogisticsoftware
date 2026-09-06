@@ -978,7 +978,37 @@ export function InquiryForm({
                         </th>
                         {volumeColumns.map((column) => (
                           <td key={column.key} className="border border-line p-0">
-                            {row.field === 'containerTypeId' ? (
+                            {row.field === 'note' ? (
+                              /*
+                                Client request, 2026-09-06: a form control, not
+                                a free-text box.
+                                
+                                It matters most on a Consol Box, where the
+                                column says CBM and nothing said whether the box
+                                is a 20ft or a 40ft. Typed by hand it was also
+                                unreportable — "40HC", "40 HC" and "40' High
+                                Cube" are three different strings for one box.
+
+                                The master's names are the options; the chosen
+                                name is what gets stored, so this needs no
+                                migration and the column keeps working for every
+                                inquiry already keyed in.
+                              */
+                              <Select
+                                id={`vol-${column.key}-${row.field}`}
+                                aria-label={`${column.label} ${row.label}`}
+                                className="border-0 text-center"
+                                value={cell(column.key).note}
+                                onChange={(e) => setCell(column.key, { note: e.target.value })}
+                              >
+                                <option value="">—</option>
+                                {options.containerSizes.map((size) => (
+                                  <option key={size.id} value={size.name}>
+                                    {size.name}
+                                  </option>
+                                ))}
+                              </Select>
+                            ) : row.field === 'containerTypeId' ? (
                               <Select
                                 id={`vol-${column.key}-${row.field}`}
                                 aria-label={`${column.label} ${row.label}`}
