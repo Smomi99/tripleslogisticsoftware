@@ -54,7 +54,14 @@ export const CONVERT_FEATURE: Record<ConvertMode, string> = {
 export function modeOf(inquiry: InquiryDto): ConvertMode | null {
   if (inquiry.shipmentType === 'AIR') return 'AIR';
   if (inquiry.loadingType === 'FCL') return 'SEA_FCL';
-  if (inquiry.loadingType === 'LCL') return 'SEA_LCL';
+  /*
+   * A consol box prices off the LCL table. It is the forwarder's own container
+   * rather than bought coloader space, but the cargo inside is still sold by
+   * the cubic metre and that is what the LCL rates are keyed on. Without this
+   * a Consol Box inquiry would return null and the Convert button would go
+   * dead with nothing on screen to say why.
+   */
+  if (inquiry.loadingType === 'LCL' || inquiry.loadingType === 'CONSOL_BOX') return 'SEA_LCL';
   return null;
 }
 

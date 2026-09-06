@@ -8,6 +8,7 @@ import {
   isoCurrency,
   quotationIsEditable,
   TRANSIT_TYPES,
+  loadingTypeLabel,
 } from '@ff/shared';
 import Link from 'next/link';
 import { useState } from 'react';
@@ -264,7 +265,10 @@ export function QuotationForm({
     ['Commodity', quotation.commodities.map((c) => c.commodityName).join(', ') || null],
     ['Place of Receipt', quotation.placeOfReceipt],
     ['HS Code', quotation.commodities.map((c) => c.hsCode).filter(Boolean).join(', ') || null],
-    ['Loading Type', quotation.loadingType],
+    [
+      'Loading Type',
+      loadingTypeLabel(quotation.loadingType),
+    ],
     ['TOS', quotation.tosName],
     ['Mode', quotation.modeName],
     ['Local Currency', quotation.localCurrencyCode],

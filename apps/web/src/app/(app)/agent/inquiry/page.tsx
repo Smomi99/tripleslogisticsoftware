@@ -1,6 +1,10 @@
 'use client';
 
-import type { AgentInquiryDto, AgentInquiryVolumeDto } from '@ff/shared';
+import {
+  type AgentInquiryDto,
+  type AgentInquiryVolumeDto,
+  loadingTypeLabel,
+} from '@ff/shared';
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 
@@ -203,7 +207,8 @@ export default function PortalInquiryListPage() {
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 text-cell text-steel">
                       {inquiry.shipmentType}
-                      {inquiry.loadingType !== null && ` · ${inquiry.loadingType}`}
+                      {inquiry.loadingType !== null &&
+                        ` · ${loadingTypeLabel(inquiry.loadingType)}`}
                     </td>
                     <td className="px-3 py-2 text-cell text-hull">{inquiry.polName ?? '—'}</td>
                     <td className="px-3 py-2 text-cell text-hull">{inquiry.podName ?? '—'}</td>

@@ -575,3 +575,51 @@ describe('§5.4 — the form options', () => {
     }
   });
 });
+
+describe('Consol Box (client request, 2026-09-06)', () => {
+  /*
+   * Loading Type offered FCL and LCL; it now offers a third. A consol box is
+   * the forwarder's own container, filled with several shippers' cargo, rather
+   * than space bought from a coloader — a different commercial arrangement on
+   * the same lane, which is why it sits beside LCL rather than inside it.
+   *
+   * The cargo inside is still sold by the cubic metre, so its volume rows keep
+   * volume_kind = 'LCL'. Loading type says how it ships; volume kind says how
+   * it is counted, and only the first of those changed.
+   */
+  it('is accepted as a loading type', async () => {
+    const response = await create(tokenAdmin, { loadingType: 'CONSOL_BOX' });
+    expect(response.status, JSON.stringify(response.body.error ?? {})).toBe(201);
+    expect(response.body.data.loadingType).toBe('CONSOL_BOX');
+  });
+
+  it('takes a CBM volume, the way LCL does', async () => {
+    const response = await create(tokenAdmin, {
+      loadingType: 'CONSOL_BOX',
+      volumes: [{ volumeKind: 'LCL', cbm: '18.500' }],
+    });
+    expect(response.status, JSON.stringify(response.body.error ?? {})).toBe(201);
+    expect(response.body.data.volumes).toHaveLength(1);
+    expect(response.body.data.volumes[0].cbm).toBe('18.500');
+  });
+
+  it('reads back on the list beside FCL and LCL inquiries', async () => {
+    await create(tokenAdmin, { loadingType: 'CONSOL_BOX' });
+    const list = await as(tokenAdmin).get('/api/tenant/sales/inquiries?limit=100');
+    expect(list.status).toBe(200);
+    const kinds = (list.body.data as { loadingType: string | null }[]).map((r) => r.loadingType);
+    expect(kinds).toContain('CONSOL_BOX');
+  });
+
+  it('still refuses a sea inquiry with no loading type at all', async () => {
+    // Adding an option must not turn the field optional.
+    const response = await create(tokenAdmin, { shipmentType: 'SEA', loadingType: undefined });
+    expect(response.status).toBe(400);
+    expect(response.body.error.fields.loadingType).toBeDefined();
+  });
+
+  it('refuses a loading type that is not one of the three', async () => {
+    const response = await create(tokenAdmin, { loadingType: 'CONSOL' });
+    expect(response.status).toBe(400);
+  });
+});

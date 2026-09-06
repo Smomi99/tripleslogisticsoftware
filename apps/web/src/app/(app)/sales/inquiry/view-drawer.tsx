@@ -5,6 +5,7 @@ import {
   INQUIRY_STATUS_TONE,
   OUTCOME_STATUSES,
   SETTABLE_STATUSES,
+  loadingTypeLabel,
 } from '@ff/shared';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
@@ -90,7 +91,10 @@ export function ViewDrawer({
     ['Target price', inquiry.targetPrice ?? '—'],
     ['TOS (Incoterm)', inquiry.tosName ?? '—'],
     ['Mode', inquiry.modeName ?? '—'],
-    ['Loading type', inquiry.loadingType ?? '—'],
+    [
+      'Loading type',
+      loadingTypeLabel(inquiry.loadingType) ?? '—',
+    ],
     [
       inquiry.movementType === 'INBOUND' ? 'Agents' : 'Customers notified',
       inquiry.parties.length === 0 ? '—' : inquiry.parties.map((p) => p.name).join(', '),

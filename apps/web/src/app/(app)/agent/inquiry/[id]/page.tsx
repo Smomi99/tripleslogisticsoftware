@@ -1,6 +1,10 @@
 'use client';
 
-import { acceptsAgentQuotes, type AgentInquiryDto } from '@ff/shared';
+import {
+  acceptsAgentQuotes,
+  type AgentInquiryDto,
+  loadingTypeLabel,
+} from '@ff/shared';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
@@ -117,7 +121,12 @@ export default function PortalInquiryDetailPage() {
           <Detail label="Discharge port" value={inquiry.podName} />
           <Detail label="Place of receipt" value={inquiry.placeOfReceipt} />
           <Detail label="Shipment" value={inquiry.shipmentType} />
-          <Detail label="Loading type" value={inquiry.loadingType} />
+          <Detail
+            label="Loading type"
+            value={
+              loadingTypeLabel(inquiry.loadingType)
+            }
+          />
           <Detail label="Incoterm" value={inquiry.tosName} />
           <Detail label="Terms of shipment" value={inquiry.modeName} />
           <Detail

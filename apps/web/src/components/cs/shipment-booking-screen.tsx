@@ -10,6 +10,7 @@ import {
   SHIPMENT_STATUS_LABEL,
   sumCargoTotals,
   TRANSIT_TYPES,
+  LOADING_TYPE_LABEL,
 } from '@ff/shared';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -573,7 +574,7 @@ export function ShipmentBookingScreen({
               <option value="">—</option>
               {LOADING_TYPES.map((t) => (
                 <option key={t} value={t}>
-                  {t}
+                  {LOADING_TYPE_LABEL[t]}
                 </option>
               ))}
             </Select>

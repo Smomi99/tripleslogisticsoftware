@@ -1,0 +1,21 @@
+-- Loading type gains Consol Box.
+--
+-- Client request, 2026-09-06: the New Inquiry form's Loading Type offered FCL
+-- and LCL; it now offers a third, Consol Box. A consol box is the forwarder's
+-- own container, filled with several shippers' cargo, rather than space bought
+-- from a coloader — a different commercial arrangement on the same lane, which
+-- is why it belongs beside FCL and LCL rather than inside LCL.
+--
+-- Additive only. Every existing inquiry, quotation and booking keeps the
+-- loading type it already has, and nothing reads the enum exhaustively in SQL.
+--
+-- Rate matching is unaffected: MODES_FOR derives the rate modes from the
+-- SHIPMENT type (Sea considers SEA_FCL and SEA_LCL, Air considers AIR), never
+-- from the loading type, so a Consol Box inquiry still prices against both sea
+-- rate tables.
+--
+-- The cargo itself is still measured in CBM, so its volume rows keep
+-- volume_kind = 'LCL'. Loading type says how it ships; volume kind says how it
+-- is counted, and only the first of those changed.
+
+ALTER TYPE "loading_type" ADD VALUE IF NOT EXISTS 'CONSOL_BOX';

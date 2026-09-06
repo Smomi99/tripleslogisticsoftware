@@ -15,6 +15,7 @@ import {
   type QuotationStatus,
   quotationUpdateSchema,
   quotationNotes,
+  loadingTypeLabel,
 } from '@ff/shared';
 import { Router } from 'express';
 
@@ -1070,7 +1071,9 @@ quotationRouter.get(
         podName: dto.podName ?? '—',
         goodsTypeName: dto.goodsTypeName,
         commodity: dto.commodities.map((c) => c.commodityName).join(', ') || '—',
-        loadingType: dto.loadingType,
+        // The words, not the enum — this page goes to the customer, and
+        // "CONSOL_BOX" on a quotation is not a thing anybody would send.
+        loadingType: loadingTypeLabel(dto.loadingType),
         tosName: dto.tosName,
         modeName: dto.modeName,
         carrierName: dto.carrierName,

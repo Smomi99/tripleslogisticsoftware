@@ -2518,9 +2518,16 @@ enum InquiryStatus {
 /// Which shape a volume row takes — §5.4's grid renders rows by shipment type.
 /// Sea only: whether the cargo fills containers or is consolidated.
 /// Null on an Air inquiry, where the question does not arise.
+///
+/// CONSOL_BOX (client request, 2026-09-06) is the forwarder's own container,
+/// filled with several shippers' cargo, rather than space bought from a
+/// coloader. A different commercial arrangement on the same lane, which is why
+/// it sits beside LCL rather than inside it. The cargo is still measured in
+/// CBM, so its volume rows keep volume_kind = 'LCL'.
 enum LoadingType {
   FCL
   LCL
+  CONSOL_BOX
 
   @@map("loading_type")
 }

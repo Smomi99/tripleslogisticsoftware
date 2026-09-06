@@ -530,16 +530,6 @@ export function PriceListScreen({
                             </tr>
                           ))}
                         </tbody>
-                        <tfoot>
-                          <tr className="border-t border-line">
-                            <td colSpan={4} className="label-manifest py-1.5">
-                              Total
-                            </td>
-                            <td className="py-1.5 text-right font-mono tabular-nums text-hull">
-                              {rate.localChargeTotal} {rate.currencyCode}
-                            </td>
-                          </tr>
-                        </tfoot>
                       </table>
                     </td>
                   </tr>

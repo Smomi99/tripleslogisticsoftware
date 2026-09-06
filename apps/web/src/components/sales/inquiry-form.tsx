@@ -6,6 +6,9 @@ import {
   type InquiryPartyOption,
   type LaneCheckDto,
   type InquiryVolumeInput,
+  LOADING_TYPES,
+  LOADING_TYPE_LABEL,
+  type LoadingType,
   type LookupOption,
   MOVEMENT_TYPES,
   MOVEMENT_TYPE_LABEL,
@@ -178,7 +181,7 @@ export function InquiryForm({
   const [placeOfReceipt, setPlaceOfReceipt] = useState(inquiry?.placeOfReceipt ?? '');
   const [tosId, setTosId] = useState(inquiry?.tosId ?? '');
   const [modeId, setModeId] = useState(inquiry?.modeId ?? '');
-  const [loadingType, setLoadingType] = useState<'' | 'FCL' | 'LCL'>(
+  const [loadingType, setLoadingType] = useState<'' | LoadingType>(
     inquiry?.loadingType ?? '',
   );
   const [volumes, setVolumes] = useState<Record<string, VolumeCell>>(volumesOf(inquiry));
@@ -279,7 +282,7 @@ export function InquiryForm({
    * the old ones has nowhere to go. Clearing is honest; carrying four container
    * counts silently into a single CBM column would not be.
    */
-  function changeLoadingType(next: '' | 'FCL' | 'LCL'): void {
+  function changeLoadingType(next: '' | LoadingType): void {
     if (next === loadingType) return;
     setLoadingType(next);
     setVolumes({});
@@ -388,8 +391,20 @@ export function InquiryForm({
     if (shipmentType === 'AIR') {
       return [{ key: 'air', label: 'Air (kG)', containerSizeId: null }];
     }
-    if (loadingType === 'LCL') {
-      return [{ key: 'lcl', label: 'LCL (CBM)', containerSizeId: null }];
+    if (loadingType === 'LCL' || loadingType === 'CONSOL_BOX') {
+      /*
+       * A consol box is measured in CBM, like LCL. The box is the forwarder's;
+       * the customer's cargo is still cubic metres, so the column and the
+       * stored volume_kind are LCL's. Loading type carries the commercial
+       * difference on its own.
+       */
+      return [
+        {
+          key: 'lcl',
+          label: loadingType === 'CONSOL_BOX' ? 'Consol Box (CBM)' : 'LCL (CBM)',
+          containerSizeId: null,
+        },
+      ];
     }
     if (loadingType === 'FCL') {
       return options.containerSizes.map((type) => ({
@@ -892,11 +907,14 @@ export function InquiryForm({
               <Select
                 id="loadingType"
                 value={loadingType}
-                onChange={(e) => changeLoadingType(e.target.value as '' | 'FCL' | 'LCL')}
+                onChange={(e) => changeLoadingType(e.target.value as '' | LoadingType)}
               >
-                <option value="">Select FCL or LCL</option>
-                <option value="FCL">FCL</option>
-                <option value="LCL">LCL</option>
+                <option value="">Select a loading type</option>
+                {LOADING_TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {LOADING_TYPE_LABEL[type]}
+                  </option>
+                ))}
               </Select>
             </Field>
           )}
@@ -909,7 +927,7 @@ export function InquiryForm({
             {shipmentType === 'AIR'
               ? 'Chargeable weight, and what you are aiming to quote.'
               : loadingType === ''
-                ? 'Choose FCL or LCL above and the sizes will appear here.'
+                ? 'Choose a loading type above and the sizes will appear here.'
                 : loadingType === 'FCL'
                   ? 'Fill in only the sizes this inquiry needs.'
                   : 'One consolidated column, measured in CBM.'}

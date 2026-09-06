@@ -180,9 +180,38 @@ const optionalInt = z
  * One row per container size for Sea FCL, a single CBM row for LCL, a single KG
  * row for Air. Empty rows are dropped before submit rather than stored as zeros.
  */
-/** Sea only: FCL fills containers, LCL is consolidated. */
-export const LOADING_TYPES = ['FCL', 'LCL'] as const;
+/**
+ * Sea only: how the cargo ships.
+ *
+ * FCL fills containers. LCL buys space in somebody else's. CONSOL_BOX (client
+ * request, 2026-09-06) is the forwarder's own container, filled with several
+ * shippers' cargo — a different commercial arrangement on the same lane, which
+ * is why it sits beside LCL rather than inside it.
+ */
+export const LOADING_TYPES = ['FCL', 'LCL', 'CONSOL_BOX'] as const;
 export type LoadingType = (typeof LOADING_TYPES)[number];
+
+/** What each reads as on a screen. CONSOL_BOX is the only one that is not an
+ * industry abbreviation, so it is the only one that needs words. */
+export const LOADING_TYPE_LABEL: Record<LoadingType, string> = {
+  FCL: 'FCL',
+  LCL: 'LCL',
+  CONSOL_BOX: 'Consol Box',
+};
+
+/**
+ * The label for a loading type that arrived over the wire.
+ *
+ * Several DTOs type this column as a plain string rather than the union, so a
+ * screen cannot index the map directly. Rather than tighten six DTOs and still
+ * be one deploy-skew away from an unknown value, this falls back to showing
+ * what it was given: a screen printing CONSOL_BOX is bad, and a screen printing
+ * nothing at all is worse.
+ */
+export function loadingTypeLabel(value: string | null | undefined): string | null {
+  if (value === null || value === undefined || value === '') return null;
+  return LOADING_TYPE_LABEL[value as LoadingType] ?? value;
+}
 
 export const inquiryVolumeInputSchema = z.object({
   volumeKind: z.enum(VOLUME_KINDS),

@@ -59,11 +59,24 @@ export default function CustomerPage() {
         // The name opens the customer. Six columns cannot carry the volumes,
         // the opening balance, the salesman and the notes, and reading them
         // through the edit form is how a record gets changed by accident.
+        /*
+          Client decision, 2026-09-06: a customer with no salesman reads in
+          --alert. Nobody is following them up, and on a list of two hundred
+          that is invisible until somebody goes looking. Red is the product's
+          "needs attention" colour (§12), and the Salesman column below says
+          what the attention is for — colour alone is not information, and a
+          reader with a colour vision deficiency gets the same answer there.
+        */
         cell: (r) => (
           <button
             type="button"
             onClick={() => setViewing(r)}
-            className="text-left text-harbour hover:underline"
+            className={
+              r.salesmanId === null
+                ? 'text-left font-medium text-alert hover:underline'
+                : 'text-left text-harbour hover:underline'
+            }
+            title={r.salesmanId === null ? 'No salesman assigned' : undefined}
           >
             {r.name}
           </button>
@@ -81,6 +94,16 @@ export default function CustomerPage() {
         cell: (r) => BUSINESS_AREA_LABEL[r.businessArea],
       },
       { id: 'sector', header: 'Commodity', cell: (r) => r.industrySectorName },
+      {
+        id: 'salesman',
+        header: 'Salesman',
+        cell: (r) =>
+          r.salesmanName === null ? (
+            <span className="text-alert">Unassigned</span>
+          ) : (
+            r.salesmanName
+          ),
+      },
       {
         id: 'picCount',
         header: 'Contacts',

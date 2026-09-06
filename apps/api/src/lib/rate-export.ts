@@ -150,7 +150,6 @@ export async function buildRateWorkbook(context: ExportContext): Promise<Buffer>
     ...tiers.map((t) => `${t.code} sell`),
     ...(showBuy ? tiers.map((t) => `${t.code} buy`) : []),
     'Local charges',
-    'Local charge total',
   ];
 
   sheet.getRow(4).values = header;
@@ -187,7 +186,6 @@ export async function buildRateWorkbook(context: ExportContext): Promise<Buffer>
       ...tiers.map((t) => priceOf(t.id, 'sell')),
       ...(showBuy ? tiers.map((t) => priceOf(t.id, 'buy')) : []),
       chargeBreakdown(rate),
-      rate.localChargeCount === 0 ? '' : Number(rate.localChargeTotal),
     ]);
   }
 
@@ -201,20 +199,18 @@ export async function buildRateWorkbook(context: ExportContext): Promise<Buffer>
   // would have gone unformatted, with nothing to say so.
   const firstPriceColumn = LEAD_COLUMNS.length + 1;
   const tierColumnCount = tiers.length * (showBuy ? 2 : 1);
-  const totalColumn = firstPriceColumn + tierColumnCount + 1;
   for (let i = 0; i < tierColumnCount; i += 1) {
     sheet.getColumn(firstPriceColumn + i).numFmt = '#,##0.0000';
     sheet.getColumn(firstPriceColumn + i).alignment = { horizontal: 'right' };
   }
-  sheet.getColumn(totalColumn).numFmt = '#,##0.0000';
-  sheet.getColumn(totalColumn).alignment = { horizontal: 'right' };
 
   sheet.columns.forEach((column) => {
     column.width = Math.max(12, String(column.values?.[4] ?? '').length + 4);
   });
   // The breakdown is a sentence, not a figure. Wide enough to read, and
-  // wrapped so a long one does not run across the sheet.
-  const breakdownColumn = sheet.getColumn(totalColumn - 1);
+  // wrapped so a long one does not run across the sheet. Last column now that
+  // the total is gone, and derived so it stays put if another one is added.
+  const breakdownColumn = sheet.getColumn(firstPriceColumn + tierColumnCount);
   breakdownColumn.width = 52;
   breakdownColumn.alignment = { wrapText: true, vertical: 'top' };
 
@@ -319,8 +315,12 @@ export function buildRatePdf(context: ExportContext): Promise<Buffer> {
        *
        * A PDF is read rather than filtered, so here the breakdown belongs
        * beside its rate — the opposite call to the spreadsheet, for the
-       * opposite reason. A total with no breakdown is the thing a carrier
-       * queries first, and answering it should not mean opening the app.
+       * opposite reason: a PDF is read rather than filtered, so the charges
+       * belong beside the rate they price.
+       *
+       * No total across them (client decision, 2026-09-06). Each cost head
+       * carries its own currency, so summing them produced a figure nobody
+       * could bill from while looking exactly like one they could.
        */
       for (const charge of rate.localCharges) {
         drawDetail(
@@ -328,9 +328,6 @@ export function buildRatePdf(context: ExportContext): Promise<Buffer> {
             (charge.containerSizeCode === null ? '' : ` · ${charge.containerSizeCode}`),
           `${charge.amount} ${charge.currencyCode}`,
         );
-      }
-      if (rate.localCharges.length > 0) {
-        drawDetail('Local charges total', `${rate.localChargeTotal} ${rate.currencyCode}`, true);
       }
     }
 

@@ -137,15 +137,37 @@ describe('the workbook', () => {
     expect(workbook.getWorksheet('Local charges')).toBeUndefined();
   });
 
-  it('keeps the total in its own column, so the sheet still sums', async () => {
-    // The breakdown beside it is a sentence; this stays a number.
+  it('carries the charges but not a total across them', async () => {
+    /*
+     * Client decision, 2026-09-06 — this used to assert the opposite.
+     *
+     * Each cost head carries its own currency, so a sum across them produced a
+     * figure nobody could bill from while looking exactly like one they could.
+     * The breakdown stays, because that is the thing a carrier queries.
+     */
     const workbook = await readWorkbook(await buildRateWorkbook(context([rate()])));
     const sheet = workbook.worksheets[0]!;
     const header = (sheet.getRow(4).values as unknown[]).map(String);
+
     expect(header).toContain('Local charges');
-    expect(header).toContain('Local charge total');
-    const totalIndex = header.indexOf('Local charge total');
-    expect(sheet.getRow(5).getCell(totalIndex).value).toBe(13);
+    expect(header.some((h) => /total/i.test(h))).toBe(false);
+
+    // The charges themselves are still on the row, in words.
+    const breakdown = String(sheet.getRow(5).getCell(header.indexOf('Local charges')).value);
+    expect(breakdown).toContain('Seal Charge');
+    expect(breakdown).toContain('13.0000 USD');
+  });
+
+  it('leaves the breakdown as the last column, wrapped and wide', async () => {
+    // Removing the total made this the final column; the width and wrapping
+    // were pinned to "the column before the total", which no longer exists.
+    const workbook = await readWorkbook(await buildRateWorkbook(context([rate()])));
+    const sheet = workbook.worksheets[0]!;
+    const header = (sheet.getRow(4).values as unknown[]).map(String);
+    const column = sheet.getColumn(header.indexOf('Local charges'));
+
+    expect(column.width).toBe(52);
+    expect(column.alignment?.wrapText).toBe(true);
   });
 
   it('leaves the cell empty when a rate has no charges', async () => {

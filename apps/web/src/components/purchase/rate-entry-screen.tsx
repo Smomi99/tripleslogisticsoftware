@@ -872,17 +872,17 @@ export function RateEntryScreen({
                   );
                 })}
                 <td className="px-2.5 py-2 text-right font-mono text-cell tabular-nums">
+                  {/*
+                    Client decision, 2026-09-06: the charges, not their sum.
+                    A total across cost heads in different currencies was never
+                    a figure anyone could bill from, and it read as one.
+                  */}
                   {rate.localChargeCount === 0 ? (
                     <span className="text-steel">—</span>
                   ) : (
-                    <>
-                      <div>
-                        {rate.localChargeTotal} {rate.currencyCode}
-                      </div>
-                      <div className="text-steel">
-                        {rate.localChargeCount} line{rate.localChargeCount === 1 ? '' : 's'}
-                      </div>
-                    </>
+                    <span className="text-steel">
+                      {rate.localChargeCount} line{rate.localChargeCount === 1 ? '' : 's'}
+                    </span>
                   )}
                 </td>
                 <td className="whitespace-nowrap px-2.5 py-2 text-cell text-steel">
