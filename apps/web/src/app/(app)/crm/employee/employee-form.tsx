@@ -37,6 +37,7 @@ export function EmployeeForm({ employee }: { employee: EmployeeDto | null }) {
       officeMobile: '',
       personalEmail: '',
       qualification: '',
+      incentivePercentage: '',
     },
   });
 
@@ -51,6 +52,7 @@ export function EmployeeForm({ employee }: { employee: EmployeeDto | null }) {
       officeMobile: employee.officeMobile ?? '',
       personalEmail: employee.personalEmail ?? '',
       qualification: employee.qualification ?? '',
+      incentivePercentage: employee.incentivePercentage ?? '',
     });
   }, [employee, reset]);
 
@@ -102,6 +104,25 @@ export function EmployeeForm({ employee }: { employee: EmployeeDto | null }) {
       <Field id="personalEmail" label="Personal email" error={errors.personalEmail?.message}>
         <Input id="personalEmail" type="email" {...register('personalEmail')} />
       </Field>
+      {/*
+        The rate the performance report's incentive is a share of — the client's
+        note puts it here: "This incentive percentage pull from Employee table."
+        Blank means not on the scheme, which is not the same as nought percent.
+      */}
+      <Field
+        id="incentivePercentage"
+        label="Incentive (% of gross profit)"
+        error={errors.incentivePercentage?.message}
+        hint="Leave blank if this employee is not on the incentive scheme."
+      >
+        <Input
+          id="incentivePercentage"
+          inputMode="decimal"
+          placeholder="e.g. 7.5"
+          {...register('incentivePercentage')}
+        />
+      </Field>
+
       <Field id="qualification" label="Qualification" error={errors.qualification?.message} wide>
         <Input id="qualification" {...register('qualification')} />
       </Field>

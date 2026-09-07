@@ -14,6 +14,7 @@ import { ConfirmDialog } from '@/components/ui/modal';
 import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
+import { PerformanceDrawer } from '@/components/crm/performance-drawer';
 import { useMasterList } from '@/lib/use-master-list';
 
 /** CRM → Employee (CLAUDE.md §6, §8). CV and Salary are contextual row buttons. */
@@ -29,10 +30,31 @@ export default function EmployeePage() {
   // that never was. The server refuses if anything references it.
   const [toDelete, setToDelete] = useState<EmployeeDto | null>(null);
   const [isDeleting, setDeleting] = useState(false);
+  /** Whose performance report is open. */
+  const [performanceOf, setPerformanceOf] = useState<EmployeeDto | null>(null);
 
   const columns: DataTableColumn<EmployeeDto>[] = useMemo(
     () => [
-      { id: 'name', header: 'Employee', sortable: true, cell: (r) => r.name },
+      {
+        id: 'name',
+        header: 'Employee',
+        sortable: true,
+        /*
+          Client wireframe, 2026-09-07: the name opens what this person has
+          done. It was plain text, which made the most interesting cell on the
+          row the only one you could not click.
+        */
+        cell: (r) => (
+          <button
+            type="button"
+            onClick={() => setPerformanceOf(r)}
+            className="text-left text-harbour hover:underline"
+            title="Performance report"
+          >
+            {r.name}
+          </button>
+        ),
+      },
       { id: 'department', header: 'Department', sortable: true, cell: (r) => r.department ?? '—' },
       { id: 'designation', header: 'Designation', cell: (r) => r.designation ?? '—' },
       {
@@ -234,6 +256,14 @@ export default function EmployeePage() {
         isPending={isDeleting}
         onConfirm={() => void confirmDelete()}
       />
+
+      {performanceOf !== null && (
+        <PerformanceDrawer
+          employeeId={performanceOf.id}
+          employeeName={performanceOf.name}
+          onClose={() => setPerformanceOf(null)}
+        />
+      )}
     </div>
   );
 }

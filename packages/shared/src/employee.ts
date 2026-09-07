@@ -33,6 +33,23 @@ export const employeeInputSchema = z.object({
     .refine((v) => v === '' || z.email().safeParse(v).success, 'Enter a valid email address.')
     .optional(),
   qualification: z.string().trim().max(2000, 'Qualification is too long.').optional(),
+  /**
+   * Share of gross profit paid as incentive (performance report wireframe:
+   * "This incentive percentage pull from Employee table").
+   *
+   * A string because §4 rule 6 keeps money and rates off floats, and blank
+   * because most staff are not on the scheme — which is a different fact from
+   * being on nought percent.
+   */
+  incentivePercentage: z
+    .string()
+    .trim()
+    .refine(
+      (v) => v === '' || /^\d{1,3}(\.\d{1,2})?$/.test(v),
+      'Enter a percentage, up to two decimal places.',
+    )
+    .refine((v) => v === '' || Number(v) <= 100, 'A share of profit cannot exceed 100%.')
+    .optional(),
 });
 
 export type EmployeeInput = z.input<typeof employeeInputSchema>;
@@ -55,6 +72,8 @@ export interface EmployeeDto {
   officeMobile: string | null;
   personalEmail: string | null;
   qualification: string | null;
+  /** Null when they are not on the incentive scheme. */
+  incentivePercentage: string | null;
   /** Storage key only (§2). */
   serviceContractFile: string | null;
   serviceContractFileName: string | null;

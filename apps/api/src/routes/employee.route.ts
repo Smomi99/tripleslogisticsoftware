@@ -11,9 +11,14 @@ import {
   employeeListQuerySchema,
   type EmployeeSalaryDto,
   employeeSalaryInputSchema,
+  type EmployeePerformanceDto,
+  isDrillableMetric,
+  type PerformanceDetailRow,
+  performanceQuerySchema,
 } from '@ff/shared';
 
 import { CODE_RETRY_LIMIT, isUniqueViolation, nextCode } from '../lib/codes';
+import { employeePerformance, performanceDetail } from '../lib/employee-performance';
 import { Prisma } from '../generated/prisma/client';
 import { HttpError } from '../lib/http-error';
 import { assertRowDeletable, deleteOwnedChildren } from '../lib/references';
@@ -48,6 +53,7 @@ const SELECT = {
   officeMobile: true,
   personalEmail: true,
   qualification: true,
+  incentivePercentage: true,
   serviceContractFile: true,
   isActive: true,
   cv: { select: { id: true } },
@@ -65,6 +71,7 @@ type EmployeeRow = {
   officeMobile: string | null;
   personalEmail: string | null;
   qualification: string | null;
+  incentivePercentage: Prisma.Decimal | null;
   serviceContractFile: string | null;
   isActive: boolean;
   cv: { id: bigint } | null;
@@ -87,6 +94,7 @@ function toDto(row: EmployeeRow): EmployeeDto {
     officeMobile: row.officeMobile,
     personalEmail: row.personalEmail,
     qualification: row.qualification,
+    incentivePercentage: row.incentivePercentage?.toString() ?? null,
     serviceContractFile: row.serviceContractFile,
     serviceContractFileName:
       row.serviceContractFile === null ? null : displayNameFromKey(row.serviceContractFile),
@@ -171,6 +179,76 @@ employeeRouter.get('/:id/summary', requirePermission(`${FEATURE}.VIEW`), async (
   res.json(payload);
 });
 
+/**
+ * GET /:id/performance — the client's Performance Report, 2026-09-07.
+ *
+ * Behind the employee's own VIEW: this is that person's record, read from the
+ * screen that lists them. Note that it reveals which customers and lanes they
+ * work, so if the client later wants performance restricted more tightly than
+ * the staff directory it needs a feature of its own — flagged rather than
+ * assumed.
+ */
+employeeRouter.get('/:id/performance', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
+  const auth = req.auth!;
+  const id = parseId(req.params.id, 'employee');
+  const query = performanceQuerySchema.parse(req.query);
+
+  const data = await withTenant(auth.tenantId, (db) =>
+    employeePerformance(db, id, query.period, { from: query.from, to: query.to }, new Date()),
+  );
+  if (data === null) throw HttpError.notFound('Employee not found.');
+
+  const payload: ApiSuccess<EmployeePerformanceDto> = { success: true, data };
+  res.json(payload);
+});
+
+/**
+ * GET /:id/performance/:metric — "Each report will show the details list".
+ *
+ * Capped rather than paginated. A period a person can read is a period with
+ * tens of rows, not thousands, and a drill-down that paginates invites someone
+ * to conclude the count was wrong when page two is empty.
+ */
+const DETAIL_ROW_CAP = 500;
+
+employeeRouter.get(
+  '/:id/performance/:metric',
+  requirePermission(`${FEATURE}.VIEW`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'employee');
+    // Express types a param as string | string[]; a path segment is a string.
+    const metric = String(req.params.metric ?? '');
+    const query = performanceQuerySchema.parse(req.query);
+
+    if (!isDrillableMetric(metric)) {
+      throw HttpError.badRequest(
+        `There is no detail list for ${metric}. The money figures arrive with the Accounts module.`,
+      );
+    }
+
+    const data = await withTenant(auth.tenantId, async (db) => {
+      const exists = await db.employee.findFirst({
+        where: { id, deletedAt: null },
+        select: { id: true },
+      });
+      if (exists === null) throw HttpError.notFound('Employee not found.');
+      return performanceDetail(
+        db,
+        id,
+        metric,
+        query.period,
+        { from: query.from, to: query.to },
+        new Date(),
+        DETAIL_ROW_CAP,
+      );
+    });
+
+    const payload: ApiSuccess<PerformanceDetailRow[]> = { success: true, data };
+    res.json(payload);
+  },
+);
+
 employeeRouter.post('/', requirePermission(`${FEATURE}.CREATE`), async (req, res) => {
   const auth = req.auth!;
   const input = employeeInputSchema.parse(req.body);
@@ -191,6 +269,10 @@ employeeRouter.post('/', requirePermission(`${FEATURE}.CREATE`), async (req, res
             officeMobile: input.officeMobile || null,
             personalEmail: input.personalEmail || null,
             qualification: input.qualification || null,
+            incentivePercentage:
+              input.incentivePercentage === undefined || input.incentivePercentage === ''
+                ? null
+                : new Prisma.Decimal(input.incentivePercentage),
             createdBy: auth.userId,
             updatedBy: auth.userId,
           },
@@ -226,6 +308,10 @@ employeeRouter.patch('/:id', requirePermission(`${FEATURE}.EDIT`), async (req, r
         officeMobile: input.officeMobile || null,
         personalEmail: input.personalEmail || null,
         qualification: input.qualification || null,
+        incentivePercentage:
+          input.incentivePercentage === undefined || input.incentivePercentage === ''
+            ? null
+            : new Prisma.Decimal(input.incentivePercentage),
         updatedBy: auth.userId,
       },
       select: SELECT,

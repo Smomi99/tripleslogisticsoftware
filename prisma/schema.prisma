@@ -1349,6 +1349,12 @@ model Employee {
   qualification       String?   @db.Text
   /// Storage key only, never the file itself (§2).
   serviceContractFile String?   @map("service_contract_file") @db.VarChar(500)
+  /// Share of gross profit paid as incentive, from the performance report
+  /// wireframe: "This incentive percentage pull from Employee table."
+  /// Null means not on the scheme — a zero would say they are on nought
+  /// percent, which is a different statement. Nothing computes with it yet:
+  /// the gross profit comes from invoice margin, and Accounts has no tables.
+  incentivePercentage Decimal?  @map("incentive_percentage") @db.Decimal(5, 2)
   isActive            Boolean   @default(true) @map("is_active")
   createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)

@@ -19,6 +19,7 @@ export * from './employee';
 export * from './freight-rate';
 export * from './inquiry';
 export * from './opening-balance';
+export * from './performance';
 export * from './permissions';
 export * from './port';
 export * from './portal';
