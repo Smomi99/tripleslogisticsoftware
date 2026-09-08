@@ -8,6 +8,7 @@ import {
   type CurrencyRateInput,
   currencyRateInputSchema,
   type CurrencySortField,
+  formatRate,
 } from '@ff/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
@@ -50,31 +51,71 @@ export default function CurrencyPage() {
   // edited — this takes a copy that can be.
   const [toCustomise, setToCustomise] = useState<CurrencyDto | null>(null);
   const [isCustomising, setCustomising] = useState(false);
+  /** The currency about to become the base — a change worth confirming. */
+  const [toBase, setToBase] = useState<CurrencyDto | null>(null);
+  const [isRebasing, setRebasing] = useState(false);
 
   const columns: DataTableColumn<CurrencyDto>[] = useMemo(
     () => [
-      { id: 'currency', header: 'Currency', sortable: true, cell: (r) => r.currency },
+      {
+        id: 'currency',
+        header: 'Currency',
+        sortable: true,
+        /*
+          The base is marked here rather than in a column of its own: it is a
+          fact about this currency, and one row in the table has it. §12 says a
+          state is a dot and a label, not a coloured pill.
+        */
+        cell: (r) => (
+          <span className="flex items-center gap-2">
+            {r.currency}
+            {r.isBase && (
+              <span
+                className="inline-flex items-center gap-1.5 text-cell text-verified"
+                title="Every rate is expressed against this currency"
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-verified" aria-hidden />
+                Base
+              </span>
+            )}
+          </span>
+        ),
+      },
       {
         id: 'conversion',
         header: 'System Rate',
         sortable: true,
         align: 'right',
         numeric: true,
-        cell: (r) => r.conversion,
+        cell: (r) => formatRate(r.conversion),
       },
       {
         id: 'tenantRate',
         header: 'Your Rate',
         align: 'right',
         numeric: true,
-        cell: (r) => (r.tenantRate === null ? <span className="text-steel">—</span> : r.tenantRate),
+        cell: (r) =>
+          r.tenantRate === null ? (
+            <span className="text-steel">—</span>
+          ) : (
+            formatRate(r.tenantRate)
+          ),
       },
       {
         id: 'effectiveRate',
         header: 'Booking Rate',
         align: 'right',
         numeric: true,
-        cell: (r) => <span className="font-medium">{r.effectiveRate}</span>,
+        cell: (r) => (
+          <span className="flex items-center justify-end gap-2">
+            <span className="font-medium">{formatRate(r.effectiveRate)}</span>
+            {r.usingSystemDefault && (
+              <span className="text-cell text-signal" title="No rate set for this workspace — the built-in default is being used">
+                default
+              </span>
+            )}
+          </span>
+        ),
       },
       {
         id: 'source',
@@ -114,6 +155,30 @@ export default function CurrencyPage() {
     setRateFor(null);
     toast.success('Rate set');
     await list.reload();
+  }
+
+  async function confirmBase(): Promise<void> {
+    if (toBase === null) return;
+    setRebasing(true);
+    try {
+      const result = await authorizedRequest<{ rebased: number; changed: boolean }>(
+        `${ENDPOINT}/${toBase.id}/set-base`,
+        { method: 'POST' },
+      );
+      toast.success(
+        result.changed
+          ? `Base is now ${toBase.currency} — ${result.rebased} rates re-expressed`
+          : `${toBase.currency} was already the base`,
+      );
+      setToBase(null);
+      await list.reload();
+    } catch (error) {
+      toast.error(
+        error instanceof ApiError ? error.message : 'Could not change the base currency.',
+      );
+    } finally {
+      setRebasing(false);
+    }
   }
 
   async function confirmToggle(): Promise<void> {
@@ -215,9 +280,19 @@ export default function CurrencyPage() {
         isPending={list.isPending}
         actions={(row) => (
           <>
-            {can('SETTING.CURRENCY.EDIT') && (
+            {/*
+              The base converts to itself at 1, so there is no rate to set on
+              it — offering the control would invite somebody to break the one
+              invariant the whole conversion rests on.
+            */}
+            {can('SETTING.CURRENCY.EDIT') && !row.isBase && (
               <Button variant="text" size="inline" onClick={() => setRateFor(row)}>
                 Set rate
+              </Button>
+            )}
+            {can('SETTING.CURRENCY.EDIT') && !row.isBase && row.isActive && (
+              <Button variant="text" size="inline" onClick={() => setToBase(row)}>
+                Make base
               </Button>
             )}
             {can('SETTING.CURRENCY.EDIT') && !row.isSystem && (
@@ -325,6 +400,22 @@ export default function CurrencyPage() {
         destructive={toToggle?.isActive === true}
         isPending={isToggling}
         onConfirm={() => void confirmToggle()}
+      />
+
+      <ConfirmDialog
+        open={toBase !== null}
+        onOpenChange={(open) => {
+          if (!open) setToBase(null);
+        }}
+        title="Make this the base currency?"
+        message={
+          toBase === null
+            ? ''
+            : `Every rate you hold will be re-expressed against ${toBase.currency}, so the numbers on this screen will change — but what each currency is worth relative to another will not. Quotations already sent keep the rate they were sent with.`
+        }
+        confirmLabel="Make base"
+        isPending={isRebasing}
+        onConfirm={() => void confirmBase()}
       />
 
       <ConfirmDialog

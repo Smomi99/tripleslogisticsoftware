@@ -57,7 +57,13 @@ const SYSTEM_PORTS = [
   { name: 'Changi', portCode: 'SIN', country: 'Singapore', type: 'AIRPORT' },
 ] as const;
 
-/** ISO 4217. `conversion` is the system default against BDT (§9 display base). */
+/**
+ * ISO 4217. `conversion` is the SYSTEM default, expressed against BDT — the row
+ * that sits at 1. A workspace declares its own base on Settings → Currency, and
+ * from then on these defaults are only a valid fallback while its base is still
+ * BDT; lib/currency-rate refuses them otherwise rather than converting with a
+ * rate that means something else.
+ */
 const SYSTEM_CURRENCIES = [
   { currency: 'BDT — Bangladeshi Taka', conversion: '1.0000' },
   { currency: 'USD — US Dollar', conversion: '120.0000' },
@@ -750,8 +756,40 @@ async function seedDevTenant(): Promise<void> {
       status: 'TRIAL',
       trialEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
     },
-    select: { id: true },
+    select: { id: true, currencyId: true },
   });
+
+  /*
+   * The base currency, without which nothing can be priced.
+   *
+   * Every rate means "units of the base per one unit of this currency", and
+   * lib/currency-rate refuses to convert for a workspace that has not declared
+   * one — loudly, because the alternative is quoting at a rate nobody chose.
+   * So a workspace is not usable until this is set, and §7A rule 6 wants a new
+   * one usable the moment it exists.
+   *
+   * Only ever set when it is missing: a workspace that has moved its base has
+   * rebased every rate it holds, and re-seeding must not quietly move it back.
+   */
+  if (tenant.currencyId === null) {
+    const wanted = process.env['SEED_TENANT_BASE_CURRENCY'] ?? 'BDT';
+    const base = await prisma.currency.findFirst({
+      where: { currency: { startsWith: `${wanted} ` }, deletedAt: null },
+      orderBy: [{ tenantId: 'asc' }, { id: 'asc' }],
+      select: { id: true, currency: true },
+    });
+    if (base === null) {
+      throw new Error(
+        `No currency starting "${wanted}" to use as the base. ` +
+          'Check SEED_TENANT_BASE_CURRENCY against the seeded list.',
+      );
+    }
+    await prisma.tenant.update({
+      where: { id: tenant.id },
+      data: { currencyId: base.id },
+    });
+    console.log(`  base currency: ${base.currency}`);
+  }
 
   // §7: role templates exist for speed; per-user overrides still win.
   const existingRole = await prisma.role.findFirst({

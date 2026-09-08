@@ -22,6 +22,42 @@ import { listQuerySchema } from './api';
  * lib/currency-label and the web app inlined the same split in a rate panel,
  * which is exactly the drift its own comment warned about.
  */
+/**
+ * A rate as a person should read it.
+ *
+ * Rates are STORED to ten decimal places because they have to be: places are
+ * absolute and rates are relative, so a small rate carries no significant
+ * figures at four. But ten places on a screen is noise pretending to be
+ * precision, and worse than noise after a rebase — dividing twice leaves
+ * 33.4999999648 where 33.5 is meant, which reads as broken and invites
+ * somebody to "correct" a figure that is right to nine significant figures.
+ *
+ * So: six significant figures, which is finer than any published rate, with at
+ * least four decimal places so a column still lines up. The stored value is
+ * untouched; only the reading of it is tidied.
+ */
+export function formatRate(value: string): string {
+  if (!/^-?\d+(\.\d+)?$/.test(value)) return value;
+
+  const n = Number(value);
+  if (!Number.isFinite(n)) return value;
+  if (n === 0) return '0.0000';
+
+  // toPrecision gives six significant figures wherever the decimal point is,
+  // so 33.4999999648 reads 33.5000 and 0.0000186 keeps every figure it has.
+  const rounded = Number(n.toPrecision(6));
+  const asText = rounded.toFixed(Math.max(4, decimalsFor(rounded)));
+  // Trailing zeros beyond the fourth place say nothing.
+  return asText.includes('.') ? asText.replace(/(\.\d{4}\d*?)0+$/, '$1') : asText;
+}
+
+/** How many decimal places this number actually needs, up to ten. */
+function decimalsFor(n: number): number {
+  const text = n.toFixed(10).replace(/0+$/, '');
+  const dot = text.indexOf('.');
+  return dot === -1 ? 0 : text.length - dot - 1;
+}
+
 export function isoCurrency(value: string): string {
   return (value.split('—')[0] ?? value).trim();
 }
@@ -61,6 +97,17 @@ export interface CurrencyDto {
   tenantRate: string | null;
   /** tenantRate when set, else conversion — what the workspace actually books at. */
   effectiveRate: string;
+  /**
+   * The workspace's base currency. Every other rate is units of THIS per one
+   * unit of that currency, and the base's own rate is always exactly 1.
+   */
+  isBase: boolean;
+  /**
+   * True when the effective rate is the built-in default rather than one this
+   * workspace set — and that default is only meaningful while the base is the
+   * currency the defaults are expressed in. The screen warns on it.
+   */
+  usingSystemDefault: boolean;
   isActive: boolean;
   isSystem: boolean;
 }

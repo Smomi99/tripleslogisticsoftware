@@ -12,9 +12,13 @@ import {
 } from '@ff/shared';
 
 import { CODE_RETRY_LIMIT, codeSortSql, isUniqueViolation, nextCode } from '../lib/codes';
+import { isoCurrency } from '../lib/currency-label';
 import { Prisma } from '../generated/prisma/client';
 import { HttpError } from '../lib/http-error';
+import { recordAudit } from '../lib/audit';
+import { baseCurrency, rebase, resolveRates } from '../lib/currency-rate';
 import { assertCustomisable, recordReplacement, repointReferences } from '../lib/customise';
+import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import { assertRowDeletable, deleteOwnedChildren } from '../lib/references';
 import { parseId } from '../lib/request';
 import { withTenant } from '../lib/tenant-client';
@@ -50,18 +54,31 @@ interface CurrencyRow {
   tenant_rate: Prisma.Decimal | null;
   effective_is_active: boolean;
   is_system: boolean;
+  is_base: boolean;
 }
 
+/**
+ * Rates read at 10 decimals, money at 4.
+ *
+ * A rate can be small — BDT is 0.00833 of a US dollar — and trimming that to
+ * four would show 0.0083, which is a different number. The amounts it produces
+ * are still money and still shown to 4.
+ */
 function toDto(row: CurrencyRow): CurrencyDto {
-  const conversion = row.conversion.toFixed(4);
-  const tenantRate = row.tenant_rate === null ? null : row.tenant_rate.toFixed(4);
+  const conversion = row.conversion.toFixed(10);
+  const tenantRate = row.tenant_rate === null ? null : row.tenant_rate.toFixed(10);
+  // The base converts to itself at 1, whatever happens to be stored against
+  // it — that is what being the base means (see lib/currency-rate).
+  const effectiveRate = row.is_base ? '1.0000000000' : (tenantRate ?? conversion);
   return {
     id: row.id.toString(),
     code: row.code,
     currency: row.currency,
     conversion,
     tenantRate,
-    effectiveRate: tenantRate ?? conversion,
+    effectiveRate,
+    isBase: row.is_base,
+    usingSystemDefault: !row.is_base && tenantRate === null,
     isActive: row.effective_is_active,
     isSystem: row.is_system,
   };
@@ -100,6 +117,7 @@ currencyRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (req, res) =
 
     const where = Prisma.join(conditions, ' AND ');
     const joins = Prisma.sql`
+      CROSS JOIN (SELECT currency_id FROM tenant WHERE id = ${auth.tenantId}) b
       LEFT JOIN tenant_master_override o
         ON o.table_name = 'currency' AND o.record_id = c.id AND o.tenant_id = ${auth.tenantId}
       LEFT JOIN LATERAL (
@@ -128,7 +146,8 @@ currencyRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (req, res) =
       SELECT c.id, c.code, c.currency, c.conversion,
              r.rate AS tenant_rate,
              (c.is_active AND COALESCE(o.is_active, true)) AS effective_is_active,
-             (c.tenant_id IS NULL) AS is_system
+             (c.tenant_id IS NULL) AS is_system,
+             (c.id = b.currency_id) AS is_base
       FROM currency c ${joins}
       WHERE ${where}
       ORDER BY ${orderColumn} ${direction}, c.id ASC
@@ -142,6 +161,156 @@ currencyRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (req, res) =
     success: true,
     data: result.rows,
     meta: buildMeta(query.page, query.limit, result.total),
+  };
+  res.json(payload);
+});
+
+
+/**
+ * POST /api/tenant/setting/currencies/:id/set-base
+ *
+ * Declares this workspace's base currency — client request, 2026-09-08.
+ *
+ * Changing it is not a label change. Every rate on file means "units of the
+ * base per one unit of this currency", so a new base re-expresses all of them:
+ * if USD was 120 of the old base, then in USD terms everything divides by 120.
+ * Every ratio between two currencies survives, which is what makes it safe.
+ *
+ * Three things this deliberately does:
+ *
+ *   - writes an explicit workspace rate for EVERY currency it can see, even
+ *     ones that were riding on the built-in default, because after the switch
+ *     that default is in the wrong base and must never be fallen back to;
+ *   - leaves every issued document alone. A quotation froze its rate when it
+ *     was sent (§2.2) and restating a price a customer is holding would be
+ *     worse than any rounding;
+ *   - runs in one transaction. A half-applied rebase is a ledger where two
+ *     currencies disagree about what the base is.
+ */
+currencyRouter.post('/:id/set-base', requirePermission(`${FEATURE}.EDIT`), async (req, res) => {
+  const auth = req.auth!;
+  const id = parseId(req.params.id, 'currency');
+
+  const data = await withTenant(auth.tenantId, async (db) => {
+    const target = await db.currency.findFirst({
+      where: { id, deletedAt: null },
+      select: { id: true, code: true, currency: true, isActive: true },
+    });
+    if (target === null) throw HttpError.notFound('Currency not found.');
+
+    // A workspace cannot book in a currency it has switched off for itself.
+    const hidden = await inactiveMasters(db);
+    const off = (hidden.get('currency') ?? []).some((x) => x === id);
+    if (!target.isActive || off) {
+      throw HttpError.conflict(
+        `${target.currency} is switched off for this workspace. Turn it back on before making it the base.`,
+      );
+    }
+
+    const current = await baseCurrency(db, auth.tenantId);
+    if (current !== null && current.id === id) {
+      // Nothing to do, and rebasing by 1 would write a pointless history row
+      // against every currency.
+      return { changed: false, base: target, rebased: 0 };
+    }
+
+    /*
+     * Every currency this workspace can see, priced in the OLD base. Anything
+     * it cannot price is excluded rather than assumed: a currency with no rate
+     * has no position to move.
+     */
+    const visible = await db.currency.findMany({
+      where: { deletedAt: null, ...excludeInactive(hidden, 'currency') },
+      select: { id: true },
+    });
+    const ids = visible.map((c) => c.id);
+    const before = await resolveRates(db, auth.tenantId, ids);
+
+    const newBaseRate = before.get(id.toString());
+    if (newBaseRate === undefined) {
+      throw new HttpError(
+        409,
+        'RATE_NOT_SET',
+        `There is no rate on file for ${target.currency}, so nothing can be expressed against it. ` +
+          'Set its rate first, then make it the base.',
+      );
+    }
+
+    const rows = rebase(
+      ids
+        .filter((cid) => before.has(cid.toString()))
+        .map((cid) => ({ id: cid, rateInOldBase: before.get(cid.toString())!.rate })),
+      id,
+      newBaseRate.rate,
+    );
+
+    const now = new Date();
+    for (const row of rows) {
+      // Close whatever was in force, so exactly one rate applies at any moment
+      // — the same rule POST /:id/rate keeps.
+      await db.currencyRateHistory.updateMany({
+        where: { currencyId: row.currencyId, effectiveTo: null, deletedAt: null },
+        data: { effectiveTo: now, updatedBy: auth.userId },
+      });
+      await db.currencyRateHistory.create({
+        data: {
+          tenantId: auth.tenantId,
+          currencyId: row.currencyId,
+          rate: row.rate,
+          effectiveFrom: now,
+          createdBy: auth.userId,
+          updatedBy: auth.userId,
+        },
+      });
+    }
+
+    await db.tenant.update({ where: { id: auth.tenantId }, data: { currencyId: id } });
+
+    return { changed: true, base: target, rebased: rows.length };
+  });
+
+  await recordAudit({
+    tenantId: auth.tenantId,
+    action: 'UPDATE',
+    tableName: 'tenant',
+    recordId: auth.tenantId,
+    actorId: auth.userId,
+    details: { baseCurrency: data.base.currency, rebasedRates: data.rebased },
+  });
+
+  const payload: ApiSuccess<{ baseCurrency: string; rebased: number; changed: boolean }> = {
+    success: true,
+    data: {
+      baseCurrency: data.base.currency,
+      rebased: data.rebased,
+      changed: data.changed,
+    },
+  };
+  res.json(payload);
+});
+
+/**
+ * GET /api/tenant/setting/currencies/base — what this workspace books in.
+ *
+ * Its own endpoint because screens well outside Settings need it: every money
+ * label in the product should say the workspace's currency rather than a
+ * hardcoded dollar sign.
+ */
+currencyRouter.get('/base', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
+  const auth = req.auth!;
+  const base = await withTenant(auth.tenantId, (db) => baseCurrency(db, auth.tenantId));
+
+  const payload: ApiSuccess<{ id: string; code: string; currency: string; iso: string } | null> = {
+    success: true,
+    data:
+      base === null
+        ? null
+        : {
+            id: base.id.toString(),
+            code: base.code,
+            currency: base.currency,
+            iso: isoCurrency(base.currency),
+          },
   };
   res.json(payload);
 });
@@ -186,7 +355,7 @@ currencyRouter.post('/', requirePermission(`${FEATURE}.CREATE`), async (req, res
     );
   });
 
-  const conversion = created.conversion.toFixed(4);
+  const conversion = created.conversion.toFixed(10);
   const payload: ApiSuccess<CurrencyDto> = {
     success: true,
     data: {
@@ -196,6 +365,9 @@ currencyRouter.post('/', requirePermission(`${FEATURE}.CREATE`), async (req, res
       conversion,
       tenantRate: null,
       effectiveRate: conversion,
+      // Newly added or just renamed: not the base, and no workspace rate yet.
+      isBase: false,
+      usingSystemDefault: true,
       isActive: created.isActive,
       isSystem: false,
     },
@@ -232,7 +404,7 @@ currencyRouter.patch('/:id', requirePermission(`${FEATURE}.EDIT`), async (req, r
     });
   });
 
-  const conversion = updated.conversion.toFixed(4);
+  const conversion = updated.conversion.toFixed(10);
   const payload: ApiSuccess<CurrencyDto> = {
     success: true,
     data: {
@@ -242,6 +414,9 @@ currencyRouter.patch('/:id', requirePermission(`${FEATURE}.EDIT`), async (req, r
       conversion,
       tenantRate: null,
       effectiveRate: conversion,
+      // Newly added or just renamed: not the base, and no workspace rate yet.
+      isBase: false,
+      usingSystemDefault: true,
       isActive: updated.isActive,
       isSystem: false,
     },

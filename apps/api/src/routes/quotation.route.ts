@@ -23,6 +23,7 @@ import { amountInWords } from '../lib/amount-in-words';
 import { recordAudit } from '../lib/audit';
 import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
 import { isoCurrency } from '../lib/currency-label';
+import { resolveRate, resolveRates } from '../lib/currency-rate';
 import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import { nextQuotationNo, seriesYearOf } from '../lib/inquiry-no';
 import { HttpError } from '../lib/http-error';
@@ -313,22 +314,24 @@ quotationRouter.post('/quotations', requirePermission(`${FEATURE}.CREATE`), asyn
     }
 
     /*
-     * §5.4 — the booking rate, frozen here and never re-read. `conversion` on
-     * the currency master is what it is worth today; the quotation is what it
-     * was worth the day we committed to it.
+     * §5.4 — the booking rate, frozen here and never re-read. The rate today
+     * is what the workspace books at; the quotation is what it was worth the
+     * day we committed to it.
+     *
+     * Through resolveRate, not `currency.conversion` (fixed 2026-09-08). That
+     * column is the built-in default, and a workspace setting its own rate on
+     * Settings → Currency was writing it to currency_rate_history where
+     * nothing outside that screen ever read it. A team could put BDT/USD at
+     * 122 and every quotation would still bill at the system's 120 — the rate
+     * captured, displayed, and quietly ignored.
      */
     const currencyId = parseRefId(input.localCurrencyId, 'currency');
     const currency = await db.currency.findFirst({
       where: { id: currencyId, deletedAt: null },
-      select: { id: true, conversion: true },
+      select: { id: true },
     });
     if (currency === null) throw HttpError.notFound('That currency no longer exists.');
-    const conversionRate = currency.conversion;
-    if (conversionRate.lessThanOrEqualTo(0)) {
-      throw HttpError.conflict(
-        'That currency has no conversion rate set. Set one on Settings → Currency first.',
-      );
-    }
+    const conversionRate = (await resolveRate(db, auth.tenantId, currencyId)).rate;
 
     const carrierId = parseRefId(input.carrierId, 'carrier');
     const quotationDate = new Date(`${input.quotationDate}T00:00:00.000Z`);
@@ -532,7 +535,7 @@ quotationRouter.get(
           db.currency.findMany({
             where: visible('currency'),
             orderBy: { currency: 'asc' },
-            select: { id: true, currency: true, conversion: true },
+            select: { id: true, currency: true },
           }),
           db.costHead.findMany({ where: active, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
           db.containerSize.findMany({ where: visible('container_size'), orderBy: { name: 'asc' }, select: { id: true, name: true } }),
@@ -540,6 +543,14 @@ quotationRouter.get(
           db.tos.findMany({ where: visible('tos'), orderBy: { name: 'asc' }, select: { id: true, name: true } }),
           db.mode.findMany({ where: visible('mode'), orderBy: { name: 'asc' }, select: { id: true, name: true } }),
         ]);
+
+      // One pass for every currency on the form, resolved the way the freeze
+      // will resolve it.
+      const rates = await resolveRates(
+        db,
+        auth.tenantId,
+        currencies.map((c) => c.id),
+      );
 
       return {
         inquiries: inquiries.map((i) => ({
@@ -552,7 +563,16 @@ quotationRouter.get(
         currencies: currencies.map((c) => ({
           id: c.id.toString(),
           label: isoCurrency(c.currency) ?? c.currency,
-          conversion: c.conversion.toString(),
+          /*
+            The rate this workspace books at — the same resolveRate the freeze
+            uses. It used to be the built-in default, so the figure the form
+            showed and the figure the quotation stored could differ.
+
+            A currency with no rate this workspace can use is offered as '0',
+            which the form already treats as unusable and the create refuses
+            with a message naming the fix.
+          */
+          conversion: (rates.get(c.id.toString())?.rate ?? new Prisma.Decimal(0)).toString(),
         })),
         costHeads: label(costHeads),
         containerSizes: label(sizes),

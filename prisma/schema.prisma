@@ -191,7 +191,9 @@ model Tenant {
   slug        String       @unique @db.VarChar(63)
   country     String       @db.VarChar(100)
   timezone    String       @default("Asia/Dhaka") @db.VarChar(64)
-  /// Base currency for display (§9). Plain FK — currency is system-capable.
+  /// The workspace base currency (§9). Every rate is units of THIS per 1 unit
+  /// of the other currency, and this currency's own rate is always exactly 1.
+  /// Set from Settings → Currency. Plain FK — currency is system-capable.
   currencyId  BigInt?      @map("currency_id")
   status      TenantStatus @default(TRIAL)
   trialEndsAt DateTime?    @map("trial_ends_at") @db.Timestamptz(6)
@@ -430,7 +432,11 @@ model Currency {
   code       String    @db.VarChar(32)
   /// ISO 4217 code plus name, e.g. USD — US Dollar.
   currency   String    @db.VarChar(100)
-  conversion Decimal   @db.Decimal(18, 4)
+  /// The rate, in the SYSTEM base — the shared row whose conversion is 1.
+  /// Ten decimals, not four. Decimal places are absolute and rates are
+  /// relative: BDT is 0.0083333333 of a US dollar, and four places would round
+  /// that to 0.0083 — a 0.4% error on every converted figure.
+  conversion Decimal   @db.Decimal(18, 10)
   isActive   Boolean   @default(true) @map("is_active")
   createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -473,7 +479,7 @@ model CurrencyRateHistory {
   tenantId      BigInt    @map("tenant_id")
   id            BigInt    @id @default(autoincrement())
   currencyId    BigInt    @map("currency_id")
-  rate          Decimal   @db.Decimal(18, 4)
+  rate          Decimal   @db.Decimal(18, 10)
   effectiveFrom DateTime  @map("effective_from") @db.Timestamptz(6)
   /// NULL = still in force.
   effectiveTo   DateTime? @map("effective_to") @db.Timestamptz(6)
@@ -3228,7 +3234,7 @@ model Quotation {
   /// from the currency master once and then never re-read, so the arithmetic on
   /// an issued document cannot move under it.
   localCurrencyId BigInt  @map("local_currency_id")
-  conversionRate  Decimal @map("conversion_rate") @db.Decimal(18, 4)
+  conversionRate  Decimal @map("conversion_rate") @db.Decimal(18, 10)
 
   /// When the price came from an agent's RFQ rather than our own rate table.
   sourceAgentQuoteId BigInt? @map("source_agent_quote_id")
@@ -3333,7 +3339,7 @@ model QuotationLine {
 
   /// The quotation's frozen rate, copied onto every line so a multi-currency
   /// quotation still totals correctly (§5.4).
-  conversionRate Decimal @map("conversion_rate") @db.Decimal(18, 4)
+  conversionRate Decimal @map("conversion_rate") @db.Decimal(18, 10)
 
   /// GENERATED quantity * selling_price * conversion_rate. The client's "Bill
   /// Amount (Local Currency)": 2 x 5252 = 10504, x 129 = 1,355,016.

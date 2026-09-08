@@ -241,10 +241,10 @@ describe('currency', () => {
 
     const seenByA = await get('/api/tenant/setting/currencies?search=Test%20Currency');
     const rowA = seenByA.body.data[0];
-    expect(rowA.tenantRate).toBe('77.5000');
-    expect(rowA.effectiveRate).toBe('77.5000');
+    expect(rowA.tenantRate).toBe('77.5000000000');
+    expect(rowA.effectiveRate).toBe('77.5000000000');
     // The shared default is untouched — this is the §5 resolution holding.
-    expect(rowA.conversion).toBe('10.0000');
+    expect(rowA.conversion).toBe('10.0000000000');
 
     const rowsForB = await owner.currencyRateHistory.findMany({ where: { tenantId: tenantB } });
     expect(rowsForB).toHaveLength(0);

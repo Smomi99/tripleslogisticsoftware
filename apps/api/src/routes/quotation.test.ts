@@ -52,6 +52,8 @@ let size40: bigint;
 
 async function cleanup(): Promise<void> {
   const scope = `(SELECT id FROM tenant WHERE slug = '${SLUG}')`;
+  // The tenant references its base currency, so let go before deleting them.
+  await owner.$executeRawUnsafe(`UPDATE tenant SET currency_id = NULL WHERE slug = '${SLUG}'`);
   for (const table of [
     'notification_setting',
     'quotation_followup',
@@ -214,6 +216,24 @@ beforeAll(async () => {
       select: { id: true },
     })
   ).id;
+
+  /*
+   * The workspace's base currency (2026-09-08). Nothing can be priced without
+   * one — lib/currency-rate refuses rather than converting at a rate nobody
+   * chose — and a workspace is not usable until it has declared it.
+   *
+   * At 1, which keeps QCUR resolving to its own 129: the built-in defaults are
+   * expressed against whichever currency sits at 1, so they stay a valid
+   * fallback while the base is that currency. Every figure below is the
+   * client's own sample and is unchanged by this.
+   */
+  const baseCurrencyId = (
+    await owner.currency.create({
+      data: { tenantId, code: 'QBASE', currency: 'QBT — Quote Base Taka', conversion: '1.0000' },
+      select: { id: true },
+    })
+  ).id;
+  await owner.tenant.update({ where: { id: tenantId }, data: { currencyId: baseCurrencyId } });
 
   const unit = await owner.costUnit.findFirstOrThrow({ select: { id: true } });
   freightHeadId = (
