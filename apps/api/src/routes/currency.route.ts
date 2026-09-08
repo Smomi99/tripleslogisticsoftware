@@ -55,6 +55,8 @@ interface CurrencyRow {
   effective_is_active: boolean;
   is_system: boolean;
   is_base: boolean;
+  /** Whether the built-in defaults are in this workspace's base. */
+  system_base: boolean;
 }
 
 /**
@@ -67,9 +69,17 @@ interface CurrencyRow {
 function toDto(row: CurrencyRow): CurrencyDto {
   const conversion = row.conversion.toFixed(10);
   const tenantRate = row.tenant_rate === null ? null : row.tenant_rate.toFixed(10);
-  // The base converts to itself at 1, whatever happens to be stored against
-  // it — that is what being the base means (see lib/currency-rate).
-  const effectiveRate = row.is_base ? '1.0000000000' : (tenantRate ?? conversion);
+  /*
+    Resolved exactly as lib/currency-rate resolves it, because a screen that
+    shows a rate the server would refuse to convert with is worse than one that
+    shows nothing. The base is 1 by definition; then the workspace's own rate;
+    then the built-in default, and ONLY while that default is in this
+    workspace's base. Otherwise there is no rate here yet, and the screen says
+    so rather than printing a figure from another axis.
+  */
+  const effectiveRate = row.is_base
+    ? '1.0000000000'
+    : (tenantRate ?? (row.system_base ? conversion : null));
   return {
     id: row.id.toString(),
     code: row.code,
@@ -78,7 +88,8 @@ function toDto(row: CurrencyRow): CurrencyDto {
     tenantRate,
     effectiveRate,
     isBase: row.is_base,
-    usingSystemDefault: !row.is_base && tenantRate === null,
+    usingSystemDefault: !row.is_base && tenantRate === null && row.system_base,
+    systemRateComparable: row.system_base,
     isActive: row.effective_is_active,
     isSystem: row.is_system,
   };
@@ -117,7 +128,12 @@ currencyRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (req, res) =
 
     const where = Prisma.join(conditions, ' AND ');
     const joins = Prisma.sql`
-      CROSS JOIN (SELECT currency_id FROM tenant WHERE id = ${auth.tenantId}) b
+      CROSS JOIN (
+        SELECT t.currency_id, bc.conversion AS base_conversion
+          FROM tenant t
+          LEFT JOIN currency bc ON bc.id = t.currency_id
+         WHERE t.id = ${auth.tenantId}
+      ) b
       LEFT JOIN tenant_master_override o
         ON o.table_name = 'currency' AND o.record_id = c.id AND o.tenant_id = ${auth.tenantId}
       LEFT JOIN LATERAL (
@@ -147,7 +163,11 @@ currencyRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (req, res) =
              r.rate AS tenant_rate,
              (c.is_active AND COALESCE(o.is_active, true)) AS effective_is_active,
              (c.tenant_id IS NULL) AS is_system,
-             (c.id = b.currency_id) AS is_base
+             (c.id = b.currency_id) AS is_base,
+             -- The built-in defaults are expressed against whichever shared
+             -- currency sits at 1. They are comparable only while this
+             -- workspace still books in that currency.
+             COALESCE(b.base_conversion = 1, false) AS system_base
       FROM currency c ${joins}
       WHERE ${where}
       ORDER BY ${orderColumn} ${direction}, c.id ASC
@@ -187,7 +207,12 @@ currencyRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (req, res) =
  *   - runs in one transaction. A half-applied rebase is a ledger where two
  *     currencies disagree about what the base is.
  */
-currencyRouter.post('/:id/set-base', requirePermission(`${FEATURE}.EDIT`), async (req, res) => {
+currencyRouter.post(
+  '/:id/set-base',
+  // Not EDIT — §7's SET_BASE, because this re-expresses every rate the
+  // workspace holds rather than correcting one of them.
+  requirePermission(`${FEATURE}.SET_BASE`),
+  async (req, res) => {
   const auth = req.auth!;
   const id = parseId(req.params.id, 'currency');
 
@@ -368,6 +393,9 @@ currencyRouter.post('/', requirePermission(`${FEATURE}.CREATE`), async (req, res
       // Newly added or just renamed: not the base, and no workspace rate yet.
       isBase: false,
       usingSystemDefault: true,
+      // Freshly written by this workspace, so it is in whatever base they book
+      // in — the list refreshes with the resolved answer either way.
+      systemRateComparable: true,
       isActive: created.isActive,
       isSystem: false,
     },
@@ -417,6 +445,9 @@ currencyRouter.patch('/:id', requirePermission(`${FEATURE}.EDIT`), async (req, r
       // Newly added or just renamed: not the base, and no workspace rate yet.
       isBase: false,
       usingSystemDefault: true,
+      // Freshly written by this workspace, so it is in whatever base they book
+      // in — the list refreshes with the resolved answer either way.
+      systemRateComparable: true,
       isActive: updated.isActive,
       isSystem: false,
     },

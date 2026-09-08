@@ -95,8 +95,17 @@ export interface CurrencyDto {
   conversion: string;
   /** This workspace's current rate if it has set one, otherwise null. */
   tenantRate: string | null;
-  /** tenantRate when set, else conversion — what the workspace actually books at. */
-  effectiveRate: string;
+  /**
+   * What this workspace actually books at, resolved the same way
+   * lib/currency-rate resolves it: 1 for the base, then the workspace's own
+   * rate, then the built-in default — and that last only while the default is
+   * in this workspace's base.
+   *
+   * NULL when none of those apply, which means this currency cannot be priced
+   * here yet. It has to be nullable: showing a figure the server would refuse
+   * to convert with is how a screen and its API come to disagree about money.
+   */
+  effectiveRate: string | null;
   /**
    * The workspace's base currency. Every other rate is units of THIS per one
    * unit of that currency, and the base's own rate is always exactly 1.
@@ -104,10 +113,19 @@ export interface CurrencyDto {
   isBase: boolean;
   /**
    * True when the effective rate is the built-in default rather than one this
-   * workspace set — and that default is only meaningful while the base is the
-   * currency the defaults are expressed in. The screen warns on it.
+   * workspace set. The screen marks it, because a rate nobody chose is worth
+   * knowing about before quoting against it.
    */
   usingSystemDefault: boolean;
+  /**
+   * Whether `conversion` is in the same base this workspace books in.
+   *
+   * The built-in defaults are expressed against the SYSTEM base — the shared
+   * currency sitting at 1. A workspace that has moved its base off that is
+   * looking at a figure on a different axis, and comparing it to the booking
+   * rate would be a mistake, so the screen withholds it instead.
+   */
+  systemRateComparable: boolean;
   isActive: boolean;
   isSystem: boolean;
 }

@@ -9,6 +9,7 @@ import {
   currencyRateInputSchema,
   type CurrencySortField,
   formatRate,
+  isoCurrency,
 } from '@ff/shared';
 import { useEffect, useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
@@ -37,6 +38,17 @@ const ENDPOINT = '/api/tenant/setting/currencies';
 export default function CurrencyPage() {
   const { authorizedRequest, can } = useSession();
   const list = useMasterList<CurrencyDto, CurrencySortField>(ENDPOINT, 'currency');
+
+  /*
+    What this workspace books in. Every rate on this screen is "units of THIS
+    per one unit of that currency", and until the screen said so the numbers
+    were unlabelled — a column of figures against a base nobody had named.
+  */
+  const baseIso = useMemo(
+    () => list.rows.find((r) => r.isBase)?.currency ?? null,
+    [list.rows],
+  );
+  const baseCode = baseIso === null ? null : isoCurrency(baseIso);
 
   const [editing, setEditing] = useState<CurrencyDto | null>(null);
   const [isFormOpen, setFormOpen] = useState(false);
@@ -87,11 +99,27 @@ export default function CurrencyPage() {
         sortable: true,
         align: 'right',
         numeric: true,
-        cell: (r) => formatRate(r.conversion),
+        /*
+          The built-in default, which is expressed against the SYSTEM base —
+          whichever shared currency sits at 1. Once a workspace has moved its
+          base off that, this figure is in a different base entirely, and
+          showing it beside the booking rate invites comparing two numbers that
+          do not belong on the same axis. It is withheld rather than explained
+          away; lib/currency-rate refuses to convert with it for the same
+          reason.
+        */
+        cell: (r) =>
+          r.systemRateComparable ? (
+            formatRate(r.conversion)
+          ) : (
+            <span className="text-steel" title="In a different base to this workspace's, so not comparable">
+              —
+            </span>
+          ),
       },
       {
         id: 'tenantRate',
-        header: 'Your Rate',
+        header: baseCode === null ? 'Your Rate' : `Your Rate (${baseCode})`,
         align: 'right',
         numeric: true,
         cell: (r) =>
@@ -103,19 +131,36 @@ export default function CurrencyPage() {
       },
       {
         id: 'effectiveRate',
-        header: 'Booking Rate',
+        header: baseCode === null ? 'Booking Rate' : `Booking Rate (${baseCode})`,
         align: 'right',
         numeric: true,
-        cell: (r) => (
-          <span className="flex items-center justify-end gap-2">
-            <span className="font-medium">{formatRate(r.effectiveRate)}</span>
-            {r.usingSystemDefault && (
-              <span className="text-cell text-signal" title="No rate set for this workspace — the built-in default is being used">
-                default
-              </span>
-            )}
-          </span>
-        ),
+        cell: (r) =>
+          r.effectiveRate === null ? (
+            /*
+              No rate this workspace can use. Said plainly, and in --alert,
+              because nothing can be quoted in this currency until somebody
+              sets one — the server refuses it, so a figure here would be a
+              promise the API will not keep.
+            */
+            <span
+              className="text-alert"
+              title="Set a rate for this currency before quoting in it"
+            >
+              No rate
+            </span>
+          ) : (
+            <span className="flex items-center justify-end gap-2">
+              <span className="font-medium">{formatRate(r.effectiveRate)}</span>
+              {r.usingSystemDefault && (
+                <span
+                  className="text-cell text-signal"
+                  title="No rate set for this workspace — the built-in default is being used"
+                >
+                  default
+                </span>
+              )}
+            </span>
+          ),
       },
       {
         id: 'source',
@@ -134,7 +179,7 @@ export default function CurrencyPage() {
         ),
       },
     ],
-    [],
+    [baseCode],
   );
 
   async function submitCurrency(values: CurrencyInput): Promise<void> {
@@ -233,7 +278,11 @@ export default function CurrencyPage() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Currency"
-        description="Shared currencies with their system rate, plus the rate this workspace books at."
+        description={
+          baseCode === null
+            ? 'No base currency set. Choose one with Make base — nothing can be priced until you do.'
+            : `Every rate below is ${baseCode} per one unit of that currency. ${baseCode} is this workspace's base, so it sits at 1.`
+        }
         action={
           can('SETTING.CURRENCY.CREATE') ? (
             <Button
@@ -290,7 +339,7 @@ export default function CurrencyPage() {
                 Set rate
               </Button>
             )}
-            {can('SETTING.CURRENCY.EDIT') && !row.isBase && row.isActive && (
+            {can('SETTING.CURRENCY.SET_BASE') && !row.isBase && row.isActive && (
               <Button variant="text" size="inline" onClick={() => setToBase(row)}>
                 Make base
               </Button>

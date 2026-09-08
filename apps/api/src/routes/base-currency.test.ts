@@ -420,3 +420,171 @@ describe('§7 — the base is behind the currency permission', () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe('the system default is only shown where it means something', () => {
+  /*
+   * Client, 2026-09-08: "still it has rate against bdt . but rate will be
+   * against base rate".
+   *
+   * The built-in defaults are expressed against the SYSTEM base — whichever
+   * shared currency sits at 1. While a workspace books in that currency they
+   * are comparable to its own rates. The moment it moves its base they are on
+   * a different axis, and a column of figures against a base nobody named is
+   * exactly how somebody reads the wrong number.
+   */
+  const rowFor = async (id: bigint) => {
+    const res = await api.get('/api/tenant/setting/currencies?limit=100');
+    return (res.body.data as { id: string; systemRateComparable: boolean; conversion: string }[])
+      .find((c) => c.id === id.toString());
+  };
+
+  it('is comparable while the workspace books in the system base', async () => {
+    // The fixture's base sits at 1, so the defaults and the base agree.
+    await setBase(bdt);
+    expect((await rowFor(usd))?.systemRateComparable).toBe(true);
+  });
+
+  it('stops being comparable the moment the base moves', async () => {
+    await setRate(usd, '120');
+    await setBase(usd);
+
+    const row = await rowFor(aed);
+    expect(row?.systemRateComparable).toBe(false);
+    // The figure is still carried — the screen decides to withhold it, and a
+    // later report may want to know what the default was.
+    expect(row?.conversion).toBe('32.7000000000');
+  });
+
+  it('becomes comparable again on the way back', async () => {
+    await setBase(bdt);
+    expect((await rowFor(aed))?.systemRateComparable).toBe(true);
+  });
+});
+
+describe('§7 — the base is admin work, not editing', () => {
+  /*
+   * Client, 2026-09-08: "base rate is for admin". Setting a rate changes one
+   * number; changing the base re-expresses every rate the workspace holds, so
+   * it is SET_BASE rather than EDIT.
+   */
+  async function tokenWith(permissions: string[], name: string): Promise<string> {
+    const user = await owner.user.create({
+      data: {
+        tenantId,
+        code: `USR-perm-${name}`,
+        username: `perm-${name}-base`,
+        email: `perm-${name}@base.test`,
+        passwordHash: 'x',
+        isSuperadmin: false,
+      },
+      select: { id: true },
+    });
+    return signAccessToken({
+      sub: user.id.toString(),
+      tenantId: tenantId.toString(),
+      isSuperadmin: false,
+      permissions,
+      tokenVersion: 0,
+    });
+  }
+
+  it('refuses someone who may edit currencies but not set the base', async () => {
+    const editor = await tokenWith(
+      ['SETTING.CURRENCY.VIEW', 'SETTING.CURRENCY.EDIT'],
+      'editor',
+    );
+
+    // They can still set a rate — that is EDIT, and it is their job.
+    const rate = await request(app)
+      .post(`/api/tenant/setting/currencies/${aed}/rate`)
+      .set('Authorization', `Bearer ${editor}`)
+      .set('X-Tenant-Slug', SLUG)
+      .send({ rate: '32.9', effectiveFrom: new Date().toISOString() });
+    expect(rate.status, JSON.stringify(rate.body)).toBe(201);
+
+    // ...but not move the base under everybody.
+    const base = await request(app)
+      .post(`/api/tenant/setting/currencies/${aed}/set-base`)
+      .set('Authorization', `Bearer ${editor}`)
+      .set('X-Tenant-Slug', SLUG);
+    expect(base.status).toBe(403);
+  });
+
+  it('allows someone holding SET_BASE', async () => {
+    const admin = await tokenWith(
+      ['SETTING.CURRENCY.VIEW', 'SETTING.CURRENCY.SET_BASE'],
+      'admin',
+    );
+    const res = await request(app)
+      .post(`/api/tenant/setting/currencies/${aed}/set-base`)
+      .set('Authorization', `Bearer ${admin}`)
+      .set('X-Tenant-Slug', SLUG);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+
+    // Put it back for anything that runs after.
+    await setBase(bdt);
+  });
+});
+
+describe('the list never shows a rate the server would refuse', () => {
+  /*
+   * The screen and the resolver must agree. A booking rate on the list that
+   * lib/currency-rate would refuse to convert with is a promise the API will
+   * not keep — and it is how the "rate against BDT" the client spotted was
+   * still leaking through after the base had moved.
+   */
+  const rowFor = async (id: bigint) => {
+    const res = await api.get('/api/tenant/setting/currencies?limit=100');
+    return (
+      res.body.data as { id: string; effectiveRate: string | null; usingSystemDefault: boolean }[]
+    ).find((c) => c.id === id.toString());
+  };
+
+  it('offers the built-in default while the base is the one it is expressed in', async () => {
+    await setBase(bdt);
+    // Its own currency: the others have picked up workspace rates by now, and
+    // the point here is the row that has none.
+    const fresh = await owner.currency.create({
+      data: { tenantId, code: 'BC-SGD', currency: 'SGD — Base Test Dollar', conversion: '89' },
+      select: { id: true },
+    });
+
+    const row = await rowFor(fresh.id);
+    expect(row?.effectiveRate).toBe('89.0000000000');
+    expect(row?.usingSystemDefault).toBe(true);
+
+    await owner.currency.delete({ where: { id: fresh.id } });
+  });
+
+  it('offers no rate at all once the base has moved away', async () => {
+    await setRate(usd, '120');
+    await setBase(usd);
+
+    /*
+     * A currency created after the rebase, so it has no workspace rate and its
+     * only default is in the old base. The list must say there is no rate
+     * rather than print the old-base figure.
+     */
+    const eur = await owner.currency.create({
+      data: { tenantId, code: 'BC-EU2', currency: 'EUR — Base Test Euro 2', conversion: '130' },
+      select: { id: true },
+    });
+
+    const row = await rowFor(eur.id);
+    expect(row?.effectiveRate).toBeNull();
+    expect(row?.usingSystemDefault).toBe(false);
+
+    // And the server agrees — this is the pair that must never disagree.
+    const quote = await quoteAt(eur.id);
+    expect(quote.status).toBe(409);
+
+    await owner.currency.delete({ where: { id: eur.id } });
+    await setBase(bdt);
+  });
+
+  it('always offers the base itself, at 1', async () => {
+    const row = await rowFor(bdt);
+    expect(row?.effectiveRate).toBe('1.0000000000');
+    expect(row?.usingSystemDefault).toBe(false);
+  });
+});

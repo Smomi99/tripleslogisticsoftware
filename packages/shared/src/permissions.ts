@@ -44,6 +44,16 @@ export const ACTIONS = [
   'PRICE_CHECK',
   'CARRIER_POSITION',
   /*
+   * Declaring the workspace's base currency, and it is not EDIT.
+   *
+   * Setting a rate changes one number. Changing the base re-expresses every
+   * rate the workspace holds and changes what every figure on every screen
+   * means — the sort of thing that belongs with whoever owns the books rather
+   * than with anyone who may correct a dollar rate. The client's own words,
+   * 2026-09-08: "base rate is for admin".
+   */
+  'SET_BASE',
+  /*
    * §7's quotation actions.
    *
    * SEND is separate from EDIT because building a quotation and putting it in
@@ -400,7 +410,13 @@ export const FEATURES: readonly FeatureDefinition[] = [
   // checkbox in the superadmin matrix is worse than an absent one.
   { module: 'SETTING', feature: 'SETTING.SEA_AIR_PORT', label: 'Sea-Air Port', actions: MASTER_DELETABLE },
   { module: 'SETTING', feature: 'SETTING.COST_HEAD', label: 'Cost Head', actions: MASTER_DELETABLE },
-  { module: 'SETTING', feature: 'SETTING.CURRENCY', label: 'Currency', actions: MASTER_DELETABLE },
+  {
+    module: 'SETTING',
+    feature: 'SETTING.CURRENCY',
+    label: 'Currency',
+    // SET_BASE on top of the master set: see the note on the action.
+    actions: [...MASTER_DELETABLE, 'SET_BASE'],
+  },
   { module: 'SETTING', feature: 'SETTING.CARRIER', label: 'Carrier', actions: MASTER_DELETABLE },
   // CR-001 §6. Carrier PIC and Service Port are gated by SETTING.CARRIER, but
   // the client asked for Port Pair to be grantable on its own — lane rankings
