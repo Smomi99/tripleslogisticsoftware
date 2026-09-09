@@ -123,6 +123,61 @@ async function clear(tenantId: bigint): Promise<void> {
   await prisma.quotationLine.deleteMany({ where: { ...t, quotationId: { in: quotationIds } } });
   await prisma.quotation.deleteMany({ where: { ...t, id: { in: quotationIds } } });
 
+  /*
+   * Anything of the user's OWN hanging off demo data stops the clear.
+   *
+   * Raising a quotation on a demo inquiry, or an inquiry for a demo customer,
+   * is the obvious way to try the product — and it leaves real work pointing
+   * at scenery. Deleting it to tidy up would destroy something somebody did;
+   * crashing with a foreign-key stack trace explains nothing. So: stop before
+   * touching anything, name exactly what is in the way, and let them decide.
+   */
+  const [heldQuotations, heldInquiries] = await Promise.all([
+    prisma.quotation.findMany({
+      where: {
+        ...t,
+        deletedAt: null,
+        code: { not: { startsWith: P } },
+        inquiry: { code: { startsWith: P } },
+      },
+      select: { code: true, inquiry: { select: { code: true } } },
+    }),
+    prisma.inquiry.findMany({
+      where: {
+        ...t,
+        deletedAt: null,
+        code: { not: { startsWith: P } },
+        customer: { code: { startsWith: P } },
+      },
+      select: { code: true, customer: { select: { code: true } } },
+    }),
+  ]);
+
+  const blocking = [
+    ...heldQuotations.map((q) => `  ${q.code} — quotation on ${q.inquiry.code}`),
+    ...heldInquiries.map((i) => `  ${i.code} — inquiry for ${i.customer?.code ?? "a demo customer"}`),
+  ];
+  if (blocking.length > 0) {
+    throw new Error(
+      'Cannot remove the demo data — this work of yours is built on it:' +
+        `\n${blocking.join('\n')}\n\n` +
+        'Delete those records first, or leave the demo data in place. Nothing has been changed.',
+    );
+  }
+
+  await prisma.agentQuoteLine.deleteMany({
+    where: { ...t, option: { quote: { inquiryId: { in: inquiryIds } } } },
+  });
+  await prisma.agentQuoteComment.deleteMany({
+    where: { ...t, quote: { inquiryId: { in: inquiryIds } } },
+  });
+  await prisma.agentQuoteOption.deleteMany({
+    where: { ...t, quote: { inquiryId: { in: inquiryIds } } },
+  });
+  await prisma.agentQuote.deleteMany({ where: { ...t, inquiryId: { in: inquiryIds } } });
+  await prisma.inquiryRate.deleteMany({ where: { ...t, inquiryId: { in: inquiryIds } } });
+  await prisma.inquiryFollowup.deleteMany({ where: { ...t, inquiryId: { in: inquiryIds } } });
+  await prisma.inquiryPartyContact.deleteMany({ where: { ...t, inquiryId: { in: inquiryIds } } });
   await prisma.inquiryVolume.deleteMany({ where: { ...t, inquiryId: { in: inquiryIds } } });
   await prisma.inquiryCommodity.deleteMany({ where: { ...t, inquiryId: { in: inquiryIds } } });
   await prisma.inquiryParty.deleteMany({ where: { ...t, inquiryId: { in: inquiryIds } } });
@@ -148,6 +203,24 @@ async function clear(tenantId: bigint): Promise<void> {
 
   await prisma.user.deleteMany({ where: { ...t, employeeId: { in: employeeIds } } });
   await prisma.employee.deleteMany({ where: { ...t, id: { in: employeeIds } } });
+
+  // The agent login, its role, and the agent it belongs to.
+  await prisma.user.deleteMany({ where: { ...t, ...demoCode } });
+  await prisma.rolePermission.deleteMany({
+    where: { ...t, role: { code: { startsWith: P } } },
+  });
+  await prisma.role.deleteMany({ where: { ...t, ...demoCode } });
+  await prisma.agentPic.deleteMany({ where: { ...t, agent: { code: { startsWith: P } } } });
+  await prisma.agentExpertArea.deleteMany({
+    where: { ...t, agent: { code: { startsWith: P } } },
+  });
+  await prisma.agentPortCoverage.deleteMany({
+    where: { ...t, agent: { code: { startsWith: P } } },
+  });
+  await prisma.agentNetworkMember.deleteMany({
+    where: { ...t, agent: { code: { startsWith: P } } },
+  });
+  await prisma.agent.deleteMany({ where: { ...t, ...demoCode } });
 
   // The audit trail for rows that no longer exist is noise, not history.
   await prisma.$executeRawUnsafe(
@@ -328,6 +401,67 @@ async function seed(tenantId: bigint): Promise<void> {
     });
     employees.push({ id: employee.id, userId: user.id, name: person.name });
   }
+
+  // ------------------------------------------------------ an agent to log in as
+  //
+  // An agent signs in at the same /login as staff; what makes the session an
+  // agent's is the agent_id on the user row, and every staff router refuses a
+  // session that has one. They also need a role granting AGENT.INQUIRY, or
+  // they sign in successfully and see an empty product.
+  const agent = await prisma.agent.create({
+    data: {
+      ...t,
+      code: `${P}AGT-1`,
+      name: 'Gulf Freight Partners LLC',
+      country: 'United Arab Emirates',
+      address: 'Jebel Ali Free Zone, Dubai',
+      agentType: 'GENERAL',
+      createdAt: monthsAgo(8),
+    },
+    select: { id: true },
+  });
+  await prisma.agentPic.create({
+    data: {
+      ...t,
+      code: `${P}APIC-1`,
+      agentId: agent.id,
+      name: 'Yousef Rahman',
+      designation: 'Operations Manager',
+      email: 'yousef@gulffreight.test',
+      mobile: '+971501234567',
+    },
+  });
+
+  const agentRole = await prisma.role.create({
+    data: {
+      ...t,
+      code: `${P}ROL-1`,
+      name: 'Agent (demo)',
+      description: 'What an overseas agent can reach: their own inquiries, and quoting on them.',
+    },
+    select: { id: true },
+  });
+  const agentPermissions = await prisma.permission.findMany({
+    where: { module: 'AGENT' },
+    select: { id: true },
+  });
+  for (const permission of agentPermissions) {
+    await prisma.rolePermission.create({
+      data: { ...t, roleId: agentRole.id, permissionId: permission.id },
+    });
+  }
+  await prisma.user.create({
+    data: {
+      ...t,
+      code: `${P}USR-AGT`,
+      username: `${P.toLowerCase()}agent`,
+      email: 'yousef@gulffreight.test',
+      passwordHash: password,
+      agentId: agent.id,
+      roleId: agentRole.id,
+      isSuperadmin: false,
+    },
+  });
 
   // -------------------------------------------------------------- customers
   //
