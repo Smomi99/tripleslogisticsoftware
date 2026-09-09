@@ -18,7 +18,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Field, Input } from '@/components/ui/field';
+import { Field, Input, Select } from '@/components/ui/field';
 import { FormLayout, PageHeader } from '@/components/ui/form-layout';
 import { ConfirmDialog, Modal } from '@/components/ui/modal';
 import { Status } from '@/components/ui/status';
@@ -49,6 +49,7 @@ export default function CurrencyPage() {
     [list.rows],
   );
   const baseCode = baseIso === null ? null : isoCurrency(baseIso);
+  const canSetBase = can('SETTING.CURRENCY.SET_BASE');
 
   const [editing, setEditing] = useState<CurrencyDto | null>(null);
   const [isFormOpen, setFormOpen] = useState(false);
@@ -297,15 +298,58 @@ export default function CurrencyPage() {
         }
       />
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Input
-          type="search"
-          placeholder="Search currencies"
-          aria-label="Search currencies"
-          value={list.searchInput}
-          onChange={(event) => list.setSearchInput(event.target.value)}
-          className="w-72"
-        />
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="flex flex-col gap-1">
+          <span className="label-manifest">Search</span>
+          <Input
+            type="search"
+            placeholder="Search currencies"
+            aria-label="Search currencies"
+            value={list.searchInput}
+            onChange={(event) => list.setSearchInput(event.target.value)}
+            className="w-72"
+          />
+        </div>
+
+        {/*
+          The base, chosen here rather than from a row action (client request,
+          2026-09-09). It belongs beside the filter because it governs the whole
+          table — every figure below is expressed against it — rather than being
+          a property of any one row.
+
+          Still SET_BASE, not EDIT: this re-expresses every rate the workspace
+          holds. Someone without it sees which currency is the base and cannot
+          move it.
+        */}
+        <div className="flex flex-col gap-1">
+          <span className="label-manifest">Base currency</span>
+          <Select
+            aria-label="Base currency"
+            className="w-64"
+            value={list.rows.find((r) => r.isBase)?.id ?? ''}
+            disabled={!canSetBase}
+            title={
+              canSetBase
+                ? 'Every rate is expressed against this'
+                : 'Only an administrator can change the base currency'
+            }
+            onChange={(event) => {
+              const next = list.rows.find((r) => r.id === event.target.value);
+              if (next !== undefined && !next.isBase) setToBase(next);
+            }}
+          >
+            {list.rows.find((r) => r.isBase) === undefined && (
+              <option value="">Not set — choose one</option>
+            )}
+            {list.rows
+              .filter((r) => r.isActive || r.isBase)
+              .map((r) => (
+                <option key={r.id} value={r.id}>
+                  {isoCurrency(r.currency)}
+                </option>
+              ))}
+          </Select>
+        </div>
       </div>
 
       {list.error !== null && (
@@ -339,11 +383,7 @@ export default function CurrencyPage() {
                 Set rate
               </Button>
             )}
-            {can('SETTING.CURRENCY.SET_BASE') && !row.isBase && row.isActive && (
-              <Button variant="text" size="inline" onClick={() => setToBase(row)}>
-                Make base
-              </Button>
-            )}
+
             {can('SETTING.CURRENCY.EDIT') && !row.isSystem && (
               <Button
                 variant="text"

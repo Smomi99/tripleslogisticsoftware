@@ -11,7 +11,7 @@ import {
   loadingTypeLabel,
 } from '@ff/shared';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -127,6 +127,37 @@ export function QuotationForm({
   const [eta, setEta] = useState(quotation.eta ?? '');
   const [busy, setBusy] = useState(false);
   const [sending, setSending] = useState(false);
+  /** Which currency the bill amount is being checked against. '' is none. */
+  const [checkIn, setCheckIn] = useState('');
+
+  /*
+   * The bill amount seen in another currency, at today's rates.
+   *
+   * Both rates are "units of the workspace base per one unit", so going from
+   * the quotation's billing currency to the chosen one is one multiply and one
+   * divide through the base. Today's rates deliberately: the question this
+   * answers is "what is that worth to me now", not "what did we freeze", and
+   * the frozen figure is on screen right beside it.
+   */
+  const checked = useMemo(() => {
+    if (checkIn === '') return null;
+    const target = options.currencies.find((c) => c.id === checkIn);
+    const from = options.currencies.find((c) => c.id === quotation.localCurrencyId);
+    if (target === undefined || from === undefined) return null;
+
+    const billed = Number(quotation.totalAmountLocal ?? '0');
+    const fromRate = Number(from.conversion);
+    const toRate = Number(target.conversion);
+    if (!Number.isFinite(billed) || !(fromRate > 0) || !(toRate > 0)) return null;
+
+    return {
+      code: target.label,
+      amount: ((billed * fromRate) / toRate).toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      }),
+    };
+  }, [checkIn, options.currencies, quotation.localCurrencyId, quotation.totalAmountLocal]);
   const [emails, setEmails] = useState(quotation.recipients.map((r) => r.email).join(', '));
 
   /** §6.6's document, opened in a tab. */
@@ -438,6 +469,48 @@ export function QuotationForm({
             </p>
           </div>
         </div>
+        {/*
+          The conversion checker — client request, 2026-09-09.
+
+          For CHECKING only. What this quotation sends and prints is the Bill
+          Amount above, in the currency it was raised in, at the rate it froze
+          when it was issued (§2.2). This converts that figure at TODAY'S
+          workspace rates so somebody can sanity-check it against their own
+          money, and says so, because a second number beside a price is
+          otherwise indistinguishable from the price.
+        */}
+        <div className="mt-4 flex flex-wrap items-end gap-3 border-t border-line pt-4">
+          <div className="flex flex-col gap-1">
+            <span className="label-manifest">Check this in</span>
+            <Select
+              aria-label="Check the bill amount in another currency"
+              className="w-40"
+              value={checkIn}
+              onChange={(event) => setCheckIn(event.target.value)}
+            >
+              <option value="">—</option>
+              {options.currencies
+                .filter((c) => c.id !== quotation.localCurrencyId && Number(c.conversion) > 0)
+                .map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.label}
+                  </option>
+                ))}
+            </Select>
+          </div>
+          {checked !== null && (
+            <p className="pb-1.5 text-body text-steel">
+              <span className="font-mono tabular-nums text-hull">
+                {checked.amount} {checked.code}
+              </span>
+              <span className="ml-2 text-cell">
+                at today&apos;s rate — the quotation still bills{' '}
+                {money(quotation.totalAmountLocal)} {quotation.localCurrencyCode ?? ''}
+              </span>
+            </p>
+          )}
+        </div>
+
         {quotation.amountInWords !== null && (
           <p className="mt-3 border-t border-line pt-3 text-cell text-steel">
             <span className="label-manifest mr-2">In word</span>
