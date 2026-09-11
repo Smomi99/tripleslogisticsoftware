@@ -154,10 +154,15 @@ export default function QuotationListPage() {
     },
     {
       id: 'totalAmountUsd',
-      header: 'Total ($)',
+      // Not "Total ($)". The figure is in whatever the charges were priced in,
+      // so the currency belongs against the row, not in the header.
+      header: 'Total',
       numeric: true,
       align: 'right',
-      cell: (row) => money(row.totalAmountUsd),
+      cell: (row) =>
+        row.totalCurrencyCode === null
+          ? money(row.totalAmountUsd)
+          : `${money(row.totalAmountUsd)} ${row.totalCurrencyCode}`,
     },
     {
       id: 'validityDate',

@@ -51,6 +51,10 @@ export interface QuotationPdfInput {
   localCurrencyCode: string;
   /** §2.2 — only a document issued in the two-currency layout re-prints it. */
   printsConvertedTotal: boolean;
+  /** What the charges come to, per currency they were priced in. */
+  totalsByCurrency: { currencyCode: string; amount: string }[];
+  /** The one currency they share, or null — then the words are left off. */
+  totalCurrencyCode: string | null;
 
   lines: {
     description: string;
@@ -246,12 +250,26 @@ export function renderQuotationPdf(input: QuotationPdfInput): Promise<Buffer> {
           y,
         );
     }
-    doc
-      .font('Helvetica-Bold')
-      .fontSize(10)
-      .fillColor(HULL)
-      .text(`Total: USD ${input.totalUsd}`, left, y, { width, align: 'right' });
-    y = doc.y + 2;
+    /*
+      The total names the currency the charges are actually in.
+
+      It said "USD" in fixed text, whatever the lines held — so a quotation of
+      BDT 1,150 went to the customer reading "Total: USD 1,150", overstating
+      the price by a factor of a hundred and twenty-four. Where the charges do
+      not share a currency there is no single total, and the document says so
+      by printing one line per currency rather than adding them together.
+    */
+    for (const subtotal of input.totalsByCurrency) {
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(10)
+        .fillColor(HULL)
+        .text(`Total: ${subtotal.currencyCode} ${subtotal.amount}`, left, y, {
+          width,
+          align: 'right',
+        });
+      y = doc.y + 2;
+    }
     if (input.printsConvertedTotal) {
       doc
         .font('Helvetica')
@@ -266,11 +284,22 @@ export function renderQuotationPdf(input: QuotationPdfInput): Promise<Buffer> {
       y += 8;
     }
 
-    doc.font('Helvetica-Bold').fontSize(9).fillColor(HULL).text('In word (USD): ', left, y, {
-      continued: true,
-    });
-    doc.font('Helvetica').fillColor(HULL).text(input.amountInWords);
-    y = doc.y + 14;
+    /*
+      The words are the arbiter when the digits are disputed, so the currency
+      they name has to be the one the charges are in. Where the charges are in
+      several, there is no single amount to spell and the subtotals above say
+      it on their own — inventing a total across currencies would be worse
+      than leaving this off.
+    */
+    if (input.totalCurrencyCode !== null && input.amountInWords !== '') {
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(9)
+        .fillColor(HULL)
+        .text(`In word (${input.totalCurrencyCode}): `, left, y, { continued: true });
+      doc.font('Helvetica').fillColor(HULL).text(input.amountInWords);
+      y = doc.y + 14;
+    }
 
     // ------------------------------------------------------------- the notes
     doc.moveTo(left, y).lineTo(right, y).strokeColor(LINE).stroke();

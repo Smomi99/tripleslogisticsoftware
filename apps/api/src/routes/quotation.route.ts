@@ -140,6 +140,23 @@ function lineToDto(row: QuotationRow['lines'][number]): QuotationLineDto {
 }
 
 function toDto(row: QuotationRow): QuotationDto {
+  const totals = currencyTotals(row.lines);
+  /*
+    Stored words win; computed words fill the gap.
+
+    The migration cleared the words on quotations that named the wrong
+    currency — they read "US Dollars" on charges that were never dollars.
+    Rather than leaving those documents with a blank line until somebody
+    happens to re-save them, they are spelled here from the stored total,
+    which is deterministic: same figure in, same words out, so nothing on an
+    issued document moves (§2.2).
+  */
+  const words =
+    row.amountInWords ??
+    (totals.totalCurrencyCode === null
+      ? null
+      : amountInWords(num(row.totalAmountUsd) ?? '0', totals.totalCurrencyCode));
+
   return {
     id: row.id.toString(),
     code: row.code,
@@ -185,7 +202,8 @@ function toDto(row: QuotationRow): QuotationDto {
 
     totalAmountUsd: num(row.totalAmountUsd),
     totalAmountLocal: num(row.totalAmountLocal),
-    amountInWords: row.amountInWords,
+    amountInWords: words,
+    ...totals,
 
     status: row.status,
     sentAt: row.sentAt?.toISOString() ?? null,
@@ -229,14 +247,64 @@ async function retotal(db: TenantDb, quotationId: bigint): Promise<void> {
     new Prisma.Decimal(0),
   );
 
+  /*
+    The words name the currency the charges are actually in.
+
+    They used to say "US Dollars" whatever the lines held, because
+    amountInWords defaults to USD and nobody passed the second argument — so a
+    quotation of BDT 1,150 went out reading "US Dollars One thousand one
+    hundred and fifty only", overstating itself by two orders of magnitude on
+    the one line of a document that exists to be the arbiter when the digits
+    are disputed.
+
+    When the charges do not share a currency there is no single amount to
+    spell, so there are no words: the document prints a subtotal per currency
+    instead, and inventing a total across them would be worse than silence.
+  */
+  const codes = new Set(rows.map((r) => r.currencyCode).filter((c): c is string => !!c));
+  const single = codes.size === 1 ? [...codes][0]! : null;
+
   await db.quotation.update({
     where: { id: quotationId },
     data: {
       totalAmountUsd: usd,
       totalAmountLocal: local,
-      amountInWords: amountInWords(usd.toString()),
+      amountInWords: single === null ? null : amountInWords(usd.toString(), single),
     },
   });
+}
+
+/**
+ * The total as a line of text: "USD 2,121.0000", or every currency's subtotal
+ * when the charges do not share one. Used wherever the figure is announced
+ * rather than laid out — the email, and its plain-text fallback.
+ */
+function quotationTotalText(dto: QuotationDto): string {
+  if (dto.totalsByCurrency.length === 0) return 'USD 0.0000';
+  return dto.totalsByCurrency.map((t) => `${t.currencyCode} ${t.amount}`).join(' + ');
+}
+
+/** The charges grouped by what they are priced in — see QuotationDto. */
+function currencyTotals(
+  lines: { currencyCode: string | null; totalAmount: Prisma.Decimal | null }[],
+): { totalCurrencyCode: string | null; totalsByCurrency: { currencyCode: string; amount: string }[] } {
+  const byCode = new Map<string, Prisma.Decimal>();
+  for (const line of lines) {
+    const code = line.currencyCode ?? '';
+    if (code === '') continue;
+    byCode.set(code, (byCode.get(code) ?? new Prisma.Decimal(0)).plus(line.totalAmount ?? 0));
+  }
+  const totalsByCurrency = [...byCode.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    // toString, not toFixed: every other money field on this DTO is rendered
+    // by `num` the same way, and a second format would show up as two
+    // different-looking totals for the same figure.
+    .map(([currencyCode, amount]) => ({ currencyCode, amount: amount.toString() }));
+
+  return {
+    totalCurrencyCode: totalsByCurrency.length === 1 ? totalsByCurrency[0]!.currencyCode : null,
+    totalsByCurrency,
+  };
 }
 
 /**
@@ -660,6 +728,12 @@ quotationRouter.get('/quotations', requirePermission(`${FEATURE}.VIEW`), async (
           shipmentType: true,
           status: true,
           totalAmountUsd: true,
+          // Only what says which currency the total is in — the list has no
+          // room for the charges themselves.
+          lines: {
+            where: { deletedAt: null },
+            select: { currencyCode: true, totalAmount: true },
+          },
           customer: { select: { name: true } },
           pol: { select: { name: true, portCode: true } },
           pod: { select: { name: true, portCode: true } },
@@ -704,6 +778,7 @@ quotationRouter.get('/quotations', requirePermission(`${FEATURE}.VIEW`), async (
     validityDate: day(row.validityDate),
     status: row.status,
     totalAmountUsd: num(row.totalAmountUsd),
+    totalCurrencyCode: currencyTotals(row.lines).totalCurrencyCode,
   }));
 
   const payload: ApiSuccess<QuotationListItemDto[]> = {
@@ -1141,8 +1216,18 @@ quotationRouter.get(
         })),
         totalUsd: dto.totalAmountUsd ?? '0.0000',
         totalLocal: dto.totalAmountLocal ?? '0.0000',
-        // §5.3 rule 7 generated these words on save; printing them is reading.
-        amountInWords: dto.amountInWords ?? amountInWords(dto.totalAmountUsd ?? '0'),
+        totalsByCurrency: dto.totalsByCurrency,
+        totalCurrencyCode: dto.totalCurrencyCode,
+        /*
+          §5.3 rule 7 generated these words on save; printing them is reading.
+          The fallback names the same currency the total does — computing them
+          here in dollars was half of how "USD" ended up on a taka quotation.
+        */
+        amountInWords:
+          dto.amountInWords ??
+          (dto.totalCurrencyCode === null
+            ? ''
+            : amountInWords(dto.totalAmountUsd ?? '0', dto.totalCurrencyCode)),
         notes: quotationNotes(settings?.quotationNotes),
       });
 
@@ -1252,7 +1337,7 @@ quotationRouter.post(
           podName: dto.podName ?? '—',
           shipmentType: dto.shipmentType === 'AIR' ? 'Air' : 'Sea',
           commodity: dto.commodities.map((c) => c.commodityName).join(', ') || '—',
-          totalUsd: dto.totalAmountUsd ?? '0.0000',
+          totalUsd: quotationTotalText(dto),
           amountInWords: dto.amountInWords ?? '—',
           validityDate: dto.validityDate ?? 'on request',
         },
@@ -1263,7 +1348,7 @@ quotationRouter.post(
           subject: `Quotation ${dto.code}`,
           bodyText:
             `Our quotation ${dto.code} for ${dto.polName ?? '—'} to ${dto.podName ?? '—'} ` +
-            `comes to USD ${dto.totalAmountUsd ?? '0.0000'}.`,
+            `comes to ${quotationTotalText(dto)}.`,
         },
       });
     }

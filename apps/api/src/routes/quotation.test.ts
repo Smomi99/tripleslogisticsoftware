@@ -1169,7 +1169,8 @@ describe('the quotation prints in its own currency', () => {
     const id = created.body.data.id as string;
 
     const words = pdfWords((await fetchPdf(id).expect(200)).body as Buffer);
-    expect(words).toContain('TotalUSD');
+    const code = created.body.data.totalCurrencyCode as string;
+    expect(words).toContain(`Total${code}`);
     expect(words).not.toContain('ConversionRate');
 
     // And the figure itself is gone, not merely its label.
@@ -1190,7 +1191,79 @@ describe('the quotation prints in its own currency', () => {
 
     const words = pdfWords((await fetchPdf(id).expect(200)).body as Buffer);
     expect(words).toContain('ConversionRate');
+    expect(words).toContain(`Total${created.body.data.totalCurrencyCode as string}`);
+  });
+
+  /*
+    The defect this fixes. total_amount_usd is the sum of the line totals, and
+    a line is priced in whatever it was priced in — so the column holds taka on
+    a taka quotation. Everything that showed it said "USD" in fixed text, which
+    is how QTN-2026-000006 went out reading "Total: USD 1,150" for BDT 1,150.
+  */
+  it('names the currency the charges are in, not dollars', async () => {
+    const created = await create().expect(201);
+    const id = created.body.data.id as string;
+
+    // The fixture prices in QTD, the workspace's own currency — not USD.
+    expect(created.body.data.totalCurrencyCode).toBe('QTD');
+    expect(created.body.data.totalsByCurrency).toEqual([
+      { currencyCode: 'QTD', amount: created.body.data.totalAmountUsd },
+    ]);
+
+    const words = pdfWords((await fetchPdf(id).expect(200)).body as Buffer);
+    expect(words).toContain('TotalQTD');
+    expect(words).not.toContain('TotalUSD');
+    // The words are the arbiter when the digits are disputed, so they name it too.
+    expect(words).toContain('InwordQTD');
+    expect(words).not.toContain('USDollars');
+  });
+
+  it('spells the amount in that currency, not in dollars', async () => {
+    const created = await create().expect(201);
+    const stored = await owner.quotation.findFirstOrThrow({
+      where: { id: BigInt(created.body.data.id as string) },
+      select: { amountInWords: true },
+    });
+    expect(stored.amountInWords).toMatch(/^QTD /);
+    expect(stored.amountInWords).not.toMatch(/US Dollars/);
+  });
+
+  it('gives no single total when the charges are in different currencies', async () => {
+    const created = await create().expect(201);
+    const id = created.body.data.id as string;
+    const lines = created.body.data.lines as QuotationLineDto[];
+    expect(lines.length).toBeGreaterThan(1);
+
+    // Freight in one currency, a local charge in another — ordinary in this trade.
+    const usd = await owner.currency.findFirstOrThrow({
+      where: { currency: { startsWith: 'USD' } },
+      select: { id: true },
+    });
+    const res = await patch(`/api/tenant/cs/quotations/${id}`, {
+      lines: lines.map((l, i) => ({
+        id: l.id,
+        lineGroup: l.lineGroup,
+        costHeadId: l.costHeadId,
+        containerSizeId: l.containerSizeId,
+        costUnitId: l.costUnitId,
+        quantity: l.quantity,
+        sellingPrice: l.sellingPrice,
+        currencyId: i === 0 ? usd.id.toString() : l.currencyId,
+        source: l.source,
+      })),
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+
+    // No pretend total across them, and no words for an amount that has none.
+    expect(res.body.data.totalCurrencyCode).toBeNull();
+    expect(res.body.data.totalsByCurrency.length).toBe(2);
+    expect(res.body.data.amountInWords).toBeNull();
+
+    // The document says the same: a subtotal per currency, no "In word" line.
+    const words = pdfWords((await fetchPdf(id).expect(200)).body as Buffer);
     expect(words).toContain('TotalUSD');
+    expect(words).toContain('TotalQTD');
+    expect(words).not.toContain('Inword');
   });
 
   it('refuses to guess when the workspace has declared no base', async () => {

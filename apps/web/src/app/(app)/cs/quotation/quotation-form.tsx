@@ -463,13 +463,30 @@ export function QuotationForm({
 
       {/* ------------------------------------------------------- the totals */}
       <section className="rounded-manifest border border-line bg-surface p-5 shadow-manifest">
-        <div className="flex flex-wrap items-baseline justify-between gap-4">
-          <div>
-            <span className="label-manifest">Total ($)</span>
-            <p className="font-mono text-page-title tabular-nums text-hull">
-              {money(quotation.totalAmountUsd)}
-            </p>
-          </div>
+        {/*
+          One total per currency the charges are priced in.
+
+          It was a single box labelled "Total ($)" showing a sum taken across
+          whatever currencies the lines held, so a quotation of BDT 1,150 read
+          as $1,150. Charges in one currency — the ordinary case — still show
+          as one figure; it is just named correctly now.
+        */}
+        <div className="flex flex-wrap items-baseline gap-10">
+          {quotation.totalsByCurrency.length === 0 ? (
+            <div>
+              <span className="label-manifest">Total</span>
+              <p className="font-mono text-page-title tabular-nums text-steel">—</p>
+            </div>
+          ) : (
+            quotation.totalsByCurrency.map((subtotal) => (
+              <div key={subtotal.currencyCode}>
+                <span className="label-manifest">Total ({subtotal.currencyCode})</span>
+                <p className="font-mono text-page-title tabular-nums text-hull">
+                  {money(subtotal.amount)}
+                </p>
+              </div>
+            ))
+          )}
         </div>
         {/*
           The conversion view — client request, 2026-09-11.
@@ -525,7 +542,12 @@ export function QuotationForm({
           </p>
         </div>
 
-        {quotation.amountInWords !== null && (
+        {/*
+          Words only where there is one currency to name — the same rule the
+          PDF prints by, so the screen and the document never disagree about
+          whether this quotation has a single total.
+        */}
+        {quotation.amountInWords !== null && quotation.totalCurrencyCode !== null && (
           <p className="mt-3 border-t border-line pt-3 text-cell text-steel">
             <span className="label-manifest mr-2">In word</span>
             {quotation.amountInWords}
@@ -634,7 +656,7 @@ function LineGrid({
                 <th className="label-manifest px-3 py-2 text-right">Qty</th>
                 <th className="label-manifest px-3 py-2 text-right">Selling Price</th>
                 <th className="label-manifest px-3 py-2 text-left">Currency</th>
-                <th className="label-manifest px-3 py-2 text-right">Total Amount ($)</th>
+                <th className="label-manifest px-3 py-2 text-right">Total Amount</th>
                 {editable && <th className="label-manifest px-3 py-2 text-right">Action</th>}
               </tr>
             </thead>

@@ -127,9 +127,28 @@ export interface QuotationDto {
 
   sourceAgentQuoteId: string | null;
 
+  /**
+   * The column is named for a currency it never guaranteed.
+   *
+   * It is the sum of the line totals, and a line is priced in whatever
+   * currency it was priced in — so on a quotation whose charges are in taka
+   * this is taka, despite the name and despite everything that used to print
+   * "USD" beside it. Read it with `totalCurrencyCode`, never alone.
+   */
   totalAmountUsd: string | null;
   totalAmountLocal: string | null;
   amountInWords: string | null;
+
+  /**
+   * The currency every charge on this quotation is priced in.
+   *
+   * Null when they are not all the same — ocean freight in USD beside a local
+   * charge in BDT is ordinary in this trade — and then there is no single
+   * total to name, only `totalsByCurrency`.
+   */
+  totalCurrencyCode: string | null;
+  /** What the charges come to, per currency. One entry in the usual case. */
+  totalsByCurrency: { currencyCode: string; amount: string }[];
 
   status: QuotationStatus;
   sentAt: string | null;
@@ -159,6 +178,20 @@ export interface QuotationListItemDto {
   validityDate: string | null;
   status: QuotationStatus;
   totalAmountUsd: string | null;
+  /** What that total is in. Null when the charges do not share one currency. */
+  totalCurrencyCode: string | null;
+}
+
+/**
+ * How a quotation's total is labelled, wherever it is shown.
+ *
+ * One place, because the answer has to be the same on the screen, on the PDF
+ * and in the email that announces it — and because the old answer was the
+ * literal string "USD" in four separate files, which is how a quotation
+ * priced in taka came to tell the customer it was dollars.
+ */
+export function totalCurrencyLabel(code: string | null): string {
+  return code ?? 'mixed';
 }
 
 // -------------------------------------------------------------------- inputs
