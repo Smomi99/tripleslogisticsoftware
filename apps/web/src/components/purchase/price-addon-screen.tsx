@@ -370,8 +370,8 @@ export function PriceAddonScreen({
                           {/* Quiet helper text: the outcome before saving. */}
                           <p className="mt-1 text-right font-mono text-cell tabular-nums text-steel">
                             {options.canSeeBuyPrice
-                              ? `sell ${preview}`
-                              : `now ${purchasePrice(line.sellPrice)}`}
+                              ? `sell ${preview} ${rate.currencyCode}`
+                              : `now ${purchasePrice(line.sellPrice)} ${rate.currencyCode}`}
                           </p>
                         </td>
                       );

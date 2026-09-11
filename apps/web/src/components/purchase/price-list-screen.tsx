@@ -478,7 +478,18 @@ export function PriceListScreen({
                           <span className="text-steel">—</span>
                         ) : (
                           <>
-                            <div className="cursor-help">{purchasePrice(line.sellPrice)}</div>
+                            {/*
+                              The currency beside the price (client,
+                              2026-09-12). It belongs to the rate rather than
+                              the tier, so it is the same down the row — but a
+                              figure with no currency on it is not a price, and
+                              the buyer reading across four tiers should not
+                              have to remember which row they are on.
+                            */}
+                            <div className="cursor-help">
+                              {purchasePrice(line.sellPrice)}{' '}
+                              <span className="text-steel">{rate.currencyCode}</span>
+                            </div>
                             {/* Absent unless the server sent it (§4 rule 5). */}
                             {line.buyPrice !== undefined && !hideBuyPrice && (
                               <div className="text-steel">buy {purchasePrice(line.buyPrice)}</div>

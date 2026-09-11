@@ -385,7 +385,13 @@ export function previewSellPrice(
   const profit = Number(profitValue);
   if (!Number.isFinite(buy) || !Number.isFinite(profit)) return '—';
   const sell = profitType === 'FLAT' ? buy + profit : buy * (1 + profit / 100);
-  return sell.toFixed(4);
+  /*
+    Rounded, because the generated column is (client, 2026-09-12) and a preview
+    that promises 112.1100 where the database will store 112 is worse than no
+    preview at all. Postgres ROUND() and Math.round agree on positives, and a
+    price is never negative.
+  */
+  return purchasePrice(String(Math.round(sell)));
 }
 
 /** How near expiry a rate has to be before the list flags it (§4 rule 3). */
