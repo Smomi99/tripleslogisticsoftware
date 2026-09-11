@@ -447,6 +447,7 @@ export default function CurrencyPage() {
       >
         <CurrencyForm
           currency={editing}
+          baseCode={baseCode}
           onSubmit={submitCurrency}
           onCancel={() => {
             setFormOpen(false);
@@ -465,6 +466,7 @@ export default function CurrencyPage() {
       >
         <RateForm
           currency={rateFor}
+          baseCode={baseCode}
           onSubmit={submitRate}
           onCancel={() => setRateFor(null)}
         />
@@ -545,10 +547,13 @@ export default function CurrencyPage() {
 
 function CurrencyForm({
   currency,
+  baseCode,
   onSubmit,
   onCancel,
 }: {
   currency: CurrencyDto | null;
+  /** The workspace's base currency — what every rate is expressed against. */
+  baseCode: string | null;
   onSubmit: (values: CurrencyInput) => Promise<void>;
   onCancel: () => void;
 }) {
@@ -605,11 +610,20 @@ function CurrencyForm({
         <Input id="currency" autoFocus aria-invalid={errors.currency !== undefined} {...register('currency')} />
       </Field>
 
+      {/*
+        Named after the workspace's own base, not BDT. The base is chosen on
+        this screen and a Dubai forwarder books in dirhams; a form that says
+        "against BDT" to them is asking for a number in the wrong currency.
+      */}
       <Field
         id="conversion"
-        label="Rate against BDT"
+        label={baseCode === null ? 'Rate against the base currency' : `Rate against ${baseCode}`}
         required
-        hint="Up to 4 decimal places."
+        hint={
+          baseCode === null
+            ? 'How much of your base currency one unit of this currency is worth.'
+            : `How much ${baseCode} one unit of this currency is worth. Up to 10 decimal places.`
+        }
         error={errors.conversion?.message}
       >
         <Input
@@ -626,10 +640,13 @@ function CurrencyForm({
 
 function RateForm({
   currency,
+  baseCode,
   onSubmit,
   onCancel,
 }: {
   currency: CurrencyDto | null;
+  /** The workspace's base currency — what this rate is expressed against. */
+  baseCode: string | null;
   onSubmit: (values: CurrencyRateInput) => Promise<void>;
   onCancel: () => void;
 }) {
@@ -674,12 +691,30 @@ function RateForm({
     >
       <Field
         id="rate"
-        label="Your rate against BDT"
+        label={
+          baseCode === null ? 'Your rate against the base currency' : `Your rate against ${baseCode}`
+        }
         required
         hint={
           currency === null
             ? undefined
-            : `The shared system rate is ${currency.conversion}.`
+            : baseCode === null
+              ? `The built-in rate is ${formatRate(currency.conversion)}.`
+              : /*
+                  The built-in default is expressed against whichever shared
+                  currency sits at 1. Offering it as a starting point is only
+                  honest while that is also this workspace's base — otherwise
+                  it is a number in a different currency and would mislead.
+                */
+                `${
+                    currency.effectiveRate === null
+                      ? // Nothing this workspace can convert at yet — which is
+                        // exactly why they are on this form.
+                        'No rate on file yet. '
+                      : currency.usingSystemDefault
+                        ? `Currently using the built-in rate of ${formatRate(currency.conversion)}. `
+                        : `Currently ${formatRate(currency.effectiveRate)}. `
+                  }Enter how much ${baseCode} one ${isoCurrency(currency.currency)} is worth.`
         }
         error={errors.rate?.message}
       >
