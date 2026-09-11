@@ -24,15 +24,16 @@ import { useSession } from '@/lib/session';
  * §6.5 — the Quotation screen.
  *
  * The client's own layout: a header block of the inquiry copied down, the
- * priced line grid, an Additional Charge section beneath it, and totals pinned
- * at the foot in both currencies.
+ * priced line grid, an Additional Charge section beneath it, and the total
+ * pinned at the foot.
  *
  * Two things on this screen are load-bearing rather than decorative:
  *
- *   Total and Bill Amount are never computed here. They are GENERATED columns,
- *   so the figures shown are the ones Postgres stored — the browser showing a
- *   number the database disagrees with is how a customer ends up holding a
- *   different total to the one we recorded.
+ *   The total is never computed here. It is what Postgres stored — the browser
+ *   showing a number the database disagrees with is how a customer ends up
+ *   holding a different total to the one we recorded. The conversion below it
+ *   is the deliberate exception: it is a view, it is never sent, and it reads
+ *   the grid so it can answer while a price is still being typed.
  *
  *   An AUTO line and a MANUAL one are marked differently, because §6.5 asks for
  *   it and because the distinction matters: one is what the price list says,
@@ -97,16 +98,16 @@ function money(value: string | null | undefined, dp = 2): string {
 }
 
 /** What the grid shows while a line is being edited, before the server re-adds. */
-function preview(line: LineDraft, conversionRate: string): { total: string; local: string } {
+function preview(line: LineDraft): { total: string } {
   const qty = Number(line.quantity);
   const price = Number(line.sellingPrice);
-  const rate = Number(conversionRate);
-  if (!Number.isFinite(qty) || !Number.isFinite(price)) return { total: '—', local: '—' };
-  const total = qty * price;
-  return {
-    total: money(String(total)),
-    local: Number.isFinite(rate) ? money(String(total * rate)) : '—',
-  };
+  if (!Number.isFinite(qty) || !Number.isFinite(price)) return { total: '—' };
+  return { total: money(String(qty * price)) };
+}
+
+/** A line's own total, as a number, for the conversion below the grid. */
+function lineTotal(line: LineDraft): number {
+  return Number(line.quantity) * Number(line.sellingPrice);
 }
 
 export function QuotationForm({
@@ -122,7 +123,6 @@ export function QuotationForm({
 
   const editable = quotationIsEditable(quotation.status) && can('CUSTOMER_SERVICE.QUOTATION.EDIT');
   const [lines, setLines] = useState<LineDraft[]>(quotation.lines.map(toDraft));
-  const [conversionRate, setConversionRate] = useState(quotation.conversionRate);
   const [validityDate, setValidityDate] = useState(quotation.validityDate ?? '');
   const [transitType, setTransitType] = useState(quotation.transitType ?? '');
   const [firstVesselId, setFirstVesselId] = useState(quotation.firstVesselId ?? '');
@@ -147,6 +147,10 @@ export function QuotationForm({
    * "how much base one of these is worth", so multiplying by the line's rate
    * and dividing by the target's is the whole conversion.
    *
+   * It reads the grid rather than the saved rows, so it answers while a price
+   * is being typed. Waiting for a save would make it useless for the one thing
+   * it is for — deciding whether a price is right before committing to it.
+   *
    * Today's rates deliberately. The question is "what is this worth to me
    * now", not "what did we freeze" — and this figure is never sent, so it
    * carries none of §2.2's obligations.
@@ -159,14 +163,16 @@ export function QuotationForm({
     if (!(toRate > 0)) return null;
 
     let inBase = 0;
-    for (const line of quotation.lines) {
+    for (const line of lines) {
+      const amount = lineTotal(line);
+      // A half-typed row is not an error — it is simply not part of the sum yet.
+      if (!Number.isFinite(amount)) continue;
       const from = options.currencies.find((c) => c.id === line.currencyId);
       const rate = Number(from?.conversion ?? '0');
-      const amount = Number(line.totalAmount);
       // A line in a currency this workspace has no usable rate for cannot be
       // carried across. Saying so beats quietly dropping it from the sum.
-      if (!Number.isFinite(amount) || !(rate > 0)) {
-        return { code: target.label, amount: null, blockedBy: line.currencyCode };
+      if (!(rate > 0)) {
+        return { code: target.label, amount: null, blockedBy: from?.label ?? 'that currency' };
       }
       inBase += amount * rate;
     }
@@ -179,7 +185,7 @@ export function QuotationForm({
         maximumFractionDigits: 2,
       }),
     };
-  }, [checkIn, options.currencies, quotation.lines]);
+  }, [checkIn, options.currencies, lines]);
   const [emails, setEmails] = useState(quotation.recipients.map((r) => r.email).join(', '));
 
   /** §6.6's document, opened in a tab. */
@@ -251,7 +257,6 @@ export function QuotationForm({
             firstVesselId: firstVesselId === '' ? null : firstVesselId,
             etd: etd === '' ? null : etd,
             eta: eta === '' ? null : eta,
-            conversionRate,
             lines: lines
               .filter((l) => l.costHeadId !== '' && l.sellingPrice !== '')
               .map((l) => ({
@@ -430,23 +435,6 @@ export function QuotationForm({
               onChange={(event) => setEta(event.target.value)}
             />
           </Field>
-          <Field
-            id="conversionRate"
-            label="Booking Rate"
-            hint={
-              quotation.status === 'SENT'
-                ? 'Frozen — this quotation has been sent.'
-                : 'The USD→local rate this quotation bills at. Frozen once sent.'
-            }
-          >
-            <Input
-              id="conversionRate"
-              value={conversionRate}
-              disabled={!editable || quotation.status === 'SENT'}
-              onChange={(event) => setConversionRate(event.target.value)}
-              className="font-mono tabular-nums"
-            />
-          </Field>
         </div>
       </section>
 
@@ -457,7 +445,6 @@ export function QuotationForm({
         lines={standard}
         options={options}
         editable={editable}
-        conversionRate={conversionRate}
         onPatch={patchLine}
         onRemove={(line) => setLines((c) => c.filter((l) => l !== line))}
         onAdd={editable && options.canAddCharge ? () => addLine('STANDARD') : null}
@@ -469,7 +456,6 @@ export function QuotationForm({
         lines={additional}
         options={options}
         editable={editable}
-        conversionRate={conversionRate}
         onPatch={patchLine}
         onRemove={(line) => setLines((c) => c.filter((l) => l !== line))}
         onAdd={editable && options.canAddCharge ? () => addLine('ADDITIONAL') : null}
@@ -603,7 +589,6 @@ function LineGrid({
   lines,
   options,
   editable,
-  conversionRate,
   onPatch,
   onRemove,
   onAdd,
@@ -613,7 +598,6 @@ function LineGrid({
   lines: LineDraft[];
   options: QuotationOptions;
   editable: boolean;
-  conversionRate: string;
   onPatch: (line: LineDraft, patch: Partial<LineDraft>) => void;
   onRemove: (line: LineDraft) => void;
   onAdd: (() => void) | null;
@@ -651,14 +635,12 @@ function LineGrid({
                 <th className="label-manifest px-3 py-2 text-right">Selling Price</th>
                 <th className="label-manifest px-3 py-2 text-left">Currency</th>
                 <th className="label-manifest px-3 py-2 text-right">Total Amount ($)</th>
-                <th className="label-manifest px-3 py-2 text-right">Booking Rate</th>
-                <th className="label-manifest px-3 py-2 text-right">Bill Amount</th>
                 {editable && <th className="label-manifest px-3 py-2 text-right">Action</th>}
               </tr>
             </thead>
             <tbody>
               {lines.map((line, index) => {
-                const shown = preview(line, conversionRate);
+                const shown = preview(line);
                 return (
                   <tr key={line.id ?? `new-${index}`} className="border-b border-line last:border-0">
                     <td className="px-3 py-1.5">
@@ -770,12 +752,6 @@ function LineGrid({
                     </td>
                     <td className="px-3 py-1.5 text-right font-mono text-cell tabular-nums text-hull">
                       {shown.total}
-                    </td>
-                    <td className="px-3 py-1.5 text-right font-mono text-cell tabular-nums text-steel">
-                      {conversionRate}
-                    </td>
-                    <td className="px-3 py-1.5 text-right font-mono text-cell tabular-nums text-hull">
-                      {shown.local}
                     </td>
                     {editable && (
                       <td className="px-3 py-1.5 text-right">
