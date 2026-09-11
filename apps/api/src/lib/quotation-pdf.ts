@@ -49,6 +49,8 @@ export interface QuotationPdfInput {
   /** §6.6 prints the rate on the line table. */
   conversionRate: string;
   localCurrencyCode: string;
+  /** §2.2 — only a document issued in the two-currency layout re-prints it. */
+  printsConvertedTotal: boolean;
 
   lines: {
     description: string;
@@ -223,25 +225,46 @@ export function renderQuotationPdf(input: QuotationPdfInput): Promise<Buffer> {
     doc.moveTo(left, y).lineTo(right, y).strokeColor(LINE).stroke();
     y += 6;
 
-    // §6.6 prints the frozen rate beside the totals — the number the local
-    // figure was computed from, so the customer can check the arithmetic.
-    doc
-      .font('Helvetica')
-      .fontSize(8)
-      .fillColor(STEEL)
-      .text(`Conversion Rate: 1 USD = ${input.conversionRate} ${input.localCurrencyCode}`, left, y);
+    /*
+      A quotation prints in the currency it was priced in, and nothing else.
+
+      It used to carry a second, converted total and the rate behind it — §6.6's
+      layout. The conversion is now staff-side only: something to look at on
+      the form, never to put in front of a customer. `printsConvertedTotal` is
+      false on everything raised since, and true on documents that were already
+      issued with both figures on them, because §2.2 means re-printing one of
+      those has to hand back the page that was sent.
+    */
+    if (input.printsConvertedTotal) {
+      doc
+        .font('Helvetica')
+        .fontSize(8)
+        .fillColor(STEEL)
+        .text(
+          `Conversion Rate: 1 USD = ${input.conversionRate} ${input.localCurrencyCode}`,
+          left,
+          y,
+        );
+    }
     doc
       .font('Helvetica-Bold')
       .fontSize(10)
       .fillColor(HULL)
       .text(`Total: USD ${input.totalUsd}`, left, y, { width, align: 'right' });
     y = doc.y + 2;
-    doc
-      .font('Helvetica')
-      .fontSize(9)
-      .fillColor(HULL)
-      .text(`${input.localCurrencyCode} ${input.totalLocal}`, left, y, { width, align: 'right' });
-    y = doc.y + 8;
+    if (input.printsConvertedTotal) {
+      doc
+        .font('Helvetica')
+        .fontSize(9)
+        .fillColor(HULL)
+        .text(`${input.localCurrencyCode} ${input.totalLocal}`, left, y, {
+          width,
+          align: 'right',
+        });
+      y = doc.y + 8;
+    } else {
+      y += 8;
+    }
 
     doc.font('Helvetica-Bold').fontSize(9).fillColor(HULL).text('In word (USD): ', left, y, {
       continued: true,

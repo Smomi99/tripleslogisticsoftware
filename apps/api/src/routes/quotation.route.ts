@@ -23,7 +23,7 @@ import { amountInWords } from '../lib/amount-in-words';
 import { recordAudit } from '../lib/audit';
 import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
 import { isoCurrency } from '../lib/currency-label';
-import { resolveRate, resolveRates } from '../lib/currency-rate';
+import { baseCurrency, resolveRate, resolveRates } from '../lib/currency-rate';
 import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import { nextQuotationNo, seriesYearOf } from '../lib/inquiry-no';
 import { HttpError } from '../lib/http-error';
@@ -179,6 +179,7 @@ function toDto(row: QuotationRow): QuotationDto {
     localCurrencyId: row.localCurrencyId.toString(),
     localCurrencyCode: isoCurrency(row.localCurrency?.currency ?? '') ?? null,
     conversionRate: row.conversionRate.toString(),
+    printsConvertedTotal: row.printsConvertedTotal,
 
     sourceAgentQuoteId: row.sourceAgentQuoteId?.toString() ?? null,
 
@@ -325,7 +326,25 @@ quotationRouter.post('/quotations', requirePermission(`${FEATURE}.CREATE`), asyn
      * 122 and every quotation would still bill at the system's 120 — the rate
      * captured, displayed, and quietly ignored.
      */
-    const currencyId = parseRefId(input.localCurrencyId, 'currency');
+    /*
+      The form stopped asking which currency to bill in. A quotation is priced
+      in whatever its charges are priced in, and anything converted is taken
+      against the workspace base — so the base is what a quotation is raised
+      against unless a caller names something else.
+    */
+    let currencyId: bigint;
+    if (input.localCurrencyId == null) {
+      const base = await baseCurrency(db, auth.tenantId);
+      if (base === null) {
+        throw HttpError.conflict(
+          'This workspace has not set a base currency yet, so a quotation has ' +
+            'nothing to be raised against. Set one on Settings → Currency.',
+        );
+      }
+      currencyId = base.id;
+    } else {
+      currencyId = parseRefId(input.localCurrencyId, 'currency');
+    }
     const currency = await db.currency.findFirst({
       where: { id: currencyId, deletedAt: null },
       select: { id: true },
@@ -552,6 +571,11 @@ quotationRouter.get(
         currencies.map((c) => c.id),
       );
 
+      // What the form's conversion view starts on: the money this workspace
+      // thinks in, so the first thing a user sees is the figure in their own
+      // currency without having to pick it.
+      const base = await baseCurrency(db, auth.tenantId);
+
       return {
         inquiries: inquiries.map((i) => ({
           id: i.id.toString(),
@@ -574,6 +598,8 @@ quotationRouter.get(
           */
           conversion: (rates.get(c.id.toString())?.rate ?? new Prisma.Decimal(0)).toString(),
         })),
+        baseCurrencyId: base?.id.toString() ?? null,
+        baseCurrencyCode: base === null ? null : (isoCurrency(base.currency) ?? base.currency),
         costHeads: label(costHeads),
         containerSizes: label(sizes),
         costUnits: label(units),
@@ -1103,6 +1129,7 @@ quotationRouter.get(
         eta: dto.eta,
         conversionRate: dto.conversionRate,
         localCurrencyCode: dto.localCurrencyCode ?? 'BDT',
+        printsConvertedTotal: dto.printsConvertedTotal,
         lines: dto.lines.map((line) => ({
           description: line.costHeadName,
           containerSize: line.containerSizeName,

@@ -44,7 +44,6 @@ export default function NewQuotationPage() {
   const [options, setOptions] = useState<QuotationOptions | null>(null);
   const [inquiryId, setInquiryId] = useState(preselected ?? '');
   const [carrierId, setCarrierId] = useState('');
-  const [localCurrencyId, setLocalCurrencyId] = useState('');
   const [freightCostHeadId, setFreightCostHeadId] = useState('');
   const [quotationDate, setQuotationDate] = useState(new Date().toISOString().slice(0, 10));
   const [validityDate, setValidityDate] = useState('');
@@ -59,8 +58,6 @@ export default function NewQuotationPage() {
         );
         if (cancelled) return;
         setOptions(opts);
-        // Default to the workspace's own billing currency where there is one.
-        setLocalCurrencyId((current) => current || (opts.currencies[0]?.id ?? ''));
       } catch (caught) {
         if (!cancelled) {
           toast.error(
@@ -82,7 +79,6 @@ export default function NewQuotationPage() {
         body: {
           inquiryId,
           carrierId,
-          localCurrencyId,
           quotationDate,
           ...(validityDate === '' ? {} : { validityDate }),
           ...(freightCostHeadId === '' ? {} : { freightCostHeadId }),
@@ -103,7 +99,7 @@ export default function NewQuotationPage() {
     }
   }
 
-  const ready = inquiryId !== '' && carrierId !== '' && localCurrencyId !== '';
+  const ready = inquiryId !== '' && carrierId !== '';
 
   return (
     <div className="flex flex-col gap-5">
@@ -150,26 +146,6 @@ export default function NewQuotationPage() {
                 {(options?.carriers ?? []).map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.label}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-
-            <Field
-              id="localCurrencyId"
-              label="Local Currency"
-              required
-              hint="Its conversion rate is frozen onto this quotation now, and never re-read."
-            >
-              <Select
-                id="localCurrencyId"
-                value={localCurrencyId}
-                onChange={(event) => setLocalCurrencyId(event.target.value)}
-              >
-                <option value="">Choose a currency</option>
-                {(options?.currencies ?? []).map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label} ({c.conversion})
                   </option>
                 ))}
               </Select>

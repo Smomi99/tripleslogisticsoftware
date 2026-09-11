@@ -1,3 +1,5 @@
+import { inflateSync } from 'node:zlib';
+
 import { PrismaPg } from '@prisma/adapter-pg';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -1077,5 +1079,139 @@ describe('what the quotation form offers (§7A rule 7)', () => {
       (c) => c.id,
     );
     expect(ids).toContain(currencyId.toString());
+  });
+});
+
+/*
+  The client's 2026-09-11 decision: a quotation goes to the customer in the
+  money it was priced in. The second, converted total came off the document,
+  and the currency behind it came off the form — it is the workspace base now,
+  and the conversion is something staff look at on screen.
+*/
+describe('the quotation prints in its own currency', () => {
+  /** Fetches the document as raw bytes rather than letting supertest parse it. */
+  function fetchPdf(id: string) {
+    return request(app)
+      .get(`/api/tenant/cs/quotations/${id}/pdf`)
+      .set('Authorization', `Bearer ${token}`)
+      .set('X-Tenant-Slug', SLUG)
+      .buffer(true)
+      .parse((r, cb) => {
+        const chunks: Buffer[] = [];
+        r.on('data', (c: Buffer) => chunks.push(c));
+        r.on('end', () => cb(null, Buffer.concat(chunks)));
+      });
+  }
+
+  /**
+   * The words back out of a PDF.
+   *
+   * Two layers to get through. The content streams are deflated, and inside
+   * them PDFKit writes text as kerned hex runs — [<51> 10 <554f> ...] TJ —
+   * whose bytes are the characters themselves. Spacing and punctuation live
+   * in the kerning numbers between runs rather than in the text, so this
+   * compares on letters and digits only.
+   *
+   * Worth the trouble: a byte-length assertion would pass just as happily if
+   * a line moved somewhere else on the page instead of coming off it.
+   */
+  function pdfWords(pdf: Buffer): string {
+    let content = '';
+    let at = 0;
+    for (;;) {
+      const start = pdf.indexOf('stream', at);
+      if (start === -1) break;
+      let from = start + 'stream'.length;
+      if (pdf[from] === 0x0d) from += 1;
+      if (pdf[from] === 0x0a) from += 1;
+      const end = pdf.indexOf('endstream', from);
+      if (end === -1) break;
+      const chunk = pdf.subarray(from, end);
+      try {
+        content += inflateSync(chunk).toString('latin1');
+      } catch {
+        content += chunk.toString('latin1');
+      }
+      at = end + 'endstream'.length;
+    }
+
+    let out = '';
+    for (const run of content.match(/<([0-9A-Fa-f]+)>/g) ?? []) {
+      const hex = run.slice(1, -1);
+      for (let i = 0; i + 1 < hex.length; i += 2) {
+        out += String.fromCharCode(Number.parseInt(hex.slice(i, i + 2), 16));
+      }
+    }
+    return out.replace(/[^A-Za-z0-9]/g, '');
+  }
+
+  it('raises one without being told which currency to bill in', async () => {
+    const res = await post('/api/tenant/cs/quotations', {
+      inquiryId: inquiryId.toString(),
+      carrierId: carrierId.toString(),
+      quotationDate: '2026-08-27',
+      freightCostHeadId: freightHeadId.toString(),
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+
+    // It lands on the workspace base, which is the only sensible answer once
+    // nobody is being asked.
+    const tenant = await owner.tenant.findFirstOrThrow({
+      where: { slug: SLUG },
+      select: { currencyId: true },
+    });
+    expect(res.body.data.localCurrencyId).toBe(tenant.currencyId?.toString());
+    expect(res.body.data.printsConvertedTotal).toBe(false);
+  });
+
+  it('leaves the converted total and its rate off the page', async () => {
+    const created = await create().expect(201);
+    const id = created.body.data.id as string;
+
+    const words = pdfWords((await fetchPdf(id).expect(200)).body as Buffer);
+    expect(words).toContain('TotalUSD');
+    expect(words).not.toContain('ConversionRate');
+
+    // And the figure itself is gone, not merely its label.
+    const converted = (created.body.data.totalAmountLocal as string).replace(/[^0-9]/g, '');
+    expect(converted.length).toBeGreaterThan(0);
+    expect(words).not.toContain(converted);
+  });
+
+  it('still prints both on a document that was issued with both — §2.2', async () => {
+    const created = await create().expect(201);
+    const id = created.body.data.id as string;
+
+    // What the backfill did to every quotation already sent when this shipped.
+    await owner.quotation.update({
+      where: { id: BigInt(id) },
+      data: { printsConvertedTotal: true },
+    });
+
+    const words = pdfWords((await fetchPdf(id).expect(200)).body as Buffer);
+    expect(words).toContain('ConversionRate');
+    expect(words).toContain('TotalUSD');
+  });
+
+  it('refuses to guess when the workspace has declared no base', async () => {
+    const tenant = await owner.tenant.findFirstOrThrow({
+      where: { slug: SLUG },
+      select: { id: true, currencyId: true },
+    });
+    await owner.tenant.update({ where: { id: tenant.id }, data: { currencyId: null } });
+    try {
+      const res = await post('/api/tenant/cs/quotations', {
+        inquiryId: inquiryId.toString(),
+        carrierId: carrierId.toString(),
+        quotationDate: '2026-08-27',
+      });
+      expect(res.status).toBe(409);
+      expect(JSON.stringify(res.body)).toContain('base currency');
+    } finally {
+      await owner.tenant.update({
+        where: { id: tenant.id },
+        data: { currencyId: tenant.currencyId },
+      });
+    }
   });
 });

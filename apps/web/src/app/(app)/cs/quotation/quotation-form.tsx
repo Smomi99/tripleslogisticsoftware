@@ -44,6 +44,9 @@ export interface QuotationOptions {
   carriers: { id: string; label: string }[];
   vessels: { id: string; label: string }[];
   currencies: { id: string; label: string; conversion: string }[];
+  /** The money this workspace thinks in — where the conversion view starts. */
+  baseCurrencyId: string | null;
+  baseCurrencyCode: string | null;
   costHeads: { id: string; label: string }[];
   containerSizes: { id: string; label: string }[];
   costUnits: { id: string; label: string }[];
@@ -127,37 +130,56 @@ export function QuotationForm({
   const [eta, setEta] = useState(quotation.eta ?? '');
   const [busy, setBusy] = useState(false);
   const [sending, setSending] = useState(false);
-  /** Which currency the bill amount is being checked against. '' is none. */
-  const [checkIn, setCheckIn] = useState('');
+  /*
+    Which currency the total is being viewed in. Starts on the workspace base,
+    so the figure in the user's own money is the one already on screen — that
+    was the point of asking for it. '' is none.
+  */
+  const [checkIn, setCheckIn] = useState(options.baseCurrencyId ?? '');
 
   /*
-   * The bill amount seen in another currency, at today's rates.
+   * The quotation seen in one currency, at today's rates.
    *
-   * Both rates are "units of the workspace base per one unit", so going from
-   * the quotation's billing currency to the chosen one is one multiply and one
-   * divide through the base. Today's rates deliberately: the question this
-   * answers is "what is that worth to me now", not "what did we freeze", and
-   * the frozen figure is on screen right beside it.
+   * Summed line by line rather than from the stored total, because the charges
+   * on one quotation need not share a currency — freight in USD and a local
+   * charge in BDT is ordinary. Each line is carried to the target through the
+   * workspace base, which is the unit every rate here is quoted in: a rate is
+   * "how much base one of these is worth", so multiplying by the line's rate
+   * and dividing by the target's is the whole conversion.
+   *
+   * Today's rates deliberately. The question is "what is this worth to me
+   * now", not "what did we freeze" — and this figure is never sent, so it
+   * carries none of §2.2's obligations.
    */
   const checked = useMemo(() => {
     if (checkIn === '') return null;
     const target = options.currencies.find((c) => c.id === checkIn);
-    const from = options.currencies.find((c) => c.id === quotation.localCurrencyId);
-    if (target === undefined || from === undefined) return null;
-
-    const billed = Number(quotation.totalAmountLocal ?? '0');
-    const fromRate = Number(from.conversion);
+    if (target === undefined) return null;
     const toRate = Number(target.conversion);
-    if (!Number.isFinite(billed) || !(fromRate > 0) || !(toRate > 0)) return null;
+    if (!(toRate > 0)) return null;
+
+    let inBase = 0;
+    for (const line of quotation.lines) {
+      const from = options.currencies.find((c) => c.id === line.currencyId);
+      const rate = Number(from?.conversion ?? '0');
+      const amount = Number(line.totalAmount);
+      // A line in a currency this workspace has no usable rate for cannot be
+      // carried across. Saying so beats quietly dropping it from the sum.
+      if (!Number.isFinite(amount) || !(rate > 0)) {
+        return { code: target.label, amount: null, blockedBy: line.currencyCode };
+      }
+      inBase += amount * rate;
+    }
 
     return {
       code: target.label,
-      amount: ((billed * fromRate) / toRate).toLocaleString('en-US', {
+      blockedBy: null,
+      amount: (inBase / toRate).toLocaleString('en-US', {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
       }),
     };
-  }, [checkIn, options.currencies, quotation.localCurrencyId, quotation.totalAmountLocal]);
+  }, [checkIn, options.currencies, quotation.lines]);
   const [emails, setEmails] = useState(quotation.recipients.map((r) => r.email).join(', '));
 
   /** §6.6's document, opened in a tab. */
@@ -302,7 +324,9 @@ export function QuotationForm({
     ],
     ['TOS', quotation.tosName],
     ['Mode', quotation.modeName],
-    ['Local Currency', quotation.localCurrencyCode],
+    // Local currency is no longer one of the quotation's own facts — it is
+    // whatever the workspace books in, and the conversion view below says so
+    // far more usefully than a code in a summary grid.
     ['Carrier', quotation.carrierName],
   ];
 
@@ -460,55 +484,59 @@ export function QuotationForm({
               {money(quotation.totalAmountUsd)}
             </p>
           </div>
-          <div>
-            <span className="label-manifest">
-              Bill Amount ({quotation.localCurrencyCode ?? 'local'})
-            </span>
-            <p className="font-mono text-page-title tabular-nums text-hull">
-              {money(quotation.totalAmountLocal)}
-            </p>
-          </div>
         </div>
         {/*
-          The conversion checker — client request, 2026-09-09.
+          The conversion view — client request, 2026-09-11.
 
-          For CHECKING only. What this quotation sends and prints is the Bill
-          Amount above, in the currency it was raised in, at the rate it froze
-          when it was issued (§2.2). This converts that figure at TODAY'S
-          workspace rates so somebody can sanity-check it against their own
-          money, and says so, because a second number beside a price is
-          otherwise indistinguishable from the price.
+          It replaces the old "Bill Amount", which printed a second currency on
+          the customer's page. A quotation now goes out in the money it was
+          priced in and nothing else; this is the staff-side answer to "what is
+          that in ours", starting on the workspace base.
+
+          It is never sent and never printed. That is worth saying on the
+          screen, because a second number beside a price is otherwise
+          indistinguishable from the price.
         */}
-        <div className="mt-4 flex flex-wrap items-end gap-3 border-t border-line pt-4">
-          <div className="flex flex-col gap-1">
-            <span className="label-manifest">Check this in</span>
-            <Select
-              aria-label="Check the bill amount in another currency"
-              className="w-40"
-              value={checkIn}
-              onChange={(event) => setCheckIn(event.target.value)}
-            >
-              <option value="">—</option>
-              {options.currencies
-                .filter((c) => c.id !== quotation.localCurrencyId && Number(c.conversion) > 0)
-                .map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label}
-                  </option>
-                ))}
-            </Select>
+        <div className="mt-4 border-t border-line pt-4">
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex flex-col gap-1">
+              <span className="label-manifest">Conversion currency</span>
+              <Select
+                aria-label="See this quotation converted into another currency"
+                className="w-40"
+                value={checkIn}
+                onChange={(event) => setCheckIn(event.target.value)}
+              >
+                <option value="">—</option>
+                {options.currencies
+                  .filter((c) => Number(c.conversion) > 0)
+                  .map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.label}
+                      {c.id === options.baseCurrencyId ? ' (base)' : ''}
+                    </option>
+                  ))}
+              </Select>
+            </div>
+            {checked !== null && checked.amount !== null && (
+              <p className="pb-1.5">
+                <span className="font-mono text-page-title tabular-nums text-hull">
+                  {checked.amount} {checked.code}
+                </span>
+              </p>
+            )}
+            {checked !== null && checked.amount === null && (
+              <p className="pb-2 text-cell text-alert">
+                No rate on file for {checked.blockedBy}, so this cannot be converted. Set one
+                on Settings → Currency.
+              </p>
+            )}
           </div>
-          {checked !== null && (
-            <p className="pb-1.5 text-body text-steel">
-              <span className="font-mono tabular-nums text-hull">
-                {checked.amount} {checked.code}
-              </span>
-              <span className="ml-2 text-cell">
-                at today&apos;s rate — the quotation still bills{' '}
-                {money(quotation.totalAmountLocal)} {quotation.localCurrencyCode ?? ''}
-              </span>
-            </p>
-          )}
+          <p className="mt-2 text-cell text-steel">
+            For checking only, at today&apos;s rate. It is not printed on the quotation and
+            not sent to the customer — they receive the totals above, in the currency each
+            charge was priced in.
+          </p>
         </div>
 
         {quotation.amountInWords !== null && (

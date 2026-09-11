@@ -3236,6 +3236,15 @@ model Quotation {
   localCurrencyId BigInt  @map("local_currency_id")
   conversionRate  Decimal @map("conversion_rate") @db.Decimal(18, 10)
 
+  /// Whether the document prints a second, converted total beside its own.
+  ///
+  /// It no longer does: a quotation goes to the customer in the currency it
+  /// was priced in, and the conversion is a thing staff look at on screen.
+  /// Documents issued before that change keep the two-currency layout they
+  /// were sent in, which is the whole of §2.2 — re-printing a quotation must
+  /// not hand the customer a different piece of paper than the one they got.
+  printsConvertedTotal Boolean @default(false) @map("prints_converted_total")
+
   /// When the price came from an agent's RFQ rather than our own rate table.
   sourceAgentQuoteId BigInt? @map("source_agent_quote_id")
 

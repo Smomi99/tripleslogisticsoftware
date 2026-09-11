@@ -122,6 +122,8 @@ export interface QuotationDto {
   localCurrencyId: string;
   localCurrencyCode: string | null;
   conversionRate: string;
+  /** §2.2 — true only for documents issued in the old two-currency layout. */
+  printsConvertedTotal: boolean;
 
   sourceAgentQuoteId: string | null;
 
@@ -200,7 +202,16 @@ export const quotationCreateSchema = z.object({
   transitType: z.enum(TRANSIT_TYPES).nullish(),
   etd: isoDate.nullish(),
   eta: isoDate.nullish(),
-  localCurrencyId: z.string().min(1, 'Choose the billing currency.'),
+  /**
+   * Optional since the form stopped asking.
+   *
+   * A quotation is priced in whatever its charges are priced in, and the
+   * workspace base currency is what any conversion is taken against — so
+   * there was nothing left for the user to decide. Left accepted because it
+   * still records what the quotation was raised against; absent, the base is
+   * used.
+   */
+  localCurrencyId: z.string().min(1, 'Choose the billing currency.').nullish(),
   /**
    * What the freight is called on the customer's document.
    *
