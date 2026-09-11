@@ -56,6 +56,7 @@ export const TENANT_OWNED_MODELS = [
   'CarrierPic',
   'CarrierPortPair',
   'CarrierServicePort',
+  'CommodityBusinessPort',
   'CommodityItem',
   'CostHead',
   'CurrencyRateHistory',

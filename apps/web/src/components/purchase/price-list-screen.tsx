@@ -2,10 +2,12 @@
 
 import {
   type ApiMeta,
+  PURCHASE_SOURCE_LABEL,
   DEFAULT_PAGE_SIZE,
   type FreightRateDto,
   type LookupOption,
   type RateMode,
+  purchasePrice,
 } from '@ff/shared';
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -45,6 +47,42 @@ const EMPTY: ListOptions = {
   tiers: [],
   canSeeBuyPrice: false,
 };
+
+/**
+ * What a price was bought against, for the hover (client, 2026-09-12).
+ *
+ * A sell price on its own says what to charge and nothing about where it came
+ * from, which is the first question anybody asks of a number they are about to
+ * quote. Everything here is already on the row; this only puts it within
+ * reach of the price rather than three columns away.
+ *
+ * The buy figures follow the same rule the cell does: shown only when the
+ * server actually sent them (§4 rule 5) and the buyer has not hidden them.
+ * A tooltip is not a way around a permission.
+ */
+function boughtFrom(
+  rate: FreightRateDto,
+  line: FreightRateDto['lines'][number] | undefined,
+  showBuy: boolean,
+): string {
+  const parts = [
+    `Bought from ${PURCHASE_SOURCE_LABEL[rate.purchaseSourceType]}: ${rate.purchaseSourceName}`,
+    `Rate ${rate.code} · ${rate.currencyCode}`,
+    `Valid ${rate.validFrom} to ${rate.validTo}`,
+  ];
+  if (rate.route !== null && rate.route !== '') parts.push(`Routing: ${rate.route}`);
+  if (line !== undefined && line.buyPrice !== undefined && showBuy) {
+    // A percentage keeps its decimals — 12.5% is ordinary — but loses the
+    // trailing zeros NUMERIC(18,4) hands back. A flat margin is a price and
+    // reads like one.
+    const margin =
+      line.profitType === 'PERCENT'
+        ? `${Number(line.profitValue ?? '0')}% margin`
+        : `${purchasePrice(line.profitValue)} margin`;
+    parts.push(`Buy ${purchasePrice(line.buyPrice)} · ${margin} · sell ${purchasePrice(line.sellPrice)}`);
+  }
+  return parts.join(String.fromCharCode(10));
+}
 
 export function PriceListScreen({
   mode,
@@ -430,15 +468,20 @@ export function PriceListScreen({
                       <td
                         key={tier.id}
                         className="px-2.5 py-2 text-right font-mono text-cell tabular-nums"
+                        // Hover tells you where the price came from. A native
+                        // title rather than a floating panel: this table scrolls
+                        // sideways under sticky columns, and anything positioned
+                        // inside a cell gets clipped by that.
+                        title={line === undefined ? undefined : boughtFrom(rate, line, !hideBuyPrice)}
                       >
                         {line === undefined ? (
                           <span className="text-steel">—</span>
                         ) : (
                           <>
-                            <div>{line.sellPrice}</div>
+                            <div className="cursor-help">{purchasePrice(line.sellPrice)}</div>
                             {/* Absent unless the server sent it (§4 rule 5). */}
                             {line.buyPrice !== undefined && !hideBuyPrice && (
-                              <div className="text-steel">buy {line.buyPrice}</div>
+                              <div className="text-steel">buy {purchasePrice(line.buyPrice)}</div>
                             )}
                           </>
                         )}
@@ -525,7 +568,7 @@ export function PriceListScreen({
                                 {charge.currencyCode}
                               </td>
                               <td className="py-1 text-right font-mono tabular-nums text-hull">
-                                {charge.amount}
+                                {purchasePrice(charge.amount)}
                               </td>
                             </tr>
                           ))}

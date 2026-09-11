@@ -3,7 +3,12 @@ import { Router } from 'express';
 import {
   type ApiSuccess,
   buildMeta,
+  BUSINESS_PORT_ONE_SIDE,
+  businessPortAccepts,
+  businessPortSummary,
   CODE_PREFIX,
+  type CommodityBusinessPortDto,
+  commodityBusinessPortInputSchema,
   type CommodityItemDto,
   commodityItemInputSchema,
   type IndustrySectorDto,
@@ -13,9 +18,10 @@ import {
 } from '@ff/shared';
 
 import { CODE_RETRY_LIMIT, isUniqueViolation, nextCode } from '../lib/codes';
+import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import { HttpError } from '../lib/http-error';
 import { assertRowDeletable, deleteOwnedChildren } from '../lib/references';
-import { parseId } from '../lib/request';
+import { parseId, parseRefId } from '../lib/request';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
 import { authenticate } from '../middleware/authenticate';
 import { requirePermission } from '../middleware/require-permission';
@@ -41,21 +47,50 @@ const SECTOR_SELECT = {
   name: true,
   isActive: true,
   _count: { select: { items: true } },
+  /*
+    The lane, rendered on the list because the client asked to see it there.
+    Ports rather than a count: "CGP, NGB -> JEA" tells you what the category
+    trades on, where "2 business ports" tells you only that somebody filled
+    the screen in.
+  */
+  businessPorts: {
+    where: { deletedAt: null },
+    select: {
+      polId: true,
+      podId: true,
+      pol: { select: { name: true, portCode: true } },
+      pod: { select: { name: true, portCode: true } },
+    },
+  },
 } as const;
 
-function sectorToDto(row: {
+type SectorRow = {
   id: bigint;
   code: string;
   name: string;
   isActive: boolean;
   _count: { items: number };
-}): IndustrySectorDto {
+  businessPorts: {
+    pol: { name: string; portCode: string | null } | null;
+    pod: { name: string; portCode: string | null } | null;
+  }[];
+};
+
+function sectorToDto(row: SectorRow): IndustrySectorDto {
+  const lanes = row.businessPorts.map((bp) => ({
+    polName: bp.pol?.name ?? '',
+    polCode: bp.pol?.portCode ?? null,
+    podName: bp.pod?.name ?? '',
+    podCode: bp.pod?.portCode ?? null,
+  }));
   return {
     id: row.id.toString(),
     code: row.code,
     name: row.name,
     isActive: row.isActive,
     itemCount: row._count.items,
+    businessPortCount: row.businessPorts.length,
+    businessPortSummary: businessPortSummary(lanes),
   };
 }
 
@@ -384,3 +419,242 @@ commodityRouter.delete('/:id', requirePermission(`${FEATURE}.DELETE`), async (re
   const payload: ApiSuccess<{ deleted: true }> = { success: true, data: { deleted: true } };
   res.json(payload);
 });
+
+// ---------------------------------------------------------- Business Port
+/*
+  The lanes a category is traded on (client, 2026-09-12).
+
+  A child list in the §8 shape, with one rule laid over the whole set: many
+  loading ports into one discharge port, or one loading port out to many, never
+  both. It spans rows, so no CHECK constraint can hold it and these handlers
+  are where it lives.
+*/
+
+const BUSINESS_PORT_SELECT = {
+  id: true,
+  code: true,
+  polId: true,
+  podId: true,
+  isActive: true,
+  pol: { select: { name: true, portCode: true } },
+  pod: { select: { name: true, portCode: true } },
+} as const;
+
+function businessPortToDto(row: {
+  id: bigint;
+  code: string;
+  polId: bigint;
+  podId: bigint;
+  isActive: boolean;
+  pol: { name: string; portCode: string | null } | null;
+  pod: { name: string; portCode: string | null } | null;
+}): CommodityBusinessPortDto {
+  return {
+    id: row.id.toString(),
+    code: row.code,
+    polId: row.polId.toString(),
+    polName: row.pol?.name ?? '—',
+    polCode: row.pol?.portCode ?? null,
+    podId: row.podId.toString(),
+    podName: row.pod?.name ?? '—',
+    podCode: row.pod?.portCode ?? null,
+    isActive: row.isActive,
+  };
+}
+
+/*
+  Ports for the two pickers, served from this route rather than from
+  /setting/ports so the screen needs only the commodity permission — somebody
+  who maintains category lanes has no business needing the port master's VIEW.
+*/
+commodityRouter.get(
+  '/business-port-options',
+  requirePermission(`${FEATURE}.VIEW`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const ports = await withTenant(auth.tenantId, async (db) => {
+      // §7A rule 7: a shared row a workspace switched off is not offered.
+      const inactive = await inactiveMasters(db);
+      return db.port.findMany({
+        where: { deletedAt: null, isActive: true, ...excludeInactive(inactive, 'port') },
+        select: { id: true, name: true, portCode: true },
+        orderBy: [{ name: 'asc' }],
+      });
+    });
+
+    const payload: ApiSuccess<{ ports: { id: string; name: string; portCode: string | null }[] }> = {
+      success: true,
+      data: {
+        ports: ports.map((p) => ({
+          id: p.id.toString(),
+          name: p.name,
+          portCode: p.portCode,
+        })),
+      },
+    };
+    res.json(payload);
+  },
+);
+
+commodityRouter.get(
+  '/:id/business-ports',
+  requirePermission(`${FEATURE}.VIEW`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const sectorId = parseId(req.params.id, 'category');
+
+    const rows = await withTenant(auth.tenantId, async (db) => {
+      await findSector(db, sectorId);
+      return db.commodityBusinessPort.findMany({
+        where: { industrySectorId: sectorId, deletedAt: null },
+        select: BUSINESS_PORT_SELECT,
+        orderBy: [{ id: 'asc' }],
+      });
+    });
+
+    // Unpaged on purpose: a lane is a handful of ports, and the screen needs
+    // the whole set in hand to know which side is still selectable.
+    const payload: ApiSuccess<CommodityBusinessPortDto[]> = {
+      success: true,
+      data: rows.map(businessPortToDto),
+    };
+    res.json(payload);
+  },
+);
+
+commodityRouter.post(
+  '/:id/business-ports',
+  requirePermission(`${FEATURE}.CREATE`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const sectorId = parseId(req.params.id, 'category');
+    const input = commodityBusinessPortInputSchema.parse(req.body);
+    const polId = parseRefId(input.polId, 'port');
+    const podId = parseRefId(input.podId, 'port');
+
+    if (polId === podId) {
+      throw HttpError.badRequest('The loading and discharge ports must be different.');
+    }
+
+    const created = await withTenant(auth.tenantId, async (db) => {
+      await findSector(db, sectorId);
+
+      const ports = await db.port.findMany({
+        where: { id: { in: [polId, podId] }, deletedAt: null },
+        select: { id: true },
+      });
+      if (ports.length < 2) throw HttpError.notFound('That port no longer exists.');
+
+      const existing = await db.commodityBusinessPort.findMany({
+        where: { industrySectorId: sectorId, deletedAt: null },
+        select: { polId: true, podId: true },
+      });
+
+      // The rule, checked against what is already on file.
+      const accepts = businessPortAccepts(
+        existing.map((r) => ({ polId: r.polId.toString(), podId: r.podId.toString() })),
+        { polId: polId.toString(), podId: podId.toString() },
+      );
+      if (!accepts) {
+        throw HttpError.badRequest(BUSINESS_PORT_ONE_SIDE);
+      }
+
+      for (let attempt = 0; attempt < CODE_RETRY_LIMIT; attempt += 1) {
+        const code = await nextCode(
+          db,
+          'commodityBusinessPort',
+          CODE_PREFIX.commodityBusinessPort,
+          auth.tenantId,
+        );
+        try {
+          return await db.commodityBusinessPort.create({
+            data: {
+              tenantId: auth.tenantId,
+              code,
+              industrySectorId: sectorId,
+              polId,
+              podId,
+              createdBy: auth.userId,
+              updatedBy: auth.userId,
+            },
+            select: BUSINESS_PORT_SELECT,
+          });
+        } catch (error) {
+          if (isUniqueViolation(error, 'code')) continue;
+          if (isUniqueViolation(error, 'pol_id')) {
+            throw HttpError.conflict('That lane is already on this category.');
+          }
+          throw error;
+        }
+      }
+      throw new HttpError(
+        409,
+        'CODE_GENERATION_FAILED',
+        'Could not allocate a business port code. Please try again.',
+      );
+    });
+
+    const payload: ApiSuccess<CommodityBusinessPortDto> = {
+      success: true,
+      data: businessPortToDto(created),
+    };
+    res.status(201).json(payload);
+  },
+);
+
+commodityRouter.post(
+  '/:id/business-ports/:bpId/toggle-status',
+  requirePermission(`${FEATURE}.TOGGLE_STATUS`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const sectorId = parseId(req.params.id, 'category');
+    const bpId = parseId(req.params.bpId, 'business port');
+
+    const updated = await withTenant(auth.tenantId, async (db) => {
+      await findSector(db, sectorId);
+      const row = await db.commodityBusinessPort.findFirst({
+        where: { id: bpId, industrySectorId: sectorId, deletedAt: null },
+        select: { isActive: true },
+      });
+      if (row === null) throw HttpError.notFound('That business port is not on this category.');
+
+      return db.commodityBusinessPort.update({
+        where: { id: bpId },
+        data: { isActive: !row.isActive, updatedBy: auth.userId },
+        select: BUSINESS_PORT_SELECT,
+      });
+    });
+
+    const payload: ApiSuccess<CommodityBusinessPortDto> = {
+      success: true,
+      data: businessPortToDto(updated),
+    };
+    res.json(payload);
+  },
+);
+
+commodityRouter.delete(
+  '/:id/business-ports/:bpId',
+  requirePermission(`${FEATURE}.DELETE`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const sectorId = parseId(req.params.id, 'category');
+    const bpId = parseId(req.params.bpId, 'business port');
+
+    await withTenant(auth.tenantId, async (db) => {
+      await findSector(db, sectorId);
+      const row = await db.commodityBusinessPort.findFirst({
+        where: { id: bpId, industrySectorId: sectorId, deletedAt: null },
+        select: { id: true },
+      });
+      if (row === null) throw HttpError.notFound('That business port is not on this category.');
+
+      await db.commodityBusinessPort.update({
+        where: { id: bpId },
+        data: { deletedAt: new Date(), updatedBy: auth.userId },
+      });
+    });
+
+    res.json({ success: true, data: { id: bpId.toString() } });
+  },
+);

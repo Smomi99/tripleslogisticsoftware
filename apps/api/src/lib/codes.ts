@@ -39,6 +39,7 @@ const CODE_TABLES = {
   vendorPic: 'vendor_pic',
   industrySector: 'industry_sector',
   commodityItem: 'commodity_item',
+  commodityBusinessPort: 'commodity_business_port',
   customer: 'customer',
   customerPic: 'customer_pic',
   agent: 'agent',

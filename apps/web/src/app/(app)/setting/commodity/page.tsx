@@ -53,6 +53,23 @@ export default function CommodityPage() {
         cell: (r) => String(r.itemCount),
       },
       {
+        /*
+          The lane, on the list because the client asked to see it here. Ports
+          rather than a count: "CGP, NGB → JEA" says what the category trades
+          on, where "2" says only that somebody filled the screen in.
+        */
+        id: 'businessPort',
+        header: 'Business Port',
+        cell: (r) =>
+          r.businessPortSummary === null ? (
+            <span className="text-steel">—</span>
+          ) : (
+            <span className="font-mono text-cell tabular-nums text-hull">
+              {r.businessPortSummary}
+            </span>
+          ),
+      },
+      {
         id: 'isActive',
         header: 'Status',
         cell: (r) => (
@@ -161,6 +178,11 @@ export default function CommodityPage() {
             {can('SETTING.COMMODITY_CATEGORY.VIEW') && (
               <Button variant="text" size="inline" asChild>
                 <Link href={`/setting/commodity/${row.id}/item`}>Items</Link>
+              </Button>
+            )}
+            {can('SETTING.COMMODITY_CATEGORY.VIEW') && (
+              <Button variant="text" size="inline" asChild>
+                <Link href={`/setting/commodity/${row.id}/business-port`}>Business Port</Link>
               </Button>
             )}
             {can('SETTING.COMMODITY_CATEGORY.EDIT') && (

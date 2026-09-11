@@ -223,6 +223,7 @@ model Tenant {
   vendorPics            VendorPic[]
   industrySectors       IndustrySector[]
   commodityItems        CommodityItem[]
+  commodityBusinessPorts CommodityBusinessPort[]
   customers             Customer[]
   customerPics          CustomerPic[]
   expertAreas           ExpertArea[]
@@ -395,6 +396,8 @@ model Port {
   ratesToHere         FreightRate[]        @relation("FreightRatePod")
   lanesFromHere       CarrierPortPair[]    @relation("CarrierPortPairPol")
   lanesToHere         CarrierPortPair[]    @relation("CarrierPortPairPod")
+  businessPortsFrom   CommodityBusinessPort[] @relation("CommodityBusinessPortPol")
+  businessPortsTo     CommodityBusinessPort[] @relation("CommodityBusinessPortPod")
 
   // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
   // prisma migrate owns them — an appendix-only constraint is dropped by the
@@ -954,8 +957,9 @@ model IndustrySector {
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
 
-  items     CommodityItem[]
-  customers Customer[]
+  items         CommodityItem[]
+  customers     Customer[]
+  businessPorts CommodityBusinessPort[]
 
   // Audit FKs (§4 rule 5). Modelled here rather than in raw SQL so that
   // prisma migrate owns them — an appendix-only constraint is dropped by the
@@ -971,6 +975,52 @@ model IndustrySector {
 }
 
 /// client: Table_Industry_Sector_Item_List  [child of industry_sector]
+/// client: the Business Port button on Commodity Category.
+///
+/// The lanes a commodity category is actually traded on, as POL -> POD pairs.
+/// One rule shapes the whole set (client, 2026-09-12): a category fans in or
+/// fans out, never both. Several loading ports feeding one discharge port is a
+/// lane; several discharge ports served from one loading port is a lane; a
+/// grid of many-to-many is not something anybody buys or sells against, so it
+/// is refused.
+///
+/// The rule spans rows, which no CHECK constraint can express, so the route
+/// enforces it. The composite unique below is what the database can hold: the
+/// same pair cannot be listed twice for one category.
+model CommodityBusinessPort {
+  tenantId         BigInt @map("tenant_id")
+  id               BigInt @id @default(autoincrement())
+  code             String @db.VarChar(32)
+  industrySectorId BigInt @map("industry_sector_id")
+  polId            BigInt @map("pol_id")
+  podId            BigInt @map("pod_id")
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant         Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  industrySector IndustrySector @relation(fields: [tenantId, industrySectorId], references: [tenantId, id], onDelete: Restrict)
+  // Port is system-capable (§7A rule 7), so a plain FK — a composite one is
+  // impossible while the parent's tenant_id may be NULL.
+  pol            Port           @relation("CommodityBusinessPortPol", fields: [polId], references: [id], onDelete: Restrict)
+  pod            Port           @relation("CommodityBusinessPortPod", fields: [podId], references: [id], onDelete: Restrict)
+
+  createdByUser User? @relation("CommodityBusinessPortCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("CommodityBusinessPortUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, industrySectorId, polId, podId])
+  @@index([tenantId])
+  @@index([industrySectorId])
+  @@index([polId])
+  @@index([podId])
+  @@map("commodity_business_port")
+}
+
 model CommodityItem {
   tenantId         BigInt    @map("tenant_id")
   id               BigInt    @id @default(autoincrement())
@@ -1646,6 +1696,7 @@ model User {
   createdVendorPics            VendorPic[]            @relation("VendorPicCreatedBy")
   createdIndustrySectors       IndustrySector[]       @relation("IndustrySectorCreatedBy")
   createdCommodityItems        CommodityItem[]        @relation("CommodityItemCreatedBy")
+  createdCommodityBusinessPorts CommodityBusinessPort[] @relation("CommodityBusinessPortCreatedBy")
   createdCustomers             Customer[]             @relation("CustomerCreatedBy")
   createdCustomerPics          CustomerPic[]          @relation("CustomerPicCreatedBy")
   createdExpertAreas           ExpertArea[]           @relation("ExpertAreaCreatedBy")
@@ -1679,6 +1730,7 @@ model User {
   updatedVendorPics            VendorPic[]            @relation("VendorPicUpdatedBy")
   updatedIndustrySectors       IndustrySector[]       @relation("IndustrySectorUpdatedBy")
   updatedCommodityItems        CommodityItem[]        @relation("CommodityItemUpdatedBy")
+  updatedCommodityBusinessPorts CommodityBusinessPort[] @relation("CommodityBusinessPortUpdatedBy")
   updatedCustomers             Customer[]             @relation("CustomerUpdatedBy")
   updatedCustomerPics          CustomerPic[]          @relation("CustomerPicUpdatedBy")
   updatedExpertAreas           ExpertArea[]           @relation("ExpertAreaUpdatedBy")

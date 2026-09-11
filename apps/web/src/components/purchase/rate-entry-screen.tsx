@@ -13,6 +13,7 @@ import {
   type PurchaseSourceType,
   type RateMode,
   RATE_STATUS_LABEL,
+  purchasePrice,
 } from '@ff/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -861,10 +862,10 @@ export function RateEntryScreen({
                         <span className="text-steel">—</span>
                       ) : (
                         <>
-                          <div>{line.sellPrice}</div>
+                          <div>{purchasePrice(line.sellPrice)}</div>
                           {/* Absent when the server withheld it (§4 rule 5). */}
                           {line.buyPrice !== undefined && (
-                            <div className="text-steel">buy {line.buyPrice}</div>
+                            <div className="text-steel">buy {purchasePrice(line.buyPrice)}</div>
                           )}
                         </>
                       )}

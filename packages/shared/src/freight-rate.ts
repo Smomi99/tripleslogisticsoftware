@@ -61,6 +61,24 @@ const optionalMoneyField = (message: string) =>
     .refine((v) => v === '' || /^\d{1,14}(\.\d{1,4})?$/.test(v), message)
     .optional();
 
+/**
+ * A purchase price rendered for reading (client, 2026-09-12: "round figure, no
+ * decimal needed").
+ *
+ * NUMERIC(18,4) comes back as "112.0000", and a screen of those is four digits
+ * of noise on every price. A whole number renders whole. One that genuinely
+ * carries paisa keeps it — a per-CBM LCL rate of 1450.50 is a real price, and
+ * rounding it on screen would show a figure the database does not hold.
+ */
+export function purchasePrice(value: string | null | undefined): string {
+  if (value === null || value === undefined || value === '') return '—';
+  const n = Number(value);
+  if (!Number.isFinite(n)) return value;
+  return Number.isInteger(n)
+    ? n.toLocaleString('en-US')
+    : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+}
+
 /** `YYYY-MM-DD`. Dates are stored UTC and displayed Asia/Dhaka (CLAUDE.md §9). */
 const dateField = z
   .string()

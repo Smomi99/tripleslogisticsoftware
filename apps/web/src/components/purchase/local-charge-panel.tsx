@@ -6,6 +6,7 @@ import {
   isoCurrency,
   type LocalChargeInput,
   type LookupOption,
+  purchasePrice,
 } from '@ff/shared';
 import { useState } from 'react';
 
@@ -131,7 +132,7 @@ export function LocalChargePanel({
                       : (containerSizes.find((t) => t.id === charge.containerSizeId)?.name ?? '—')}
                   </td>
                   <td className="py-1.5 text-right font-mono tabular-nums">
-                    {charge.amount} {codeOf(charge.currencyId)}
+                    {purchasePrice(charge.amount)} {codeOf(charge.currencyId)}
                   </td>
                   <td className="py-1.5 text-right">
                     <Button

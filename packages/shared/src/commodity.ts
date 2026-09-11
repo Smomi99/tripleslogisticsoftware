@@ -33,6 +33,9 @@ export interface IndustrySectorDto {
   name: string;
   isActive: boolean;
   itemCount: number;
+  businessPortCount: number;
+  /** "CGP, NGB → JEA", or null where no lane is on file. */
+  businessPortSummary: string | null;
 }
 
 export const commodityItemInputSchema = z.object({
@@ -57,4 +60,94 @@ export interface CommodityItemDto {
   name: string;
   hsCode: string | null;
   isActive: boolean;
+}
+
+/**
+ * Business Port — the lanes a category is traded on (client, 2026-09-12).
+ *
+ * POL -> POD pairs hung off a commodity category, with one rule over the whole
+ * set: a category fans in or it fans out, never both. Several loading ports
+ * feeding one discharge port is a lane somebody buys against; several
+ * discharge ports served from one loading port is too. A full grid of origins
+ * against destinations is not a lane, it is a list of guesses, so it is
+ * refused.
+ */
+export const commodityBusinessPortInputSchema = z.object({
+  polId: z.string().min(1, 'Choose the loading port.'),
+  podId: z.string().min(1, 'Choose the discharge port.'),
+});
+
+export type CommodityBusinessPortInput = z.input<typeof commodityBusinessPortInputSchema>;
+
+export interface CommodityBusinessPortDto {
+  id: string;
+  code: string;
+  polId: string;
+  polName: string;
+  polCode: string | null;
+  podId: string;
+  podName: string;
+  podCode: string | null;
+  isActive: boolean;
+}
+
+/** Which side of the lane may still take new ports. */
+export type BusinessPortShape = 'EMPTY' | 'OPEN' | 'FANS_IN' | 'FANS_OUT';
+
+/**
+ * The shape of a category's lane, and what that leaves selectable.
+ *
+ * EMPTY   nothing on file — either side is free.
+ * OPEN    one pair — still either, because one pair fans both ways.
+ * FANS_IN many loading ports into one discharge port; the POD is fixed.
+ * FANS_OUT one loading port out to many discharge ports; the POL is fixed.
+ */
+export function businessPortShape(
+  rows: { polId: string; podId: string }[],
+): { shape: BusinessPortShape; fixedPolId: string | null; fixedPodId: string | null } {
+  if (rows.length === 0) return { shape: 'EMPTY', fixedPolId: null, fixedPodId: null };
+
+  const pols = new Set(rows.map((r) => r.polId));
+  const pods = new Set(rows.map((r) => r.podId));
+  const onePol = pols.size === 1;
+  const onePod = pods.size === 1;
+
+  // A single pair satisfies both, and constrains neither yet.
+  if (onePol && onePod) {
+    return {
+      shape: 'OPEN',
+      fixedPolId: [...pols][0] ?? null,
+      fixedPodId: [...pods][0] ?? null,
+    };
+  }
+  if (onePod) return { shape: 'FANS_IN', fixedPolId: null, fixedPodId: [...pods][0] ?? null };
+  if (onePol) return { shape: 'FANS_OUT', fixedPolId: [...pols][0] ?? null, fixedPodId: null };
+
+  // Unreachable through the API, which refuses the save that would cause it.
+  // Reachable by reading a row written before the rule existed.
+  return { shape: 'EMPTY', fixedPolId: null, fixedPodId: null };
+}
+
+/** Whether adding this pair would leave the set still a lane. */
+export function businessPortAccepts(
+  rows: { polId: string; podId: string }[],
+  next: { polId: string; podId: string },
+): boolean {
+  const pols = new Set([...rows.map((r) => r.polId), next.polId]);
+  const pods = new Set([...rows.map((r) => r.podId), next.podId]);
+  return pols.size === 1 || pods.size === 1;
+}
+
+export const BUSINESS_PORT_ONE_SIDE =
+  'A category runs many loading ports into one discharge port, or one loading port out to many — not both.';
+
+/** "CGP, NGB → JEA" for the category list. Null when nothing is on file. */
+export function businessPortSummary(
+  rows: { polCode: string | null; polName: string; podCode: string | null; podName: string }[],
+): string | null {
+  if (rows.length === 0) return null;
+  const label = (code: string | null, name: string): string => code ?? name;
+  const pols = [...new Set(rows.map((r) => label(r.polCode, r.polName)))];
+  const pods = [...new Set(rows.map((r) => label(r.podCode, r.podName)))];
+  return `${pols.join(', ')} → ${pods.join(', ')}`;
 }

@@ -9,6 +9,7 @@ import {
   PROFIT_TYPE_LABEL,
   type ProfitType,
   type RateMode,
+  purchasePrice,
 } from '@ff/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -370,7 +371,7 @@ export function PriceAddonScreen({
                           <p className="mt-1 text-right font-mono text-cell tabular-nums text-steel">
                             {options.canSeeBuyPrice
                               ? `sell ${preview}`
-                              : `now ${line.sellPrice}`}
+                              : `now ${purchasePrice(line.sellPrice)}`}
                           </p>
                         </td>
                       );

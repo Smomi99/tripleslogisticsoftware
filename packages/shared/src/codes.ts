@@ -38,6 +38,7 @@ export const CODE_PREFIX = {
   vendorPic: 'VEP',
   industrySector: 'ISC',
   commodityItem: 'CIT',
+  commodityBusinessPort: 'CBP',
 
   goodsType: 'GDT',
   containerSize: 'CNT',
