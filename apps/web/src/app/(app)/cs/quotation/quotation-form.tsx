@@ -140,12 +140,15 @@ export function QuotationForm({
   /*
    * The quotation seen in one currency, at today's rates.
    *
-   * Summed line by line rather than from the stored total, because the charges
-   * on one quotation need not share a currency — freight in USD and a local
-   * charge in BDT is ordinary. Each line is carried to the target through the
+   * Summed line by line rather than from the stored total, because that is
+   * what makes it live. Each line is carried to the target through the
    * workspace base, which is the unit every rate here is quoted in: a rate is
    * "how much base one of these is worth", so multiplying by the line's rate
    * and dividing by the target's is the whole conversion.
+   *
+   * Per line also means a quotation stored mixed — nothing can create one now,
+   * but one may exist — converts correctly instead of being read as though it
+   * were all in the first charge's currency.
    *
    * It reads the grid rather than the saved rows, so it answers while a price
    * is being typed. Waiting for a save would make it useless for the one thing
@@ -204,7 +207,19 @@ export function QuotationForm({
   const additional = lines.filter((l) => l.lineGroup === 'ADDITIONAL');
 
   function patchLine(target: LineDraft, patch: Partial<LineDraft>): void {
-    setLines((current) => current.map((l) => (l === target ? { ...l, ...patch } : l)));
+    setLines((current) =>
+      current.map((l) => {
+        if (l === target) return { ...l, ...patch };
+        /*
+          One currency per quotation (client rule, 2026-09-11). It is a
+          property of the document rather than of the row, so changing it
+          anywhere moves every charge — which beats disabling the control on
+          all but the first row and leaving no way to change your mind.
+        */
+        if (patch.currencyId !== undefined) return { ...l, currencyId: patch.currencyId };
+        return l;
+      }),
+    );
   }
 
   /*
@@ -218,6 +233,10 @@ export function QuotationForm({
    * Seal Charge belongs in the same money as the freight above it; then §5.4's
    * "Freight in USD"; then the quotation's own billing currency. The list's
    * first row is the last resort, not the first.
+   *
+   * Since 2026-09-11 the first branch is not a preference but the rule: one
+   * currency per quotation, so the first charge decides and the rest follow.
+   * The later branches only ever apply to that first charge.
    */
   function defaultCurrencyId(current: LineDraft[]): string {
     const onGrid = current.find((l) => l.currencyId !== '')?.currencyId;
@@ -441,7 +460,7 @@ export function QuotationForm({
       {/* --------------------------------------------------- the line grids */}
       <LineGrid
         title="Charges"
-        description="Pulled from the price list on POL, POD, goods type and carrier."
+        description="Pulled from the price list on POL, POD, goods type and carrier. Every charge is in one currency — changing it on any row changes them all."
         lines={standard}
         options={options}
         editable={editable}

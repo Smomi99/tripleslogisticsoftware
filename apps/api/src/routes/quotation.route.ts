@@ -15,6 +15,7 @@ import {
   type QuotationStatus,
   quotationUpdateSchema,
   quotationNotes,
+  QUOTATION_ONE_CURRENCY,
   loadingTypeLabel,
 } from '@ff/shared';
 import { Router } from 'express';
@@ -152,10 +153,13 @@ function toDto(row: QuotationRow): QuotationDto {
     issued document moves (§2.2).
   */
   const words =
-    row.amountInWords ??
-    (totals.totalCurrencyCode === null
-      ? null
-      : amountInWords(num(row.totalAmountUsd) ?? '0', totals.totalCurrencyCode));
+    totals.totalCurrencyCode === null
+      ? // No single currency, so no single amount to spell — whatever is
+        // stored names a currency this quotation is not wholly in, and stale
+        // words on a document are worse than none.
+        null
+      : (row.amountInWords ??
+        amountInWords(num(row.totalAmountUsd) ?? '0', totals.totalCurrencyCode));
 
   return {
     id: row.id.toString(),
@@ -434,6 +438,25 @@ quotationRouter.post('/quotations', requirePermission(`${FEATURE}.CREATE`), asyn
           ? null
           : parseRefId(input.freightCostHeadId, 'cost head'),
     });
+
+    /*
+      The price list can disagree with itself.
+
+      Freight takes the rate's currency and each local charge takes its own, so
+      a rate whose THC is priced in dirhams and whose freight is in taka would
+      pull a quotation that breaks the one-currency rule before anyone has
+      touched it. Refusing here, and naming both currencies, beats silently
+      dropping the odd charge — the charge is real and the price list is what
+      needs correcting.
+    */
+    const pulledCodes = [...new Set(pulled.lines.map((l) => l.currencyCode).filter((c) => c !== ''))];
+    if (pulledCodes.length > 1) {
+      throw HttpError.conflict(
+        `${QUOTATION_ONE_CURRENCY} Your price list prices this lane in ` +
+          `${pulledCodes.sort().join(' and ')}. Put that rate's freight and its local ` +
+          'charges in one currency, then raise the quotation.',
+      );
+    }
 
     // Addresses default from the customer, per the client's own note on the
     // wireframe: "email id automatically come from customer table".
@@ -990,6 +1013,26 @@ quotationRouter.patch('/quotations/:id', requirePermission(`${FEATURE}.EDIT`), a
     });
 
     if (input.lines !== undefined) {
+      /*
+        One currency per quotation, checked before anything is written.
+
+        The grid keeps the charges in step, but a hidden control is a courtesy
+        and this is the control. It runs ahead of the wholesale delete below so
+        a refused save leaves the stored lines exactly as they were.
+      */
+      const currencyIds = [...new Set(input.lines.map((l) => l.currencyId))];
+      if (currencyIds.length > 1) {
+        const named = await db.currency.findMany({
+          where: { id: { in: currencyIds.map((id) => parseRefId(id, 'currency')) } },
+          select: { currency: true },
+        });
+        const codes = named.map((c) => isoCurrency(c.currency) ?? c.currency).sort();
+        throw HttpError.badRequest(
+          `${QUOTATION_ONE_CURRENCY} These charges are in ${codes.join(' and ')}. ` +
+            'Put them all in one, or raise a separate quotation for the rest.',
+        );
+      }
+
       const header = await db.quotation.findFirstOrThrow({
         where: { id: workingId },
         select: { conversionRate: true },

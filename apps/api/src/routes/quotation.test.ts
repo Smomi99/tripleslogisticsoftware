@@ -1228,13 +1228,12 @@ describe('the quotation prints in its own currency', () => {
     expect(stored.amountInWords).not.toMatch(/US Dollars/);
   });
 
-  it('gives no single total when the charges are in different currencies', async () => {
+  it('refuses a save that puts the charges in two currencies', async () => {
     const created = await create().expect(201);
     const id = created.body.data.id as string;
     const lines = created.body.data.lines as QuotationLineDto[];
     expect(lines.length).toBeGreaterThan(1);
 
-    // Freight in one currency, a local charge in another — ordinary in this trade.
     const usd = await owner.currency.findFirstOrThrow({
       where: { currency: { startsWith: 'USD' } },
       select: { id: true },
@@ -1252,19 +1251,74 @@ describe('the quotation prints in its own currency', () => {
         source: l.source,
       })),
     });
-    expect(res.status, JSON.stringify(res.body)).toBe(200);
 
-    // No pretend total across them, and no words for an amount that has none.
+    expect(res.status, JSON.stringify(res.body)).toBe(400);
+    expect(JSON.stringify(res.body)).toContain('same currency');
+    // Named, so the fix is obvious rather than a hunt down the grid.
+    expect(JSON.stringify(res.body)).toContain('QTD');
+    expect(JSON.stringify(res.body)).toContain('USD');
+
+    // And nothing was written: the guard runs before the lines are replaced.
+    const after = await as(`/api/tenant/cs/quotations/${id}`).expect(200);
+    const codes = new Set(
+      (after.body.data.lines as QuotationLineDto[]).map((l) => l.currencyCode),
+    );
+    expect([...codes]).toEqual(['QTD']);
+  });
+
+  it('moves every charge when one of them changes currency', async () => {
+    const created = await create().expect(201);
+    const id = created.body.data.id as string;
+    const lines = created.body.data.lines as QuotationLineDto[];
+
+    const usd = await owner.currency.findFirstOrThrow({
+      where: { currency: { startsWith: 'USD' } },
+      select: { id: true },
+    });
+    const res = await patch(`/api/tenant/cs/quotations/${id}`, {
+      lines: lines.map((l) => ({
+        id: l.id,
+        lineGroup: l.lineGroup,
+        costHeadId: l.costHeadId,
+        containerSizeId: l.containerSizeId,
+        costUnitId: l.costUnitId,
+        quantity: l.quantity,
+        sellingPrice: l.sellingPrice,
+        currencyId: usd.id.toString(),
+        source: l.source,
+      })),
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.data.totalCurrencyCode).toBe('USD');
+    expect(res.body.data.totalsByCurrency.length).toBe(1);
+  });
+
+  /*
+    Nothing can create this state any more, but a quotation stored before the
+    rule — or by a price list that disagreed with itself — still has to read
+    honestly rather than be relabelled as whatever its first charge is in.
+  */
+  it('still reads a stored mixed quotation as one subtotal per currency', async () => {
+    const created = await create().expect(201);
+    const id = created.body.data.id as string;
+    const lines = created.body.data.lines as QuotationLineDto[];
+
+    const usd = await owner.currency.findFirstOrThrow({
+      where: { currency: { startsWith: 'USD' } },
+      select: { id: true },
+    });
+    // Written underneath the API, which is the only way to reach this state.
+    await owner.quotationLine.update({
+      where: { id: BigInt(lines[0]!.id) },
+      data: { currencyId: usd.id, currencyCode: 'USD' },
+    });
+
+    const res = await as(`/api/tenant/cs/quotations/${id}`).expect(200);
     expect(res.body.data.totalCurrencyCode).toBeNull();
     expect(res.body.data.totalsByCurrency.length).toBe(2);
     expect(res.body.data.amountInWords).toBeNull();
-
-    // The document says the same: a subtotal per currency, no "In word" line.
-    const words = pdfWords((await fetchPdf(id).expect(200)).body as Buffer);
-    expect(words).toContain('TotalUSD');
-    expect(words).toContain('TotalQTD');
-    expect(words).not.toContain('Inword');
   });
+
 
   it('refuses to guess when the workspace has declared no base', async () => {
     const tenant = await owner.tenant.findFirstOrThrow({

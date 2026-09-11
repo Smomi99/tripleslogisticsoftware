@@ -194,6 +194,21 @@ export function totalCurrencyLabel(code: string | null): string {
   return code ?? 'mixed';
 }
 
+/**
+ * A quotation is priced in one currency — client rule, 2026-09-11.
+ *
+ * The first charge decides it and every other charge follows. The screen keeps
+ * them in step by moving all of them together, and the API refuses a save that
+ * arrives mixed, because a hidden control is a courtesy and the check is what
+ * actually holds.
+ *
+ * Anything already stored mixed still reads and prints as a subtotal per
+ * currency: nothing can create that state now, but a document that exists must
+ * be shown as it is rather than as the rule wishes it were.
+ */
+export const QUOTATION_ONE_CURRENCY =
+  'Every charge on a quotation has to be in the same currency.';
+
 // -------------------------------------------------------------------- inputs
 
 const money = z
