@@ -22,6 +22,13 @@ export interface FormLayoutProps {
   submitLabel?: string;
   cancelLabel?: string;
   isPending?: boolean;
+  /**
+   * Holds the submit closed while the form is knowingly incomplete.
+   *
+   * Separate from isPending, which means "working": this means "not yet a
+   * valid thing to send", and the two look different to a user.
+   */
+  submitDisabled?: boolean;
   /** A whole-form error, distinct from the per-field errors (§12). */
   error?: string | undefined;
   /** Overrides the field-count heuristic when a layout needs it. */
@@ -35,6 +42,7 @@ export function FormLayout({
   submitLabel = 'Save changes',
   cancelLabel = 'Cancel',
   isPending = false,
+  submitDisabled = false,
   error,
   columns,
 }: FormLayoutProps) {
@@ -62,7 +70,7 @@ export function FormLayout({
       </div>
 
       <div className="flex items-center gap-2 border-t border-line pt-4">
-        <Button type="submit" disabled={isPending}>
+        <Button type="submit" disabled={isPending || submitDisabled}>
           {isPending ? 'Saving…' : submitLabel}
         </Button>
         {onCancel !== undefined && (

@@ -72,10 +72,24 @@ export interface CommodityItemDto {
  * against destinations is not a lane, it is a list of guesses, so it is
  * refused.
  */
-export const commodityBusinessPortInputSchema = z.object({
-  polId: z.string().min(1, 'Choose the loading port.'),
-  podId: z.string().min(1, 'Choose the discharge port.'),
-});
+export const BUSINESS_PORT_ONE_SIDE =
+  'A category runs many loading ports into one discharge port, or one loading port out to many — not both.';
+
+export const commodityBusinessPortInputSchema = z
+  .object({
+    polIds: z.array(z.string().min(1)).min(1, 'Choose at least one loading port.'),
+    podIds: z.array(z.string().min(1)).min(1, 'Choose at least one discharge port.'),
+  })
+  /*
+    The rule lives on the input because the lane is chosen in one go: pick
+    three loading ports and one discharge port and that is the lane, saved as
+    three pairs. Asking for them one pair at a time made "select multiple POL"
+    impossible to express, which is how the client asked for it.
+  */
+  .refine((v) => v.polIds.length === 1 || v.podIds.length === 1, {
+    message: BUSINESS_PORT_ONE_SIDE,
+    path: ['podIds'],
+  });
 
 export type CommodityBusinessPortInput = z.input<typeof commodityBusinessPortInputSchema>;
 
@@ -128,18 +142,30 @@ export function businessPortShape(
   return { shape: 'EMPTY', fixedPolId: null, fixedPodId: null };
 }
 
-/** Whether adding this pair would leave the set still a lane. */
+/** Whether adding these pairs would leave the set still a lane. */
 export function businessPortAccepts(
   rows: { polId: string; podId: string }[],
-  next: { polId: string; podId: string },
+  next: { polId: string; podId: string } | { polId: string; podId: string }[],
 ): boolean {
-  const pols = new Set([...rows.map((r) => r.polId), next.polId]);
-  const pods = new Set([...rows.map((r) => r.podId), next.podId]);
+  const added = Array.isArray(next) ? next : [next];
+  const pols = new Set([...rows.map((r) => r.polId), ...added.map((r) => r.polId)]);
+  const pods = new Set([...rows.map((r) => r.podId), ...added.map((r) => r.podId)]);
   return pols.size === 1 || pods.size === 1;
 }
 
-export const BUSINESS_PORT_ONE_SIDE =
-  'A category runs many loading ports into one discharge port, or one loading port out to many — not both.';
+/** Every pair a selection stands for. One side is always a single port. */
+export function businessPortPairs(
+  polIds: string[],
+  podIds: string[],
+): { polId: string; podId: string }[] {
+  const pairs: { polId: string; podId: string }[] = [];
+  for (const polId of polIds) {
+    for (const podId of podIds) {
+      if (polId !== podId) pairs.push({ polId, podId });
+    }
+  }
+  return pairs;
+}
 
 /** "CGP, NGB → JEA" for the category list. Null when nothing is on file. */
 export function businessPortSummary(

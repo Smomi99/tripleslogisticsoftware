@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   businessPortAccepts,
+  businessPortPairs,
   businessPortShape,
   businessPortSummary,
 } from '@ff/shared';
@@ -123,5 +124,39 @@ describe('how the lane reads on the category list', () => {
         { polCode: null, polName: 'Chattogram', podCode: 'JEA', podName: 'Jebel Ali' },
       ]),
     ).toBe('Chattogram → JEA');
+  });
+});
+
+describe('a whole selection at once', () => {
+  it('expands several loading ports against one discharge port', () => {
+    expect(businessPortPairs(['1', '2', '3'], ['9'])).toEqual([
+      pair('1', '9'),
+      pair('2', '9'),
+      pair('3', '9'),
+    ]);
+  });
+
+  it('expands one loading port against several discharge ports', () => {
+    expect(businessPortPairs(['9'], ['1', '2'])).toEqual([pair('9', '1'), pair('9', '2')]);
+  });
+
+  it('drops a port selected on both sides rather than pairing it with itself', () => {
+    // The one combination of an otherwise sensible selection that cannot mean
+    // anything. Failing the whole save over it would be unkind.
+    expect(businessPortPairs(['1', '9'], ['9'])).toEqual([pair('1', '9')]);
+  });
+
+  it('judges the selection as a set, not pair by pair', () => {
+    // Every pair here shares a discharge port, so the set is a lane.
+    expect(businessPortAccepts([], businessPortPairs(['1', '2', '3'], ['9']))).toBe(true);
+    // Against a category already fanning into 9, a different POD breaks it —
+    // even though each pair on its own looks harmless.
+    expect(
+      businessPortAccepts([pair('1', '9'), pair('2', '9')], businessPortPairs(['4'], ['8'])),
+    ).toBe(false);
+  });
+
+  it('refuses a selection that is many on both sides', () => {
+    expect(businessPortAccepts([], businessPortPairs(['1', '2'], ['8', '9']))).toBe(false);
   });
 });

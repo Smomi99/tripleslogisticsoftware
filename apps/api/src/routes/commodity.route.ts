@@ -5,6 +5,7 @@ import {
   buildMeta,
   BUSINESS_PORT_ONE_SIDE,
   businessPortAccepts,
+  businessPortPairs,
   businessPortSummary,
   CODE_PREFIX,
   type CommodityBusinessPortDto,
@@ -529,74 +530,97 @@ commodityRouter.post(
     const auth = req.auth!;
     const sectorId = parseId(req.params.id, 'category');
     const input = commodityBusinessPortInputSchema.parse(req.body);
-    const polId = parseRefId(input.polId, 'port');
-    const podId = parseRefId(input.podId, 'port');
 
-    if (polId === podId) {
+    const polIds = input.polIds.map((v) => parseRefId(v, 'port'));
+    const podIds = input.podIds.map((v) => parseRefId(v, 'port'));
+
+    /*
+      The lane is chosen in one go — several loading ports against one
+      discharge port, or the other way round — and saved as the pairs it
+      stands for. A port on both sides is dropped rather than refused: it is
+      the one combination of an otherwise sensible selection that cannot mean
+      anything, and failing the whole save over it would be unkind.
+    */
+    const pairs = businessPortPairs(
+      polIds.map((v) => v.toString()),
+      podIds.map((v) => v.toString()),
+    );
+    if (pairs.length === 0) {
       throw HttpError.badRequest('The loading and discharge ports must be different.');
     }
 
     const created = await withTenant(auth.tenantId, async (db) => {
       await findSector(db, sectorId);
 
+      const wanted = [...new Set([...polIds, ...podIds])];
       const ports = await db.port.findMany({
-        where: { id: { in: [polId, podId] }, deletedAt: null },
+        where: { id: { in: wanted }, deletedAt: null },
         select: { id: true },
       });
-      if (ports.length < 2) throw HttpError.notFound('That port no longer exists.');
+      if (ports.length < wanted.length) throw HttpError.notFound('That port no longer exists.');
 
       const existing = await db.commodityBusinessPort.findMany({
         where: { industrySectorId: sectorId, deletedAt: null },
         select: { polId: true, podId: true },
       });
+      const onFile = existing.map((r) => ({
+        polId: r.polId.toString(),
+        podId: r.podId.toString(),
+      }));
 
-      // The rule, checked against what is already on file.
-      const accepts = businessPortAccepts(
-        existing.map((r) => ({ polId: r.polId.toString(), podId: r.podId.toString() })),
-        { polId: polId.toString(), podId: podId.toString() },
-      );
-      if (!accepts) {
+      // The whole selection judged against what is already there, not pair by
+      // pair — half a lane saved and half refused is nobody's idea of a lane.
+      if (!businessPortAccepts(onFile, pairs)) {
         throw HttpError.badRequest(BUSINESS_PORT_ONE_SIDE);
       }
 
-      for (let attempt = 0; attempt < CODE_RETRY_LIMIT; attempt += 1) {
-        const code = await nextCode(
-          db,
-          'commodityBusinessPort',
-          CODE_PREFIX.commodityBusinessPort,
-          auth.tenantId,
-        );
-        try {
-          return await db.commodityBusinessPort.create({
-            data: {
-              tenantId: auth.tenantId,
-              code,
-              industrySectorId: sectorId,
-              polId,
-              podId,
-              createdBy: auth.userId,
-              updatedBy: auth.userId,
-            },
-            select: BUSINESS_PORT_SELECT,
-          });
-        } catch (error) {
-          if (isUniqueViolation(error, 'code')) continue;
-          if (isUniqueViolation(error, 'pol_id')) {
-            throw HttpError.conflict('That lane is already on this category.');
+      const already = new Set(onFile.map((r) => `${r.polId}:${r.podId}`));
+      const rows: Awaited<ReturnType<typeof createOne>>[] = [];
+
+      async function createOne(polId: bigint, podId: bigint) {
+        for (let attempt = 0; attempt < CODE_RETRY_LIMIT; attempt += 1) {
+          const code = await nextCode(
+            db,
+            'commodityBusinessPort',
+            CODE_PREFIX.commodityBusinessPort,
+            auth.tenantId,
+          );
+          try {
+            return await db.commodityBusinessPort.create({
+              data: {
+                tenantId: auth.tenantId,
+                code,
+                industrySectorId: sectorId,
+                polId,
+                podId,
+                createdBy: auth.userId,
+                updatedBy: auth.userId,
+              },
+              select: BUSINESS_PORT_SELECT,
+            });
+          } catch (error) {
+            if (isUniqueViolation(error, 'code')) continue;
+            throw error;
           }
-          throw error;
         }
+        throw new HttpError(
+          409,
+          'CODE_GENERATION_FAILED',
+          'Could not allocate a business port code. Please try again.',
+        );
       }
-      throw new HttpError(
-        409,
-        'CODE_GENERATION_FAILED',
-        'Could not allocate a business port code. Please try again.',
-      );
+
+      for (const pair of pairs) {
+        // Re-adding a pair that is already on file is a no-op, not an error.
+        if (already.has(`${pair.polId}:${pair.podId}`)) continue;
+        rows.push(await createOne(BigInt(pair.polId), BigInt(pair.podId)));
+      }
+      return rows;
     });
 
-    const payload: ApiSuccess<CommodityBusinessPortDto> = {
+    const payload: ApiSuccess<CommodityBusinessPortDto[]> = {
       success: true,
-      data: businessPortToDto(created),
+      data: created.map(businessPortToDto),
     };
     res.status(201).json(payload);
   },
