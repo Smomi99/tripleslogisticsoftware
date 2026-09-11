@@ -62,11 +62,23 @@ export function isoCurrency(value: string): string {
   return (value.split('—')[0] ?? value).trim();
 }
 
-/** Money and rates are NUMERIC(18,4) (§4 rule 6) — never a float, so a string. */
+/**
+ * Rates are NUMERIC(18,10) — never a float, so a string.
+ *
+ * Ten decimals, not the §4 rule 6 four, because a rate is not money: it is a
+ * ratio, and the base currency decides how small it gets. A workspace based in
+ * US dollars writes one taka as 0.0080645161 — at four places that is 0.0081,
+ * two significant figures, and half a percent of error on every line it
+ * converts. Eight integer digits because 18 total minus 10 is what the column
+ * holds; a longer number used to pass here and fail in Postgres.
+ */
 const rateSchema = z
   .string()
   .trim()
-  .regex(/^\d{1,14}(\.\d{1,4})?$/, 'Enter a rate with up to 4 decimal places.')
+  .regex(
+    /^\d{1,8}(\.\d{1,10})?$/,
+    'Enter a rate with up to 8 digits and 10 decimal places.',
+  )
   .refine((value) => Number(value) > 0, 'Rate must be greater than zero.');
 
 export const currencyInputSchema = z.object({

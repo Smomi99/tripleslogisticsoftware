@@ -588,3 +588,45 @@ describe('the list never shows a rate the server would refuse', () => {
     expect(row?.usingSystemDefault).toBe(false);
   });
 });
+
+/*
+  The reason the columns are NUMERIC(18,10). A rate is a ratio, and how small
+  it gets is decided by the base: the moment a workspace books in dollars
+  rather than taka, the taka rate needs far more than four places to stay
+  honest.
+*/
+describe('a rate keeps the precision a small currency needs', () => {
+  it('stores all ten decimals, unrounded', async () => {
+    // One taka in US dollars. At four places this is 0.0081 — two significant
+    // figures, and half a percent of error on every line it converts.
+    const res = await setRate(usd, '0.0080645161');
+    expect(res.status).toBe(201);
+    expect(await effective(usd)).toBe('0.0080645161');
+  });
+
+  it('freezes those ten decimals onto a quotation', async () => {
+    const quote = await quoteAt(usd);
+    expect(quote.status).toBe(201);
+    expect(quote.rate).toBe('0.0080645161');
+  });
+
+  it('refuses more decimals than the column holds, without reaching Postgres', async () => {
+    const res = await setRate(usd, '0.00806451612903');
+    expect(res.status).toBe(400);
+  });
+
+  it('refuses more digits than the column holds, without reaching Postgres', async () => {
+    // NUMERIC(18,10) leaves eight digits in front of the point. This used to
+    // pass validation and fail as a 500 on the insert.
+    const res = await setRate(usd, '123456789.5');
+    expect(res.status).toBe(400);
+  });
+
+  it('still refuses a rate of zero', async () => {
+    expect((await setRate(usd, '0')).status).toBe(400);
+  });
+
+  afterAll(async () => {
+    await setRate(usd, '122.5');
+  });
+});
