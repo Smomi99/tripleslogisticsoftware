@@ -125,8 +125,10 @@ describe('the workbook', () => {
       (value): value is string => typeof value === 'string' && value.includes('Seal Charge'),
     );
     expect(cell).toBeDefined();
-    expect(cell).toContain('Seal Charge (POL, 20STD) 13.0000 USD');
-    expect(cell).toContain('ENS Charge (POD) 30.0000 USD');
+    // Whole, not 13.0000: a purchase price is a round figure and the export
+    // is where the client noticed it was not (2026-09-12).
+    expect(cell).toContain('Seal Charge (POL, 20STD) 13 USD');
+    expect(cell).toContain('ENS Charge (POD) 30 USD');
     // Comma separated, in one cell.
     expect(cell!.split(', ').length).toBeGreaterThan(1);
   });
@@ -155,7 +157,7 @@ describe('the workbook', () => {
     // The charges themselves are still on the row, in words.
     const breakdown = String(sheet.getRow(5).getCell(header.indexOf('Local charges')).value);
     expect(breakdown).toContain('Seal Charge');
-    expect(breakdown).toContain('13.0000 USD');
+    expect(breakdown).toContain('13 USD');
   });
 
   it('leaves the breakdown as the last column, wrapped and wide', async () => {
@@ -258,7 +260,13 @@ describe('the route column (client request, 2026-09-06)', () => {
     const sellAt = header.indexOf('20STD sell');
     const statusAt = header.indexOf('Status');
 
-    expect(sheet.getColumn(sellAt).numFmt).toBe('#,##0.0000');
+    /*
+      Decimals only where a price has them. The cell still holds the exact
+      value, so a rate that really is 1450.5 is not rounded away inside a
+      spreadsheet somebody is about to compute with — but a price of 223 reads
+      as 223 rather than 223.0000.
+    */
+    expect(sheet.getColumn(sellAt).numFmt).toBe('#,##0.####');
     expect(sheet.getColumn(statusAt).numFmt).toBeUndefined();
   });
 

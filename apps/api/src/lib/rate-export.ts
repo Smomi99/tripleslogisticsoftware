@@ -1,4 +1,4 @@
-import type { FreightRateDto, RateMode } from '@ff/shared';
+import { type FreightRateDto, purchasePrice, type RateMode } from '@ff/shared';
 import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
 
@@ -74,7 +74,7 @@ function chargeBreakdown(rate: FreightRateDto): string {
         .filter((part): part is string => part !== null && part !== undefined && part !== '')
         .join(', ');
       const label = where === '' ? charge.costHeadName : `${charge.costHeadName} (${where})`;
-      return `${label} ${charge.amount} ${charge.currencyCode}`;
+      return `${label} ${purchasePrice(charge.amount)} ${charge.currencyCode}`;
     })
     .join(', ');
 }
@@ -200,7 +200,14 @@ export async function buildRateWorkbook(context: ExportContext): Promise<Buffer>
   const firstPriceColumn = LEAD_COLUMNS.length + 1;
   const tierColumnCount = tiers.length * (showBuy ? 2 : 1);
   for (let i = 0; i < tierColumnCount; i += 1) {
-    sheet.getColumn(firstPriceColumn + i).numFmt = '#,##0.0000';
+    /*
+      Decimals only where a price actually has them (client, 2026-09-12).
+      '#,##0.0000' printed 223.0000 for a price of 223, on every row of every
+      export. The cell still holds the exact value — this is the display, so a
+      per-CBM rate that really is 1450.5 is not quietly rounded in a
+      spreadsheet somebody is about to compute with.
+    */
+    sheet.getColumn(firstPriceColumn + i).numFmt = '#,##0.####';
     sheet.getColumn(firstPriceColumn + i).alignment = { horizontal: 'right' };
   }
 
@@ -293,7 +300,9 @@ export function buildRatePdf(context: ExportContext): Promise<Buffer> {
         const line = rate.lines.find((l) => l.tierId === tierId);
         if (line === undefined) return '—';
         const raw = which === 'sell' ? line.sellPrice : line.buyPrice;
-        return raw ?? '—';
+        // Rendered the way the screen renders it, rather than the way Postgres
+        // hands it over: "223.0000" is a column width of noise on a page.
+        return raw === undefined ? '—' : purchasePrice(raw);
       };
 
       drawRow(
@@ -326,7 +335,7 @@ export function buildRatePdf(context: ExportContext): Promise<Buffer> {
         drawDetail(
           `${charge.costHeadName} · ${charge.side}` +
             (charge.containerSizeCode === null ? '' : ` · ${charge.containerSizeCode}`),
-          `${charge.amount} ${charge.currencyCode}`,
+          `${purchasePrice(charge.amount)} ${charge.currencyCode}`,
         );
       }
     }
