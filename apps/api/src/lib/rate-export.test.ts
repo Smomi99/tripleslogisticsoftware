@@ -2,6 +2,8 @@ import type { FreightRateDto } from '@ff/shared';
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
 
+import { inflateSync } from 'node:zlib';
+
 import { buildRatePdf, buildRateWorkbook, pdfColumns } from './rate-export';
 
 /**
@@ -363,5 +365,87 @@ describe('a downloaded price list carries no cost (client decision, 2026-09-06)'
     // what decides there is no cost to give it.
     const labels = pdfColumns([{ id: '1', code: '20STD' }], true).map((c) => c.label);
     expect(labels).toContain('20STD buy');
+  });
+});
+
+/**
+ * The words back out of a PDF.
+ *
+ * Content streams are deflated, and inside them PDFKit writes text as kerned
+ * hex runs whose bytes are the characters. Spacing lives in the kerning
+ * numbers rather than the text, so this compares on letters and digits — which
+ * is enough to say whether a figure carries its currency.
+ */
+function pdfWords(pdf: Buffer): string {
+  let content = '';
+  let at = 0;
+  for (;;) {
+    const start = pdf.indexOf('stream', at);
+    if (start === -1) break;
+    let from = start + 'stream'.length;
+    if (pdf[from] === 0x0d) from += 1;
+    if (pdf[from] === 0x0a) from += 1;
+    const end = pdf.indexOf('endstream', from);
+    if (end === -1) break;
+    const chunk = pdf.subarray(from, end);
+    try {
+      content += inflateSync(chunk).toString('latin1');
+    } catch {
+      content += chunk.toString('latin1');
+    }
+    at = end + 'endstream'.length;
+  }
+  let out = '';
+  for (const run of content.match(/<([0-9A-Fa-f]+)>/g) ?? []) {
+    const hex = run.slice(1, -1);
+    for (let i = 0; i + 1 < hex.length; i += 2) {
+      out += String.fromCharCode(Number.parseInt(hex.slice(i, i + 2), 16));
+    }
+  }
+  return out.replace(/[^A-Za-z0-9]/g, '');
+}
+
+describe('an exported price says what money it is in (client, 2026-09-12)', () => {
+  it('prints the currency beside the sell price', async () => {
+    const buffer = await buildRatePdf(context([rate()]));
+    const words = pdfWords(buffer);
+    // 1200.0000 stored, printed as a round figure with its currency on it.
+    expect(words).toContain('1200USD');
+  });
+
+  it('prints no price stripped of its decimals only to keep four of them', async () => {
+    const words = pdfWords(await buildRatePdf(context([rate()])));
+    expect(words).not.toMatch(/\d+00000/);
+  });
+
+  it('keeps the Currency column on the workbook', async () => {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(await buildRateWorkbook(context([rate()])));
+    const sheet = workbook.worksheets[0]!;
+    const header = sheet.getRow(4).values as unknown[];
+    const at = header.indexOf('Currency');
+    expect(at).toBeGreaterThan(0);
+    expect(sheet.getRow(5).getCell(at).value).toBe('USD');
+  });
+
+  it('sizes every column to the widest thing in it, not to its heading', async () => {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(await buildRateWorkbook(context([rate()])));
+    const sheet = workbook.worksheets[0]!;
+
+    const cut: string[] = [];
+    sheet.columns.forEach((column, index) => {
+      let longest = 0;
+      for (let row = 4; row <= sheet.rowCount; row += 1) {
+        const value = sheet.getRow(row).getCell(index + 1).value;
+        longest = Math.max(longest, value === null || value === undefined ? 0 : String(value).length);
+      }
+      const heading = String(sheet.getRow(4).getCell(index + 1).value ?? '');
+      // The charge breakdown is a sentence and is deliberately capped.
+      if (heading === '' || heading === 'Local charges') return;
+      if (longest > (column.width ?? 0)) cut.push(`${heading} (${longest} > ${column.width})`);
+    });
+
+    expect(cut, `columns narrower than their content: ${cut.join(', ')}`).toEqual([]);
   });
 });

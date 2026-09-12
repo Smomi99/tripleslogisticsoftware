@@ -30,6 +30,9 @@ import PDFDocument from 'pdfkit';
  * Named because the numeric formatting below has to know where the prices
  * start, and counting them by hand is how that index goes stale.
  */
+/** The sheet's header row. Rows 1-3 are the title block above it. */
+const HEADER_ROW = 4;
+
 const LEAD_COLUMNS = [
   'Code',
   'POL',
@@ -211,8 +214,25 @@ export async function buildRateWorkbook(context: ExportContext): Promise<Buffer>
     sheet.getColumn(firstPriceColumn + i).alignment = { horizontal: 'right' };
   }
 
-  sheet.columns.forEach((column) => {
-    column.width = Math.max(12, String(column.values?.[4] ?? '').length + 4);
+  /*
+    Width from the widest cell in the column, not from the header.
+
+    It used to measure row 4 — the header — alone, so any column whose data ran
+    longer than its title was cut off in the file: "Evergreen Line" under a
+    "Carrier" heading came out truncated, and nothing on the sheet said so.
+    Capped, because the local-charge breakdown is a sentence and would
+    otherwise push every other column off the screen.
+  */
+  sheet.columns.forEach((column, index) => {
+    let longest = 0;
+    // From the header row down. The title block above it is merged prose and
+    // would size every column to the width of the report name.
+    for (let rowNumber = HEADER_ROW; rowNumber <= sheet.rowCount; rowNumber += 1) {
+      const value = sheet.getRow(rowNumber).getCell(index + 1).value;
+      const text = value === null || value === undefined ? '' : String(value);
+      longest = Math.max(longest, text.length);
+    }
+    column.width = Math.min(56, Math.max(12, longest + 2));
   });
   // The breakdown is a sentence, not a figure. Wide enough to read, and
   // wrapped so a long one does not run across the sheet. Last column now that
@@ -300,9 +320,17 @@ export function buildRatePdf(context: ExportContext): Promise<Buffer> {
         const line = rate.lines.find((l) => l.tierId === tierId);
         if (line === undefined) return '—';
         const raw = which === 'sell' ? line.sellPrice : line.buyPrice;
-        // Rendered the way the screen renders it, rather than the way Postgres
-        // hands it over: "223.0000" is a column width of noise on a page.
-        return raw === undefined ? '—' : purchasePrice(raw);
+        if (raw === undefined) return '—';
+        /*
+          The currency rides with the sell price (client, 2026-09-12). A column
+          of its own would be tidier, but the table already runs to 1000pt on
+          four tiers with buy prices against 778pt of landscape A4, and adding
+          width is the wrong direction. The buy figure underneath is in the
+          same currency and its column says "buy", so it stays bare.
+        */
+        return which === 'sell'
+          ? `${purchasePrice(raw)} ${rate.currencyCode}`
+          : purchasePrice(raw);
       };
 
       drawRow(
