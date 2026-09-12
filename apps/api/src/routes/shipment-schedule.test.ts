@@ -540,8 +540,9 @@ describe('versions (§4.2)', () => {
   it('leaves only one schedule live at a time', async () => {
     const bookingId = await makeBooking();
     await as(token).post(`/api/tenant/cs/bookings/${bookingId}/schedules`).send(body('DIRECT', oneLeg()));
-    // Re-proposing over a live one: the first becomes SUPERSEDED.
-    await owner.shipment.update({ where: { id: bookingId }, data: { status: 'REJECTED' } });
+    // Re-proposing over a live one: the first becomes SUPERSEDED. This used to
+    // need the booking forced to REJECTED first, which was working around the
+    // missing self-loop rather than testing anything.
     await as(token)
       .post(`/api/tenant/cs/bookings/${bookingId}/schedules`)
       .send(body('INDIRECT', threeLegs()));
@@ -555,6 +556,48 @@ describe('versions (§4.2)', () => {
       where: { shipmentId: bookingId, status: 'SUPERSEDED' },
     });
     expect(superseded).toBe(1);
+  });
+
+  /*
+    Reported 2026-09-13: "i cannot update vessel schedule".
+
+    §5.1's transition table had no VESSEL_PROPOSED -> VESSEL_PROPOSED, so once
+    a sailing was with the customer it could not be corrected — the only route
+    was to have them reject the wrong one first, which means asking a customer
+    to turn down a schedule you already know is wrong.
+  */
+  it('revises a live proposal without the customer rejecting it first', async () => {
+    const bookingId = await makeBooking();
+    const first = await as(token)
+      .post(`/api/tenant/cs/bookings/${bookingId}/schedules`)
+      .send(body('DIRECT', oneLeg()));
+    expect(first.status).toBe(201);
+
+    const before = await owner.shipment.findFirstOrThrow({
+      where: { id: bookingId },
+      select: { status: true },
+    });
+    expect(before.status).toBe('VESSEL_PROPOSED');
+
+    const revised = await as(token)
+      .post(`/api/tenant/cs/bookings/${bookingId}/schedules`)
+      .send(body('INDIRECT', threeLegs()));
+    expect(revised.status, JSON.stringify(revised.body)).toBe(201);
+    expect((revised.body as { data: { versionNo: number } }).data.versionNo).toBe(2);
+
+    // Still proposed — a revision does not move the booking anywhere.
+    const after = await owner.shipment.findFirstOrThrow({
+      where: { id: bookingId },
+      select: { status: true },
+    });
+    expect(after.status).toBe('VESSEL_PROPOSED');
+
+    // And §4.2 still holds: one live version, the old one kept.
+    const live = await owner.shipmentSchedule.findMany({
+      where: { shipmentId: bookingId, deletedAt: null, status: 'PROPOSED' },
+      select: { versionNo: true },
+    });
+    expect(live.map((v) => v.versionNo)).toEqual([2]);
   });
 });
 

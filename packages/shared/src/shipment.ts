@@ -82,8 +82,18 @@ export const SHIPMENT_EDITABLE: readonly ShipmentStatus[] = ['BOOKING_RECEIVED']
 export const SHIPMENT_TRANSITIONS: Record<ShipmentStatus, readonly ShipmentStatus[]> = {
   // C/S saves a schedule.
   BOOKING_RECEIVED: ['VESSEL_PROPOSED', 'CANCELLED'],
-  // The customer approves or rejects what was proposed.
-  VESSEL_PROPOSED: ['APPROVED_FOR_SHIPMENT', 'REJECTED', 'CANCELLED'],
+  /*
+   * The customer approves or rejects what was proposed — and C/S may put a
+   * different sailing to them before either happens.
+   *
+   * The self-loop is the last of those and was missing. §6.4 supersedes the
+   * live proposal and writes a new version on every save, which is exactly
+   * what revising one means; the booking simply stays Vessel proposed,
+   * because it is. Without it the only route to a corrected schedule was to
+   * have the customer reject the wrong one first (reported 2026-09-13:
+   * "i cannot update vessel schedule").
+   */
+  VESSEL_PROPOSED: ['VESSEL_PROPOSED', 'APPROVED_FOR_SHIPMENT', 'REJECTED', 'CANCELLED'],
   // C/S proposes a new version; §4.2 keeps the rejected one.
   REJECTED: ['VESSEL_PROPOSED', 'CANCELLED'],
   // §5.4 rule 3: inbound skips the shipping order entirely.

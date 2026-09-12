@@ -43,7 +43,11 @@ let seq = 0;
 /** §5.1's table, typed out from the spec rather than imported. */
 const SPEC: Record<ShipmentStatus, ShipmentStatus[]> = {
   BOOKING_RECEIVED: ['VESSEL_PROPOSED'],
-  VESSEL_PROPOSED: ['APPROVED_FOR_SHIPMENT', 'REJECTED'],
+  // The self-loop is not in §5.1's table and is required by §6.4: saving a
+  // schedule supersedes the live one and writes a new version, which is what
+  // revising a proposal is. Without it a wrong sailing could only be corrected
+  // by having the customer reject it first.
+  VESSEL_PROPOSED: ['VESSEL_PROPOSED', 'APPROVED_FOR_SHIPMENT', 'REJECTED'],
   REJECTED: ['VESSEL_PROPOSED'],
   APPROVED_FOR_SHIPMENT: ['SO_ISSUED', 'SO_SKIPPED'],
   // The APPROVED_FOR_SHIPMENT entries come from §5.4 rule 2 rather than §5.1's
@@ -266,11 +270,21 @@ describe('the transition table matches §5.1', () => {
     }
   });
 
-  it('lets a part-received booking receive again', () => {
-    // §5.5 rule 4: a booking may have several receipts. The only self-loop.
-    expect(canTransition('PART_RECEIVED', 'PART_RECEIVED')).toBe(true);
+  it('allows exactly the two states that can legitimately repeat', () => {
+    /*
+      §5.5 rule 4: a booking may have several receipts.
+
+      §6.4: proposing a schedule supersedes the live one and writes a new
+      version, so revising a sailing leaves the booking where it already was.
+      Reported 2026-09-13 — without this the only way to correct a wrong
+      schedule was to have the customer reject it first.
+    */
+    const loops: ShipmentStatus[] = ['PART_RECEIVED', 'VESSEL_PROPOSED'];
+    for (const status of loops) {
+      expect(canTransition(status, status), `${status} -> itself`).toBe(true);
+    }
     for (const status of SHIPMENT_STATUSES) {
-      if (status === 'PART_RECEIVED') continue;
+      if (loops.includes(status)) continue;
       expect(canTransition(status, status), `${status} -> itself`).toBe(false);
     }
   });
