@@ -7,9 +7,11 @@ import {
   type ShipmentDto,
   type ShipmentScheduleDto,
 } from '@ff/shared';
+import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
+import { ScheduleDetail, ScheduleStatusDot } from '@/components/cs/schedule-detail';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Input } from '@/components/ui/field';
@@ -50,6 +52,7 @@ export function ApprovalTab({
   onDecided: () => void;
 }) {
   const { authorizedRequest, can } = useSession();
+  const isAir = booking.shipmentType === 'AIR';
 
   const [choices, setChoices] = useState<Record<string, Choice>>({});
   const [comments, setComments] = useState<Record<string, string>>({});
@@ -131,22 +134,43 @@ export function ApprovalTab({
     <div className="flex flex-col gap-4">
       {/* --------------------------------- the proposal, read-only (§6.5) */}
       <section className="rounded-manifest border border-line bg-surface p-4 shadow-manifest">
-        <h2 className="mb-3 text-section text-hull">Proposed schedule</h2>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <h2 className="flex items-center gap-3 text-section text-hull">
+            <span>Proposed schedule</span>
+            {schedule !== null && (
+              <>
+                <span className="font-mono tabular-nums text-body text-steel">
+                  v{schedule.versionNo}
+                </span>
+                <ScheduleStatusDot status={schedule.status} />
+              </>
+            )}
+          </h2>
+          {/*
+            The way back to change it (client, 2026-09-13). Somebody looking at
+            a proposal here is the person most likely to want it altered, and
+            the only route was to know which tab it came from.
+          */}
+          {schedule !== null && can('CUSTOMER_SERVICE.SCHEDULE.CREATE') && (
+            <Button variant="secondary" size="inline" asChild>
+              <Link href={`/cs/shipment-booking/${booking.id}?tab=schedule`}>
+                {isAir ? 'Update flight schedule' : 'Update vessel schedule'}
+              </Link>
+            </Button>
+          )}
+        </div>
         {schedule === null ? (
           <p className="text-body text-steel">
-            Nothing has been proposed yet. A schedule is put to the customer from the Vessel
-            Schedule tab.
+            Nothing has been proposed yet. A schedule is put to the customer from the{' '}
+            {isAir ? 'Flight' : 'Vessel'} Schedule tab.
           </p>
         ) : (
-          <div className="flex flex-wrap items-baseline gap-3 text-body">
-            <span className="font-mono tabular-nums text-hull">v{schedule.versionNo}</span>
-            <span className="text-hull">{schedule.carrierName}</span>
-            <span className="text-steel">
-              {schedule.legs
-                .map((l) => `${l.originPortName} → ${l.destinationPortName}`)
-                .join(', then ')}
-            </span>
-          </div>
+          /*
+            In full. This screen decides whether a sailing is acceptable, and a
+            carrier plus a pair of port names does not say which sailing it is
+            — the vessel, the voyage and the dates are the decision.
+          */
+          <ScheduleDetail schedule={schedule} isAir={isAir} />
         )}
       </section>
 

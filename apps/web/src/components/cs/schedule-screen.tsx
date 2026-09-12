@@ -3,7 +3,6 @@
 import {
   checkLegContinuity,
   LEGS_ALLOWED,
-  SCHEDULE_STATUS_LABEL,
   type ScheduleLegInput,
   type ShipmentScheduleDto,
   TRANSIT_TYPES,
@@ -13,10 +12,10 @@ import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
+import { ScheduleDetail, ScheduleStatusDot } from '@/components/cs/schedule-detail';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/form-layout';
-import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 
@@ -92,6 +91,24 @@ const newLeg = (originPortId = '', destinationPortId = ''): DraftLeg => ({
 /** `datetime-local` gives "2026-09-02T14:30"; the API wants a real instant. */
 const toIso = (v: string): string | undefined =>
   v.trim() === '' ? undefined : new Date(v).toISOString();
+
+/**
+ * The other direction, for loading a saved schedule back into the form.
+ *
+ * `datetime-local` will not accept a UTC instant, and it reads whatever it is
+ * given as local time — so this converts rather than slicing the ISO string,
+ * which would show a Dhaka sailing six hours early.
+ */
+const forInput = (iso: string | null): string => {
+  if (iso === null) return '';
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return '';
+  const pad = (n: number): string => String(n).padStart(2, '0');
+  return (
+    `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}` +
+    `T${pad(at.getHours())}:${pad(at.getMinutes())}`
+  );
+};
 
 export function ScheduleScreen({
   shipmentId,
@@ -221,7 +238,11 @@ export function ScheduleScreen({
           },
         },
       );
-      toast.success('Schedule proposed. The customer has been notified.');
+      toast.success(
+        live === null
+          ? 'Schedule proposed. The customer has been notified.'
+          : `Schedule updated to v${live.versionNo + 1}. The customer has been notified.`,
+      );
       // Back to the file's Overview, where the new schedule is summarised.
       router.push(`/cs/shipment-booking/${shipmentId}?tab=overview`);
     } catch (error) {
@@ -248,6 +269,40 @@ export function ScheduleScreen({
   }
 
   const canPropose = can('CUSTOMER_SERVICE.SCHEDULE.CREATE');
+
+  /*
+    The one the customer is looking at, and the ones they are not.
+
+    At most one version is live at a time — proposing supersedes whatever was
+    there (§4.2) — so this is a find, not a filter.
+  */
+  const live = history.find((v) => v.status === 'PROPOSED' || v.status === 'APPROVED') ?? null;
+  const earlier = history.filter((v) => v.id !== live?.id);
+
+  /** Loads the live proposal back into the form so it can be revised. */
+  function loadIntoForm(): void {
+    if (live === null) return;
+    setCarrierId(live.carrierId);
+    setTransitType(live.transitType === 'INDIRECT' ? 'INDIRECT' : 'DIRECT');
+    setCutOffDate(forInput(live.cutOffDate));
+    setVgmDate(live.vgmDate === null ? '' : live.vgmDate.slice(0, 10));
+    setSiDate(live.siDate === null ? '' : live.siDate.slice(0, 10));
+    setLegs(
+      live.legs.map((leg) => ({
+        key: `leg-${(legSeed += 1)}`,
+        vesselId: leg.vesselId ?? '',
+        voyageNo: leg.voyageNo ?? '',
+        flightNo: leg.flightNo ?? '',
+        flightTime: leg.flightTime ?? '',
+        originPortId: leg.originPortId,
+        destinationPortId: leg.destinationPortId,
+        etd: forInput(leg.etd),
+        eta: forInput(leg.eta),
+      })),
+    );
+    setFormError(null);
+    toast.success('Loaded into the form below. Saving proposes a new version.');
+  }
 
   /*
    * The booking's own carrier, even when this workspace has switched that
@@ -296,35 +351,46 @@ export function ScheduleScreen({
         </dl>
       </section>
 
+      {/* ------------------------------------- what is with the customer now */}
+      {live !== null && (
+        <section className="rounded-manifest border border-line bg-surface p-4 shadow-manifest">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <h2 className="flex items-center gap-3 text-section text-hull">
+              <span>Current proposal</span>
+              <span className="font-mono tabular-nums text-body text-steel">v{live.versionNo}</span>
+              <ScheduleStatusDot status={live.status} />
+            </h2>
+            {/*
+              Revising a live proposal used to mean retyping it: the form seeds
+              from the booking, so every vessel, voyage and time had to be
+              entered again to change one of them (client, 2026-09-13). Saving
+              still writes a new version and supersedes this one — §4.2, never
+              edited in place — so this only saves the typing, not the history.
+            */}
+            {canPropose && (
+              <Button variant="secondary" size="inline" onClick={loadIntoForm}>
+                Update this schedule
+              </Button>
+            )}
+          </div>
+          <ScheduleDetail schedule={live} isAir={isAir} />
+        </section>
+      )}
+
       {/* ------------------------------------------------- what came before it */}
-      {history.length > 0 && (
+      {earlier.length > 0 && (
         <section className="rounded-manifest border border-line bg-surface p-4 shadow-manifest">
           <h2 className="mb-3 text-section text-hull">Earlier proposals</h2>
-          <ul className="flex flex-col gap-2">
-            {history.map((version) => (
-              <li key={version.id} className="flex flex-wrap items-baseline gap-3 text-body">
-                <span className="font-mono tabular-nums text-hull">v{version.versionNo}</span>
-                <Status
-                  tone={
-                    version.status === 'REJECTED'
-                      ? 'overdue'
-                      : version.status === 'APPROVED'
-                        ? 'active'
-                        : version.status === 'PROPOSED'
-                          ? 'pending'
-                          : 'inactive'
-                  }
-                >
-                  {SCHEDULE_STATUS_LABEL[version.status]}
-                </Status>
-                <span className="text-steel">
-                  {version.legs.map((l) => `${l.originPortName} → ${l.destinationPortName}`).join(', then ')}
-                </span>
-                {/* §4.2: the customer must be able to see what they turned down
-                    AND why, so the comment travels with the version. */}
-                {version.rejectionComments !== null && (
-                  <span className="text-alert">“{version.rejectionComments}”</span>
-                )}
+          <ul className="flex flex-col gap-5">
+            {earlier.map((version) => (
+              <li key={version.id} className="flex flex-col gap-2 border-t border-line pt-4 first:border-0 first:pt-0">
+                <div className="flex flex-wrap items-center gap-3">
+                  <span className="font-mono tabular-nums text-body text-hull">
+                    v{version.versionNo}
+                  </span>
+                  <ScheduleStatusDot status={version.status} />
+                </div>
+                <ScheduleDetail schedule={version} isAir={isAir} />
               </li>
             ))}
           </ul>
@@ -606,7 +672,11 @@ export function ScheduleScreen({
         )}
         {canPropose && (
           <Button disabled={isPending || problems.length > 0} onClick={() => void save()}>
-            {isPending ? 'Saving…' : 'Propose to customer'}
+            {isPending
+              ? 'Saving…'
+              : live === null
+                ? 'Propose to customer'
+                : `Replace v${live.versionNo} and propose`}
           </Button>
         )}
       </div>
