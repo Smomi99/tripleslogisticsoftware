@@ -70,3 +70,46 @@ export function excludeInactive(
   if (ids === undefined || ids.length === 0) return {};
   return { id: { notIn: ids } };
 }
+
+/**
+ * A candidate row competing for a code.
+ *
+ * Identity and ownership only. Callers that have a display name select it too
+ * and use it in their message — RateTier calls its label something else, and
+ * requiring a `name` here broke on it.
+ */
+export interface CodeHolder {
+  id: bigint;
+  tenantId: bigint | null;
+}
+
+/**
+ * Which row, if any, stops this workspace taking a code.
+ *
+ * Both kinds of clash look identical in a plain query, and they are not the
+ * same thing:
+ *
+ *   Its own row always blocks. The partial unique index says so, and letting
+ *   the insert through would trade a clear message for a database error.
+ *
+ *   A shared row blocks only while the workspace still uses it. Once it has
+ *   been switched off — or replaced by a customised copy — it is gone from
+ *   every picker, and holding its code hostage is indefensible: the product
+ *   refuses to let you delete a shared port, tells you to deactivate it
+ *   instead, and then refuses the replacement you deactivated it for.
+ *
+ * Returns the blocking row so the caller can say which it was, because
+ * "already in use" on a row you cannot see is not an answer.
+ */
+export function codeHeldBy<T extends CodeHolder>(
+  rows: T[],
+  inactive: InactiveMasters,
+  table: string,
+): { row: T; shared: boolean } | null {
+  const own = rows.find((r) => r.tenantId !== null);
+  if (own !== undefined) return { row: own, shared: false };
+
+  const hidden = new Set((inactive.get(table) ?? []).map((id) => id.toString()));
+  const stillInUse = rows.find((r) => !hidden.has(r.id.toString()));
+  return stillInUse === undefined ? null : { row: stillInUse, shared: true };
+}

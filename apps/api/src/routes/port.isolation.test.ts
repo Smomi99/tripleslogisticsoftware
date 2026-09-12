@@ -211,6 +211,69 @@ describe('§7A rule 7 — shared rows are read-only', () => {
   });
 });
 
+/*
+  Reported from production, 2026-09-13: a workspace deactivated the shared SIN
+  port and could not then add its own, because the code was still held by the
+  row it had just been told to hide.
+
+  The product refuses to let a tenant delete a shared row — correctly — and
+  says "deactivate it to hide it here". Deactivating was therefore the only
+  route open, and it was exactly what blocked the replacement.
+*/
+describe('a code held by a shared row this workspace has switched off', () => {
+  const addPort = (portCode: string, name: string) =>
+    request(app)
+      .post('/api/tenant/setting/ports')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .set('X-Tenant-Slug', SLUG_A)
+      .send({ name, portCode, country: 'Singapore', type: 'SEAPORT' });
+
+  it('is refused while the shared row is still in use, and says what to do', async () => {
+    // Make sure it is switched on for this tenant before asserting.
+    await owner.tenantMasterOverride.deleteMany({
+      where: { tenantId: tenantA, tableName: 'port', recordId: systemPort },
+    });
+
+    const response = await addPort('SYSSYS', 'My Own Shared-Code Port');
+    expect(response.status).toBe(409);
+    expect(response.body.error.message).toContain('shared with every workspace');
+    // Naming the row and the way out is the whole point — "already in use" on
+    // something you cannot see is not an answer.
+    expect(response.body.error.message).toContain('Shared Test Port');
+    expect(response.body.error.message).toMatch(/Deactivate it here first|Customise/);
+  });
+
+  it('is free once the workspace has deactivated that shared row', async () => {
+    await request(app)
+      .post(`/api/tenant/setting/ports/${systemPort}/toggle-status`)
+      .set('Authorization', `Bearer ${tokenA}`)
+      .set('X-Tenant-Slug', SLUG_A)
+      .expect(200);
+
+    const response = await addPort('SYSSYS', 'My Own Shared-Code Port');
+    expect(response.status, JSON.stringify(response.body)).toBe(201);
+    expect(response.body.data.portCode).toBe('SYSSYS');
+
+    // The shared row is untouched; this workspace simply stopped using it.
+    const shared = await owner.port.findUnique({ where: { id: systemPort } });
+    expect(shared?.deletedAt).toBeNull();
+    expect(shared?.isActive).toBe(true);
+
+    await owner.port.delete({ where: { id: BigInt(response.body.data.id as string) } });
+  });
+
+  it('still refuses a code the workspace itself already holds', async () => {
+    const first = await addPort('OWNOWN', 'First Of Mine');
+    expect(first.status).toBe(201);
+
+    const second = await addPort('OWNOWN', 'Second Of Mine');
+    expect(second.status).toBe(409);
+    expect(second.body.error.message).toContain('First Of Mine');
+
+    await owner.port.delete({ where: { id: BigInt(first.body.data.id as string) } });
+  });
+});
+
 describe('§7 — every route is permission guarded', () => {
   it('rejects an unauthenticated request', async () => {
     const response = await request(app)

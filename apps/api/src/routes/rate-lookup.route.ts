@@ -23,7 +23,12 @@ import {
 import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
 import { Prisma } from '../generated/prisma/client';
 import { HttpError } from '../lib/http-error';
-import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
+import {
+  type CodeHolder,
+  codeHeldBy,
+  excludeInactive,
+  inactiveMasters,
+} from '../lib/master-visibility';
 import { parseId, parseRefId } from '../lib/request';
 import {
   assertEditable,
@@ -54,23 +59,43 @@ const decimal = (value: unknown): string =>
 const optionalDecimal = (value: unknown): string | null =>
   value === null || value === undefined ? null : new Prisma.Decimal(String(value)).toFixed(3);
 
-/** Codes are unique per tenant, but a workspace also cannot shadow a shared code. */
+/**
+ * Codes are unique per tenant, and a workspace cannot shadow a shared code it
+ * is still using.
+ *
+ * "Still using" is the part that was missing. A shared row the workspace has
+ * switched off, or replaced with a customised copy, is gone from every picker
+ * — and went on holding its code anyway, which left no way to replace a shared
+ * row at all: deleting one is refused by design, so deactivating it is the only
+ * route, and that was exactly what blocked the replacement.
+ */
 async function assertCodeFree(
   db: Parameters<typeof listSystemLookup>[0],
-  model: { findFirst: (args: never) => Promise<{ id: bigint } | null> },
+  model: { findMany: (args: never) => Promise<CodeHolder[]> },
+  table: string,
   code: string,
   excludeId?: bigint,
 ): Promise<void> {
-  const clash = await (model.findFirst as unknown as (args: unknown) => Promise<{ id: bigint } | null>)({
+  const holders = await (
+    model.findMany as unknown as (args: unknown) => Promise<CodeHolder[]>
+  )({
     where: {
       code,
       deletedAt: null,
       ...(excludeId === undefined ? {} : { NOT: { id: excludeId } }),
     },
-    select: { id: true },
+    select: { id: true, tenantId: true },
   });
-  void db;
-  if (clash !== null) throw HttpError.conflict(`Code ${code} is already in use.`);
+
+  const held = codeHeldBy(holders, await inactiveMasters(db), table);
+  if (held === null) return;
+
+  throw HttpError.conflict(
+    held.shared
+      ? `Code ${code} belongs to a row shared with every workspace. ` +
+          'Deactivate it here first, or customise it to make your own copy.'
+      : `Code ${code} is already in use.`,
+  );
 }
 
 // ===========================================================================
@@ -114,7 +139,7 @@ rateLookupRouter.post('/goods-types', requirePermission(`${GOODS_FEATURE}.CREATE
   const input = goodsTypeInputSchema.parse(req.body);
 
   const created = await withTenant(auth.tenantId, async (db) => {
-    await assertCodeFree(db, db.goodsType as never, input.code);
+    await assertCodeFree(db, db.goodsType as never, 'goods_type', input.code);
     for (let attempt = 0; attempt < CODE_RETRY_LIMIT; attempt += 1) {
       try {
         return await db.goodsType.create({
@@ -157,7 +182,7 @@ rateLookupRouter.patch('/goods-types/:id', requirePermission(`${GOODS_FEATURE}.E
     });
     if (existing === null) throw HttpError.notFound('Goods type not found.');
     assertEditable(existing.tenantId, 'goods type');
-    await assertCodeFree(db, db.goodsType as never, input.code, id);
+    await assertCodeFree(db, db.goodsType as never, 'goods_type', input.code, id);
 
     return db.goodsType.update({
       where: { id },
@@ -241,7 +266,7 @@ rateLookupRouter.post(
     const input = containerSizeInputSchema.parse(req.body);
 
     const created = await withTenant(auth.tenantId, async (db) => {
-      await assertCodeFree(db, db.containerSize as never, input.code);
+      await assertCodeFree(db, db.containerSize as never, 'container_size', input.code);
       return db.containerSize.create({
         data: {
           tenantId: auth.tenantId,
@@ -287,7 +312,7 @@ rateLookupRouter.patch(
       });
       if (existing === null) throw HttpError.notFound('Container size not found.');
       assertEditable(existing.tenantId, 'container size');
-      await assertCodeFree(db, db.containerSize as never, input.code, id);
+      await assertCodeFree(db, db.containerSize as never, 'container_size', input.code, id);
 
       return db.containerSize.update({
         where: { id },
@@ -440,7 +465,7 @@ rateLookupRouter.post('/rate-tiers', requirePermission(`${TIER_FEATURE}.CREATE`)
       : parseRefId(input.containerSizeId, 'container size');
 
   const created = await withTenant(auth.tenantId, async (db) => {
-    await assertCodeFree(db, db.rateTier as never, input.code);
+    await assertCodeFree(db, db.rateTier as never, 'rate_tier', input.code);
 
     if (input.mode === 'SEA_FCL' && containerSizeId === null) {
       throw HttpError.badRequest('A Sea FCL tier must name a container size.');
@@ -513,7 +538,7 @@ rateLookupRouter.patch('/rate-tiers/:id', requirePermission(`${TIER_FEATURE}.EDI
     });
     if (existing === null) throw HttpError.notFound('Rate tier not found.');
     assertEditable(existing.tenantId, 'rate tier');
-    await assertCodeFree(db, db.rateTier as never, input.code, id);
+    await assertCodeFree(db, db.rateTier as never, 'rate_tier', input.code, id);
 
     if (input.mode === 'SEA_FCL' && containerSizeId === null) {
       throw HttpError.badRequest('A Sea FCL tier must name a container size.');
@@ -591,6 +616,15 @@ function registerSimpleLookup(
     return chosen as unknown as SimpleLookupModel;
   };
 
+  /*
+    tenant_master_override records the DATABASE table name, and `table` above
+    is the Prisma model key. For tos and mode the two spellings coincide, which
+    is exactly why inquirySource was the only one to go wrong — it is stored as
+    inquiry_source, so nothing matched and a row the workspace had switched off
+    went on holding its code.
+  */
+  const overrideTable = table === 'inquirySource' ? 'inquiry_source' : table;
+
   rateLookupRouter.get(`/${path}`, requirePermission(`${feature}.VIEW`), async (req, res) => {
     const auth = req.auth!;
     const query = listQuerySchema.parse(req.query);
@@ -622,7 +656,7 @@ function registerSimpleLookup(
     const auth = req.auth!;
     const input = schema.parse(req.body);
     const created = await withTenant(auth.tenantId, async (db) => {
-      await assertCodeFree(db, model(db) as never, input.code);
+      await assertCodeFree(db, model(db) as never, overrideTable, input.code);
       return model(db).create({
         data: {
           tenantId: auth.tenantId,
@@ -654,7 +688,7 @@ function registerSimpleLookup(
       });
       if (existing === null) throw HttpError.notFound(`${noun} not found.`);
       assertEditable(existing.tenantId, noun);
-      await assertCodeFree(db, model(db) as never, input.code, id);
+      await assertCodeFree(db, model(db) as never, overrideTable, input.code, id);
 
       return model(db).update({
         where: { id },

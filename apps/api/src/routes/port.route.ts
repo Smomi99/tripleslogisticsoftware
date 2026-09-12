@@ -13,7 +13,7 @@ import {
 import { CODE_RETRY_LIMIT, codeSortSql, isUniqueViolation, nextCode } from '../lib/codes';
 import { HttpError } from '../lib/http-error';
 import { assertCustomisable, recordReplacement, repointReferences } from '../lib/customise';
-import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
+import { codeHeldBy, excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import { assertRowDeletable, deleteOwnedChildren } from '../lib/references';
 import { Prisma } from '../generated/prisma/client';
 import { withTenant } from '../lib/tenant-client';
@@ -192,20 +192,44 @@ portRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
 });
 
 /** POST /api/tenant/setting/ports */
+/**
+ * Why a port code is refused, said usefully.
+ *
+ * A shared row and one of your own both read as "already in use", and the two
+ * need different things done about them — so each says which it is and what
+ * to do next.
+ */
+function codeInUseMessage(
+  portCode: string,
+  held: { row: { name: string }; shared: boolean },
+): HttpError {
+  return HttpError.conflict(
+    held.shared
+      ? `Port code ${portCode} belongs to ${held.row.name}, which is shared with every workspace. ` +
+          'Deactivate it here first, or use Customise to make your own copy of it.'
+      : `Port code ${portCode} is already in use by ${held.row.name}.`,
+  );
+}
+
 portRouter.post('/', requirePermission(`${FEATURE}.CREATE`), async (req, res) => {
   const auth = req.auth!;
   const input = portInputSchema.parse(req.body);
 
   const created = await withTenant(auth.tenantId, async (db) => {
-    // A workspace may not reuse a port code that is already visible to it,
-    // whether that is its own row or a shared system one.
-    const clash = await db.port.findFirst({
+    /*
+      A workspace may not reuse a code it is actually using — its own row, or a
+      shared one it still has switched on. A shared row it has deactivated or
+      replaced is not in that set: the product refuses to let you delete a
+      shared port and tells you to deactivate it instead, so refusing the
+      replacement afterwards leaves no way through at all.
+    */
+    const inactive = await inactiveMasters(db);
+    const holders = await db.port.findMany({
       where: { portCode: input.portCode, deletedAt: null },
-      select: { id: true },
+      select: { id: true, tenantId: true, name: true },
     });
-    if (clash !== null) {
-      throw HttpError.conflict(`Port code ${input.portCode} is already in use.`);
-    }
+    const held = codeHeldBy(holders, inactive, 'port');
+    if (held !== null) throw codeInUseMessage(input.portCode, held);
 
     for (let attempt = 0; attempt < CODE_RETRY_LIMIT; attempt += 1) {
       const code = await nextCode(db, 'port', CODE_PREFIX.port, auth.tenantId);
@@ -279,13 +303,13 @@ portRouter.patch('/:id', requirePermission(`${FEATURE}.EDIT`), async (req, res) 
       );
     }
 
-    const clash = await db.port.findFirst({
+    const inactive = await inactiveMasters(db);
+    const holders = await db.port.findMany({
       where: { portCode: input.portCode, deletedAt: null, NOT: { id } },
-      select: { id: true },
+      select: { id: true, tenantId: true, name: true },
     });
-    if (clash !== null) {
-      throw HttpError.conflict(`Port code ${input.portCode} is already in use.`);
-    }
+    const held = codeHeldBy(holders, inactive, 'port');
+    if (held !== null) throw codeInUseMessage(input.portCode, held);
 
     return db.port.update({
       where: { id },

@@ -312,19 +312,65 @@ describe('§7A rule 7 — shared rows are read-only, switchable per workspace', 
   }
 });
 
-describe('a workspace cannot shadow a shared code', () => {
-  for (const [endpoint] of ENDPOINTS) {
-    it(`${endpoint}: rejects a code a shared row already holds`, async () => {
-      const table = TABLE_OF.get(endpoint)!;
-      const sharedCode = await codeOf(table, sharedRows.get(endpoint)!);
+/*
+  A shared code is held only while the workspace is still using the row.
 
-      const response = await request(app)
+  This used to assert the plain "cannot shadow a shared code", and passed for
+  the wrong reason: the block above deactivates every shared row first, so it
+  was really asserting that a row you had just hidden went on blocking you.
+  That is the production bug reported on 2026-09-13 — a workspace hid the
+  shared SIN port, as the delete refusal tells you to, and could not then add
+  its own.
+*/
+describe('a shared code is held only while the workspace uses it', () => {
+  for (const [endpoint] of ENDPOINTS) {
+    const create = (code: string) =>
+      request(app)
         .post(`/api/tenant/setting/${endpoint}`)
         .set('Authorization', `Bearer ${tokenA}`)
         .set('X-Tenant-Slug', SLUG_A)
-        .send(editPayload(endpoint, sharedCode));
+        .send(editPayload(endpoint, code));
 
+    it(`${endpoint}: refused while the shared row is switched on`, async () => {
+      const table = TABLE_OF.get(endpoint)!;
+      const id = sharedRows.get(endpoint)!;
+      const sharedCode = await codeOf(table, id);
+
+      // Switched on, whatever an earlier case left behind.
+      await owner.tenantMasterOverride.deleteMany({
+        where: { tenantId: tenantA, tableName: table, recordId: id },
+      });
+
+      const response = await create(sharedCode);
       expect(response.status).toBe(409);
+      expect(response.body.error.message).toContain('shared with every workspace');
+    });
+
+    it(`${endpoint}: free once the workspace has switched that shared row off`, async () => {
+      const table = TABLE_OF.get(endpoint)!;
+      const id = sharedRows.get(endpoint)!;
+      const sharedCode = await codeOf(table, id);
+
+      await request(app)
+        .post(`/api/tenant/setting/${endpoint}/${id}/toggle-status`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .set('X-Tenant-Slug', SLUG_A)
+        .expect(200);
+
+      const response = await create(sharedCode);
+      expect(response.status, JSON.stringify(response.body)).toBe(201);
+
+      // The shared row is untouched — this workspace simply stopped using it.
+      const rows = await owner.$queryRawUnsafe<{ deleted_at: Date | null }[]>(
+        `SELECT deleted_at FROM "${table}" WHERE id = $1`,
+        id,
+      );
+      expect(rows[0]?.deleted_at).toBeNull();
+
+      await owner.$executeRawUnsafe(
+        `DELETE FROM "${table}" WHERE id = $1`,
+        BigInt(response.body.data.id as string),
+      );
     });
   }
 });

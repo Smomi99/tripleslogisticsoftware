@@ -419,8 +419,7 @@ describe('an exported price says what money it is in (client, 2026-09-12)', () =
   });
 
   it('keeps the Currency column on the workbook', async () => {
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(await buildRateWorkbook(context([rate()])));
+    const workbook = await readWorkbook(await buildRateWorkbook(context([rate()])));
     const sheet = workbook.worksheets[0]!;
     const header = sheet.getRow(4).values as unknown[];
     const at = header.indexOf('Currency');
@@ -429,8 +428,7 @@ describe('an exported price says what money it is in (client, 2026-09-12)', () =
   });
 
   it('sizes every column to the widest thing in it, not to its heading', async () => {
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(await buildRateWorkbook(context([rate()])));
+    const workbook = await readWorkbook(await buildRateWorkbook(context([rate()])));
     const sheet = workbook.worksheets[0]!;
 
     const cut: string[] = [];
