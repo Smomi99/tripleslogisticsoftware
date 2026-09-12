@@ -189,6 +189,32 @@ export function QuotationForm({
       }),
     };
   }, [checkIn, options.currencies, lines]);
+  /*
+    The conversion, per line, for the charge grids (client, 2026-09-13).
+
+    Same arithmetic as the total below — each line carried to the target
+    through the workspace base — exposed per row so a charge can be read in
+    both currencies at once rather than only in aggregate.
+  */
+  const convertTo = useMemo(() => {
+    if (checkIn === '') return null;
+    const target = options.currencies.find((c) => c.id === checkIn);
+    if (target === undefined) return null;
+    const toRate = Number(target.conversion);
+    if (!(toRate > 0)) return null;
+
+    return {
+      code: target.label,
+      of: (line: LineDraft): number | null => {
+        const amount = lineTotal(line);
+        if (!Number.isFinite(amount)) return null;
+        const from = options.currencies.find((c) => c.id === line.currencyId);
+        const rate = Number(from?.conversion ?? '0');
+        return rate > 0 ? (amount * rate) / toRate : null;
+      },
+    };
+  }, [checkIn, options.currencies]);
+
   const [emails, setEmails] = useState(quotation.recipients.map((r) => r.email).join(', '));
 
   /** §6.6's document, opened in a tab. */
@@ -464,6 +490,7 @@ export function QuotationForm({
         lines={standard}
         options={options}
         editable={editable}
+        convertTo={convertTo}
         onPatch={patchLine}
         onRemove={(line) => setLines((c) => c.filter((l) => l !== line))}
         onAdd={editable && options.canAddCharge ? () => addLine('STANDARD') : null}
@@ -475,6 +502,7 @@ export function QuotationForm({
         lines={additional}
         options={options}
         editable={editable}
+        convertTo={convertTo}
         onPatch={patchLine}
         onRemove={(line) => setLines((c) => c.filter((l) => l !== line))}
         onAdd={editable && options.canAddCharge ? () => addLine('ADDITIONAL') : null}
@@ -630,6 +658,7 @@ function LineGrid({
   lines,
   options,
   editable,
+  convertTo,
   onPatch,
   onRemove,
   onAdd,
@@ -639,10 +668,40 @@ function LineGrid({
   lines: LineDraft[];
   options: QuotationOptions;
   editable: boolean;
+  /** The currency the grid shows a second column in, or null for none. */
+  convertTo: { code: string; of: (line: LineDraft) => number | null } | null;
   onPatch: (line: LineDraft, patch: Partial<LineDraft>) => void;
   onRemove: (line: LineDraft) => void;
   onAdd: (() => void) | null;
 }) {
+  /** This section in its own currency, or null when it is in several. */
+  const sectionTotal = ((): { amount: number; code: string } | null => {
+    const codes = new Set(lines.map((l) => l.currencyId).filter((id) => id !== ''));
+    if (codes.size !== 1) return null;
+    const currencyId = [...codes][0]!;
+    let amount = 0;
+    for (const line of lines) {
+      const value = lineTotal(line);
+      if (Number.isFinite(value)) amount += value;
+    }
+    return {
+      amount,
+      code: options.currencies.find((c) => c.id === currencyId)?.label ?? '',
+    };
+  })();
+
+  /** The same charges in the conversion currency — safe across currencies. */
+  const convertedTotal = ((): number | null => {
+    if (convertTo === null) return null;
+    let amount = 0;
+    for (const line of lines) {
+      const value = convertTo.of(line);
+      if (value === null) return null;
+      amount += value;
+    }
+    return amount;
+  })();
+
   return (
     <section className="rounded-manifest border border-line bg-surface shadow-manifest">
       <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-line px-4 py-3">
@@ -676,6 +735,11 @@ function LineGrid({
                 <th className="label-manifest px-3 py-2 text-right">Selling Price</th>
                 <th className="label-manifest px-3 py-2 text-left">Currency</th>
                 <th className="label-manifest px-3 py-2 text-right">Total Amount</th>
+                {convertTo !== null && (
+                  <th className="label-manifest px-3 py-2 text-right">
+                    Conversion ({convertTo.code})
+                  </th>
+                )}
                 {editable && <th className="label-manifest px-3 py-2 text-right">Action</th>}
               </tr>
             </thead>
@@ -792,8 +856,19 @@ function LineGrid({
                       )}
                     </td>
                     <td className="px-3 py-1.5 text-right font-mono text-cell tabular-nums text-hull">
-                      {shown.total}
+                      {shown.total}{' '}
+                      <span className="text-steel">
+                        {options.currencies.find((c) => c.id === line.currencyId)?.label ?? ''}
+                      </span>
                     </td>
+                    {convertTo !== null && (
+                      <td className="px-3 py-1.5 text-right font-mono text-cell tabular-nums text-steel">
+                        {(() => {
+                          const value = convertTo.of(line);
+                          return value === null ? '—' : money(String(value));
+                        })()}
+                      </td>
+                    )}
                     {editable && (
                       <td className="px-3 py-1.5 text-right">
                         <span className="inline-flex items-center gap-2">
@@ -826,6 +901,48 @@ function LineGrid({
                 );
               })}
             </tbody>
+            {/*
+              What this section comes to (client, 2026-09-13).
+
+              The charge currency total is only shown when the section is in
+              one currency. Summing across currencies is the mistake that put
+              "Total: USD 1,150" on a taka quotation, and it is not worth
+              repeating here for the sake of filling a cell. The conversion
+              total is always safe: every line is carried to the same currency
+              before it is added.
+            */}
+            <tfoot>
+              <tr className="border-t border-line bg-paper">
+                <td className="px-3 py-2 text-right label-manifest" colSpan={6}>
+                  {title} total
+                </td>
+                <td className="px-3 py-2 text-right font-mono text-cell tabular-nums text-hull">
+                  {sectionTotal === null ? (
+                    <span className="text-steel" title="These charges are in more than one currency.">
+                      —
+                    </span>
+                  ) : (
+                    <>
+                      {money(String(sectionTotal.amount))}{' '}
+                      <span className="text-steel">{sectionTotal.code}</span>
+                    </>
+                  )}
+                </td>
+                {convertTo !== null && (
+                  <td className="px-3 py-2 text-right font-mono text-cell tabular-nums text-hull">
+                    {convertedTotal === null ? (
+                      <span className="text-steel">—</span>
+                    ) : (
+                      <>
+                        {money(String(convertedTotal))}{' '}
+                        <span className="text-steel">{convertTo.code}</span>
+                      </>
+                    )}
+                  </td>
+                )}
+                {editable && <td />}
+              </tr>
+            </tfoot>
           </table>
         </div>
       )}
