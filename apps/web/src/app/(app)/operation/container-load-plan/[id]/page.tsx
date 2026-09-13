@@ -89,7 +89,7 @@ const whole = (v: number | null | undefined): string =>
 export default function ClpBuilderPage() {
   const params = useParams<{ id: string }>();
   const shipmentId = params.id;
-  const { authorizedRequest, can } = useSession();
+  const { authorizedRequest, authorizedDownload, can } = useSession();
 
   const [plan, setPlan] = useState<ClpPlan | null>(null);
   const [loading, setLoading] = useState(true);
@@ -106,6 +106,8 @@ export default function ClpBuilderPage() {
   const [blocked, setBlocked] = useState<
     { row: ClpPoolRow; ctnQty: number; why: string } | null
   >(null);
+  /** §4.3 — the plan whose cancellation is being explained. */
+  const [cancelling, setCancelling] = useState<ClpCard | null>(null);
 
   const endpoint = `/api/tenant/ops/bookings/${shipmentId}/clp`;
 
@@ -178,6 +180,37 @@ export default function ClpBuilderPage() {
       toast.error(refusal(error, 'Could not save those details.'));
     } finally {
       setBusy(false);
+    }
+  }
+
+  /** §4.3 — cancel, with the reason that every cancellation carries. */
+  async function cancelPlan(clpId: string, reason: string): Promise<void> {
+    setBusy(true);
+    try {
+      apply(
+        await authorizedRequest<ClpPlan>(`/api/tenant/ops/clps/${clpId}/cancel`, {
+          method: 'POST',
+          body: { reason },
+        }),
+      );
+      setCancelling(null);
+      toast.success('Load plan cancelled — its cargo is back in the pool');
+    } catch (error) {
+      toast.error(refusal(error, 'Could not cancel that plan.'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** §5.3 — the document, in whichever state the plan is in. */
+  async function print(clp: ClpCard): Promise<void> {
+    try {
+      await authorizedDownload(
+        `/api/tenant/ops/clps/${clp.id}/print`,
+        clp.status === 'FINAL' ? `${clp.code}.pdf` : `${clp.code}-${clp.status.toLowerCase()}.pdf`,
+      );
+    } catch (error) {
+      toast.error(refusal(error, 'Could not print that plan.'));
     }
   }
 
@@ -284,6 +317,8 @@ export default function ClpBuilderPage() {
   const maySplit = can('OPERATION.CONTAINER_LOAD_PLAN.SPLIT');
   const mayOverride = can('OPERATION.CONTAINER_LOAD_PLAN.OVERRIDE_CAPACITY');
   const mayFinalise = can('OPERATION.CONTAINER_LOAD_PLAN.FINALISE');
+  const mayCancelFinal = can('OPERATION.CONTAINER_LOAD_PLAN.CANCEL');
+  const mayPrint = can('OPERATION.CONTAINER_LOAD_PLAN.EXPORT');
   const drafts = plan.clps.filter((c) => c.status === 'DRAFT');
   /*
     The biggest capacity on this plan, so every container is drawn to the same
@@ -329,8 +364,14 @@ export default function ClpBuilderPage() {
         */}
         {plan.clps.length > 0 && !plan.reconciliation.matches && (
           <p className="mt-3 rounded-manifest border border-signal/30 bg-signal/5 px-3 py-2 text-body text-hull">
-            Booking declares {plan.reconciliation.required}. This plan uses{' '}
-            {plan.reconciliation.planned}.
+            Booking declares {plan.reconciliation.required}.{' '}
+            {/*
+              Every plan can be cancelled, which leaves nothing planned. "This
+              plan uses —." was technically true and read like a glitch.
+            */}
+            {plan.reconciliation.planned === '' || plan.reconciliation.planned === '—'
+              ? 'No containers are planned yet.'
+              : `This plan uses ${plan.reconciliation.planned}.`}
           </p>
         )}
         {/* §4.4 — always shown, and the outstanding POs named. */}
@@ -511,6 +552,10 @@ export default function ClpBuilderPage() {
               isTarget={clp.id === target}
               supervisors={plan.supervisors}
               mayFinalise={mayFinalise}
+              mayCancelFinal={mayCancelFinal}
+              mayPrint={mayPrint}
+              onAskCancel={() => setCancelling(clp)}
+              onPrint={() => print(clp)}
               onSave={(input) => saveDetails(clp.id, input)}
               onFinalise={(input) => finalise(clp.id, input)}
               mayEdit={mayEdit}
@@ -554,6 +599,22 @@ export default function ClpBuilderPage() {
         )}
       </Modal>
 
+      <Modal
+        open={cancelling !== null}
+        onOpenChange={(open) => !open && setCancelling(null)}
+        title={cancelling === null ? 'Cancel load plan' : `Cancel CLP ${cancelling.clpSeq}?`}
+        description="The plan is kept for the record. Its cargo goes back to the pool."
+      >
+        {cancelling !== null && (
+          <CancelForm
+            clp={cancelling}
+            pending={busy}
+            onCancel={() => setCancelling(null)}
+            onSubmit={(reason) => cancelPlan(cancelling.id, reason)}
+          />
+        )}
+      </Modal>
+
       <ConfirmDialog
         open={toRemove !== null}
         onOpenChange={(open) => !open && setToRemove(null)}
@@ -579,10 +640,14 @@ function ClpCardView({
   isTarget,
   mayEdit,
   mayFinalise,
+  mayCancelFinal,
+  mayPrint,
   supervisors,
   busy,
   onRemoveLine,
   onRemove,
+  onAskCancel,
+  onPrint,
   onSave,
   onFinalise,
 }: {
@@ -591,10 +656,14 @@ function ClpCardView({
   isTarget: boolean;
   mayEdit: boolean;
   mayFinalise: boolean;
+  mayCancelFinal: boolean;
+  mayPrint: boolean;
   supervisors: { id: string; name: string }[];
   busy: boolean;
   onRemoveLine: (id: string, label: string) => void;
   onRemove: () => void;
+  onAskCancel: () => void;
+  onPrint: () => void;
   onSave: (input: ClpDetailsInput) => Promise<void>;
   onFinalise: (input: ClpFinaliseInput) => Promise<void>;
 }) {
@@ -671,6 +740,16 @@ function ClpCardView({
         </p>
       )}
 
+      {clp.status === 'CANCELLED' && clp.cancelReason !== null && (
+        <p className="mb-3 rounded-manifest border border-alert/30 bg-alert/5 px-3 py-2 text-cell text-hull">
+          <span className="label-manifest text-alert">Cancelled</span>{' '}
+          <span className="ml-1">{clp.cancelReason}</span>
+          {clp.cancelledBy !== null && (
+            <span className="text-steel"> — by {clp.cancelledBy}</span>
+          )}
+        </p>
+      )}
+
       {clp.lines.length === 0 ? (
         <p className="text-cell text-steel">
           Nothing loaded yet.
@@ -708,15 +787,36 @@ function ClpCardView({
         </ul>
       )}
 
-      {mayEdit && clp.status === 'DRAFT' && clp.lines.length === 0 && (
-        <div className="mt-3 flex justify-end">
+      <div className="mt-3 flex flex-wrap items-center justify-end gap-3">
+        {/* §4.3 — PRINT works in both states; a draft carries the watermark. */}
+        {mayPrint && (
+          <Button variant="text" size="inline" disabled={busy} onClick={onPrint}>
+            Print
+          </Button>
+        )}
+        {mayEdit && clp.status === 'DRAFT' && clp.lines.length === 0 && (
           <Button variant="secondary" size="inline" disabled={busy} onClick={onRemove}>
             Remove this container
           </Button>
-        </div>
-      )}
+        )}
+        {/*
+          Cancelling is offered on a plan that holds cargo; an empty draft is
+          removed instead, which is the tidier verb for something that never
+          held anything. A FINAL plan is offered only to somebody who may
+          cancel one — §4.3 makes that privileged, and showing the button to
+          everyone would be a promise the server then breaks.
+        */}
+        {mayEdit &&
+          clp.status !== 'CANCELLED' &&
+          clp.lines.length > 0 &&
+          (clp.status === 'DRAFT' || mayCancelFinal) && (
+            <Button variant="destructive" size="inline" disabled={busy} onClick={onAskCancel}>
+              Cancel plan
+            </Button>
+          )}
+      </div>
 
-      {clp.status !== 'CANCELLED' && (
+      {(
         <FinalisePanel
           clp={clp}
           supervisors={supervisors}
@@ -789,7 +889,12 @@ function FinalisePanel({
   if (loadAt === '') missing.push('the load date and time');
   if (clp.lines.length === 0) missing.push('at least one carton loaded');
 
-  if (clp.status === 'FINAL') {
+  if (clp.status === 'FINAL' || clp.status === 'CANCELLED') {
+    /*
+      §4.3 keeps a cancelled plan with its lines "for audit" — which is only
+      worth anything if the screen still shows which container it was. So the
+      same read-only block serves both, and a cancelled one says why above it.
+    */
     return (
       <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 border-t border-line pt-3 sm:grid-cols-3">
         {[
@@ -798,7 +903,8 @@ function FinalisePanel({
           ['Loaded', clp.loadDatetime === null ? '—' : new Date(clp.loadDatetime).toLocaleString()],
           ['Supervisor', clp.supervisorName ?? '—'],
           ['Tally man', clp.tallyManName ?? '—'],
-          ['Finalised by', clp.finalisedBy ?? '—'],
+          [clp.status === 'CANCELLED' ? 'Cancelled by' : 'Finalised by',
+            (clp.status === 'CANCELLED' ? clp.cancelledBy : clp.finalisedBy) ?? '—'],
         ].map(([label, value]) => (
           <div key={label}>
             <dt className="label-manifest">{label}</dt>
@@ -975,6 +1081,65 @@ function toLocalInput(iso: string | null): string {
   return (
     `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}` +
     `T${pad(at.getHours())}:${pad(at.getMinutes())}`
+  );
+}
+
+/**
+ * §4.3's cancellation — the only way out of a finalised plan.
+ *
+ * A reason is required for every cancellation, draft or final, because a
+ * cancelled CLP is kept with its lines for audit and a record nobody can
+ * explain is worth much less than one that says why it stopped being true.
+ *
+ * The warning above the box is not decoration. Cancelling a FINAL plan hands
+ * its cargo back to the pool, so somebody watching the container list sees
+ * cartons reappear; they should know that is what this button does.
+ */
+function CancelForm({
+  clp,
+  pending,
+  onCancel,
+  onSubmit,
+}: {
+  clp: ClpCard;
+  pending: boolean;
+  onCancel: () => void;
+  onSubmit: (reason: string) => Promise<void>;
+}) {
+  const [reason, setReason] = useState('');
+  const ready = reason.trim().length >= 5;
+
+  return (
+    <FormLayout
+      onSubmit={(event: FormEvent) => {
+        event.preventDefault();
+        if (ready) void onSubmit(reason.trim());
+      }}
+      onCancel={onCancel}
+      isPending={pending}
+      submitDisabled={!ready}
+      submitLabel={`Cancel CLP ${clp.clpSeq}`}
+    >
+      <p className="rounded-manifest border border-alert/30 bg-alert/5 px-3 py-2 text-body text-hull">
+        {clp.status === 'FINAL'
+          ? `CLP ${clp.clpSeq} is final. Cancelling it releases its ${clp.totalCtnQty} cartons back to the pool, and the plan cannot be un-cancelled — you would build a new one.`
+          : `This releases ${clp.totalCtnQty} carton${clp.totalCtnQty === 1 ? '' : 's'} back to the pool. The cancelled plan is kept, with its lines, for the record.`}
+      </p>
+      <Field
+        id={`cancelReason-${clp.id}`}
+        label="Why it is being cancelled"
+        required
+        hint="Kept on the plan and in the audit trail, against your name."
+      >
+        <Input
+          id={`cancelReason-${clp.id}`}
+          autoFocus
+          value={reason}
+          onChange={(event) => setReason(event.target.value)}
+          placeholder="Terminal refused the box for a damaged door seal."
+        />
+      </Field>
+    </FormLayout>
   );
 }
 

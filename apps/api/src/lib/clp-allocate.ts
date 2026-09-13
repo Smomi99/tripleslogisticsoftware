@@ -491,6 +491,123 @@ export async function allocate(
 }
 
 /**
+ * Cancel a load plan, releasing its cargo — MODULE_CLP.md §4.3.
+ *
+ * "Cancelling a FINAL CLP releases its allocations back to the pool and
+ * creates a fresh clp_seq; the cancelled record is retained with its lines
+ * for audit."
+ *
+ * The release is not a delete. `liveAllocations` already ignores lines whose
+ * plan is CANCELLED, so flipping the status is what frees the cartons — and
+ * the rows stay exactly as they were, which is what "retained for audit"
+ * has to mean if anyone is ever going to reconstruct what was in that box.
+ *
+ * The lock matters as much as the status. A cancel that releases 60 cartons
+ * while another request is allocating the same line would let both succeed
+ * against a stale balance, so this takes the same row locks `allocate` takes,
+ * in the same order.
+ */
+export async function cancelClp(
+  db: TenantDb,
+  actor: Actor,
+  input: {
+    clpId: bigint;
+    reason: string;
+    /*
+      §4.3 makes FINAL → CANCELLED privileged. The ROUTE decides whether this
+      user holds that right; this function only refuses to do it unasked.
+    */
+    mayCancelFinal: boolean;
+  },
+): Promise<void> {
+  const reason = input.reason.trim();
+  if (reason.length < 5) {
+    throw HttpError.badRequest('Say why this load plan is being cancelled.');
+  }
+
+  const plan = await db.clp.findFirst({
+    where: { id: input.clpId, deletedAt: null },
+    select: {
+      id: true,
+      code: true,
+      clpSeq: true,
+      status: true,
+      stuffingStartedAt: true,
+      lines: {
+        where: { deletedAt: null },
+        select: { shipmentCargoLineId: true },
+      },
+    },
+  });
+  if (plan === null) throw HttpError.notFound('That load plan no longer exists.');
+
+  if (plan.status === 'CANCELLED') {
+    throw HttpError.conflict(`CLP ${plan.clpSeq} is already cancelled.`);
+  }
+
+  if (plan.status === 'FINAL' && !input.mayCancelFinal) {
+    throw HttpError.forbidden(
+      `CLP ${plan.clpSeq} is final. Cancelling a finalised load plan needs a supervisor.`,
+    );
+  }
+
+  /*
+    §4.3 — blocked once stuffing has started. Past that point the cartons are
+    physically going into the box, and a system that "released" them would be
+    describing a warehouse that no longer exists.
+  */
+  if (plan.stuffingStartedAt !== null) {
+    throw HttpError.conflict(
+      `Stuffing has already started on CLP ${plan.clpSeq}. It cannot be cancelled — ` +
+        'stop the stuffing first if the load is wrong.',
+    );
+  }
+
+  /*
+    Lock every cargo line this plan touches before anything changes, in id
+    order so two cancels can never take them in opposite orders and deadlock.
+
+    FOR UPDATE rather than a read: the balance another request is about to
+    compute depends on rows this transaction is about to free.
+  */
+  const cargoLineIds = [...new Set(plan.lines.map((l) => l.shipmentCargoLineId))].sort((a, b) =>
+    a < b ? -1 : a > b ? 1 : 0,
+  );
+  for (const id of cargoLineIds) {
+    await db.$queryRaw`SELECT id FROM shipment_cargo_line WHERE id = ${id} FOR UPDATE`;
+  }
+
+  await db.clp.update({
+    where: { id: plan.id },
+    data: {
+      status: 'CANCELLED',
+      cancelledAt: new Date(),
+      cancelledBy: actor.userId,
+      cancelReason: reason,
+      isActive: false,
+      updatedBy: actor.userId,
+    },
+  });
+
+  /*
+    Re-derive every cargo line the plan held. The cancelled plan's own lines
+    are no longer "live", so the remainder that was attached to them moves to
+    whichever allocation now completes the line — §2.3's rule, applied to a
+    plan disappearing rather than a line being removed.
+
+    The cancelled plan itself is deliberately NOT recomputed: its totals are
+    the record of what it held.
+  */
+  const touched = new Set<bigint>();
+  for (const id of cargoLineIds) {
+    for (const clpId of await recomputeCargoLine(db, actor, id)) touched.add(clpId);
+  }
+  for (const clpId of touched) {
+    if (clpId !== plan.id) await recomputeClp(db, actor, clpId);
+  }
+}
+
+/**
  * Takes an allocation back out, releasing its cartons to the pool.
  *
  * Soft-deleted (§4 rule 3), which is why the unique index on this table is

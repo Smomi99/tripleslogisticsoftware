@@ -173,6 +173,10 @@ export interface ClpCard {
   /** Set once §4.3's one-way door has been walked through. */
   finalisedAt: string | null;
   finalisedBy: string | null;
+  /** §4.3 — a cancelled plan is kept, so it has to be able to say why. */
+  cancelledAt: string | null;
+  cancelledBy: string | null;
+  cancelReason: string | null;
 
   lines: ClpLineRow[];
 }
@@ -295,6 +299,21 @@ export type ClpDetailsInput = z.input<typeof clpDetailsSchema>;
  * §4.3 — FINAL has no edit path, so the confirm step carries the figures the
  * planner is signing off on rather than just asking "are you sure?".
  */
+/**
+ * §4.3 — every cancellation carries a reason (client-confirmed).
+ *
+ * A cancelled CLP is kept with its lines for audit, and a record nobody can
+ * explain is worth much less than one that says why it stopped being true.
+ */
+export const clpCancelSchema = z.object({
+  reason: z
+    .string()
+    .trim()
+    .min(5, 'Say why this load plan is being cancelled.')
+    .max(500, 'That reason is too long.'),
+});
+export type ClpCancelInput = z.input<typeof clpCancelSchema>;
+
 export const clpFinaliseSchema = z.object({
   containerNo,
   sealNo: z.string().trim().min(1, 'Enter the seal number.').max(50, 'That seal number is too long.'),

@@ -7,6 +7,7 @@ import {
   type ClpListRow,
   clpListQuerySchema,
   type ClpCard,
+  clpCancelSchema,
   clpCreateSchema,
   clpDetailsSchema,
   clpFinaliseSchema,
@@ -15,7 +16,8 @@ import {
 } from '@ff/shared';
 import { Router } from 'express';
 
-import { allocate, availableCartons, deallocate } from '../lib/clp-allocate';
+import { allocate, availableCartons, cancelClp, deallocate } from '../lib/clp-allocate';
+import { buildClpPdf, type ClpPrintDoc, clpPdfFilename } from '../lib/clp-print';
 import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
 import { HttpError } from '../lib/http-error';
 import { formatDocumentNo, seriesYearOf } from '../lib/inquiry-no';
@@ -373,6 +375,9 @@ async function cards(db: TenantDb, shipmentId: bigint): Promise<ClpCard[]> {
       tallyManName: true,
       finalisedAt: true,
       finalisedByUser: { select: { username: true, employee: { select: { name: true } } } },
+      cancelledAt: true,
+      cancelReason: true,
+      cancelledByUser: { select: { username: true, employee: { select: { name: true } } } },
       lines: {
         where: { deletedAt: null },
         orderBy: { id: 'asc' },
@@ -433,6 +438,12 @@ async function cards(db: TenantDb, shipmentId: bigint): Promise<ClpCard[]> {
       row.finalisedByUser === null
         ? null
         : (row.finalisedByUser.employee?.name ?? row.finalisedByUser.username),
+    cancelledAt: row.cancelledAt?.toISOString() ?? null,
+    cancelReason: row.cancelReason,
+    cancelledBy:
+      row.cancelledByUser === null
+        ? null
+        : (row.cancelledByUser.employee?.name ?? row.cancelledByUser.username),
     lines: row.lines.map((l) => ({
       id: l.id.toString(),
       cargoLineId: l.shipmentCargoLineId.toString(),
@@ -932,4 +943,163 @@ clpRouter.post('/clps/:id/finalise', requirePermission(`${FEATURE}.FINALISE`), a
 
   const payload: ApiSuccess<ClpPlan> = { success: true, data };
   res.json(payload);
+});
+
+/**
+ * POST /clps/:id/cancel — §4.3's only way out of a finalised plan.
+ *
+ * Two rights, one endpoint. Cancelling a DRAFT needs EDIT; cancelling a
+ * FINAL is privileged and needs CANCEL, because it un-does a document the
+ * warehouse may already be working from. The guard here is the broader EDIT
+ * — the narrower check happens inside, where the plan's status is known.
+ */
+clpRouter.post('/clps/:id/cancel', requirePermission(`${FEATURE}.EDIT`), async (req, res) => {
+  const auth = req.auth!;
+  const clpId = parseId(req.params.id, 'load plan');
+  const input = clpCancelSchema.parse(req.body);
+
+  const data = await withTenant(auth.tenantId, async (db) => {
+    const plan = await db.clp.findFirst({
+      where: { id: clpId, deletedAt: null },
+      select: { shipmentId: true },
+    });
+    if (plan === null) throw HttpError.notFound('That load plan no longer exists.');
+
+    await cancelClp(
+      db,
+      { tenantId: auth.tenantId, userId: auth.userId },
+      {
+        clpId,
+        reason: input.reason,
+        mayCancelFinal: auth.isSuperadmin || auth.permissions.has(`${FEATURE}.CANCEL`),
+      },
+    );
+    return buildPlan(db, plan.shipmentId);
+  });
+
+  const payload: ApiSuccess<ClpPlan> = { success: true, data };
+  res.json(payload);
+});
+
+/**
+ * GET /clps/:id/print — §5.3's document.
+ *
+ * Guarded by EXPORT, which is the decision taken when the permissions were
+ * agreed: PRINT is not a separate right, because a printed CLP and an
+ * exported one put the same figures in the same hands.
+ *
+ * §4.3 — "PRINT works in both states". A draft prints, and carries the
+ * watermark that says so.
+ */
+clpRouter.get('/clps/:id/print', requirePermission(`${FEATURE}.EXPORT`), async (req, res) => {
+  const auth = req.auth!;
+  const clpId = parseId(req.params.id, 'load plan');
+
+  const { pdf, name } = await withTenant(auth.tenantId, async (db) => {
+    const row = await db.clp.findFirst({
+      where: { id: clpId, deletedAt: null },
+      select: {
+        code: true,
+        clpSeq: true,
+        status: true,
+        containerNo: true,
+        sealNo: true,
+        loadDatetime: true,
+        loadedBy: true,
+        tallyManName: true,
+        containerSize: { select: { code: true } },
+        carrier: { select: { name: true } },
+        supervisor: { select: { name: true } },
+        shipment: {
+          select: {
+            code: true,
+            exporterName: true,
+            customer: { select: { name: true } },
+            pol: { select: { name: true } },
+            pod: { select: { name: true } },
+            shippingOrders: {
+              where: { deletedAt: null },
+              orderBy: { id: 'desc' },
+              take: 1,
+              select: { code: true },
+            },
+          },
+        },
+        lines: {
+          where: { deletedAt: null },
+          orderBy: { id: 'asc' },
+          select: {
+            poNo: true,
+            itemCode: true,
+            sku: true,
+            ctnQty: true,
+            pcsQty: true,
+            netWeightKg: true,
+            grossWeightKg: true,
+            volumeCbm: true,
+            cartonLengthCm: true,
+            cartonWidthCm: true,
+            cartonHeightCm: true,
+          },
+        },
+      },
+    });
+    if (row === null) throw HttpError.notFound('That load plan no longer exists.');
+
+    const workspace = await db.tenant.findFirstOrThrow({
+      where: { id: auth.tenantId },
+      select: { name: true },
+    });
+    const me = await db.user.findFirstOrThrow({
+      where: { id: auth.userId },
+      select: { username: true, employee: { select: { name: true } } },
+    });
+
+    const doc: ClpPrintDoc = {
+      workspaceName: workspace.name,
+      status: row.status,
+      code: row.code,
+      clpSeq: row.clpSeq,
+      bookingCode: row.shipment.code,
+      shippingOrderCode: row.shipment.shippingOrders[0]?.code ?? null,
+      carrierName: row.carrier.name,
+      containerSizeCode: row.containerSize.code,
+      containerNo: row.containerNo,
+      sealNo: row.sealNo,
+      loadDatetime: row.loadDatetime?.toISOString() ?? null,
+      loadedBy: row.loadedBy,
+      supervisorName: row.supervisor?.name ?? null,
+      tallyManName: row.tallyManName,
+      polName: row.shipment.pol.name,
+      podName: row.shipment.pod.name,
+      customerName: row.shipment.customer.name,
+      exporterName: row.shipment.exporterName,
+      generatedBy: me.employee?.name ?? me.username,
+      lines: row.lines.map((l) => ({
+        poNo: l.poNo,
+        itemCode: l.itemCode,
+        sku: l.sku,
+        ctnQty: l.ctnQty,
+        pcsQty: l.pcsQty,
+        netWeightKg: dec(l.netWeightKg),
+        grossWeightKg: dec(l.grossWeightKg),
+        /*
+          The allocation's OWN snapshot, not a join back to the booked line.
+          A printed load plan should say what the cartons measured when they
+          went in the box; re-reading the master would let a later correction
+          silently rewrite a document somebody already signed.
+        */
+        cartonLengthCm: dec(l.cartonLengthCm),
+        cartonWidthCm: dec(l.cartonWidthCm),
+        cartonHeightCm: dec(l.cartonHeightCm),
+        volumeCbm: dec(l.volumeCbm),
+      })),
+    };
+
+    return { pdf: await buildClpPdf(doc), name: clpPdfFilename(doc) };
+  });
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${name}"`);
+  res.send(pdf);
 });

@@ -405,15 +405,21 @@ physically goes into a steel box, and the rounding rule is where it will fail qu
 
 ---
 
-## 8. REMAINING QUESTIONS
+## 8. REMAINING QUESTIONS — both now answered
 
-1. **Over-volume: block or warn?** The answer came back as a repetition of the question, so §4.2
-   assumes **blocked with a supervisor override**. Please confirm — it is a one-line change either
-   way, but the difference is who can load a 29 CBM plan into a 28 CBM box.
-2. **Supervisor — Employee master or free text?** Tally Man was confirmed as free text; Supervisor
-   was not addressed. §3.2 assumes the Employee master, since the supervisor signs for the load and a
-   named employee reference is worth more in a dispute than a typed name. Tally men are often casual
-   or third-party CFS staff, which is why free text fits there.
+1. **Over-volume: block or warn?**
+
+   > **Confirmed 2026-09-13.** Over-capacity is **BLOCK by default**, with a **Supervisor Override**
+   > that requires a written reason and is written to `audit_log`. Built in Phase F: weight is never
+   > overridable, volume is overridable by a holder of `OVERRIDE_CAPACITY`, and the reason is shown
+   > on the container it excuses as well as recorded. Exactly 100% is allowed; only above it is an
+   > exception.
+
+2. **Supervisor — Employee master or free text?**
+
+   > **Confirmed 2026-09-13.** Supervisor stays an **Employee FK** (`supervisor_employee_id`), not
+   > free text. Tally Man remains free text. The supervisor signs for the load, so a named employee
+   > reference is what a dispute needs; tally men are often casual or third-party CFS staff.
 
 ---
 
