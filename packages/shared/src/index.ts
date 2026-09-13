@@ -27,6 +27,7 @@ export * from './rate-lookups';
 export * from './role';
 export * from './sales-lead';
 export * from './clp';
+export * from './iso6346';
 export * from './shipment';
 export * from './user';
 export * from './vendor';

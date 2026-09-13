@@ -4,8 +4,12 @@ import {
   clpAllocateSchema,
   type ClpBookingRow,
   clpBookingListQuerySchema,
+  type ClpListRow,
+  clpListQuerySchema,
   type ClpCard,
   clpCreateSchema,
+  clpDetailsSchema,
+  clpFinaliseSchema,
   type ClpPlan,
   type ClpPoolRow,
 } from '@ff/shared';
@@ -220,6 +224,124 @@ clpRouter.get('/clp-bookings', requirePermission(`${FEATURE}.VIEW`), async (req,
   res.json(payload);
 });
 
+
+/**
+ * GET /clps — §5.2's "List of CLP - SEA".
+ *
+ * One row per container plan, where /clp-bookings gives one row per booking.
+ * The two answer different questions: that one is "what still needs
+ * planning?", this one is "where are my plans, and which are still drafts?".
+ *
+ * Cancelled plans are included rather than hidden. §4.3 keeps a cancelled
+ * record with its lines for audit, and somebody asking why a container was
+ * re-planned needs to find it.
+ */
+clpRouter.get('/clps', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
+  const auth = req.auth!;
+  const query = clpListQuerySchema.parse(req.query);
+
+  const result = await withTenant(auth.tenantId, async (db) => {
+    const search = query.search === undefined || query.search === '' ? null : query.search;
+    const where = {
+      deletedAt: null,
+      ...(query.status === undefined ? {} : { status: query.status }),
+      ...(search === null
+        ? {}
+        : {
+            OR: [
+              { code: { contains: search, mode: 'insensitive' as const } },
+              { containerNo: { contains: search, mode: 'insensitive' as const } },
+              { shipment: { code: { contains: search, mode: 'insensitive' as const } } },
+              {
+                shipment: {
+                  customer: { name: { contains: search, mode: 'insensitive' as const } },
+                },
+              },
+            ],
+          }),
+    };
+
+    const [rows, total] = await Promise.all([
+      db.clp.findMany({
+        where,
+        orderBy: [{ shipmentId: 'desc' }, { clpSeq: 'asc' }],
+        skip: (query.page - 1) * query.limit,
+        take: query.limit,
+        select: {
+          id: true,
+          code: true,
+          clpSeq: true,
+          status: true,
+          containerNo: true,
+          sealNo: true,
+          loadDatetime: true,
+          shipmentId: true,
+          totalCtnQty: true,
+          totalVolumeCbm: true,
+          volumeUtilisation: true,
+          containerSize: { select: { code: true } },
+          carrier: { select: { name: true } },
+        },
+      }),
+      db.clp.count({ where }),
+    ]);
+
+    /*
+      The booking columns come from the same helper the selector uses, so the
+      two lists cannot disagree about what a booking's POL or required
+      container is. One fetch per distinct booking, not per row — a booking
+      with four containers would otherwise be read four times.
+    */
+    const bookings = new Map<string, ClpBookingRow>();
+    for (const row of rows) {
+      const key = row.shipmentId.toString();
+      if (!bookings.has(key)) {
+        bookings.set(key, await bookingRow(db, await findBooking(db, row.shipmentId)));
+      }
+    }
+
+    return {
+      total,
+      rows: rows.map((row): ClpListRow => {
+        const booking = bookings.get(row.shipmentId.toString())!;
+        return {
+          id: row.id.toString(),
+          code: row.code,
+          clpSeq: row.clpSeq,
+          status: row.status,
+          containerSizeCode: row.containerSize.code,
+          containerNo: row.containerNo,
+          sealNo: row.sealNo,
+          loadDatetime: row.loadDatetime?.toISOString() ?? null,
+
+          shipmentId: row.shipmentId.toString(),
+          bookingCode: booking.code,
+          shippingOrderCode: booking.shippingOrderCode,
+          customerName: booking.customerName,
+          exporterName: booking.exporterName,
+          commodity: booking.commodity,
+          shipmentType: booking.shipmentType,
+          polName: booking.polName,
+          podName: booking.podName,
+          requiredContainer: booking.requiredContainer,
+          carrierName: row.carrier.name,
+
+          totalCtnQty: row.totalCtnQty,
+          totalVolumeCbm: dec(row.totalVolumeCbm),
+          volumeUtilisation: dec(row.volumeUtilisation),
+        };
+      }),
+    };
+  });
+
+  const payload: ApiSuccess<ClpListRow[]> = {
+    success: true,
+    data: result.rows,
+    meta: buildMeta(query.page, query.limit, result.total),
+  };
+  res.json(payload);
+});
+
 /** Every plan on the booking, with its lines. */
 async function cards(db: TenantDb, shipmentId: bigint): Promise<ClpCard[]> {
   const rows = await db.clp.findMany({
@@ -243,6 +365,14 @@ async function cards(db: TenantDb, shipmentId: bigint): Promise<ClpCard[]> {
       capacityOverrideUser: {
         select: { username: true, employee: { select: { name: true } } },
       },
+      containerNo: true,
+      sealNo: true,
+      loadDatetime: true,
+      supervisorEmployeeId: true,
+      supervisor: { select: { name: true } },
+      tallyManName: true,
+      finalisedAt: true,
+      finalisedByUser: { select: { username: true, employee: { select: { name: true } } } },
       lines: {
         where: { deletedAt: null },
         orderBy: { id: 'asc' },
@@ -292,6 +422,17 @@ async function cards(db: TenantDb, shipmentId: bigint): Promise<ClpCard[]> {
       row.capacityOverrideUser === null
         ? null
         : (row.capacityOverrideUser.employee?.name ?? row.capacityOverrideUser.username),
+    containerNo: row.containerNo,
+    sealNo: row.sealNo,
+    loadDatetime: row.loadDatetime?.toISOString() ?? null,
+    supervisorEmployeeId: row.supervisorEmployeeId?.toString() ?? null,
+    supervisorName: row.supervisor?.name ?? null,
+    tallyManName: row.tallyManName,
+    finalisedAt: row.finalisedAt?.toISOString() ?? null,
+    finalisedBy:
+      row.finalisedByUser === null
+        ? null
+        : (row.finalisedByUser.employee?.name ?? row.finalisedByUser.username),
     lines: row.lines.map((l) => ({
       id: l.id.toString(),
       cargoLineId: l.shipmentCargoLineId.toString(),
@@ -399,6 +540,17 @@ async function buildPlan(db: TenantDb, shipmentId: bigint): Promise<ClpPlan> {
     report it as finished while it is still at the supplier — the one reading
     of this sentence that would actually mislead a planner.
   */
+  /*
+    §5.2's Supervisor is a lookup to the Employee master (§8 Q2). Sent with
+    the plan rather than fetched separately: the panel is on every card, and
+    a list per card would be one request each.
+  */
+  const supervisors = await db.employee.findMany({
+    where: { deletedAt: null, isActive: true },
+    orderBy: { name: 'asc' },
+    select: { id: true, name: true },
+  });
+
   const allocatedPos = new Set(
     clps
       .filter((c) => c.status !== 'CANCELLED')
@@ -414,6 +566,7 @@ async function buildPlan(db: TenantDb, shipmentId: bigint): Promise<ClpPlan> {
     booking: row,
     pool: poolRows,
     clps,
+    supervisors: supervisors.map((e) => ({ id: e.id.toString(), name: e.name })),
     containerSizes: sizes.map((s) => ({
       id: s.id.toString(),
       code: s.code,
@@ -635,6 +788,144 @@ clpRouter.delete('/clps/:id', requirePermission(`${FEATURE}.EDIT`), async (req, 
     await db.clp.update({
       where: { id: clpId },
       data: { deletedAt: new Date(), isActive: false, updatedBy: auth.userId },
+    });
+    return buildPlan(db, plan.shipmentId);
+  });
+
+  const payload: ApiSuccess<ClpPlan> = { success: true, data };
+  res.json(payload);
+});
+
+/**
+ * PATCH /clps/:id — record what is known so far (§5.2's SAVE CLP).
+ *
+ * Draft only. The details are how a container is identified, and §4.3 gives
+ * FINAL no edit path, so once finalised these stop moving.
+ */
+clpRouter.patch('/clps/:id', requirePermission(`${FEATURE}.EDIT`), async (req, res) => {
+  const auth = req.auth!;
+  const clpId = parseId(req.params.id, 'load plan');
+  const input = clpDetailsSchema.parse(req.body);
+
+  const data = await withTenant(auth.tenantId, async (db) => {
+    const plan = await db.clp.findFirst({
+      where: { id: clpId, deletedAt: null },
+      select: { shipmentId: true, status: true, code: true },
+    });
+    if (plan === null) throw HttpError.notFound('That load plan no longer exists.');
+    if (plan.status !== 'DRAFT') {
+      throw HttpError.conflict(
+        `${plan.code} is ${plan.status.toLowerCase()}. A finalised plan cannot be edited — ` +
+          'cancel it and make a new one.',
+      );
+    }
+
+    await db.clp.update({
+      where: { id: clpId },
+      data: {
+        containerNo: input.containerNo ?? null,
+        sealNo: input.sealNo ?? null,
+        loadDatetime: input.loadDatetime == null ? null : new Date(input.loadDatetime),
+        supervisorEmployeeId:
+          input.supervisorEmployeeId == null || input.supervisorEmployeeId === ''
+            ? null
+            : parseId(input.supervisorEmployeeId, 'supervisor'),
+        tallyManName: input.tallyManName ?? null,
+        updatedBy: auth.userId,
+      },
+    });
+    return buildPlan(db, plan.shipmentId);
+  });
+
+  const payload: ApiSuccess<ClpPlan> = { success: true, data };
+  res.json(payload);
+});
+
+/**
+ * POST /clps/:id/finalise — §4.3's one-way door.
+ *
+ * Everything the status needs is required here rather than left to the check
+ * constraint, so the refusal names the missing field instead of surfacing a
+ * constraint violation. The constraint stays as the backstop.
+ */
+clpRouter.post('/clps/:id/finalise', requirePermission(`${FEATURE}.FINALISE`), async (req, res) => {
+  const auth = req.auth!;
+  const clpId = parseId(req.params.id, 'load plan');
+  const input = clpFinaliseSchema.parse(req.body);
+
+  const data = await withTenant(auth.tenantId, async (db) => {
+    const plan = await db.clp.findFirst({
+      where: { id: clpId, deletedAt: null },
+      select: {
+        shipmentId: true,
+        status: true,
+        code: true,
+        clpSeq: true,
+        _count: { select: { lines: { where: { deletedAt: null } } } },
+      },
+    });
+    if (plan === null) throw HttpError.notFound('That load plan no longer exists.');
+    if (plan.status === 'FINAL') {
+      throw HttpError.conflict(`${plan.code} is already final.`);
+    }
+    if (plan.status === 'CANCELLED') {
+      throw HttpError.conflict(`${plan.code} was cancelled, so it cannot be finalised.`);
+    }
+    /*
+      §4.3 lists "≥1 line". An empty container is not a load plan, and
+      finalising one would put an unopenable record in front of the carrier.
+    */
+    if (plan._count.lines === 0) {
+      throw HttpError.conflict(
+        `CLP ${plan.clpSeq} has no cargo in it. Load something before finalising it.`,
+      );
+    }
+
+    /*
+      Two plans on the SAME booking claiming one container is a mistake — the
+      cargo has been promised to that box twice, and the second lot is
+      discovered at the gate.
+
+      Deliberately scoped to this booking. The same physical container carries
+      cargo to Hamburg, comes back, and carries more; a check across all
+      bookings would refuse the second voyage of every box the company uses.
+      Telling whether two shipments overlap in time needs sailing dates this
+      table does not have, so the narrow rule is the one that has no false
+      refusals.
+    */
+    const clash = await db.clp.findFirst({
+      where: {
+        shipmentId: plan.shipmentId,
+        containerNo: input.containerNo,
+        status: 'FINAL',
+        deletedAt: null,
+        id: { not: clpId },
+      },
+      select: { code: true, clpSeq: true },
+    });
+    if (clash !== null) {
+      throw HttpError.conflict(
+        `Container ${input.containerNo} is already on CLP ${clash.clpSeq} (${clash.code}) ` +
+          'for this booking. Check the number, or cancel that plan first.',
+      );
+    }
+
+    await db.clp.update({
+      where: { id: clpId },
+      data: {
+        containerNo: input.containerNo,
+        sealNo: input.sealNo,
+        loadDatetime: new Date(input.loadDatetime),
+        supervisorEmployeeId:
+          input.supervisorEmployeeId == null || input.supervisorEmployeeId === ''
+            ? null
+            : parseId(input.supervisorEmployeeId, 'supervisor'),
+        tallyManName: input.tallyManName ?? null,
+        status: 'FINAL',
+        finalisedAt: new Date(),
+        finalisedBy: auth.userId,
+        updatedBy: auth.userId,
+      },
     });
     return buildPlan(db, plan.shipmentId);
   });

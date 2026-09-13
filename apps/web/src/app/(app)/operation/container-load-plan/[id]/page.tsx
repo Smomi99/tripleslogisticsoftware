@@ -3,9 +3,12 @@
 import {
   CLP_OVER_VOLUME,
   type ClpCard,
+  type ClpDetailsInput,
+  type ClpFinaliseInput,
   type ClpPlan,
   type ClpPoolRow,
   splitPreview,
+  validateContainerNo,
 } from '@ff/shared';
 import type { Route } from 'next';
 import { useParams } from 'next/navigation';
@@ -37,6 +40,20 @@ import { useSession } from '@/lib/session';
  * editable cell and everything else recalculates, which is the client's own
  * instruction: "we always work at carton level".
  */
+
+/**
+ * What to tell the user when a request is refused.
+ *
+ * A Zod refusal arrives as "Some fields need attention" with the real reason
+ * in `fields` — so the toast said nothing actionable while the server was
+ * holding "Check digit should be 3, not 7". §12 asks errors to name the fix;
+ * the field message is the one that does.
+ */
+function refusal(error: unknown, fallback: string): string {
+  if (!(error instanceof ApiError)) return fallback;
+  const first = Object.values(error.fields ?? {})[0]?.[0];
+  return first ?? error.message;
+}
 
 /**
  * §4.4's balance, in one sentence.
@@ -146,6 +163,42 @@ export default function ClpBuilderPage() {
     }
   }
 
+  /** §5.2's SAVE CLP — records what is known so far on a draft. */
+  async function saveDetails(clpId: string, input: ClpDetailsInput): Promise<void> {
+    setBusy(true);
+    try {
+      apply(
+        await authorizedRequest<ClpPlan>(`/api/tenant/ops/clps/${clpId}`, {
+          method: 'PATCH',
+          body: input,
+        }),
+      );
+      toast.success('Saved');
+    } catch (error) {
+      toast.error(refusal(error, 'Could not save those details.'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** §4.3's one-way door. */
+  async function finalise(clpId: string, input: ClpFinaliseInput): Promise<void> {
+    setBusy(true);
+    try {
+      apply(
+        await authorizedRequest<ClpPlan>(`/api/tenant/ops/clps/${clpId}/finalise`, {
+          method: 'POST',
+          body: input,
+        }),
+      );
+      toast.success('Load plan finalised');
+    } catch (error) {
+      toast.error(refusal(error, 'Could not finalise that plan.'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   /** §2.2: both buttons land here. `add` simply passes the whole balance. */
   async function put(row: ClpPoolRow, ctnQty: number, overrideReason?: string): Promise<void> {
     if (target === '') {
@@ -230,6 +283,7 @@ export default function ClpBuilderPage() {
   const mayEdit = can('OPERATION.CONTAINER_LOAD_PLAN.CREATE');
   const maySplit = can('OPERATION.CONTAINER_LOAD_PLAN.SPLIT');
   const mayOverride = can('OPERATION.CONTAINER_LOAD_PLAN.OVERRIDE_CAPACITY');
+  const mayFinalise = can('OPERATION.CONTAINER_LOAD_PLAN.FINALISE');
   const drafts = plan.clps.filter((c) => c.status === 'DRAFT');
   /*
     The biggest capacity on this plan, so every container is drawn to the same
@@ -455,6 +509,10 @@ export default function ClpBuilderPage() {
               clp={clp}
               largestCbm={largestCbm}
               isTarget={clp.id === target}
+              supervisors={plan.supervisors}
+              mayFinalise={mayFinalise}
+              onSave={(input) => saveDetails(clp.id, input)}
+              onFinalise={(input) => finalise(clp.id, input)}
               mayEdit={mayEdit}
               busy={busy}
               onRemoveLine={(id, label) => setToRemove({ id, label })}
@@ -520,17 +578,25 @@ function ClpCardView({
   largestCbm,
   isTarget,
   mayEdit,
+  mayFinalise,
+  supervisors,
   busy,
   onRemoveLine,
   onRemove,
+  onSave,
+  onFinalise,
 }: {
   clp: ClpCard;
   largestCbm: number;
   isTarget: boolean;
   mayEdit: boolean;
+  mayFinalise: boolean;
+  supervisors: { id: string; name: string }[];
   busy: boolean;
   onRemoveLine: (id: string, label: string) => void;
   onRemove: () => void;
+  onSave: (input: ClpDetailsInput) => Promise<void>;
+  onFinalise: (input: ClpFinaliseInput) => Promise<void>;
 }) {
   /*
     One band per PO (§5.1). A PO split across two containers appears on both,
@@ -649,7 +715,266 @@ function ClpCardView({
           </Button>
         </div>
       )}
+
+      {clp.status !== 'CANCELLED' && (
+        <FinalisePanel
+          clp={clp}
+          supervisors={supervisors}
+          busy={busy}
+          mayEdit={mayEdit}
+          mayFinalise={mayFinalise}
+          onSave={onSave}
+          onFinalise={onFinalise}
+        />
+      )}
     </section>
+  );
+}
+
+
+/**
+ * §5.2's finalisation panel, and §4.3's one-way door.
+ *
+ * Two buttons, because the details arrive at different times. The container
+ * number is known when the box reaches the gate; the seal number only once it
+ * is closed, which can be hours later. `Save CLP` records what is known so far
+ * on the draft. `Finalise` is the step with no way back.
+ *
+ * The container number is checked as you type, against the same shared
+ * utility the server uses (§5.2 asks for exactly one implementation). A wrong
+ * check digit is nearly always a misread character, so naming the digit that
+ * was expected turns the error into an instruction.
+ */
+function FinalisePanel({
+  clp,
+  supervisors,
+  busy,
+  mayEdit,
+  mayFinalise,
+  onSave,
+  onFinalise,
+}: {
+  clp: ClpCard;
+  supervisors: { id: string; name: string }[];
+  busy: boolean;
+  mayEdit: boolean;
+  mayFinalise: boolean;
+  onSave: (input: ClpDetailsInput) => Promise<void>;
+  onFinalise: (input: ClpFinaliseInput) => Promise<void>;
+}) {
+  const [containerNo, setContainerNo] = useState(clp.containerNo ?? '');
+  const [sealNo, setSealNo] = useState(clp.sealNo ?? '');
+  // <input type="datetime-local"> wants "YYYY-MM-DDTHH:mm" in local time.
+  const [loadAt, setLoadAt] = useState(toLocalInput(clp.loadDatetime));
+  const [supervisorId, setSupervisorId] = useState(clp.supervisorEmployeeId ?? '');
+  const [tallyMan, setTallyMan] = useState(clp.tallyManName ?? '');
+  const [confirming, setConfirming] = useState(false);
+
+  // Empty is not an error while typing — it is just not finished yet.
+  const check = containerNo.trim() === '' ? null : validateContainerNo(containerNo);
+  const containerError = check !== null && !check.ok ? (check.message ?? null) : null;
+
+  const details = (): ClpDetailsInput => ({
+    containerNo: containerNo.trim() === '' ? null : containerNo,
+    sealNo: sealNo.trim() === '' ? null : sealNo,
+    loadDatetime: loadAt === '' ? null : new Date(loadAt).toISOString(),
+    supervisorEmployeeId: supervisorId === '' ? null : supervisorId,
+    tallyManName: tallyMan.trim() === '' ? null : tallyMan,
+  });
+
+  /* §4.3's preconditions, named before the click rather than after it. */
+  const missing: string[] = [];
+  if (check === null || !check.ok) missing.push('a valid container number');
+  if (sealNo.trim() === '') missing.push('the seal number');
+  if (loadAt === '') missing.push('the load date and time');
+  if (clp.lines.length === 0) missing.push('at least one carton loaded');
+
+  if (clp.status === 'FINAL') {
+    return (
+      <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 border-t border-line pt-3 sm:grid-cols-3">
+        {[
+          ['Container No', clp.containerNo ?? '—'],
+          ['Seal No', clp.sealNo ?? '—'],
+          ['Loaded', clp.loadDatetime === null ? '—' : new Date(clp.loadDatetime).toLocaleString()],
+          ['Supervisor', clp.supervisorName ?? '—'],
+          ['Tally man', clp.tallyManName ?? '—'],
+          ['Finalised by', clp.finalisedBy ?? '—'],
+        ].map(([label, value]) => (
+          <div key={label}>
+            <dt className="label-manifest">{label}</dt>
+            <dd className="font-mono text-cell tabular-nums text-hull">{value}</dd>
+          </div>
+        ))}
+      </dl>
+    );
+  }
+
+  if (!mayEdit) return null;
+
+  return (
+    <div className="mt-3 border-t border-line pt-3">
+      <p className="label-manifest mb-2">Finalisation</p>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <Field
+          id={`containerNo-${clp.id}`}
+          label="Container No"
+          error={containerError ?? undefined}
+          hint={
+            containerError === null && check?.ok === true
+              ? 'Check digit verified.'
+              : '4 letters then 7 digits, like MSKU1234565.'
+          }
+        >
+          <Input
+            id={`containerNo-${clp.id}`}
+            value={containerNo}
+            onChange={(event) => setContainerNo(event.target.value)}
+            placeholder="MSKU1234565"
+            className="font-mono uppercase tabular-nums"
+          />
+        </Field>
+
+        <Field id={`sealNo-${clp.id}`} label="Seal No">
+          <Input
+            id={`sealNo-${clp.id}`}
+            value={sealNo}
+            onChange={(event) => setSealNo(event.target.value)}
+            className="font-mono tabular-nums"
+          />
+        </Field>
+
+        <Field id={`loadAt-${clp.id}`} label="Load date & time">
+          <Input
+            id={`loadAt-${clp.id}`}
+            type="datetime-local"
+            value={loadAt}
+            onChange={(event) => setLoadAt(event.target.value)}
+          />
+        </Field>
+
+        <Field id={`supervisor-${clp.id}`} label="Supervisor">
+          <Select
+            id={`supervisor-${clp.id}`}
+            value={supervisorId}
+            onChange={(event) => setSupervisorId(event.target.value)}
+          >
+            <option value="">—</option>
+            {supervisors.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+
+        <Field id={`tallyMan-${clp.id}`} label="Tally man">
+          <Input
+            id={`tallyMan-${clp.id}`}
+            value={tallyMan}
+            onChange={(event) => setTallyMan(event.target.value)}
+          />
+        </Field>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center justify-end gap-3">
+        {missing.length > 0 && (
+          <span className="mr-auto text-cell text-steel">
+            Needs {missing.join(', ')} before it can be final.
+          </span>
+        )}
+        <Button
+          variant="secondary"
+          size="inline"
+          disabled={busy || containerError !== null}
+          onClick={() => void onSave(details())}
+        >
+          Save CLP
+        </Button>
+        {mayFinalise && (
+          <Button
+            variant="primary"
+            size="inline"
+            disabled={busy || missing.length > 0}
+            onClick={() => setConfirming(true)}
+          >
+            Finalise
+          </Button>
+        )}
+      </div>
+
+      {/*
+        §4.3 — "the finalisation dialog must be a real confirmation step".
+        There is no edit path and re-keying a container plan is expensive, so
+        the figures being signed off appear here rather than a bare
+        "are you sure?".
+      */}
+      <Modal
+        open={confirming}
+        onOpenChange={(open) => !open && setConfirming(false)}
+        title={`Finalise CLP ${clp.clpSeq}?`}
+        description="A final plan cannot be edited. To change it afterwards you cancel it and build a new one."
+      >
+        <dl className="grid grid-cols-2 gap-x-6 gap-y-2">
+          {[
+            ['Container No', containerNo.toUpperCase()],
+            ['Seal No', sealNo],
+            ['Loaded', loadAt === '' ? '—' : new Date(loadAt).toLocaleString()],
+            ['Cartons', whole(clp.totalCtnQty)],
+            [
+              'Volume used',
+              clp.volumeUtilisation === null
+                ? '—'
+                : `${(Number(clp.volumeUtilisation) * 100).toFixed(1)}%`,
+            ],
+            [
+              'Weight used',
+              clp.weightUtilisation === null
+                ? '—'
+                : `${(Number(clp.weightUtilisation) * 100).toFixed(1)}%`,
+            ],
+          ].map(([label, value]) => (
+            <div key={label}>
+              <dt className="label-manifest">{label}</dt>
+              <dd className="font-mono text-body tabular-nums text-hull">{value}</dd>
+            </div>
+          ))}
+        </dl>
+
+        <div className="mt-4 flex justify-end gap-3">
+          <Button variant="secondary" onClick={() => setConfirming(false)} disabled={busy}>
+            Back
+          </Button>
+          <Button
+            variant="primary"
+            disabled={busy}
+            onClick={async () => {
+              await onFinalise({
+                containerNo,
+                sealNo,
+                loadDatetime: new Date(loadAt).toISOString(),
+                supervisorEmployeeId: supervisorId === '' ? null : supervisorId,
+                tallyManName: tallyMan.trim() === '' ? null : tallyMan,
+              });
+              setConfirming(false);
+            }}
+          >
+            Finalise CLP {clp.clpSeq}
+          </Button>
+        </div>
+      </Modal>
+    </div>
+  );
+}
+
+/** An ISO instant as <input type="datetime-local"> wants it, in local time. */
+function toLocalInput(iso: string | null): string {
+  if (iso === null) return '';
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return (
+    `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}` +
+    `T${pad(at.getHours())}:${pad(at.getMinutes())}`
   );
 }
 

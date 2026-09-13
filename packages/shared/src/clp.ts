@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { listQuerySchema } from './api';
+import { normaliseContainerNo, validateContainerNo } from './iso6346';
 
 /**
  * Container Load Plan — MODULE_CLP.md §5.1.
@@ -47,6 +48,45 @@ export interface ClpBookingRow {
 
 export const clpBookingListQuerySchema = listQuerySchema.extend({
   shipmentType: z.enum(['SEA', 'AIR']).optional(),
+});
+
+/**
+ * §5.2's "List of CLP - SEA" — one row per container plan.
+ *
+ * A different question from the booking selector above it. That one asks
+ * "what still needs planning?"; this one asks "where are my container plans,
+ * and which are still drafts?" — which is what someone chasing a sailing
+ * needs, and the booking list cannot answer because it has no CLP rows.
+ */
+export interface ClpListRow {
+  id: string;
+  code: string;
+  clpSeq: number;
+  status: ClpStatus;
+  containerSizeCode: string;
+  containerNo: string | null;
+  sealNo: string | null;
+  loadDatetime: string | null;
+
+  shipmentId: string;
+  bookingCode: string;
+  shippingOrderCode: string | null;
+  customerName: string;
+  exporterName: string | null;
+  commodity: string;
+  shipmentType: string;
+  polName: string;
+  podName: string;
+  requiredContainer: string;
+  carrierName: string | null;
+
+  totalCtnQty: number;
+  totalVolumeCbm: string | null;
+  volumeUtilisation: string | null;
+}
+
+export const clpListQuerySchema = listQuerySchema.extend({
+  status: z.enum(['DRAFT', 'FINAL', 'CANCELLED']).optional(),
 });
 
 // --------------------------------------------------------------- the plan
@@ -123,6 +163,17 @@ export interface ClpCard {
    */
   capacityOverrideBy: string | null;
 
+  /* §5.2's panel — what has been recorded so far, saved or not yet final. */
+  containerNo: string | null;
+  sealNo: string | null;
+  loadDatetime: string | null;
+  supervisorEmployeeId: string | null;
+  supervisorName: string | null;
+  tallyManName: string | null;
+  /** Set once §4.3's one-way door has been walked through. */
+  finalisedAt: string | null;
+  finalisedBy: string | null;
+
   lines: ClpLineRow[];
 }
 
@@ -137,6 +188,8 @@ export interface ClpPlan {
     maxVolumeCbm: string | null;
     maxWeightKg: string | null;
   }[];
+  /** §5.2's Supervisor lookup — the tenant's active employees. */
+  supervisors: { id: string; name: string }[];
   /** §4.4: what the booking declared against what this plan actually uses. */
   reconciliation: {
     required: string;
@@ -191,6 +244,65 @@ export const clpAllocateSchema = z.object({
     .optional(),
 });
 export type ClpAllocateInput = z.input<typeof clpAllocateSchema>;
+
+
+// -------------------------------------------------- the finalisation panel
+
+/**
+ * §5.2's panel, and §4.3's preconditions for FINAL.
+ *
+ * Saving and finalising are deliberately two steps. A planner learns the
+ * container number when the box arrives at the gate and the seal number only
+ * once it is closed, which can be hours apart — forcing both into one
+ * irreversible action would mean either keeping the details on paper until
+ * the end, or finalising a plan before the container is sealed.
+ *
+ * So: SAVE CLP records what is known on a DRAFT, and FINAL is a separate,
+ * confirmed step that refuses unless everything §4.3 lists is present.
+ */
+const isoDateTime = z
+  .string()
+  .trim()
+  .min(1)
+  .refine((v) => !Number.isNaN(Date.parse(v)), 'Use the date and time picker.');
+
+/**
+ * The container number is checked here as well as on the screen, because
+ * §5.2 puts the rule in one utility and this is the boundary that has to
+ * hold — a request need not have come from our form.
+ */
+const containerNo = z
+  .string()
+  .trim()
+  .transform(normaliseContainerNo)
+  .superRefine((value, ctx) => {
+    const result = validateContainerNo(value);
+    if (!result.ok) {
+      ctx.addIssue({ code: 'custom', message: result.message ?? 'Check the container number.' });
+    }
+  });
+
+export const clpDetailsSchema = z.object({
+  containerNo: containerNo.nullish(),
+  sealNo: z.string().trim().max(50, 'That seal number is too long.').nullish(),
+  loadDatetime: isoDateTime.nullish(),
+  supervisorEmployeeId: z.string().nullish(),
+  tallyManName: z.string().trim().max(200, 'That name is too long.').nullish(),
+});
+export type ClpDetailsInput = z.input<typeof clpDetailsSchema>;
+
+/**
+ * §4.3 — FINAL has no edit path, so the confirm step carries the figures the
+ * planner is signing off on rather than just asking "are you sure?".
+ */
+export const clpFinaliseSchema = z.object({
+  containerNo,
+  sealNo: z.string().trim().min(1, 'Enter the seal number.').max(50, 'That seal number is too long.'),
+  loadDatetime: isoDateTime,
+  supervisorEmployeeId: z.string().nullish(),
+  tallyManName: z.string().trim().max(200, 'That name is too long.').nullish(),
+});
+export type ClpFinaliseInput = z.input<typeof clpFinaliseSchema>;
 
 /**
  * What a split of `n` cartons comes to, for the dialog's live preview.
