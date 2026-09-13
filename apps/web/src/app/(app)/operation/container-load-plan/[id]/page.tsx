@@ -11,6 +11,7 @@ import { useParams } from 'next/navigation';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
+import { VirtualContainer } from '@/components/ops/virtual-container';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Input, Select } from '@/components/ui/field';
@@ -168,6 +169,15 @@ export default function ClpBuilderPage() {
   const mayEdit = can('OPERATION.CONTAINER_LOAD_PLAN.CREATE');
   const maySplit = can('OPERATION.CONTAINER_LOAD_PLAN.SPLIT');
   const drafts = plan.clps.filter((c) => c.status === 'DRAFT');
+  /*
+    The biggest capacity on this plan, so every container is drawn to the same
+    scale. Two cards side by side then compare honestly — a 40HC looks longer
+    than a 20STD because it holds more, not because it is on the right.
+  */
+  const largestCbm = Math.max(
+    1,
+    ...plan.clps.map((c) => Number(c.maxVolumeCbm ?? 0)).filter((n) => Number.isFinite(n)),
+  );
 
   return (
     <div className="flex flex-col gap-4">
@@ -384,6 +394,7 @@ export default function ClpBuilderPage() {
             <ClpCardView
               key={clp.id}
               clp={clp}
+              largestCbm={largestCbm}
               isTarget={clp.id === target}
               mayEdit={mayEdit}
               busy={busy}
@@ -431,6 +442,7 @@ export default function ClpBuilderPage() {
 /** One container, with what is in it and how full it is. */
 function ClpCardView({
   clp,
+  largestCbm,
   isTarget,
   mayEdit,
   busy,
@@ -438,14 +450,21 @@ function ClpCardView({
   onRemove,
 }: {
   clp: ClpCard;
+  largestCbm: number;
   isTarget: boolean;
   mayEdit: boolean;
   busy: boolean;
   onRemoveLine: (id: string, label: string) => void;
   onRemove: () => void;
 }) {
-  const volume = clp.volumeUtilisation === null ? null : Number(clp.volumeUtilisation);
-  const weight = clp.weightUtilisation === null ? null : Number(clp.weightUtilisation);
+  /*
+    One band per PO (§5.1). A PO split across two containers appears on both,
+    which is the point of the picture: you can see where it went.
+  */
+  const bands = clp.lines.map((line) => ({
+    poNo: line.poNo,
+    volumeCbm: Number(line.volumeCbm ?? 0),
+  }));
 
   return (
     <section
@@ -481,13 +500,19 @@ function ClpCardView({
       </dl>
 
       {/*
-        Two bars from the first allocation, not only when exceeded (§4.2). A
-        bar past 100% turns --alert; "capacity not set" is said plainly rather
-        than drawn as an empty bar, which would read as room to spare.
+        §5.1's virtual container, shown from the first allocation rather than
+        only when something is wrong — the picture is how a planner sees the
+        shape of the load, not just its failure.
       */}
-      <div className="mb-3 flex flex-col gap-2">
-        <Utilisation label="Volume" ratio={volume} limit={clp.maxVolumeCbm} unit="CBM" />
-        <Utilisation label="Weight" ratio={weight} limit={clp.maxWeightKg} unit="kg" />
+      <div className="mb-3">
+        <VirtualContainer
+          sizeCode={clp.containerSizeCode}
+          maxVolumeCbm={clp.maxVolumeCbm === null ? null : Number(clp.maxVolumeCbm)}
+          maxWeightKg={clp.maxWeightKg === null ? null : Number(clp.maxWeightKg)}
+          usedWeightKg={Number(clp.totalGrossWeightKg ?? 0)}
+          bands={bands}
+          widthFraction={Number(clp.maxVolumeCbm ?? 0) / largestCbm}
+        />
       </div>
 
       {clp.lines.length === 0 ? (
@@ -535,44 +560,6 @@ function ClpCardView({
         </div>
       )}
     </section>
-  );
-}
-
-function Utilisation({
-  label,
-  ratio,
-  limit,
-  unit,
-}: {
-  label: string;
-  ratio: number | null;
-  limit: string | null;
-  unit: string;
-}) {
-  if (limit === null || ratio === null) {
-    return (
-      <p className="text-cell text-steel">
-        {label}: capacity not set for this container size.
-      </p>
-    );
-  }
-  const pct = ratio * 100;
-  const over = ratio > 1;
-  return (
-    <div>
-      <div className="flex items-baseline justify-between text-cell">
-        <span className="label-manifest">{label}</span>
-        <span className={over ? 'font-mono tabular-nums text-alert' : 'font-mono tabular-nums text-hull'}>
-          {pct.toFixed(1)}% of {num(limit, 0)} {unit}
-        </span>
-      </div>
-      <div className="mt-1 h-1.5 w-full rounded-manifest bg-paper">
-        <div
-          className={over ? 'h-1.5 rounded-manifest bg-alert' : 'h-1.5 rounded-manifest bg-harbour'}
-          style={{ width: `${Math.min(100, pct)}%` }}
-        />
-      </div>
-    </div>
   );
 }
 
