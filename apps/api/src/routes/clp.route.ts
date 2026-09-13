@@ -22,7 +22,7 @@ import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
 import { HttpError } from '../lib/http-error';
 import { formatDocumentNo, seriesYearOf } from '../lib/inquiry-no';
 import { Prisma } from '../generated/prisma/client';
-import { renderVolumes } from '../lib/render-volumes';
+import { renderRequiredContainer } from '../lib/render-volumes';
 import { parseId } from '../lib/request';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
 import { authenticate } from '../middleware/authenticate';
@@ -64,6 +64,12 @@ async function findBooking(db: TenantDb, shipmentId: bigint) {
       },
       quotation: {
         select: {
+          /* The agreed containers — see renderRequiredContainer. */
+          lines: {
+            where: { deletedAt: null, isActive: true },
+            orderBy: { sortOrder: 'asc' },
+            select: { containerSizeName: true, quantity: true },
+          },
           inquiry: {
             select: {
               volumes: {
@@ -151,7 +157,7 @@ async function bookingRow(db: TenantDb, row: BookingRow): Promise<ClpBookingRow>
     polCode: row.pol?.portCode ?? '',
     podName: row.pod?.name ?? '—',
     podCode: row.pod?.portCode ?? '',
-    requiredContainer: renderVolumes(row.quotation.inquiry?.volumes ?? []),
+    requiredContainer: renderRequiredContainer(row.quotation.lines, row.quotation.inquiry?.volumes ?? []),
     carrierName: row.carrier?.name ?? null,
     cutOff: so?.cutOff?.toISOString() ?? null,
     etd: so?.etd?.toISOString() ?? null,

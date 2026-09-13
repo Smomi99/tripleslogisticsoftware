@@ -13,7 +13,7 @@ import {
 
 import { Prisma } from '../generated/prisma/client';
 import { HttpError } from '../lib/http-error';
-import { renderVolumes } from '../lib/render-volumes';
+import { renderRequiredContainer } from '../lib/render-volumes';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
 import { authenticate } from '../middleware/authenticate';
 import { requirePermission } from '../middleware/require-permission';
@@ -264,6 +264,12 @@ function handler(worklist: ShipmentWorklistId) {
             quotation: {
               select: {
                 code: true,
+                /* The agreed containers — see renderRequiredContainer. */
+                lines: {
+                  where: { deletedAt: null, isActive: true },
+                  orderBy: { sortOrder: 'asc' },
+                  select: { containerSizeName: true, quantity: true },
+                },
                 inquiry: {
                   select: {
                     volumes: {
@@ -305,7 +311,7 @@ function handler(worklist: ShipmentWorklistId) {
       polCode: row.pol.portCode,
       podName: row.pod.name,
       podCode: row.pod.portCode,
-      requiredContainer: renderVolumes(row.quotation.inquiry.volumes),
+      requiredContainer: renderRequiredContainer(row.quotation.lines, row.quotation.inquiry.volumes),
       transitType: row.transitType,
       goodsHandoverDate: dateOut(row.goodsHandoverDate),
       etd: dateOut(row.etd),

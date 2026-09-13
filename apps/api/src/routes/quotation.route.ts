@@ -33,7 +33,7 @@ import { pullQuotationLines } from '../lib/quotation-pull';
 import { parseId, parseRefId } from '../lib/request';
 import { queueMail } from '../lib/email-queue';
 import { renderQuotationPdf } from '../lib/quotation-pdf';
-import { renderVolumes } from '../lib/render-volumes';
+import { renderRequiredContainer } from '../lib/render-volumes';
 import { openFile } from '../lib/storage';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
 import { type AuthContext, authenticate } from '../middleware/authenticate';
@@ -751,11 +751,17 @@ quotationRouter.get('/quotations', requirePermission(`${FEATURE}.VIEW`), async (
           shipmentType: true,
           status: true,
           totalAmountUsd: true,
-          // Only what says which currency the total is in — the list has no
-          // room for the charges themselves.
+          // Which currency the total is in, and the containers that were
+          // agreed — the list has no room for the charges themselves.
           lines: {
             where: { deletedAt: null },
-            select: { currencyCode: true, totalAmount: true },
+            orderBy: { sortOrder: 'asc' },
+            select: {
+              currencyCode: true,
+              totalAmount: true,
+              containerSizeName: true,
+              quantity: true,
+            },
           },
           customer: { select: { name: true } },
           pol: { select: { name: true, portCode: true } },
@@ -797,7 +803,7 @@ quotationRouter.get('/quotations', requirePermission(`${FEATURE}.VIEW`), async (
     polName: row.pol?.name ?? null,
     podCode: row.pod?.portCode ?? null,
     podName: row.pod?.name ?? null,
-    requiredContainer: renderVolumes(row.inquiry.volumes),
+    requiredContainer: renderRequiredContainer(row.lines, row.inquiry.volumes),
     validityDate: day(row.validityDate),
     status: row.status,
     totalAmountUsd: num(row.totalAmountUsd),
