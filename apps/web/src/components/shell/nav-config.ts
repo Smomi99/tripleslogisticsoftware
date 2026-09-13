@@ -94,6 +94,7 @@ const ROUTES: Record<string, RouteEntry> = {
   'CUSTOMER_SERVICE.SHIPMENT_APPROVAL': '/cs/shipment-approval',
   'CUSTOMER_SERVICE.SHIPPING_ORDER': '/cs/shipping-order',
   'OPERATION.CARGO_RECEIPT': '/operation/cargo-receipt',
+  'OPERATION.CONTAINER_LOAD_PLAN': '/operation/container-load-plan',
 };
 
 /**
