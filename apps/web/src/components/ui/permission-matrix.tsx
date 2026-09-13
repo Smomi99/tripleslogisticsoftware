@@ -71,6 +71,10 @@ const ACTION_LABEL: Record<Action, string> = {
   DECLINE_LINE: 'Decline line',
   SHORT_CLOSE: 'Short close',
   OVERRIDE_QTY: 'Override qty',
+  // MODULE_CLP.md §6 — all three sit with a supervisor.
+  SPLIT: 'Split',
+  FINALISE: 'Finalise',
+  OVERRIDE_CAPACITY: 'Override capacity',
   SET_OUTCOME: 'Won / lost',
   PRICE_CHECK: 'Price check',
   SEND: 'Send',

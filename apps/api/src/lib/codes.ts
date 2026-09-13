@@ -40,6 +40,7 @@ const CODE_TABLES = {
   industrySector: 'industry_sector',
   commodityItem: 'commodity_item',
   commodityBusinessPort: 'commodity_business_port',
+  clp: 'clp',
   customer: 'customer',
   customerPic: 'customer_pic',
   agent: 'agent',

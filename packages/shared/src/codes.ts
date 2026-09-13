@@ -39,6 +39,7 @@ export const CODE_PREFIX = {
   industrySector: 'ISC',
   commodityItem: 'CIT',
   commodityBusinessPort: 'CBP',
+  clp: 'CLP',
 
   goodsType: 'GDT',
   containerSize: 'CNT',
