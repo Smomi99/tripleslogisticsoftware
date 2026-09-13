@@ -111,6 +111,18 @@ export interface ClpCard {
   volumeUtilisation: string | null;
   weightUtilisation: string | null;
 
+  /*
+    §4.2 — set only where a supervisor knowingly loaded past the volume limit.
+    Weight is never overridable, so these never explain an overweight box.
+  */
+  capacityOverrideReason: string | null;
+  /**
+   * Who allowed it, by name. There is no "when" column — audit_log holds the
+   * timestamp, and duplicating it on the row would be a second thing to keep
+   * true.
+   */
+  capacityOverrideBy: string | null;
+
   lines: ClpLineRow[];
 }
 
@@ -130,8 +142,22 @@ export interface ClpPlan {
     required: string;
     planned: string;
     matches: boolean;
+    /** "3 POs fully allocated" — the sentence §4.4 asks to always show. */
+    fullyAllocatedPos: number;
+    /** The ones that are not, named, because "20 cartons left" is not actionable. */
+    outstanding: { poNo: string; ctnQty: number }[];
   };
 }
+
+/**
+ * §4.2 — the refusal a supervisor can answer.
+ *
+ * Named rather than recognised from its wording: the screen decides whether
+ * to offer the override dialog on this code, and matching the prose instead
+ * would quietly remove that path the first time somebody improved the
+ * sentence.
+ */
+export const CLP_OVER_VOLUME = 'CLP_OVER_VOLUME';
 
 // -------------------------------------------------------------- the inputs
 
@@ -153,6 +179,16 @@ export const clpAllocateSchema = z.object({
     .number()
     .int('Cartons come in whole numbers.')
     .positive('Enter at least one carton.'),
+  /*
+    §4.2 — sent only when a supervisor is knowingly loading past the volume
+    limit. Weight is never overridable, so this never excuses it.
+  */
+  overrideReason: z
+    .string()
+    .trim()
+    .min(5, 'Say why this container may go over its volume.')
+    .max(500, 'That reason is too long.')
+    .optional(),
 });
 export type ClpAllocateInput = z.input<typeof clpAllocateSchema>;
 

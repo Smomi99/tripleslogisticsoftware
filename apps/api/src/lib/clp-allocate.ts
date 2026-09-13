@@ -1,3 +1,5 @@
+import { CLP_OVER_VOLUME } from '@ff/shared';
+
 import { Prisma } from '../generated/prisma/client';
 import { HttpError } from './http-error';
 import type { TenantDb } from './tenant-client';
@@ -188,7 +190,15 @@ async function recomputeCargoLine(
  * Stored rather than summed at read time, so the list screen, the virtual
  * container and the printed document cannot each arrive at a different figure.
  */
-async function recomputeClp(db: TenantDb, actor: Actor, clpId: bigint): Promise<void> {
+export interface ClpLoad {
+  sizeCode: string;
+  volumeCbm: Prisma.Decimal;
+  grossWeightKg: Prisma.Decimal;
+  maxVolumeCbm: Prisma.Decimal | null;
+  maxWeightKg: Prisma.Decimal | null;
+}
+
+async function recomputeClp(db: TenantDb, actor: Actor, clpId: bigint): Promise<ClpLoad> {
   const [lines, plan] = await Promise.all([
     db.clpLine.findMany({
       where: { clpId, deletedAt: null },
@@ -202,7 +212,11 @@ async function recomputeClp(db: TenantDb, actor: Actor, clpId: bigint): Promise<
     }),
     db.clp.findFirstOrThrow({
       where: { id: clpId },
-      select: { containerSize: { select: { maxVolumeCbm: true, maxWeightKg: true } } },
+      select: {
+        containerSize: {
+          select: { code: true, maxVolumeCbm: true, maxWeightKg: true },
+        },
+      },
     }),
   ]);
 
@@ -237,6 +251,107 @@ async function recomputeClp(db: TenantDb, actor: Actor, clpId: bigint): Promise<
       updatedBy: actor.userId,
     },
   });
+
+  return {
+    sizeCode: plan.containerSize.code,
+    volumeCbm: cbm,
+    grossWeightKg: gwt,
+    maxVolumeCbm: plan.containerSize.maxVolumeCbm,
+    maxWeightKg: plan.containerSize.maxWeightKg,
+  };
+}
+
+/**
+ * What a plan may not do — MODULE_CLP.md §4.2.
+ *
+ * Both limits block. The difference is what can be done about it:
+ *
+ *   Weight is never overridable. An overweight container is a legal and
+ *   safety matter at the port, and no reason typed into this system makes a
+ *   crane lift it.
+ *
+ *   Volume blocks too, but somebody holding OVERRIDE_CAPACITY may proceed in
+ *   writing — cartons do compress, and a supervisor standing in the warehouse
+ *   knows something the CBM column does not.
+ *
+ * Exactly 100% is allowed and only above it is an exception. The client plans
+ * a 20STD to exactly 28.0 CBM, so treating full as over would trip on every
+ * plan they make.
+ */
+function assertWithinCapacity(
+  load: ClpLoad,
+  clpSeq: number,
+  override: { reason: string } | null,
+): { overVolume: boolean } {
+  const fmt = (v: Prisma.Decimal, dp: number) =>
+    Number(v.toFixed(dp)).toLocaleString('en-US', {
+      minimumFractionDigits: dp,
+      maximumFractionDigits: dp,
+    });
+
+  if (load.maxWeightKg !== null && load.grossWeightKg.greaterThan(load.maxWeightKg)) {
+    throw HttpError.conflict(
+      `That would put CLP ${clpSeq} at ${fmt(load.grossWeightKg, 0)} kg in a ` +
+        `${fmt(load.maxWeightKg, 0)} kg ${load.sizeCode} — ` +
+        `${fmt(load.grossWeightKg.minus(load.maxWeightKg), 0)} kg over. ` +
+        'An overweight container cannot be loaded, and this one cannot be overridden.',
+    );
+  }
+
+  const overVolume =
+    load.maxVolumeCbm !== null && load.volumeCbm.greaterThan(load.maxVolumeCbm);
+
+  if (overVolume && override === null) {
+    throw new HttpError(
+      409,
+      CLP_OVER_VOLUME,
+      `That would put CLP ${clpSeq} at ${fmt(load.volumeCbm, 2)} CBM in a ` +
+        `${fmt(load.maxVolumeCbm!, 0)} CBM ${load.sizeCode} — ` +
+        `${fmt(load.volumeCbm.minus(load.maxVolumeCbm!), 2)} CBM over. ` +
+        'A supervisor can override this with a reason.',
+    );
+  }
+
+  return { overVolume };
+}
+
+/**
+ * Keeps the override flag telling the truth about the container it is on.
+ *
+ * It is set only where the load really is over volume — a reason sent with an
+ * allocation that fits would otherwise brand a perfectly legal container as
+ * over-stuffed — and cleared as soon as it is not, so a box that has had
+ * cargo taken back out stops carrying somebody's stale excuse.
+ *
+ * audit_log keeps the whole history either way; this column only ever
+ * describes the container as it stands now.
+ */
+async function syncOverride(
+  db: TenantDb,
+  actor: Actor,
+  clpId: bigint,
+  overVolume: boolean,
+  override: { reason: string } | null,
+): Promise<void> {
+  if (overVolume && override !== null) {
+    await db.clp.update({
+      where: { id: clpId },
+      data: {
+        capacityOverrideBy: actor.userId,
+        capacityOverrideReason: override.reason,
+        updatedBy: actor.userId,
+      },
+    });
+    return;
+  }
+
+  if (!overVolume) {
+    // clp_override_ck requires the pair to move together.
+    await db.clp.updateMany({
+      where: { id: clpId, capacityOverrideBy: { not: null } },
+      data: { capacityOverrideBy: null, capacityOverrideReason: null, updatedBy: actor.userId },
+    });
+  }
 }
 
 /**
@@ -253,7 +368,17 @@ async function recomputeClp(db: TenantDb, actor: Actor, clpId: bigint): Promise<
 export async function allocate(
   db: TenantDb,
   actor: Actor,
-  input: { cargoLineId: bigint; clpId: bigint; ctnQty: number },
+  input: {
+    cargoLineId: bigint;
+    clpId: bigint;
+    ctnQty: number;
+    /*
+      §4.2. The ROUTE decides whether this user may override — permissions are
+      not this function's business — and passes the reason through if so. Null
+      means no override was offered, which is the ordinary case.
+    */
+    override?: { reason: string } | null;
+  },
 ): Promise<{ clpLineId: bigint }> {
   if (!Number.isInteger(input.ctnQty) || input.ctnQty <= 0) {
     throw HttpError.badRequest('Enter a whole number of cartons, greater than zero.');
@@ -285,7 +410,7 @@ export async function allocate(
 
   const plan = await db.clp.findFirst({
     where: { id: input.clpId, deletedAt: null },
-    select: { id: true, status: true },
+    select: { id: true, status: true, clpSeq: true },
   });
   if (plan === null) throw HttpError.notFound('That load plan no longer exists.');
   if (plan.status !== 'DRAFT') {
@@ -346,7 +471,21 @@ export async function allocate(
         ).id;
 
   const touched = await recomputeCargoLine(db, actor, cargo.id);
-  for (const id of touched) await recomputeClp(db, actor, id);
+  const loads = new Map<string, ClpLoad>();
+  for (const id of touched) loads.set(id.toString(), await recomputeClp(db, actor, id));
+
+  /*
+    Checked against what was actually written rather than against a prediction.
+    withTenant is a transaction, so a refusal here unwinds the insert and the
+    rollups with it — the plan is left exactly as the planner found it, and
+    there is no second arithmetic to disagree with the first.
+  */
+  const load = loads.get(input.clpId.toString());
+  if (load !== undefined) {
+    const { overVolume } = assertWithinCapacity(load, plan.clpSeq, input.override ?? null);
+    // §4.2: recorded on the plan, and in audit_log by the row trigger.
+    await syncOverride(db, actor, input.clpId, overVolume, input.override ?? null);
+  }
 
   return { clpLineId };
 }
@@ -382,5 +521,14 @@ export async function deallocate(
   });
 
   const touched = await recomputeCargoLine(db, actor, row.shipmentCargoLineId);
-  for (const id of new Set([...touched, row.clpId])) await recomputeClp(db, actor, id);
+  for (const id of new Set([...touched, row.clpId])) {
+    const load = await recomputeClp(db, actor, id);
+    /*
+      Taking cargo out can bring a container back under its limit. The excuse
+      for going over should not outlive the reason for it.
+    */
+    const stillOver =
+      load.maxVolumeCbm !== null && load.volumeCbm.greaterThan(load.maxVolumeCbm);
+    await syncOverride(db, actor, id, stillOver, null);
+  }
 }

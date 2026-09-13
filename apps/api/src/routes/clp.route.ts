@@ -239,6 +239,10 @@ async function cards(db: TenantDb, shipmentId: bigint): Promise<ClpCard[]> {
       totalVolumeCbm: true,
       volumeUtilisation: true,
       weightUtilisation: true,
+      capacityOverrideReason: true,
+      capacityOverrideUser: {
+        select: { username: true, employee: { select: { name: true } } },
+      },
       lines: {
         where: { deletedAt: null },
         orderBy: { id: 'asc' },
@@ -277,6 +281,17 @@ async function cards(db: TenantDb, shipmentId: bigint): Promise<ClpCard[]> {
     totalVolumeCbm: dec(row.totalVolumeCbm),
     volumeUtilisation: dec(row.volumeUtilisation),
     weightUtilisation: dec(row.weightUtilisation),
+    /*
+      §4.2 — the reason goes back to the screen, not only to audit_log. A
+      container at 107% with no explanation on it is the thing a supervisor
+      wrote the reason to prevent; whoever opens the plan next is exactly who
+      needs to read it.
+    */
+    capacityOverrideReason: row.capacityOverrideReason,
+    capacityOverrideBy:
+      row.capacityOverrideUser === null
+        ? null
+        : (row.capacityOverrideUser.employee?.name ?? row.capacityOverrideUser.username),
     lines: row.lines.map((l) => ({
       id: l.id.toString(),
       cargoLineId: l.shipmentCargoLineId.toString(),
@@ -375,6 +390,22 @@ async function buildPlan(db: TenantDb, shipmentId: bigint): Promise<ClpPlan> {
     }),
   ]);
 
+  /*
+    §4.4 — "fully allocated" is a claim about this plan, so it is counted from
+    the plan: a PO with cargo loaded and nothing left in the pool.
+
+    It deliberately does NOT count every PO on the shipment. A PO whose goods
+    have not been received yet never reaches the pool, so counting it would
+    report it as finished while it is still at the supplier — the one reading
+    of this sentence that would actually mislead a planner.
+  */
+  const allocatedPos = new Set(
+    clps
+      .filter((c) => c.status !== 'CANCELLED')
+      .flatMap((c) => c.lines.map((l) => l.poNo)),
+  );
+  const outstandingPos = new Set(poolRows.map((r) => r.poNo));
+
   const planned = describeContainers(
     clps.filter((c) => c.status !== 'CANCELLED').map((c) => c.containerSizeName),
   );
@@ -399,6 +430,19 @@ async function buildPlan(db: TenantDb, shipmentId: bigint): Promise<ClpPlan> {
       required: row.requiredContainer,
       planned,
       matches: row.requiredContainer === planned,
+      /*
+        §4.4 — "Always show the unallocated balance." Named rather than
+        summed: "PO-004 has 20 cartons unassigned" tells a planner where to
+        look, where "20 cartons unassigned" tells them only that they are not
+        finished.
+      */
+      fullyAllocatedPos: [...allocatedPos].filter((po) => !outstandingPos.has(po)).length,
+      outstanding: [...outstandingPos].map((poNo) => ({
+        poNo,
+        ctnQty: poolRows
+          .filter((r) => r.poNo === poNo)
+          .reduce((sum, r) => sum + r.ctnQty, 0),
+      })),
     },
   };
 }
@@ -505,10 +549,29 @@ clpRouter.post('/clps/:id/lines', requirePermission(`${FEATURE}.CREATE`), async 
     });
     if (plan === null) throw HttpError.notFound('That load plan no longer exists.');
 
+    /*
+      §4.2 — whether this user may override is the route's decision, not the
+      service's. An override offered by somebody without the right is refused
+      outright rather than quietly ignored: a planner who typed a reason and
+      saw it saved would believe they had done something they had not.
+    */
+    let override: { reason: string } | null = null;
+    if (input.overrideReason !== undefined) {
+      const mayOverride =
+        auth.isSuperadmin || auth.permissions.has(`${FEATURE}.OVERRIDE_CAPACITY`);
+      if (!mayOverride) {
+        throw HttpError.forbidden(
+          'Loading a container past its volume needs a supervisor. Ask one to do it, ' +
+            'or take some cargo out.',
+        );
+      }
+      override = { reason: input.overrideReason };
+    }
+
     await allocate(
       db,
       { tenantId: auth.tenantId, userId: auth.userId },
-      { cargoLineId, clpId, ctnQty: input.ctnQty },
+      { cargoLineId, clpId, ctnQty: input.ctnQty, override },
     );
     return buildPlan(db, plan.shipmentId);
   });

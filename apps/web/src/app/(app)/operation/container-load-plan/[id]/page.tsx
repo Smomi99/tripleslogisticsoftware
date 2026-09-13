@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  CLP_OVER_VOLUME,
   type ClpCard,
   type ClpPlan,
   type ClpPoolRow,
@@ -37,6 +38,27 @@ import { useSession } from '@/lib/session';
  * instruction: "we always work at carton level".
  */
 
+/**
+ * §4.4's balance, in one sentence.
+ *
+ * The POs are named rather than summed: "20 cartons unassigned" tells a
+ * planner only that they are not finished, where "PO-004 has 20 cartons
+ * unassigned" tells them where to look.
+ *
+ * The "fully allocated" clause is dropped when it is zero — opening with
+ * "0 POs fully allocated" reads as a rebuke on a plan nobody has started yet.
+ */
+function balanceSentence(r: ClpPlan['reconciliation']): string {
+  if (r.outstanding.length === 0) return 'Every received carton is assigned to a container.';
+
+  const left = r.outstanding
+    .map((o) => `${o.poNo} has ${o.ctnQty} cartons unassigned`)
+    .join('; ');
+  if (r.fullyAllocatedPos === 0) return `${left}.`;
+  const done = `${r.fullyAllocatedPos} PO${r.fullyAllocatedPos === 1 ? '' : 's'} fully allocated`;
+  return `${done}. ${left}.`;
+}
+
 const num = (v: string | number | null | undefined, dp = 2): string => {
   if (v === null || v === undefined || v === '') return '—';
   const n = Number(v);
@@ -59,6 +81,14 @@ export default function ClpBuilderPage() {
   const [target, setTarget] = useState<string>('');
   const [splitting, setSplitting] = useState<ClpPoolRow | null>(null);
   const [toRemove, setToRemove] = useState<{ id: string; label: string } | null>(null);
+  /*
+    §4.2 — what was refused for volume, held so a supervisor can send it again
+    with a reason. Keeping the attempt means they do not have to retype the
+    split they just described.
+  */
+  const [blocked, setBlocked] = useState<
+    { row: ClpPoolRow; ctnQty: number; why: string } | null
+  >(null);
 
   const endpoint = `/api/tenant/ops/bookings/${shipmentId}/clp`;
 
@@ -93,12 +123,22 @@ export default function ClpBuilderPage() {
     if (sizeId === '') return;
     setBusy(true);
     try {
-      await authorizedRequest(`/api/tenant/ops/bookings/${shipmentId}/clps`, {
-        method: 'POST',
-        body: { containerSizeId: sizeId },
-      });
+      const added = await authorizedRequest<{ id: string }>(
+        `/api/tenant/ops/bookings/${shipmentId}/clps`,
+        { method: 'POST', body: { containerSizeId: sizeId } },
+      );
       toast.success('Container added to the plan');
       await load();
+      /*
+        Aim at the container that was just added. Somebody adds a box because
+        they have cargo for it, and the previous target is usually the one
+        that just ran out of room — leaving the selection there sends the next
+        `add` straight back into the container they were trying to relieve.
+
+        This runs after load(), which sets the target itself and would
+        otherwise overwrite it.
+      */
+      setTarget(added.id);
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : 'Could not add that container.');
     } finally {
@@ -107,7 +147,7 @@ export default function ClpBuilderPage() {
   }
 
   /** §2.2: both buttons land here. `add` simply passes the whole balance. */
-  async function put(row: ClpPoolRow, ctnQty: number): Promise<void> {
+  async function put(row: ClpPoolRow, ctnQty: number, overrideReason?: string): Promise<void> {
     if (target === '') {
       toast.error('Add a container first, then choose which one to load into.');
       return;
@@ -116,15 +156,36 @@ export default function ClpBuilderPage() {
     try {
       const next = await authorizedRequest<ClpPlan>(`/api/tenant/ops/clps/${target}/lines`, {
         method: 'POST',
-        body: { cargoLineId: row.cargoLineId, ctnQty },
+        body: {
+          cargoLineId: row.cargoLineId,
+          ctnQty,
+          ...(overrideReason === undefined ? {} : { overrideReason }),
+        },
       });
       apply(next);
       setSplitting(null);
-      toast.success(`${ctnQty} cartons of ${row.poNo} loaded`);
+      setBlocked(null);
+      toast.success(
+        overrideReason === undefined
+          ? `${ctnQty} cartons of ${row.poNo} loaded`
+          : `${ctnQty} cartons of ${row.poNo} loaded over capacity — the reason is on the plan`,
+      );
     } catch (error) {
-      // The refusal names the PO and the balance (§4.1), so it goes through
-      // as it came rather than being replaced with something vaguer.
-      toast.error(error instanceof ApiError ? error.message : 'Could not load that cargo.');
+      const message =
+        error instanceof ApiError ? error.message : 'Could not load that cargo.';
+      /*
+        §4.2 — a volume refusal is the one that has a way through. Offer it
+        only to somebody who actually holds the right: showing the dialog to a
+        planner who cannot use it would be a promise the server then breaks.
+      */
+      if (error instanceof ApiError && error.code === CLP_OVER_VOLUME && mayOverride) {
+        setSplitting(null);
+        setBlocked({ row, ctnQty, why: message });
+      } else {
+        // The refusal names the PO and the figures (§4.1), so it goes through
+        // as it came rather than being replaced with something vaguer.
+        toast.error(message);
+      }
     } finally {
       setBusy(false);
     }
@@ -168,6 +229,7 @@ export default function ClpBuilderPage() {
 
   const mayEdit = can('OPERATION.CONTAINER_LOAD_PLAN.CREATE');
   const maySplit = can('OPERATION.CONTAINER_LOAD_PLAN.SPLIT');
+  const mayOverride = can('OPERATION.CONTAINER_LOAD_PLAN.OVERRIDE_CAPACITY');
   const drafts = plan.clps.filter((c) => c.status === 'DRAFT');
   /*
     The biggest capacity on this plan, so every container is drawn to the same
@@ -217,11 +279,8 @@ export default function ClpBuilderPage() {
             {plan.reconciliation.planned}.
           </p>
         )}
-        <p className="mt-3 text-cell text-steel">
-          {plan.booking.unallocatedCtnQty === 0
-            ? 'Every received carton is assigned to a container.'
-            : `${plan.booking.unallocatedCtnQty} cartons still unassigned.`}
-        </p>
+        {/* §4.4 — always shown, and the outstanding POs named. */}
+        <p className="mt-3 text-cell text-steel">{balanceSentence(plan.reconciliation)}</p>
       </section>
 
       {/* --------------------------------------------- select container (§5.1) */}
@@ -421,6 +480,22 @@ export default function ClpBuilderPage() {
         )}
       </Modal>
 
+      <Modal
+        open={blocked !== null}
+        onOpenChange={(open) => !open && setBlocked(null)}
+        title="This container will be over its volume"
+        description="Say why it may go ahead. The reason is kept on the plan and in the audit trail."
+      >
+        {blocked !== null && (
+          <OverrideForm
+            why={blocked.why}
+            pending={busy}
+            onCancel={() => setBlocked(null)}
+            onSubmit={(reason) => put(blocked.row, blocked.ctnQty, reason)}
+          />
+        )}
+      </Modal>
+
       <ConfirmDialog
         open={toRemove !== null}
         onOpenChange={(open) => !open && setToRemove(null)}
@@ -515,6 +590,21 @@ function ClpCardView({
         />
       </div>
 
+      {/*
+        §4.2 — the reason a supervisor gave, on the container it excuses.
+        Written where the 107% is read, because that is where the question
+        gets asked.
+      */}
+      {clp.capacityOverrideReason !== null && (
+        <p className="mb-3 rounded-manifest border border-signal/40 bg-signal/5 px-3 py-2 text-cell text-hull">
+          <span className="label-manifest text-signal">Loaded over capacity</span>{' '}
+          <span className="ml-1">{clp.capacityOverrideReason}</span>
+          {clp.capacityOverrideBy !== null && (
+            <span className="text-steel"> — allowed by {clp.capacityOverrideBy}</span>
+          )}
+        </p>
+      )}
+
       {clp.lines.length === 0 ? (
         <p className="text-cell text-steel">
           Nothing loaded yet.
@@ -560,6 +650,59 @@ function ClpCardView({
         </div>
       )}
     </section>
+  );
+}
+
+/**
+ * §4.2's override — a supervisor saying, in writing, that this box takes more
+ * than its stated volume.
+ *
+ * Weight never reaches here: an overweight container is a legal and safety
+ * matter at the port, and the service refuses it outright.
+ */
+function OverrideForm({
+  why,
+  pending,
+  onCancel,
+  onSubmit,
+}: {
+  why: string;
+  pending: boolean;
+  onCancel: () => void;
+  onSubmit: (reason: string) => Promise<void>;
+}) {
+  const [reason, setReason] = useState('');
+  const ready = reason.trim().length >= 5;
+
+  return (
+    <FormLayout
+      onSubmit={(event: FormEvent) => {
+        event.preventDefault();
+        if (ready) void onSubmit(reason.trim());
+      }}
+      onCancel={onCancel}
+      isPending={pending}
+      submitDisabled={!ready}
+      submitLabel="Load it anyway"
+    >
+      <p className="rounded-manifest border border-alert/30 bg-alert/5 px-3 py-2 text-body text-hull">
+        {why}
+      </p>
+      <Field
+        id="overrideReason"
+        label="Why this is acceptable"
+        required
+        hint="Kept on the plan and in the audit trail, against your name."
+      >
+        <Input
+          id="overrideReason"
+          autoFocus
+          value={reason}
+          onChange={(event) => setReason(event.target.value)}
+          placeholder="Cartons compress; supervisor present at stuffing."
+        />
+      </Field>
+    </FormLayout>
   );
 }
 
