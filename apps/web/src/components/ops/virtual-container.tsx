@@ -228,18 +228,34 @@ export function VirtualContainer({
         dp={0}
       />
 
-      {/* The legend carries every PO, including the bands too narrow to label. */}
+      {/*
+        The legend carries every PO, including the bands too narrow to label.
+
+        The share is against the container's CAPACITY, not against the load,
+        so these percentages add up to the volume figure in the bar above —
+        "88.8% + 7.9%" reads back as the 96.7% the box is filled to. Against
+        the load they would always total 100% and say nothing about how full
+        the container is, which is the question the picture exists to answer.
+      */}
       {bands.length > 0 && (
         <figcaption className="mt-1 flex flex-wrap gap-x-4 gap-y-1">
           {drawn.map((band) => (
-            <span key={`legend-${band.poNo}`} className="inline-flex items-center gap-1.5">
+            <span key={`legend-${band.poNo}-${band.x}`} className="inline-flex items-center gap-1.5">
               <span
                 aria-hidden="true"
                 className="inline-block size-2.5 rounded-[2px]"
                 style={{ backgroundColor: band.fill, opacity: band.opacity }}
               />
               <span className="font-mono text-cell tabular-nums text-hull">{band.poNo}</span>
-              <span className="text-cell text-steel">{num(band.volumeCbm, 2)} CBM</span>
+              <span className="font-mono text-cell tabular-nums text-steel">
+                {num(band.volumeCbm, 2)} CBM
+              </span>
+              <span aria-hidden="true" className="text-cell text-line">
+                &middot;
+              </span>
+              <span className="font-mono text-cell tabular-nums text-hull">
+                {num((band.volumeCbm / maxVolumeCbm) * 100, 1)}%
+              </span>
             </span>
           ))}
         </figcaption>
