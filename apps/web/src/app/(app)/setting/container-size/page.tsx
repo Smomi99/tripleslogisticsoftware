@@ -32,6 +32,36 @@ export default function ContainerSizePage() {
       numeric: true,
       cell: (r) => r.teuFactor,
     },
+    /*
+      What the box holds (MODULE_CLP.md §3.1). Blank is shown as "not set"
+      rather than a dash, because the load plan cannot check a limit nobody
+      has recorded and the person maintaining this screen is the one who can
+      fix that.
+    */
+    {
+      id: 'maxVolumeCbm',
+      header: 'Max Volume',
+      numeric: true,
+      align: 'right',
+      cell: (r) =>
+        r.maxVolumeCbm === null ? (
+          <span className="text-steel">not set</span>
+        ) : (
+          `${Number(r.maxVolumeCbm).toLocaleString('en-US', { maximumFractionDigits: 2 })} CBM`
+        ),
+    },
+    {
+      id: 'maxWeightKg',
+      header: 'Max Weight',
+      numeric: true,
+      align: 'right',
+      cell: (r) =>
+        r.maxWeightKg === null ? (
+          <span className="text-steel">not set</span>
+        ) : (
+          `${Number(r.maxWeightKg).toLocaleString('en-US')} kg`
+        ),
+    },
     { id: 'sortOrder', header: 'Order', numeric: true, cell: (r) => String(r.sortOrder) },
   ];
 
@@ -70,7 +100,15 @@ function ContainerSizeForm({
     formState: { errors, isSubmitting },
   } = useForm<ContainerSizeInput>({
     resolver: zodResolver(containerSizeInputSchema),
-    defaultValues: { code: '', name: '', teuFactor: '1', sortOrder: '' },
+    defaultValues: {
+      code: '',
+      name: '',
+      teuFactor: '1',
+      sortOrder: '',
+      maxVolumeCbm: '',
+      maxWeightKg: '',
+      tareWeightKg: '',
+    },
   });
 
   useEffect(() => {
@@ -79,6 +117,9 @@ function ContainerSizeForm({
       name: row?.name ?? '',
       teuFactor: row?.teuFactor ?? '1',
       sortOrder: row === null ? '' : String(row.sortOrder),
+      maxVolumeCbm: row?.maxVolumeCbm ?? '',
+      maxWeightKg: row?.maxWeightKg ?? '',
+      tareWeightKg: row?.tareWeightKg ?? '',
     });
     setFormError(null);
   }, [row, reset]);
@@ -127,6 +168,36 @@ function ContainerSizeForm({
         error={errors.sortOrder?.message}
       >
         <Input id="sortOrder" numeric inputMode="numeric" {...register('sortOrder')} />
+      </Field>
+      {/*
+        The container load plan blocks a plan that goes over either of these,
+        so they are the numbers deciding whether cargo physically fits. Left
+        blank the plan says the capacity is not set rather than treating the
+        box as bottomless.
+      */}
+      <Field
+        id="maxVolumeCbm"
+        label="Max volume (CBM)"
+        hint="What the box holds. The load plan blocks a plan above this."
+        error={errors.maxVolumeCbm?.message}
+      >
+        <Input id="maxVolumeCbm" numeric inputMode="decimal" {...register('maxVolumeCbm')} />
+      </Field>
+      <Field
+        id="maxWeightKg"
+        label="Max weight (kg)"
+        hint="Payload limit. Overweight is a port safety matter, so this one never bends."
+        error={errors.maxWeightKg?.message}
+      >
+        <Input id="maxWeightKg" numeric inputMode="decimal" {...register('maxWeightKg')} />
+      </Field>
+      <Field
+        id="tareWeightKg"
+        label="Tare weight (kg)"
+        hint="The empty container's own weight. Optional."
+        error={errors.tareWeightKg?.message}
+      >
+        <Input id="tareWeightKg" numeric inputMode="decimal" {...register('tareWeightKg')} />
       </Field>
     </FormLayout>
   );
