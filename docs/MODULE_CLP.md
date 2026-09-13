@@ -88,6 +88,13 @@ shipment_cargo_line
 Booking data entry does not change — the user still types totals, and the per-carton values derive
 from them.
 
+> **Built 2026-09-13, with one correction.** `cbm_per_carton` cannot be written as
+> `volume_cbm / NULLIF(ctn_qty,0)`: `volume_cbm` is itself a generated column and Postgres refuses
+> — *"a generated column cannot reference another generated column"*. It is stored as the carton's
+> own volume instead, `(L × W × H) / 1000000`, which is the same number, since `volume_cbm` is
+> exactly that multiplied by the carton count. `chargeable_wt_kg` on the same table already works
+> around the identical restriction.
+
 **The rounding rule — implement exactly; it is the one place this module can silently lose data.**
 
 Per-carton values rarely divide evenly (the client's own PO-003 is 5,000 PCS over 300 cartons =
@@ -116,6 +123,18 @@ measure reconciles.
 If an allocation is later removed or changed, **recompute the whole line's allocations** rather than
 patching one row — otherwise the remainder stays attached to a split that is no longer last.
 
+> **Confirmed 2026-09-13 — which totals the remainder reconciles to.** The pool is drawn from the
+> receipt (§2.4), and the **booked line totals stay the reference and the remainder basis**. So the
+> last allocation subtracts from `pcs_qty`, `net_weight_kg`, `gross_weight_kg` and `volume_cbm` on
+> `shipment_cargo_line`, exactly as written above.
+>
+> Where a line is received in full — the ordinary case — the two bases are the same number and this
+> is simply the rule as drafted. They diverge only on a short receipt: 280 cartons arriving against
+> 300 booked means the pool empties at 280, and the final allocation then absorbs the pieces and
+> weight of the 20 cartons that never arrived. On the client's own PO-003 that is 5,000 pieces
+> recorded against 280 cartons. Implement as confirmed; raise it again if a short receipt ever
+> reaches a printed CLP.
+
 ### 2.4 CLP packs what was received — confirmed
 
 ```
@@ -124,6 +143,11 @@ available_cartons = Σ accepted cargo_receipt_line ctn  −  Σ already allocate
 
 Not booked quantity. If 280 of 300 cartons arrived, the pool offers 280. Declined receipt lines never
 enter the pool.
+
+> **Confirmed 2026-09-13.** Quantity, weight and volume all come from `cargo_receipt_line` —
+> `received_ctn_qty`, `received_net_weight_kg`, `received_gross_weight_kg`, `received_volume_cbm` —
+> for what may be allocated and for what the container is carrying. The booked totals on
+> `shipment_cargo_line` remain the reference they are compared against.
 
 ---
 
@@ -150,6 +174,16 @@ container_size
 ```
 
 Editable in Settings — these limits vary by carrier and lane, and the client will want to change them.
+
+> **Confirmed 2026-09-13.** `container_size` is system-capable (`CLAUDE.md` §7A rule 7): the four
+> seeded sizes are shared with every workspace and stay **read-only**. A workspace that needs its
+> own capacity uses **Customise** (CR-003), which copies the row into the workspace and repoints
+> existing references at the copy. The Settings screen therefore offers Customise rather than Edit
+> on a shared size, which is what the list already does.
+>
+> Capacities are **nullable**. The four seeded sizes are backfilled, but a workspace may have added
+> a size before the column existed, and §4.2 must read a missing limit as *"capacity not set"* —
+> never as unlimited.
 
 ### 3.2 CLP
 
