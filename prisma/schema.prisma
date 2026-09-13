@@ -4471,6 +4471,9 @@ model ClpLine {
   updatedByUser User? @relation("ClpLineUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   @@unique([tenantId, id])
+  /// Among live rows only — the migration scopes it WHERE deleted_at IS NULL.
+  /// A released allocation must not go on holding the slot, or a line taken
+  /// out of a container could never be put back into it.
   @@unique([tenantId, clpId, shipmentCargoLineId])
   @@index([tenantId])
   @@index([clpId])
