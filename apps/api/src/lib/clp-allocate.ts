@@ -56,6 +56,78 @@ async function receivedCartons(db: TenantDb, cargoLineId: bigint): Promise<numbe
   return rows.reduce((sum, r) => sum + r.receivedCtnQty, 0);
 }
 
+/**
+ * What actually arrived, as the figures a plan has to add up to.
+ *
+ * This is the remainder basis, and getting it from the BOOKED line was a bug
+ * with teeth. §2.4 draws the pool from what was received, so a line is
+ * "complete" once every RECEIVED carton is allocated — but the completing
+ * allocation was then given `booked total - used`, which is the volume and
+ * weight of cartons that never turned up.
+ *
+ * Seen in the field: 200 cartons booked at 33.00 CBM, 180 received, split
+ * 169 + 11. The first container took 169 x 0.165 = 27.885 CBM correctly; the
+ * second was handed 33.00 - 27.885 = 5.115 CBM for 11 cartons that measure
+ * 1.815. The 3.3 CBM of the 20 undelivered cartons had to land somewhere and
+ * landed on the last container — on the document that gets declared.
+ *
+ * `received_*` columns are used where the CFS recorded them, because what was
+ * weighed and measured on arrival beats any calculation. Where they are null,
+ * the booked per-carton rate multiplied by the received count is the honest
+ * fallback: it describes the cartons that are actually there.
+ */
+interface ReceivedBasis {
+  ctnQty: number;
+  pcsQty: number | null;
+  netWeightKg: Prisma.Decimal | null;
+  grossWeightKg: Prisma.Decimal | null;
+  volumeCbm: Prisma.Decimal | null;
+}
+
+async function receivedBasis(db: TenantDb, cargoLineId: bigint): Promise<ReceivedBasis> {
+  const rows = await db.cargoReceiptLine.findMany({
+    where: {
+      shipmentCargoLineId: cargoLineId,
+      deletedAt: null,
+      lineStatus: 'ACCEPTED',
+      receipt: { status: 'CONFIRMED', deletedAt: null },
+    },
+    select: {
+      receivedCtnQty: true,
+      receivedPcsQty: true,
+      receivedNetWeightKg: true,
+      receivedGrossWeightKg: true,
+      receivedVolumeCbm: true,
+    },
+  });
+
+  /*
+    Summed only over the receipts that recorded the column. A partial delivery
+    where one receipt weighed the goods and another did not cannot be added up
+    into a meaningful total, so in that case the column is treated as not
+    recorded at all rather than under-counted.
+  */
+  const total = (
+    pick: (r: (typeof rows)[number]) => Prisma.Decimal | null,
+  ): Prisma.Decimal | null => {
+    if (rows.length === 0 || rows.some((r) => pick(r) === null)) return null;
+    return rows.reduce((sum, r) => sum.plus(D(pick(r))), ZERO);
+  };
+
+  const pcs =
+    rows.length === 0 || rows.some((r) => r.receivedPcsQty === null)
+      ? null
+      : rows.reduce((sum, r) => sum + (r.receivedPcsQty ?? 0), 0);
+
+  return {
+    ctnQty: rows.reduce((sum, r) => sum + r.receivedCtnQty, 0),
+    pcsQty: pcs,
+    netWeightKg: total((r) => r.receivedNetWeightKg),
+    grossWeightKg: total((r) => r.receivedGrossWeightKg),
+    volumeCbm: total((r) => r.receivedVolumeCbm),
+  };
+}
+
 /** Allocations that still count — a cancelled plan holds nothing (§4.1). */
 function liveAllocations(cargoLineId: bigint) {
   return {
@@ -112,8 +184,48 @@ async function recomputeCargoLine(
     select: { id: true, clpId: true, ctnQty: true },
   });
 
-  const received = await receivedCartons(db, cargoLineId);
+  const arrived = await receivedBasis(db, cargoLineId);
+  const received = arrived.ctnQty;
   const allocated = rows.reduce((sum, r) => sum + r.ctnQty, 0);
+
+  /*
+    The figures the parts must sum to, and the per-carton rates that get there.
+
+    Both come from what arrived. Where the CFS recorded a received total the
+    rate is derived from it, so the splits and the remainder describe the same
+    goods; where it did not, the booked per-carton rate stands and the total is
+    that rate across the cartons that turned up. Either way the basis is never
+    the booked total for a quantity that was never delivered.
+  */
+  const rate = (total: Prisma.Decimal | null, bookedPer: Prisma.Decimal | null) =>
+    total !== null && received > 0 ? total.dividedBy(received) : bookedPer === null ? null : D(bookedPer);
+
+  const basisPcs =
+    arrived.pcsQty ??
+    (booked.pcsPerCarton === null
+      ? null
+      : D(booked.pcsPerCarton).times(received).toDecimalPlaces(0, Prisma.Decimal.ROUND_HALF_UP).toNumber());
+  const pcsRate =
+    arrived.pcsQty !== null && received > 0
+      ? new Prisma.Decimal(arrived.pcsQty).dividedBy(received)
+      : booked.pcsPerCarton === null
+        ? null
+        : D(booked.pcsPerCarton);
+
+  const basisNwt =
+    arrived.netWeightKg ??
+    (booked.netWeightPerCarton === null ? null : D(booked.netWeightPerCarton).times(received));
+  const nwtRate = rate(arrived.netWeightKg, booked.netWeightPerCarton);
+
+  const basisGwt =
+    arrived.grossWeightKg ??
+    (booked.grossWeightPerCarton === null ? null : D(booked.grossWeightPerCarton).times(received));
+  const gwtRate = rate(arrived.grossWeightKg, booked.grossWeightPerCarton);
+
+  const basisCbm =
+    arrived.volumeCbm ??
+    (booked.cbmPerCarton === null ? null : D(booked.cbmPerCarton).times(received));
+  const cbmRate = rate(arrived.volumeCbm, booked.cbmPerCarton);
   /*
     Only a line with nothing left to plan has a remainder to hand out. While
     cartons are still unallocated every row is an intermediate split, and
@@ -134,32 +246,32 @@ async function recomputeCargoLine(
     // Intermediate splits multiply out and round to the column's own scale;
     // the final one takes whatever is left, which is what makes the parts sum.
     const pcs =
-      booked.pcsQty === null
+      basisPcs === null || pcsRate === null
         ? null
         : carriesRemainder
-          ? booked.pcsQty - usedPcs
-          : D(booked.pcsPerCarton).times(n).toDecimalPlaces(0, Prisma.Decimal.ROUND_HALF_UP).toNumber();
+          ? basisPcs - usedPcs
+          : pcsRate.times(n).toDecimalPlaces(0, Prisma.Decimal.ROUND_HALF_UP).toNumber();
 
     const nwt =
-      booked.netWeightKg === null
+      basisNwt === null || nwtRate === null
         ? null
         : carriesRemainder
-          ? D(booked.netWeightKg).minus(usedNwt)
-          : D(booked.netWeightPerCarton).times(n).toDecimalPlaces(3);
+          ? basisNwt.minus(usedNwt)
+          : nwtRate.times(n).toDecimalPlaces(3);
 
     const gwt =
-      booked.grossWeightKg === null
+      basisGwt === null || gwtRate === null
         ? null
         : carriesRemainder
-          ? D(booked.grossWeightKg).minus(usedGwt)
-          : D(booked.grossWeightPerCarton).times(n).toDecimalPlaces(3);
+          ? basisGwt.minus(usedGwt)
+          : gwtRate.times(n).toDecimalPlaces(3);
 
     const cbm =
-      booked.volumeCbm === null
+      basisCbm === null || cbmRate === null
         ? null
         : carriesRemainder
-          ? D(booked.volumeCbm).minus(usedCbm)
-          : D(booked.cbmPerCarton).times(n).toDecimalPlaces(4);
+          ? basisCbm.minus(usedCbm)
+          : cbmRate.times(n).toDecimalPlaces(4);
 
     await db.clpLine.update({
       where: { id: row.id },
