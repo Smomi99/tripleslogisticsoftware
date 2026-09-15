@@ -395,3 +395,147 @@ export function splitPreview(
     volume: part(row.volumeCbm, 4),
   };
 }
+
+// ------------------------------------------------- CR-002: consolidation
+
+/** One booking offered for consolidation, with what the rules judge it on. */
+export interface ClpCandidateRow {
+  shipmentId: string;
+  code: string;
+  customerName: string;
+  exporterName: string | null;
+  loadingType: string | null;
+  family: 'FCL' | 'LCL' | null;
+  polName: string;
+  podName: string;
+  carrierName: string;
+  vesselName: string | null;
+  voyageNo: string | null;
+  cutOffDate: string | null;
+  quotationCode: string | null;
+  inquiryCode: string | null;
+  /** Never collapsed to one value — a booking can have several (§8). */
+  cfsLocations: string[];
+  receivedCtnQty: number;
+  receivedCbm: string;
+  receivedGrossKg: string;
+  /** Already planned into a container? Shown, not hidden. */
+  plannedCtnQty: number;
+}
+
+/**
+ * A commercial suggestion, never a constraint.
+ *
+ * The screen renders these as proposals a planner may split. §4: physical
+ * compatibility is the hard rule; the quotation is a default.
+ */
+export interface ClpSuggestedGroup {
+  key: string;
+  quotationCode: string | null;
+  inquiryCode: string | null;
+  shipmentIds: string[];
+  /** The running strip §4.2 asks for. */
+  totalCtnQty: number;
+  totalCbm: string;
+  totalGrossKg: string;
+}
+
+export interface ClpCandidateList {
+  candidates: ClpCandidateRow[];
+  suggestions: ClpSuggestedGroup[];
+}
+
+/** Why a selection cannot share a container — or merely should be looked at. */
+export interface ClpCompatibilityIssue {
+  shipmentId: string;
+  code: string;
+  reason: string;
+  /** False for a data-quality warning, such as a cut-off mismatch. */
+  blocking: boolean;
+}
+
+export interface ClpCompatibilityResult {
+  ok: boolean;
+  issues: ClpCompatibilityIssue[];
+  /** Distinct CFS locations across the selection (§8). */
+  cfsLocations: string[];
+  totalCtnQty: number;
+  totalCbm: string;
+  totalGrossKg: string;
+}
+
+export const clpCandidateQuerySchema = z.object({
+  family: z.enum(['FCL', 'LCL']),
+  search: z.string().trim().optional(),
+});
+
+export const clpCheckSchema = z.object({
+  shipmentIds: z.array(z.string().min(1)).min(1, 'Choose at least one booking.'),
+});
+export type ClpCheckInput = z.input<typeof clpCheckSchema>;
+
+export const clpConsolidateSchema = z.object({
+  shipmentIds: z.array(z.string().min(1)).min(1, 'Choose at least one booking.'),
+  containerSizeId: z.string().min(1, 'Choose a container size.'),
+  /** §8 — an explicit choice, never derived from one receipt. */
+  finalCfsLocation: z.string().trim().max(200).optional(),
+});
+export type ClpConsolidateInput = z.input<typeof clpConsolidateSchema>;
+
+// ------------------------------------------------------ CR-002: the money
+
+/** What a booking is billed on, with both sources kept visible (§7). */
+export interface ClpBillingCbm {
+  shipmentId: string;
+  bookingCode: string;
+  /** BOOKED, ACTUAL, or MIXED where some deliveries were measured and some not. */
+  basis: 'BOOKED' | 'ACTUAL' | 'MIXED' | null;
+  billingCbm: string;
+  bookedCbm: string;
+  actualCbm: string;
+  measuredLines: number;
+  totalLines: number;
+}
+
+export interface ClpCostPreview {
+  basis: 'CBM' | 'WEIGHT' | 'MANUAL';
+  actualContainerCost: string;
+  currencyCode: string | null;
+  shares: { shipmentId: string; bookingCode: string; amount: string }[];
+  /** Always true on a preview the server produced; the UI shows it anyway. */
+  reconciles: boolean;
+}
+
+export const clpCostSchema = z.object({
+  actualContainerCost: z
+    .string()
+    .trim()
+    .regex(/^\d{1,14}(\.\d{1,4})?$/, 'Enter the cost as a number, to at most four decimals.'),
+  costCurrencyId: z.string().min(1, 'Choose the currency this cost is in.'),
+  basis: z.enum(['CBM', 'WEIGHT']),
+});
+export type ClpCostInput = z.input<typeof clpCostSchema>;
+
+/**
+ * §9 — a manual split. Every booking in the box carries an amount, even zero,
+ * and the reason is kept against the name of whoever changed it.
+ */
+export const clpCostOverrideSchema = z.object({
+  allocations: z
+    .array(
+      z.object({
+        shipmentId: z.string().min(1),
+        amount: z
+          .string()
+          .trim()
+          .regex(/^\d{1,14}(\.\d{1,4})?$/, 'Enter each amount as a number.'),
+      }),
+    )
+    .min(1, 'Give an amount for each booking.'),
+  reason: z
+    .string()
+    .trim()
+    .min(5, 'Say why the split is being changed by hand.')
+    .max(500, 'That reason is too long.'),
+});
+export type ClpCostOverrideInput = z.input<typeof clpCostOverrideSchema>;

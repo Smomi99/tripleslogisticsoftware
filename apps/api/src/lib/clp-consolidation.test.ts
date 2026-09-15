@@ -226,9 +226,26 @@ describe('what the planner is told', () => {
     expect(problems.map((p) => p.code).sort()).toEqual(['BKG-002', 'BKG-003']);
   });
 
-  it('says nothing about a single booking', () => {
+  it('says nothing about a single booking that is fine', () => {
     expect(checkCompatibility([BASE])).toEqual([]);
     expect(checkCompatibility([])).toEqual([]);
+  });
+
+  it('still checks a single booking on its own merits', () => {
+    /*
+      This returned early for one candidate until the route tests caught it,
+      which let a booking with nothing received — or an air booking, or one
+      with no loading type — walk straight into a container plan. Only the
+      pairwise rules need something to compare against.
+    */
+    expect(blocking([other({ receivedCtnQty: 0 })])).toHaveLength(1);
+    expect(blocking([other({ shipmentType: 'AIR' })])[0]!.reason).toMatch(/air booking/);
+    expect(blocking([other({ status: 'APPROVED_FOR_SHIPMENT' })])[0]!.reason).toMatch(
+      /no cargo received/,
+    );
+    expect(blocking([other({ loadingType: null, family: null })])[0]!.reason).toMatch(
+      /no loading type/,
+    );
   });
 });
 

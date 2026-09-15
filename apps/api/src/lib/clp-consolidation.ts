@@ -122,7 +122,14 @@ const day = (d: Date | null): string | null => (d === null ? null : d.toISOStrin
  * boxes wants to know which two are wrong, not to discover them one at a time.
  */
 export function checkCompatibility(candidates: ConsolidationCandidate[]): Incompatibility[] {
-  if (candidates.length < 2) return [];
+  if (candidates.length === 0) return [];
+  /*
+    The per-candidate rules below run whatever the count. Returning early for a
+    single booking — as this did until the route tests caught it — meant one
+    with no cargo received, or no loading type, or an air booking, walked
+    straight through into a container plan. Only the PAIRWISE comparisons need
+    something to compare against.
+  */
   const [anchor, ...rest] = candidates as [ConsolidationCandidate, ...ConsolidationCandidate[]];
   const problems: Incompatibility[] = [];
 

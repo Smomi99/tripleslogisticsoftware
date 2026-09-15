@@ -7,7 +7,16 @@ import {
   type ClpListRow,
   clpListQuerySchema,
   type ClpCard,
+  type ClpCandidateList,
+  clpCandidateQuerySchema,
   clpCancelSchema,
+  type ClpBillingCbm,
+  clpCheckSchema,
+  type ClpCompatibilityResult,
+  clpCostOverrideSchema,
+  type ClpCostPreview,
+  clpCostSchema,
+  clpConsolidateSchema,
   clpCreateSchema,
   clpDetailsSchema,
   clpFinaliseSchema,
@@ -17,6 +26,21 @@ import {
 import { Router } from 'express';
 
 import { allocate, availableCartons, cancelClp, deallocate } from '../lib/clp-allocate';
+import { billingCbmForBooking } from '../lib/clp-billing';
+import {
+  type CostParticipant,
+  assertReconciles,
+  readManualShares,
+  splitCost,
+} from '../lib/clp-cost';
+import {
+  assertConsolidatable,
+  cfsLocations,
+  checkCompatibility,
+  isCompatible,
+  loadCandidates,
+  suggestGroups,
+} from '../lib/clp-consolidation';
 import { buildClpPdf, type ClpPrintDoc, clpPdfFilename } from '../lib/clp-print';
 import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
 import { HttpError } from '../lib/http-error';
@@ -1207,3 +1231,563 @@ clpRouter.get('/clps/:id/print', requirePermission(`${FEATURE}.EXPORT`), async (
   res.setHeader('Content-Disposition', `inline; filename="${name}"`);
   res.send(pdf);
 });
+
+// ==========================================================================
+// CR-002 — consolidation and cost.
+//
+// These handlers are deliberately thin. Every rule they enforce lives in
+// clp-consolidation.ts, clp-cost.ts or clp-billing.ts, which are tested on
+// their own; a handler that re-implemented one would be a second copy to
+// drift. What belongs here is the permission decision, the transaction, and
+// turning a service's answer into the API envelope.
+// ==========================================================================
+
+/**
+ * GET /clp-candidates — the bookings one workflow may consolidate.
+ *
+ * `family` is required rather than optional: FCL and LCL are separate
+ * workflows (§3), and a list that mixed them would invite the one selection
+ * the engine always refuses.
+ */
+clpRouter.get('/clp-candidates', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
+  const auth = req.auth!;
+  const query = clpCandidateQuerySchema.parse(req.query);
+
+  const data = await withTenant(auth.tenantId, async (db): Promise<ClpCandidateList> => {
+    const search = query.search === undefined || query.search === '' ? null : query.search;
+
+    /*
+      Only bookings with cargo actually in. §1 puts the CLP after cargo
+      receipt, so a booking with nothing received is a row nobody can act on.
+      The loading-type filter is a WHERE rather than something the engine
+      rejects later, because this is the FCL screen or the LCL screen and the
+      other kind does not belong on it.
+    */
+    const rows = await db.shipment.findMany({
+      where: {
+        deletedAt: null,
+        shipmentType: 'SEA',
+        status: { in: ['PART_RECEIVED', 'CARGO_RECEIVED'] },
+        loadingType: query.family === 'LCL' ? 'LCL' : { in: ['FCL', 'CONSOL_BOX'] },
+        ...(search === null
+          ? {}
+          : {
+              OR: [
+                { code: { contains: search, mode: 'insensitive' as const } },
+                { customer: { name: { contains: search, mode: 'insensitive' as const } } },
+                { exporterName: { contains: search, mode: 'insensitive' as const } },
+              ],
+            }),
+      },
+      orderBy: { id: 'desc' },
+      take: 200,
+      select: { id: true },
+    });
+
+    const candidates = await loadCandidates(
+      db,
+      rows.map((r) => r.id),
+    );
+
+    // How much of each booking is already in a container, so the screen can
+    // show what is left rather than implying it is all still to plan.
+    const planned = new Map<string, number>();
+    for (const line of await db.clpLine.findMany({
+      where: {
+        deletedAt: null,
+        clp: { deletedAt: null, status: { not: 'CANCELLED' } },
+        shipmentCargoLine: { shipmentId: { in: rows.map((r) => r.id) } },
+      },
+      select: { ctnQty: true, shipmentCargoLine: { select: { shipmentId: true } } },
+    })) {
+      const key = line.shipmentCargoLine.shipmentId.toString();
+      planned.set(key, (planned.get(key) ?? 0) + line.ctnQty);
+    }
+
+    const toRow = (c: (typeof candidates)[number]) => ({
+      shipmentId: c.shipmentId.toString(),
+      code: c.code,
+      customerName: c.customerName,
+      exporterName: c.exporterName,
+      loadingType: c.loadingType,
+      family: c.family,
+      polName: c.polName,
+      podName: c.podName,
+      carrierName: c.carrierName,
+      vesselName: c.vesselName,
+      voyageNo: c.voyageNo,
+      cutOffDate: c.cutOffDate?.toISOString() ?? null,
+      quotationCode: c.quotationCode,
+      inquiryCode: c.inquiryCode,
+      cfsLocations: c.cfsLocations,
+      receivedCtnQty: c.receivedCtnQty,
+      receivedCbm: c.receivedCbm.toFixed(4),
+      receivedGrossKg: c.receivedGrossKg.toFixed(3),
+      plannedCtnQty: planned.get(c.shipmentId.toString()) ?? 0,
+    });
+
+    const byId = new Map(candidates.map((c) => [c.shipmentId.toString(), c]));
+
+    return {
+      candidates: candidates.map(toRow),
+      // Suggestions only. §4: the user may split any of these.
+      suggestions: suggestGroups(candidates).map((g) => {
+        const members = g.shipmentIds.map((id) => byId.get(id.toString())!);
+        return {
+          key: g.key,
+          quotationCode: members[0]?.quotationCode ?? null,
+          inquiryCode: members[0]?.inquiryCode ?? null,
+          shipmentIds: g.shipmentIds.map((id) => id.toString()),
+          totalCtnQty: members.reduce((s, m) => s + m.receivedCtnQty, 0),
+          totalCbm: members.reduce((s, m) => s + m.receivedCbm, 0).toFixed(4),
+          totalGrossKg: members.reduce((s, m) => s + m.receivedGrossKg, 0).toFixed(3),
+        };
+      }),
+    };
+  });
+
+  const payload: ApiSuccess<ClpCandidateList> = { success: true, data };
+  res.json(payload);
+});
+
+/**
+ * POST /clp-candidates/check — would these bookings go together?
+ *
+ * Read-only. The screen calls it as boxes are ticked so a planner sees the
+ * refusal before committing to it; the same rules run again on the write,
+ * because a request need not have come from our screen (§14).
+ */
+clpRouter.post('/clp-candidates/check', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
+  const auth = req.auth!;
+  const input = clpCheckSchema.parse(req.body);
+  const ids = input.shipmentIds.map((id) => parseId(id, 'booking'));
+
+  const data = await withTenant(auth.tenantId, async (db): Promise<ClpCompatibilityResult> => {
+    const candidates = await loadCandidates(db, ids);
+    const issues = checkCompatibility(candidates);
+
+    return {
+      ok: isCompatible(issues),
+      issues,
+      cfsLocations: cfsLocations(candidates),
+      totalCtnQty: candidates.reduce((s, c) => s + c.receivedCtnQty, 0),
+      totalCbm: candidates.reduce((s, c) => s + c.receivedCbm, 0).toFixed(4),
+      totalGrossKg: candidates.reduce((s, c) => s + c.receivedGrossKg, 0).toFixed(3),
+    };
+  });
+
+  const payload: ApiSuccess<ClpCompatibilityResult> = { success: true, data };
+  res.json(payload);
+});
+
+/**
+ * POST /clps/consolidate — one container for several bookings.
+ *
+ * The single-booking route above still exists and still works; this is the
+ * path that writes clp_booking rows for a selection. A selection of one comes
+ * through here perfectly well and produces a SINGLE plan.
+ */
+clpRouter.post('/clps/consolidate', requirePermission(`${FEATURE}.CREATE`), async (req, res) => {
+  const auth = req.auth!;
+  const input = clpConsolidateSchema.parse(req.body);
+  const shipmentIds = input.shipmentIds.map((id) => parseId(id, 'booking'));
+  const containerSizeId = parseId(input.containerSizeId, 'container size');
+
+  const data = await withTenant(auth.tenantId, async (db) => {
+    // The gate. Hard rules, server-side, whatever the screen believed.
+    const candidates = await assertConsolidatable(db, shipmentIds);
+
+    const size = await db.containerSize.findFirst({
+      where: { id: containerSizeId, deletedAt: null },
+      select: { id: true },
+    });
+    if (size === null) throw HttpError.notFound('That container size no longer exists.');
+
+    const anchor = candidates[0]!;
+    const consolidated = candidates.length > 1;
+    /*
+      A consolidated container has no position "within a booking", so clp_seq
+      is null and `code` is its whole identity (§4.5 as CR-002 amends it). A
+      selection of one keeps the old numbering, so nothing about existing
+      single-booking plans changes.
+    */
+    const year = seriesYearOf(new Date());
+
+    for (let attempt = 0; attempt < CODE_RETRY_LIMIT; attempt += 1) {
+      const seqRows = await db.$queryRaw<{ max_seq: number | null }[]>`
+        SELECT MAX((regexp_replace(code, '^.*-', ''))::int) AS max_seq
+          FROM clp
+         WHERE tenant_id = ${auth.tenantId} AND series_year = ${year}
+      `;
+      const code = formatDocumentNo('CLP', year, (seqRows[0]?.max_seq ?? 0) + 1);
+
+      let clpSeq: number | null = null;
+      if (!consolidated) {
+        const last = await db.clp.findFirst({
+          where: { shipmentId: anchor.shipmentId },
+          orderBy: { clpSeq: 'desc' },
+          select: { clpSeq: true },
+        });
+        clpSeq = (last?.clpSeq ?? 0) + 1;
+      }
+
+      try {
+        const created = await db.clp.create({
+          data: {
+            tenantId: auth.tenantId,
+            code,
+            seriesYear: year,
+            clpSeq,
+            // Kept in step with clp_booking for a single-booking plan, so the
+            // column CR-002 will drop later never disagrees with the table
+            // that replaces it.
+            shipmentId: consolidated ? null : anchor.shipmentId,
+            containerSizeId,
+            carrierId: anchor.carrierId,
+            consolidationType: consolidated
+              ? anchor.family === 'LCL'
+                ? 'LCL_CONSOLIDATION'
+                : 'FCL_QUOTATION'
+              : 'SINGLE',
+            // The commercial grouping that was in force, recorded rather than
+            // enforced — every booking here already passed the physical rules.
+            quotationId:
+              consolidated && anchor.family === 'FCL' ? anchor.quotationId : null,
+            finalCfsLocation: input.finalCfsLocation ?? null,
+            createdBy: auth.userId,
+            updatedBy: auth.userId,
+          },
+          select: { id: true },
+        });
+
+        /*
+          Written separately rather than as a nested create: clp_booking's
+          relation to clp is composite (tenant_id, clp_id), so Prisma will not
+          take tenantId inside a nested create — and tenant_id is not something
+          to leave to a relation here.
+        */
+        await db.clpBooking.createMany({
+          data: candidates.map((c) => ({
+            tenantId: auth.tenantId,
+            clpId: created.id,
+            shipmentId: c.shipmentId,
+            createdBy: auth.userId,
+            updatedBy: auth.userId,
+          })),
+        });
+
+        return { id: created.id.toString(), shipmentId: anchor.shipmentId.toString() };
+      } catch (error) {
+        if (isUniqueViolation(error) && attempt < CODE_RETRY_LIMIT - 1) continue;
+        throw error;
+      }
+    }
+    throw HttpError.conflict('Could not allocate a load plan number. Try again.');
+  });
+
+  const payload: ApiSuccess<{ id: string; shipmentId: string }> = { success: true, data };
+  res.status(201).json(payload);
+});
+
+/**
+ * What each booking has loaded in THIS container.
+ *
+ * The split is apportioned on what is in the box, not on what the booking
+ * holds altogether — a booking spread across two containers pays each one for
+ * the share it actually occupies.
+ */
+async function costParticipants(db: TenantDb, clpId: bigint): Promise<CostParticipant[]> {
+  const plan = await db.clp.findFirst({
+    where: { id: clpId, deletedAt: null },
+    select: {
+      bookings: {
+        where: { deletedAt: null },
+        orderBy: { id: 'asc' },
+        select: { shipmentId: true, shipment: { select: { code: true } } },
+      },
+      lines: {
+        where: { deletedAt: null },
+        select: {
+          volumeCbm: true,
+          grossWeightKg: true,
+          shipmentCargoLine: { select: { shipmentId: true } },
+        },
+      },
+    },
+  });
+  if (plan === null) throw HttpError.notFound('That load plan no longer exists.');
+
+  const loaded = new Map<string, { cbm: Prisma.Decimal; kg: Prisma.Decimal }>();
+  for (const line of plan.lines) {
+    const key = line.shipmentCargoLine.shipmentId.toString();
+    const acc = loaded.get(key) ?? { cbm: new Prisma.Decimal(0), kg: new Prisma.Decimal(0) };
+    acc.cbm = acc.cbm.plus(line.volumeCbm ?? 0);
+    acc.kg = acc.kg.plus(line.grossWeightKg ?? 0);
+    loaded.set(key, acc);
+  }
+
+  /*
+    Every participating booking, in clp_booking order — including one with
+    nothing loaded yet, which gets a zero share rather than disappearing. A
+    booking that vanished from the split would be money quietly landing on the
+    others.
+  */
+  return plan.bookings.map((b) => {
+    const got = loaded.get(b.shipmentId.toString());
+    return {
+      shipmentId: b.shipmentId,
+      code: b.shipment.code,
+      cbm: got?.cbm ?? new Prisma.Decimal(0),
+      weightKg: got?.kg ?? new Prisma.Decimal(0),
+    };
+  });
+}
+
+/** §4.3 — a finalised plan has no edit path, and that includes its money. */
+async function assertPlanEditable(db: TenantDb, clpId: bigint): Promise<void> {
+  const plan = await db.clp.findFirst({
+    where: { id: clpId, deletedAt: null },
+    select: { status: true, code: true },
+  });
+  if (plan === null) throw HttpError.notFound('That load plan no longer exists.');
+  if (plan.status !== 'DRAFT') {
+    throw HttpError.conflict(
+      `${plan.code} is ${plan.status.toLowerCase()}. Its cost split cannot be changed — ` +
+        'cancel it and build a new plan.',
+    );
+  }
+}
+
+/**
+ * GET /clps/:id/billing — booked against actual, per booking.
+ *
+ * §7: both measurements stay visible. LCL is billed per CBM, so this is the
+ * figure a customer disputes, and being able to show what was measured beside
+ * what was booked is the reason the measurement is captured at all.
+ */
+clpRouter.get('/clps/:id/billing', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
+  const auth = req.auth!;
+  const clpId = parseId(req.params.id, 'load plan');
+
+  const data = await withTenant(auth.tenantId, async (db): Promise<ClpBillingCbm[]> => {
+    const plan = await db.clp.findFirst({
+      where: { id: clpId, deletedAt: null },
+      select: {
+        bookings: {
+          where: { deletedAt: null },
+          orderBy: { id: 'asc' },
+          select: { shipmentId: true, shipment: { select: { code: true } } },
+        },
+      },
+    });
+    if (plan === null) throw HttpError.notFound('That load plan no longer exists.');
+
+    const out: ClpBillingCbm[] = [];
+    for (const booking of plan.bookings) {
+      const lines = await db.cargoReceiptLine.findMany({
+        where: {
+          deletedAt: null,
+          lineStatus: 'ACCEPTED',
+          receipt: { status: 'CONFIRMED', deletedAt: null },
+          cargoLine: { shipmentId: booking.shipmentId, deletedAt: null },
+        },
+        select: {
+          receivedCtnQty: true,
+          receivedVolumeCbm: true,
+          cargoLine: { select: { cbmPerCarton: true } },
+        },
+      });
+
+      const r = billingCbmForBooking(
+        lines.map((l) => ({
+          receivedCtnQty: l.receivedCtnQty,
+          receivedVolumeCbm: l.receivedVolumeCbm,
+          bookedCbmPerCarton: l.cargoLine.cbmPerCarton,
+        })),
+      );
+
+      out.push({
+        shipmentId: booking.shipmentId.toString(),
+        bookingCode: booking.shipment.code,
+        basis: r.basis,
+        billingCbm: r.cbm.toFixed(4),
+        bookedCbm: r.bookedCbm.toFixed(4),
+        actualCbm: r.actualCbm.toFixed(4),
+        measuredLines: r.measuredLines,
+        totalLines: r.totalLines,
+      });
+    }
+    return out;
+  });
+
+  const payload: ApiSuccess<ClpBillingCbm[]> = { success: true, data };
+  res.json(payload);
+});
+
+/**
+ * POST /clps/:id/cost/preview — what the split would be, without saving it.
+ *
+ * §9's "preview before saving". Read-only, so it needs only VIEW: seeing the
+ * arithmetic is not the same act as committing to it.
+ */
+clpRouter.post('/clps/:id/cost/preview', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
+  const auth = req.auth!;
+  const clpId = parseId(req.params.id, 'load plan');
+  const input = clpCostSchema.parse(req.body);
+
+  const data = await withTenant(auth.tenantId, async (db): Promise<ClpCostPreview> => {
+    const participants = await costParticipants(db, clpId);
+    const total = new Prisma.Decimal(input.actualContainerCost);
+    const shares = splitCost(total, input.basis, participants);
+    assertReconciles(total, shares);
+
+    const currency = await db.currency.findFirst({
+      where: { id: parseId(input.costCurrencyId, 'currency'), deletedAt: null },
+      select: { code: true },
+    });
+
+    return {
+      basis: input.basis,
+      actualContainerCost: total.toFixed(4),
+      currencyCode: currency?.code ?? null,
+      shares: shares.map((s) => ({
+        shipmentId: s.shipmentId.toString(),
+        bookingCode: s.code,
+        amount: s.amount.toFixed(4),
+      })),
+      reconciles: true,
+    };
+  });
+
+  const payload: ApiSuccess<ClpCostPreview> = { success: true, data };
+  res.json(payload);
+});
+
+/**
+ * PATCH /clps/:id/cost — record what the box cost, and split it.
+ *
+ * Writing the cost recomputes the default allocation, which is the behaviour
+ * a planner expects: change the figure, the shares follow. A manual split is
+ * a separate, permissioned act below.
+ */
+clpRouter.patch('/clps/:id/cost', requirePermission(`${FEATURE}.EDIT`), async (req, res) => {
+  const auth = req.auth!;
+  const clpId = parseId(req.params.id, 'load plan');
+  const input = clpCostSchema.parse(req.body);
+  const currencyId = parseId(input.costCurrencyId, 'currency');
+
+  const data = await withTenant(auth.tenantId, async (db) => {
+    await assertPlanEditable(db, clpId);
+
+    const currency = await db.currency.findFirst({
+      where: { id: currencyId, deletedAt: null },
+      select: { id: true },
+    });
+    if (currency === null) throw HttpError.notFound('That currency no longer exists.');
+
+    const participants = await costParticipants(db, clpId);
+    const total = new Prisma.Decimal(input.actualContainerCost);
+    const shares = splitCost(total, input.basis, participants);
+    assertReconciles(total, shares);
+
+    await db.clp.update({
+      where: { id: clpId },
+      data: {
+        actualContainerCost: total,
+        costCurrencyId: currencyId,
+        costAllocationBasis: input.basis,
+        updatedBy: auth.userId,
+      },
+    });
+
+    for (const share of shares) {
+      await db.clpBooking.updateMany({
+        where: { clpId, shipmentId: share.shipmentId, deletedAt: null },
+        data: {
+          defaultCostAmount: share.amount,
+          allocatedCostAmount: share.amount,
+          // A recomputed default replaces any earlier hand-split: the figures
+          // it was based on have changed, so keeping the old override would
+          // leave a split that no longer reconciles.
+          costOverriddenBy: null,
+          costOverriddenAt: null,
+          costOverrideReason: null,
+          updatedBy: auth.userId,
+        },
+      });
+    }
+
+    return buildPlan(db, await planShipmentId(db, clpId));
+  });
+
+  const payload: ApiSuccess<ClpPlan> = { success: true, data };
+  res.json(payload);
+});
+
+/**
+ * PUT /clps/:id/cost/allocations — a split entered by hand.
+ *
+ * Guarded by OVERRIDE_COST rather than EDIT: this moves money between
+ * different customers' invoices, which is not something everyone who can edit
+ * a load plan should do.
+ */
+clpRouter.put(
+  '/clps/:id/cost/allocations',
+  requirePermission(`${FEATURE}.OVERRIDE_COST`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const clpId = parseId(req.params.id, 'load plan');
+    const input = clpCostOverrideSchema.parse(req.body);
+
+    const data = await withTenant(auth.tenantId, async (db) => {
+      await assertPlanEditable(db, clpId);
+
+      const plan = await db.clp.findFirstOrThrow({
+        where: { id: clpId },
+        select: { actualContainerCost: true, code: true },
+      });
+      if (plan.actualContainerCost === null) {
+        throw HttpError.conflict(
+          `${plan.code} has no container cost recorded yet, so there is nothing to split.`,
+        );
+      }
+
+      const participants = await costParticipants(db, clpId);
+      const shares = readManualShares(
+        participants,
+        input.allocations.map((a) => ({
+          shipmentId: parseId(a.shipmentId, 'booking'),
+          amount: a.amount,
+        })),
+      );
+      // The guarantee, on the path where money actually goes missing.
+      assertReconciles(new Prisma.Decimal(plan.actualContainerCost), shares);
+
+      await db.clp.update({
+        where: { id: clpId },
+        data: { costAllocationBasis: 'MANUAL', updatedBy: auth.userId },
+      });
+
+      const now = new Date();
+      for (const share of shares) {
+        await db.clpBooking.updateMany({
+          where: { clpId, shipmentId: share.shipmentId, deletedAt: null },
+          data: {
+            // default_cost_amount is deliberately untouched: §9 wants "what
+            // would it have been" to survive the override.
+            allocatedCostAmount: share.amount,
+            costOverriddenBy: auth.userId,
+            costOverriddenAt: now,
+            costOverrideReason: input.reason,
+            updatedBy: auth.userId,
+          },
+        });
+      }
+
+      return buildPlan(db, await planShipmentId(db, clpId));
+    });
+
+    const payload: ApiSuccess<ClpPlan> = { success: true, data };
+    res.json(payload);
+  },
+);
