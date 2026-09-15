@@ -6,6 +6,7 @@ import { createApp } from '../app';
 import { env } from '../config/env';
 import { PrismaClient } from '../generated/prisma/client';
 import { signAccessToken } from '../lib/jwt';
+import { withTenant } from '../lib/tenant-client';
 
 /**
  * CR-002 end to end, through HTTP.
@@ -879,6 +880,242 @@ describe('the FCL/LCL view split', () => {
       '/api/tenant/ops/clps?family=LCL',
     ]) {
       expect((await as(none).get(path)).status).toBe(403);
+    }
+  });
+});
+
+// ================================================= the booking detail read path
+
+/**
+ * A plan must be visible from the booking screen that created it.
+ *
+ * Two routes create plans and they store the participation differently:
+ * `/clps/consolidate` writes `clp_booking` rows, while the legacy
+ * `POST /bookings/:id/clps` ("Add another container") writes only
+ * `clp.shipment_id`. `cards()` joined through `clp_booking` alone, so a plan
+ * made by the legacy route vanished from the screen the moment it was made —
+ * reproduced against a running dev stack before this was written.
+ *
+ * The fix is a read-path fallback with the same two shapes the register uses.
+ * Nothing is written, backfilled or migrated, and `clp.shipment_id` keeps the
+ * meaning it always had.
+ */
+describe('the booking detail sees plans made by either path', () => {
+  const detail = (id: bigint | string) => `/api/tenant/ops/bookings/${id}/clp`;
+  const plansOf = (res: { body: { data: { clps: { id: string; code: string }[] } } }) =>
+    res.body.data.clps;
+
+  it('finds a plan created by the legacy Add another container route', async () => {
+    const b = await booking({ label: 'cdlegacy', loadingType: 'FCL' });
+
+    const empty = await as(tokenAll).get(detail(b.id));
+    expect(empty.status).toBe(200);
+    expect(plansOf(empty)).toHaveLength(0);
+
+    const made = await as(tokenAll)
+      .post(`/api/tenant/ops/bookings/${b.id}/clps`)
+      .send({ containerSizeId: size20.toString() });
+    expect(made.status).toBe(201);
+    const id = track(made.body.data.id);
+
+    // The shape being tested, asserted rather than assumed.
+    expect(await owner.clpBooking.count({ where: { clpId: id } })).toBe(0);
+
+    const res = await as(tokenAll).get(detail(b.id));
+    expect(res.status).toBe(200);
+    expect(plansOf(res).map((c) => c.id)).toEqual([id.toString()]);
+  });
+
+  it('lists that plan exactly once, and as a single-booking plan', async () => {
+    /*
+      The two branches of the fallback must be mutually exclusive. If a plan
+      could match both, the screen would show the same container twice and an
+      operator would load cargo into a duplicate that does not exist.
+    */
+    const b = await booking({ label: 'cdonce', loadingType: 'FCL' });
+    const made = await as(tokenAll)
+      .post(`/api/tenant/ops/bookings/${b.id}/clps`)
+      .send({ containerSizeId: size20.toString() });
+    track(made.body.data.id);
+
+    const res = await as(tokenAll).get(detail(b.id));
+    const ids = plansOf(res).map((c) => c.id);
+    expect(ids).toHaveLength(1);
+    expect(new Set(ids).size).toBe(ids.length);
+
+    const card = plansOf(res)[0] as unknown as {
+      consolidationType: string;
+      clpSeq: number | null;
+      bookings: unknown[];
+    };
+    expect(card.consolidationType).toBe('SINGLE');
+    expect(card.clpSeq).toBe(1);
+    /*
+      No participation rows, so none are reported. Inventing one here would
+      be a second source of truth for who is in the container; the screen
+      already hides the consolidation and cost panels when this is empty.
+    */
+    expect(card.bookings).toEqual([]);
+  });
+
+  it('still finds a consolidated plan through clp_booking', async () => {
+    const a = await booking({ label: 'cdca', loadingType: 'FCL' });
+    const b = await booking({ label: 'cdcb', loadingType: 'FCL' });
+
+    const made = await as(tokenAll)
+      .post('/api/tenant/ops/clps/consolidate')
+      .send({
+        shipmentIds: [a.id.toString(), b.id.toString()],
+        containerSizeId: size20.toString(),
+      });
+    expect(made.status).toBe(201);
+    const id = track(made.body.data.id);
+    expect(await owner.clpBooking.count({ where: { clpId: id } })).toBe(2);
+
+    // Both partners see it, which is the canonical path and must not change.
+    for (const who of [a, b]) {
+      const res = await as(tokenAll).get(detail(who.id));
+      expect(plansOf(res).map((c) => c.id)).toContain(id.toString());
+      expect(plansOf(res)).toHaveLength(1);
+    }
+
+    const card = plansOf(await as(tokenAll).get(detail(a.id)))[0] as unknown as {
+      bookings: { shipmentId: string }[];
+    };
+    expect(card.bookings.map((x) => x.shipmentId).sort()).toEqual(
+      [a.id.toString(), b.id.toString()].sort(),
+    );
+  });
+
+  it('shows both shapes together, each once, on a booking that has both', async () => {
+    /*
+      The real state of a booking planned across two containers by two
+      different routes. Neither branch may swallow the other.
+    */
+    const a = await booking({ label: 'cdmixa', loadingType: 'FCL' });
+    const b = await booking({ label: 'cdmixb', loadingType: 'FCL' });
+
+    const consolidated = await as(tokenAll)
+      .post('/api/tenant/ops/clps/consolidate')
+      .send({
+        shipmentIds: [a.id.toString(), b.id.toString()],
+        containerSizeId: size20.toString(),
+      });
+    const withBookings = track(consolidated.body.data.id).toString();
+
+    const legacy = await as(tokenAll)
+      .post(`/api/tenant/ops/bookings/${a.id}/clps`)
+      .send({ containerSizeId: size20.toString() });
+    const withoutBookings = track(legacy.body.data.id).toString();
+
+    const ids = plansOf(await as(tokenAll).get(detail(a.id))).map((c) => c.id);
+    expect(ids.sort()).toEqual([withBookings, withoutBookings].sort());
+    // And b, which is only in the consolidated one, sees only that.
+    expect(plansOf(await as(tokenAll).get(detail(b.id))).map((c) => c.id)).toEqual([
+      withBookings,
+    ]);
+  });
+
+  it('hides a soft-deleted plan of either shape', async () => {
+    const a = await booking({ label: 'cddela', loadingType: 'FCL' });
+    const legacy = await as(tokenAll)
+      .post(`/api/tenant/ops/bookings/${a.id}/clps`)
+      .send({ containerSizeId: size20.toString() });
+    const legacyId = track(legacy.body.data.id);
+
+    const b = await booking({ label: 'cddelb', loadingType: 'FCL' });
+    const consolidated = await as(tokenAll)
+      .post('/api/tenant/ops/clps/consolidate')
+      .send({ shipmentIds: [b.id.toString()], containerSizeId: size20.toString() });
+    const consolidatedId = track(consolidated.body.data.id);
+
+    expect(plansOf(await as(tokenAll).get(detail(a.id)))).toHaveLength(1);
+    expect(plansOf(await as(tokenAll).get(detail(b.id)))).toHaveLength(1);
+
+    await owner.clp.updateMany({
+      where: { id: { in: [legacyId, consolidatedId] } },
+      data: { deletedAt: new Date() },
+    });
+
+    // §4's soft delete, unchanged by the fallback: neither shape comes back.
+    expect(plansOf(await as(tokenAll).get(detail(a.id)))).toHaveLength(0);
+    expect(plansOf(await as(tokenAll).get(detail(b.id)))).toHaveLength(0);
+  });
+
+  it('drops a participation without resurrecting the plan through the fallback', async () => {
+    /*
+      The sharp edge of an OR: soft-deleting the last participation of a
+      consolidated plan makes `bookings: { none: ... }` true, and the plan
+      would reappear under whatever `clp.shipment_id` happens to hold. For a
+      consolidated plan that column is NULL, so it cannot — this is the test
+      that says so rather than trusting it.
+    */
+    const a = await booking({ label: 'cdorph', loadingType: 'FCL' });
+    const b = await booking({ label: 'cdorpi', loadingType: 'FCL' });
+    const made = await as(tokenAll)
+      .post('/api/tenant/ops/clps/consolidate')
+      .send({
+        shipmentIds: [a.id.toString(), b.id.toString()],
+        containerSizeId: size20.toString(),
+      });
+    const id = track(made.body.data.id);
+    expect(await owner.clp.findFirstOrThrow({ where: { id }, select: { shipmentId: true } }))
+      .toEqual({ shipmentId: null });
+
+    await owner.clpBooking.updateMany({ where: { clpId: id }, data: { deletedAt: new Date() } });
+
+    expect(plansOf(await as(tokenAll).get(detail(a.id)))).toHaveLength(0);
+    expect(plansOf(await as(tokenAll).get(detail(b.id)))).toHaveLength(0);
+  });
+
+  it('cannot reach another tenant plan through the shipment_id fallback', async () => {
+    /*
+      Two independent guards, both asserted, because the fallback reads a
+      column instead of a join and that is exactly where a leak would hide.
+
+      First: the composite FK means `clp.shipment_id` can only ever name a
+      booking in the same tenant (CLAUDE.md §4 rule 10), so a row that would
+      let the fallback cross a tenant boundary cannot be written at all.
+      Second: RLS scopes the read regardless.
+    */
+    const mine = await booking({ label: 'cdiso', loadingType: 'FCL' });
+    const other = await owner.tenant.create({
+      data: { name: 'CLP fallback isolation', slug: `clp-iso-${RUN}`, country: 'Bangladesh' },
+      select: { id: true },
+    });
+
+    try {
+      const size = await owner.containerSize.findFirstOrThrow({
+        where: { id: size20 },
+        select: { id: true },
+      });
+      const carrier = await owner.shipment.findFirstOrThrow({
+        where: { id: mine.id },
+        select: { carrierId: true },
+      });
+
+      await expect(
+        owner.clp.create({
+          data: {
+            tenantId: other.id,
+            code: `CLP-ISO-${RUN}`,
+            seriesYear: 2026,
+            clpSeq: 1,
+            // Another tenant's booking. The database must refuse this.
+            shipmentId: mine.id,
+            containerSizeId: size.id,
+            carrierId: carrier.carrierId!,
+          },
+        }),
+      ).rejects.toThrow();
+
+      // And the read is scoped too, not merely the write.
+      const seen = await withTenant(other.id, (tx) =>
+        tx.$queryRaw<{ n: bigint }[]>`SELECT count(*)::bigint AS n FROM clp WHERE shipment_id = ${mine.id}`,
+      );
+      expect(Number(seen[0]!.n)).toBe(0);
+    } finally {
+      await owner.tenant.delete({ where: { id: other.id } });
     }
   });
 });

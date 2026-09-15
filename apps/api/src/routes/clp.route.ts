@@ -487,7 +487,30 @@ async function cards(db: TenantDb, shipmentId: bigint): Promise<ClpCard[]> {
       CR-002 — the plans this booking takes part in, which on a consolidated
       container includes plans other bookings also appear on.
     */
-    where: { deletedAt: null, bookings: { some: { shipmentId, deletedAt: null } } },
+    where: {
+      deletedAt: null,
+      /*
+        Two shapes, the same pair the register reads (§13). A consolidated
+        plan holds clp_booking rows; a plan made by "Add another container"
+        (POST /bookings/:id/clps) holds only clp.shipment_id and writes no
+        participation, so a query joined to the participation table alone
+        cannot see the plan it just created.
+
+        `none` narrows the second branch to exactly the legacy shape: a plan
+        that recorded no participation at all. It is deliberately narrower
+        than it needs to be — dropping it changes no observable behaviour,
+        because a consolidated plan's shipment_id is NULL and a row matching
+        both branches is still returned once — so it is a statement of scope,
+        not a guard the tests can prove load-bearing.
+
+        clp.shipment_id keeps the meaning it always had. This reads it; it
+        does not make it a second source of truth, and nothing here writes.
+      */
+      OR: [
+        { bookings: { some: { shipmentId, deletedAt: null } } },
+        { bookings: { none: { deletedAt: null } }, shipmentId },
+      ],
+    },
     orderBy: [{ clpSeq: 'asc' }, { id: 'asc' }],
     select: {
       id: true,
