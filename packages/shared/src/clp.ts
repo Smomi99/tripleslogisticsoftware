@@ -27,6 +27,18 @@ export interface ClpBookingRow {
   exporterName: string | null;
   commodity: string;
   shipmentType: string;
+  /**
+   * How the booking is loaded, verbatim from `shipment.loading_type` —
+   * FCL, LCL or CONSOL_BOX. Shown rather than the family, because a planner
+   * looking at a consol box needs to know it is one.
+   */
+  loadingType: string | null;
+  /**
+   * Which workflow it belongs to. CONSOL_BOX is FCL-like (CR-002 §3), and
+   * null where the booking never stated a loading type — not defaulted, since
+   * a guess here decides which cargo may share a steel box.
+   */
+  family: 'FCL' | 'LCL' | null;
   polName: string;
   polCode: string;
   podName: string;
@@ -51,6 +63,8 @@ export interface ClpBookingRow {
 
 export const clpBookingListQuerySchema = listQuerySchema.extend({
   shipmentType: z.enum(['SEA', 'AIR']).optional(),
+  /** FCL and LCL are separate workflows, so the queue can be read as either. */
+  family: z.enum(['FCL', 'LCL']).optional(),
 });
 
 /**
@@ -80,6 +94,10 @@ export interface ClpListRow {
   exporterName: string | null;
   commodity: string;
   shipmentType: string;
+  /** Verbatim `shipment.loading_type` of the booking this plan is shown under. */
+  loadingType: string | null;
+  /** The workflow the container belongs to — CONSOL_BOX counts as FCL. */
+  family: 'FCL' | 'LCL' | null;
   polName: string;
   podName: string;
   requiredContainer: string;
@@ -92,6 +110,12 @@ export interface ClpListRow {
 
 export const clpListQuerySchema = listQuerySchema.extend({
   status: z.enum(['DRAFT', 'FINAL', 'CANCELLED']).optional(),
+  /**
+   * The same FCL/LCL split the creation screen already uses, applied to the
+   * register. Derived from the participating bookings' loading type at read
+   * time — no column was added to `clp`, because the answer is already stored.
+   */
+  family: z.enum(['FCL', 'LCL']).optional(),
 });
 
 // --------------------------------------------------------------- the plan

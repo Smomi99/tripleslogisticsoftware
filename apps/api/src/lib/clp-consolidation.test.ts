@@ -6,6 +6,7 @@ import {
   cfsLocations,
   isCompatible,
   loadingFamily,
+  loadingTypesOf,
   suggestGroups,
 } from './clp-consolidation';
 
@@ -138,6 +139,49 @@ describe('FCL and LCL never share a box', () => {
     expect(loadingFamily(null)).toBeNull();
     const problems = blocking([BASE, other({ loadingType: null, family: null })]);
     expect(problems.some((p) => /no loading type set/.test(p.reason))).toBe(true);
+  });
+});
+
+/*
+  §13 — the FCL/LCL view split filters on the same rule that decides what may
+  share a box, through one helper rather than a second copy of the mapping.
+  These tests exist so the two can never drift: if a view ever showed a set of
+  loading types the compatibility rule disagreed with, a planner would be
+  offered a booking the server would then refuse.
+*/
+describe('loadingTypesOf — the query side of the same rule', () => {
+  it('puts CONSOL_BOX in the FCL workflow, never LCL', () => {
+    expect(loadingTypesOf('FCL')).toEqual(['FCL', 'CONSOL_BOX']);
+    expect(loadingTypesOf('LCL')).toEqual(['LCL']);
+  });
+
+  it('is the exact inverse of loadingFamily, in both directions', () => {
+    // Every stored value lands in exactly one workflow's list, and that list
+    // is the one loadingFamily names.
+    for (const family of ['FCL', 'LCL'] as const) {
+      for (const type of loadingTypesOf(family)) {
+        expect(loadingFamily(type)).toBe(family);
+      }
+    }
+    // And nothing is in both, so a view can never show a row twice.
+    expect(loadingTypesOf('FCL').filter((t) => loadingTypesOf('LCL').includes(t))).toEqual([]);
+  });
+
+  it('covers every loading type the schema allows', () => {
+    /*
+      A new enum value added to `shipment.loading_type` without a decision
+      about which workflow owns it would silently vanish from both views. This
+      fails when that happens, which is the moment to ask rather than guess.
+    */
+    const stored = ['FCL', 'LCL', 'CONSOL_BOX'];
+    const covered = [...loadingTypesOf('FCL'), ...loadingTypesOf('LCL')].sort();
+    expect(covered).toEqual([...stored].sort());
+  });
+
+  it('never claims a booking with no loading type', () => {
+    // The null case is not in any list: unstated is a refusal, not a default.
+    expect(loadingTypesOf('FCL')).not.toContain(null);
+    expect(loadingTypesOf('LCL')).not.toContain(null);
   });
 });
 

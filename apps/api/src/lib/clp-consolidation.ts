@@ -43,6 +43,20 @@ export function loadingFamily(loadingType: string | null): LoadingFamily | null 
   return loadingType === 'LCL' ? 'LCL' : 'FCL';
 }
 
+/**
+ * The inverse, for querying: which stored `loading_type` values belong to a
+ * workflow.
+ *
+ * Kept beside `loadingFamily` and used by every list that filters, so a view
+ * can never disagree with the rule that decides what may share a box. A
+ * booking with no loading type is in neither list — the same refusal to guess.
+ */
+export function loadingTypesOf(
+  family: LoadingFamily,
+): ('FCL' | 'LCL' | 'CONSOL_BOX')[] {
+  return family === 'LCL' ? ['LCL'] : ['FCL', 'CONSOL_BOX'];
+}
+
 /** Everything the rules need to judge one booking. */
 export interface ConsolidationCandidate {
   shipmentId: bigint;

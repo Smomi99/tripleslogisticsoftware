@@ -6,8 +6,8 @@ import type {
   ClpCompatibilityResult,
   ClpSuggestedGroup,
 } from '@ff/shared';
-import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -46,11 +46,39 @@ const num = (v: string | number | null | undefined, dp = 2): string =>
 
 const day = (iso: string | null): string => (iso === null ? '—' : iso.slice(0, 10));
 
+/**
+ * The screen reads two things out of its own URL — the booking a `Make CLP`
+ * shortcut named, and the workflow the list screen was showing — so it needs
+ * `useSearchParams`, and that needs a Suspense boundary around it.
+ *
+ * It previously read `window.location.search` inside a state initialiser to
+ * avoid the boundary. That works on a fresh page load and silently fails on a
+ * client-side navigation, which is how both entry points are actually reached:
+ * the link is clicked, React renders before the new URL is readable there, and
+ * the shortcut lands on an empty screen with nothing selected and nothing
+ * explained. Proven by clicking `Make CLP` in a browser rather than opening
+ * its href.
+ */
 export default function NewConsolidatedClpPage() {
+  return (
+    <Suspense fallback={<p className="text-body text-steel">Loading…</p>}>
+      <NewConsolidatedClpScreen />
+    </Suspense>
+  );
+}
+
+function NewConsolidatedClpScreen() {
   const router = useRouter();
+  const params = useSearchParams();
   const { authorizedRequest, can } = useSession();
 
-  const [family, setFamily] = useState<Family>('FCL');
+  /*
+    Opens on FCL unless the list screen says otherwise (§13): arriving from
+    the LCL view and being shown FCL bookings is a switch the planner has
+    already made once. A `Make CLP` preselect still overrides this below, from
+    the server's own reading of the booking.
+  */
+  const [family, setFamily] = useState<Family>(() => (params.get('family') === 'LCL' ? 'LCL' : 'FCL'));
   const [search, setSearch] = useState('');
   const [list, setList] = useState<ClpCandidateList | null>(null);
   const [loading, setLoading] = useState(true);
@@ -66,13 +94,9 @@ export default function NewConsolidatedClpPage() {
     ordinary flow — the same compatibility call, the same review, the same
     create button. Nothing is created by arriving.
 
-    Read from the URL once rather than through useSearchParams, which would
-    need a Suspense boundary around a screen that is otherwise plain.
+    Read once and held, so that later navigation cannot re-trigger it.
   */
-  const [preselect] = useState<string | null>(() => {
-    if (typeof window === 'undefined') return null;
-    return new URLSearchParams(window.location.search).get('booking');
-  });
+  const [preselect] = useState<string | null>(() => params.get('booking'));
   const [preselectDone, setPreselectDone] = useState(false);
   const [preselectIssue, setPreselectIssue] = useState<string | null>(null);
 

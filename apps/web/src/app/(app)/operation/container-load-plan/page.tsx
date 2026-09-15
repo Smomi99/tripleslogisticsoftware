@@ -27,6 +27,29 @@ import { useSession } from '@/lib/session';
  */
 type View = 'bookings' | 'clps';
 
+/**
+ * The FCL/LCL split — CR-002 §13.
+ *
+ * FCL and LCL are different jobs done by different people: an FCL planner
+ * fills one customer's box, an LCL planner builds a consolidation out of many.
+ * Reading both queues at once means scrolling past rows you can never act on.
+ *
+ * It is a filter, not a new engine. The classification is `shipment.
+ * loading_type`, already stored, read through the same helper the creation
+ * screen uses — CONSOL_BOX is FCL-like, and a booking with no loading type
+ * appears under neither rather than being guessed into one. "All" stays the
+ * default so the screen opens as it always has.
+ */
+type Family = '' | 'FCL' | 'LCL';
+
+/** What the operator calls it, from what the booking stored. */
+const loadingLabel = (loadingType: string | null): string =>
+  loadingType === null
+    ? '—'
+    : loadingType === 'CONSOL_BOX'
+      ? 'Consol box'
+      : loadingType;
+
 export default function ContainerLoadPlanPage() {
   const { authorizedList, can } = useSession();
   const [view, setView] = useState<View>('bookings');
@@ -34,15 +57,19 @@ export default function ContainerLoadPlanPage() {
   const [clps, setClps] = useState<ClpListRow[]>([]);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState<'' | ClpStatus>('');
+  const [family, setFamily] = useState<Family>('');
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(
-    async (term: string, which: View, clpStatus: string) => {
+    async (term: string, which: View, clpStatus: string, fam: Family) => {
       setLoading(true);
       try {
         const params = new URLSearchParams();
         if (term.trim() !== '') params.set('search', term.trim());
         if (which === 'clps' && clpStatus !== '') params.set('status', clpStatus);
+        // Both lists take it: the queue filters on the booking's own loading
+        // type, the register on its participating bookings'.
+        if (fam !== '') params.set('family', fam);
         const qs = params.toString() === '' ? '' : `?${params.toString()}`;
 
         if (which === 'bookings') {
@@ -64,9 +91,9 @@ export default function ContainerLoadPlanPage() {
   );
 
   useEffect(() => {
-    const id = setTimeout(() => void load(search, view, status), search === '' ? 0 : 300);
+    const id = setTimeout(() => void load(search, view, status, family), search === '' ? 0 : 300);
     return () => clearTimeout(id);
-  }, [load, search, view, status]);
+  }, [load, search, view, status, family]);
 
   const mayView = can('OPERATION.CONTAINER_LOAD_PLAN.VIEW');
 
@@ -77,14 +104,32 @@ export default function ContainerLoadPlanPage() {
         action={
           can('OPERATION.CONTAINER_LOAD_PLAN.CREATE') ? (
             <Button variant="primary" asChild>
-              <Link href="/operation/container-load-plan/new">+ New container plan</Link>
+              {/*
+                Carries the chosen workflow through, so a planner reading the
+                LCL queue does not land on the FCL creation screen and have to
+                switch again.
+              */}
+              <Link
+                href={
+                  family === ''
+                    ? '/operation/container-load-plan/new'
+                    : `/operation/container-load-plan/new?family=${family}`
+                }
+              >
+                + New container plan
+              </Link>
             </Button>
           ) : undefined
         }
         description={
-          view === 'bookings'
+          (view === 'bookings'
             ? 'Bookings with cargo received at CFS, waiting to be planned into containers.'
-            : 'Every container plan made, with its container number and status.'
+            : 'Every container plan made, with its container number and status.') +
+          (family === ''
+            ? ''
+            : family === 'FCL'
+              ? ' Full containers and consol boxes only.'
+              : ' LCL only.')
         }
       />
 
@@ -109,6 +154,42 @@ export default function ContainerLoadPlanPage() {
               onClick={() => setView(key)}
               className={
                 view === key
+                  ? 'rounded-[3px] bg-harbour px-3 py-1.5 text-cell font-semibold text-white'
+                  : 'rounded-[3px] px-3 py-1.5 text-cell text-steel hover:text-hull'
+              }
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/*
+          The workflow switch, the same control as the one above it. Two
+          switches rather than four combined tabs: which list and which
+          workflow are independent questions, and folding them together would
+          make "To plan, LCL" a different tab from "To plan, FCL" instead of
+          the same list seen through a filter.
+        */}
+        <div
+          className="inline-flex rounded-manifest border border-line bg-surface p-0.5"
+          role="tablist"
+          aria-label="Which loading type to show"
+        >
+          {(
+            [
+              ['', 'All'],
+              ['FCL', 'FCL'],
+              ['LCL', 'LCL'],
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key === '' ? 'all' : key}
+              type="button"
+              role="tab"
+              aria-selected={family === key}
+              onClick={() => setFamily(key)}
+              className={
+                family === key
                   ? 'rounded-[3px] bg-harbour px-3 py-1.5 text-cell font-semibold text-white'
                   : 'rounded-[3px] px-3 py-1.5 text-cell text-steel hover:text-hull'
               }
@@ -152,20 +233,32 @@ export default function ContainerLoadPlanPage() {
       {loading ? (
         <p className="text-body text-steel">Loading…</p>
       ) : view === 'bookings' ? (
-        <BookingTable rows={bookings} mayView={mayView} />
+        <BookingTable rows={bookings} mayView={mayView} family={family} />
       ) : (
-        <ClpTable rows={clps} mayView={mayView} />
+        <ClpTable rows={clps} mayView={mayView} family={family} />
       )}
     </div>
   );
 }
 
-function BookingTable({ rows, mayView }: { rows: ClpBookingRow[]; mayView: boolean }) {
+function BookingTable({
+  rows,
+  mayView,
+  family,
+}: {
+  rows: ClpBookingRow[];
+  mayView: boolean;
+  family: Family;
+}) {
   if (rows.length === 0) {
     return (
       <EmptyState
-        title="Nothing to plan yet"
-        description="A booking appears here once its cargo has been received and accepted at the CFS."
+        title={family === '' ? 'Nothing to plan yet' : `No ${family} booking to plan`}
+        description={
+          family === ''
+            ? 'A booking appears here once its cargo has been received and accepted at the CFS.'
+            : `A booking appears here once its cargo has been received and accepted at the CFS. There may still be work under the other loading type — try All.`
+        }
       />
     );
   }
@@ -180,6 +273,7 @@ function BookingTable({ rows, mayView }: { rows: ClpBookingRow[]; mayView: boole
             <th className="label-manifest px-3 py-2 text-left">Customer</th>
             <th className="label-manifest px-3 py-2 text-left">Exporter</th>
             <th className="label-manifest px-3 py-2 text-left">Commodity</th>
+            <th className="label-manifest px-3 py-2 text-left">Loading</th>
             <th className="label-manifest px-3 py-2 text-left">POL</th>
             <th className="label-manifest px-3 py-2 text-left">POD</th>
             <th className="label-manifest px-3 py-2 text-left">Required Container</th>
@@ -199,6 +293,12 @@ function BookingTable({ rows, mayView }: { rows: ClpBookingRow[]; mayView: boole
               <td className="px-3 py-2 text-hull">{row.customerName}</td>
               <td className="px-3 py-2 text-steel">{row.exporterName ?? '—'}</td>
               <td className="px-3 py-2 text-steel">{row.commodity}</td>
+              {/*
+                Shown even when a workflow is chosen: inside FCL, a consol box
+                is a different job from a customer's own full container, and
+                the row should say which without being clicked.
+              */}
+              <td className="px-3 py-2 text-hull">{loadingLabel(row.loadingType)}</td>
               <td className="px-3 py-2 text-hull">{row.polName}</td>
               <td className="px-3 py-2 text-hull">{row.podName}</td>
               <td className="px-3 py-2 font-mono tabular-nums text-hull">
@@ -238,12 +338,24 @@ function BookingTable({ rows, mayView }: { rows: ClpBookingRow[]; mayView: boole
 }
 
 /** §5.2's columns, one row per container plan. */
-function ClpTable({ rows, mayView }: { rows: ClpListRow[]; mayView: boolean }) {
+function ClpTable({
+  rows,
+  mayView,
+  family,
+}: {
+  rows: ClpListRow[];
+  mayView: boolean;
+  family: Family;
+}) {
   if (rows.length === 0) {
     return (
       <EmptyState
-        title="No container plans yet"
-        description="Plan a booking into containers and its CLPs will be listed here."
+        title={family === '' ? 'No container plans yet' : `No ${family} container plan`}
+        description={
+          family === ''
+            ? 'Plan a booking into containers and its CLPs will be listed here.'
+            : 'Plan a booking into containers and its CLPs will be listed here. There may be plans under the other loading type — try All.'
+        }
       />
     );
   }
@@ -260,6 +372,7 @@ function ClpTable({ rows, mayView }: { rows: ClpListRow[]; mayView: boolean }) {
             <th className="label-manifest px-3 py-2 text-left">Exporter</th>
             <th className="label-manifest px-3 py-2 text-left">Commodity</th>
             <th className="label-manifest px-3 py-2 text-left">Type</th>
+            <th className="label-manifest px-3 py-2 text-left">Loading</th>
             <th className="label-manifest px-3 py-2 text-left">POL/AOL</th>
             <th className="label-manifest px-3 py-2 text-left">POD/AOD</th>
             <th className="label-manifest px-3 py-2 text-left">Required Container</th>
@@ -285,6 +398,17 @@ function ClpTable({ rows, mayView }: { rows: ClpListRow[]; mayView: boolean }) {
               <td className="px-3 py-2 text-steel">{row.exporterName ?? '—'}</td>
               <td className="px-3 py-2 text-steel">{row.commodity}</td>
               <td className="px-3 py-2 text-steel">{row.shipmentType}</td>
+              <td className="px-3 py-2 text-hull">
+                {loadingLabel(row.loadingType)}
+                {/*
+                  A shared container is worth seeing from the register: it is
+                  the one row where "whose cargo is in here" is not the single
+                  booking in the column beside it.
+                */}
+                {row.bookingCount > 1 && (
+                  <span className="ml-2 text-steel">+{row.bookingCount - 1}</span>
+                )}
+              </td>
               <td className="px-3 py-2 text-hull">{row.polName}</td>
               <td className="px-3 py-2 text-hull">{row.podName}</td>
               <td className="px-3 py-2 font-mono tabular-nums text-steel">

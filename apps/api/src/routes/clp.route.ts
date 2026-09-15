@@ -40,6 +40,8 @@ import {
   checkCompatibility,
   isCompatible,
   loadCandidates,
+  loadingFamily,
+  loadingTypesOf,
   suggestGroups,
 } from '../lib/clp-consolidation';
 import { buildClpPdf, type ClpPrintDoc, clpPdfFilename } from '../lib/clp-print';
@@ -78,6 +80,9 @@ async function findBooking(db: TenantDb, shipmentId: bigint) {
       code: true,
       status: true,
       shipmentType: true,
+      // What the booking is loaded as — the authoritative source for the
+      // FCL/LCL split, already stored, never re-derived.
+      loadingType: true,
       customer: { select: { name: true } },
       exporterName: true,
       carrier: { select: { name: true } },
@@ -192,6 +197,8 @@ async function bookingRow(db: TenantDb, row: BookingRow): Promise<ClpBookingRow>
     exporterName: row.exporterName,
     commodity: row.commodities.map((c) => c.commodityItem.name).join(', ') || '—',
     shipmentType: row.shipmentType,
+    loadingType: row.loadingType,
+    family: loadingFamily(row.loadingType),
     polName: row.pol?.name ?? '—',
     polCode: row.pol?.portCode ?? '',
     podName: row.pod?.name ?? '—',
@@ -249,6 +256,16 @@ clpRouter.get('/clp-bookings', requirePermission(`${FEATURE}.VIEW`), async (req,
       deletedAt: null,
       status: { notIn: ['CANCELLED' as const] },
       ...(query.shipmentType === undefined ? {} : { shipmentType: query.shipmentType }),
+      /*
+        The FCL/LCL split, §13. One workflow at a time, off the booking's own
+        loading type — the same values `loadCandidates` filters on, through the
+        same helper, so the queue and the creation screen agree on what an FCL
+        booking is. A booking with no loading type appears in neither, which is
+        the refusal to guess, not an omission.
+      */
+      ...(query.family === undefined
+        ? {}
+        : { loadingType: { in: loadingTypesOf(query.family) } }),
       ...(query.search === undefined || query.search === ''
         ? {}
         : {
@@ -331,6 +348,42 @@ clpRouter.get('/clps', requirePermission(`${FEATURE}.VIEW`), async (req, res) =>
               },
             ],
           }),
+      /*
+        The FCL/LCL split, §13. A container's workflow is its bookings' loading
+        type, which is already stored — no column was added to `clp`.
+
+        Two shapes, because two creation paths exist. A consolidated plan holds
+        `clp_booking` rows; a plan made by "Add another container" holds only
+        `clp.shipment_id`. The list already reads the booking that way
+        (`bookings[0] ?? shipmentId`), so the filter reads it the same way, and
+        a plan cannot be visible in one view while classified by the other.
+
+        `some` rather than `every` needs no tolerance for a mixed container:
+        `checkCompatibility` refuses to build one, so every participant of a
+        plan shares a family.
+      */
+      ...(query.family === undefined
+        ? {}
+        : {
+            AND: [
+              {
+                OR: [
+                  {
+                    bookings: {
+                      some: {
+                        deletedAt: null,
+                        shipment: { loadingType: { in: loadingTypesOf(query.family) } },
+                      },
+                    },
+                  },
+                  {
+                    bookings: { none: { deletedAt: null } },
+                    shipment: { loadingType: { in: loadingTypesOf(query.family) } },
+                  },
+                ],
+              },
+            ],
+          }),
     };
 
     const [rows, total] = await Promise.all([
@@ -404,6 +457,8 @@ clpRouter.get('/clps', requirePermission(`${FEATURE}.VIEW`), async (req, res) =>
           exporterName: booking.exporterName,
           commodity: booking.commodity,
           shipmentType: booking.shipmentType,
+          loadingType: booking.loadingType,
+          family: booking.family,
           polName: booking.polName,
           podName: booking.podName,
           requiredContainer: booking.requiredContainer,
@@ -1306,7 +1361,7 @@ clpRouter.get('/clp-candidates', requirePermission(`${FEATURE}.VIEW`), async (re
         deletedAt: null,
         shipmentType: 'SEA',
         status: { in: ['PART_RECEIVED', 'CARGO_RECEIVED'] },
-        loadingType: query.family === 'LCL' ? 'LCL' : { in: ['FCL', 'CONSOL_BOX'] },
+        loadingType: { in: loadingTypesOf(query.family) },
         ...(search === null
           ? {}
           : {

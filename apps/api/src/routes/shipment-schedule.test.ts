@@ -1839,9 +1839,19 @@ describe('the direct list screens (client decision, 2026-09-03)', () => {
    * separately — a booking can never sit in a worklist for a stage that has
    * already happened to it.
    */
-  const APPROVAL = '/api/tenant/cs/shipment-approvals';
-  const ORDERS = '/api/tenant/cs/shipping-orders';
-  const RECEIPTS = '/api/tenant/ops/cargo-receipts';
+  /*
+    Asked for in full, because every assertion below looks for one fixture's
+    own row in the response. Read at the default page size these queues held
+    the fixture only while the tenant had fewer than 25 bookings in them, so
+    the tests passed on the size of the database rather than on the behaviour
+    — and a later suite that seeded a few more bookings pushed the row onto
+    page two and failed here, for a reason that had nothing to do with
+    schedules.
+  */
+  const PAGE = '?limit=100';
+  const APPROVAL = '/api/tenant/cs/shipment-approvals' + PAGE;
+  const ORDERS = '/api/tenant/cs/shipping-orders' + PAGE;
+  const RECEIPTS = '/api/tenant/ops/cargo-receipts' + PAGE;
 
   interface Row {
     id: string;
@@ -1880,7 +1890,7 @@ describe('the direct list screens (client decision, 2026-09-03)', () => {
     const code = (
       await owner.shipment.findFirstOrThrow({ where: { id }, select: { code: true } })
     ).code;
-    const all = await as(token).get(`${APPROVAL}?show=ALL&search=${code}`);
+    const all = await as(token).get(`${APPROVAL}&show=ALL&search=${code}`);
     const row = find(all, id);
     expect(row?.status).toBe('APPROVED_FOR_SHIPMENT');
     expect(row?.awaiting).toBe(false);
@@ -1922,7 +1932,7 @@ describe('the direct list screens (client decision, 2026-09-03)', () => {
     const code = (
       await owner.shipment.findFirstOrThrow({ where: { id }, select: { code: true } })
     ).code;
-    const all = await as(token).get(`${ORDERS}?show=ALL&search=${code}`);
+    const all = await as(token).get(`${ORDERS}&show=ALL&search=${code}`);
     const row = find(all, id);
     expect(row, `${code} not in ${JSON.stringify(rowsOf(all).map((r) => r.code))}`).toBeDefined();
     expect(row?.awaiting).toBe(false);
@@ -1959,7 +1969,7 @@ describe('the direct list screens (client decision, 2026-09-03)', () => {
 
   it('refuses a status the screen does not cover', async () => {
     // An empty table would read as an answer. This is a mistake, so it says so.
-    const res = await as(token).get(`${ORDERS}?status=CANCELLED`);
+    const res = await as(token).get(`${ORDERS}&status=CANCELLED`);
     expect(res.status).toBe(400);
     const error = (res.body as { error: { code: string; message: string } }).error;
     expect(error.code).toBe('STATUS_OUT_OF_SCOPE');
@@ -1967,7 +1977,7 @@ describe('the direct list screens (client decision, 2026-09-03)', () => {
   });
 
   it('narrows to one status within the screen', async () => {
-    const res = await as(token).get(`${APPROVAL}?status=REJECTED`);
+    const res = await as(token).get(`${APPROVAL}&status=REJECTED`);
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     for (const row of rowsOf(res)) expect(row.status).toBe('REJECTED');
   });

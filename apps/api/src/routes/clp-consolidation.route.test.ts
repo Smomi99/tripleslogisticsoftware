@@ -686,3 +686,199 @@ describe('security', () => {
     }
   });
 });
+
+// ============================================================ §13 view split
+
+/**
+ * The FCL/LCL view split, through HTTP.
+ *
+ * It is a filter over data that was already stored, so what has to be proven
+ * is not that a new rule works but that no plan falls out of both views. Three
+ * shapes of CLP exist and they are stored differently:
+ *
+ *   consolidated        clp.shipment_id NULL, several clp_booking rows
+ *   single, consolidate clp.shipment_id set,  one clp_booking row
+ *   single, /clps       clp.shipment_id set,  NO clp_booking row
+ *
+ * The third is the one that catches a filter written only against
+ * clp_booking — `POST /bookings/:id/clps` ("Add another container") writes no
+ * participation, so a plan made that way would silently vanish from a view
+ * that only joined the participation table.
+ */
+describe('the FCL/LCL view split', () => {
+  const codesOf = (body: { data: { code: string }[] }) => body.data.map((r) => r.code);
+  const idsOf = (body: { data: { id: string }[] }) => body.data.map((r) => r.id);
+
+  it('splits the planning queue by the loading type of the booking', async () => {
+    const fcl = await booking({ label: 'vsfcl', loadingType: 'FCL' });
+    const lcl = await booking({ label: 'vslcl', loadingType: 'LCL' });
+    const box = await booking({ label: 'vsbox', loadingType: 'CONSOL_BOX' });
+
+    const q = `&search=BKGRT-${RUN}-vs&limit=100`;
+    const all = await as(tokenAll).get(`/api/tenant/ops/clp-bookings?page=1${q}`);
+    const asFcl = await as(tokenAll).get(`/api/tenant/ops/clp-bookings?family=FCL${q}`);
+    const asLcl = await as(tokenAll).get(`/api/tenant/ops/clp-bookings?family=LCL${q}`);
+    expect(all.status).toBe(200);
+
+    // Unfiltered is unchanged — the split adds a view, it removes nothing.
+    expect(codesOf(all.body)).toEqual(expect.arrayContaining([fcl.code, lcl.code, box.code]));
+
+    expect(codesOf(asFcl.body)).toEqual(expect.arrayContaining([fcl.code, box.code]));
+    expect(codesOf(asFcl.body)).not.toContain(lcl.code);
+
+    expect(codesOf(asLcl.body)).toContain(lcl.code);
+    expect(codesOf(asLcl.body)).not.toContain(fcl.code);
+    // The decision of 2026-09-15, enforced at the view: a consol box is a
+    // whole container the forwarder fills, and is never LCL work.
+    expect(codesOf(asLcl.body)).not.toContain(box.code);
+  });
+
+  it('filters the count too, not just the page', async () => {
+    // Otherwise the pager would offer pages that come back empty.
+    const q = `&search=BKGRT-${RUN}-vs&limit=100`;
+    const asFcl = await as(tokenAll).get(`/api/tenant/ops/clp-bookings?family=FCL${q}`);
+    const asLcl = await as(tokenAll).get(`/api/tenant/ops/clp-bookings?family=LCL${q}`);
+    expect(asFcl.body.meta.total).toBe(asFcl.body.data.length);
+    expect(asLcl.body.meta.total).toBe(asLcl.body.data.length);
+    expect(asFcl.body.meta.total).toBeGreaterThan(asLcl.body.meta.total);
+  });
+
+  it('carries the loading type and its family on every row', async () => {
+    const res = await as(tokenAll).get(
+      `/api/tenant/ops/clp-bookings?family=FCL&search=BKGRT-${RUN}-vs&limit=100`,
+    );
+    const box = res.body.data.find((r: { code: string }) => r.code.endsWith('vsbox'));
+    expect(box.loadingType).toBe('CONSOL_BOX');
+    expect(box.family).toBe('FCL');
+  });
+
+  it('shows a booking with no loading type under neither view, but never hides it', async () => {
+    /*
+      §3's refusal to guess, carried into the view. Dropping it from both
+      filters is correct; dropping it from the unfiltered list too would make
+      a real booking unreachable, so that is checked as well.
+    */
+    const bare = await booking({ label: 'vsnone', loadingType: null });
+    const q = `&search=${bare.code}&limit=50`;
+
+    const all = await as(tokenAll).get(`/api/tenant/ops/clp-bookings?page=1${q}`);
+    expect(codesOf(all.body)).toContain(bare.code);
+    const row = all.body.data[0];
+    expect(row.loadingType).toBeNull();
+    expect(row.family).toBeNull();
+
+    for (const family of ['FCL', 'LCL']) {
+      const res = await as(tokenAll).get(`/api/tenant/ops/clp-bookings?family=${family}${q}`);
+      expect(codesOf(res.body)).not.toContain(bare.code);
+    }
+  });
+
+  it('splits the register by the participating bookings', async () => {
+    const a = await booking({ label: 'vsra', loadingType: 'FCL' });
+    const b = await booking({ label: 'vsrb', loadingType: 'FCL' });
+    const c = await booking({ label: 'vsrc', loadingType: 'LCL', voyageNo: 'V-VS-L' });
+
+    const consolidated = await as(tokenAll)
+      .post('/api/tenant/ops/clps/consolidate')
+      .send({
+        shipmentIds: [a.id.toString(), b.id.toString()],
+        containerSizeId: size20.toString(),
+      });
+    expect(consolidated.status).toBe(201);
+    const fclId = track(consolidated.body.data.id).toString();
+
+    const lclPlan = await as(tokenAll)
+      .post('/api/tenant/ops/clps/consolidate')
+      .send({ shipmentIds: [c.id.toString()], containerSizeId: size20.toString() });
+    expect(lclPlan.status).toBe(201);
+    const lclId = track(lclPlan.body.data.id).toString();
+
+    const onlyFcl = await as(tokenAll).get('/api/tenant/ops/clps?family=FCL&limit=100');
+    const onlyLcl = await as(tokenAll).get('/api/tenant/ops/clps?family=LCL&limit=100');
+
+    expect(idsOf(onlyFcl.body)).toContain(fclId);
+    expect(idsOf(onlyFcl.body)).not.toContain(lclId);
+    expect(idsOf(onlyLcl.body)).toContain(lclId);
+    expect(idsOf(onlyLcl.body)).not.toContain(fclId);
+
+    // And the row says which, so the column is not guesswork on the client.
+    const fclRow = onlyFcl.body.data.find((r: { id: string }) => r.id === fclId);
+    expect(fclRow.family).toBe('FCL');
+    expect(fclRow.loadingType).toBe('FCL');
+    expect(fclRow.bookingCount).toBe(2);
+  });
+
+  it('classifies a plan that has no participation row at all', async () => {
+    /*
+      The regression this whole shape exists for. `POST /bookings/:id/clps`
+      writes clp.shipment_id and no clp_booking, so a filter joined only to the
+      participation table would drop the plan out of every view.
+    */
+    const solo = await booking({ label: 'vsorph', loadingType: 'LCL', voyageNo: 'V-VS-O' });
+    const made = await as(tokenAll)
+      .post(`/api/tenant/ops/bookings/${solo.id}/clps`)
+      .send({ containerSizeId: size20.toString() });
+    expect(made.status).toBe(201);
+    const orphanId = track(made.body.data.id).toString();
+
+    // Proof that it really is the shape being tested.
+    expect(await owner.clpBooking.count({ where: { clpId: BigInt(orphanId) } })).toBe(0);
+
+    const onlyLcl = await as(tokenAll).get('/api/tenant/ops/clps?family=LCL&limit=100');
+    const onlyFcl = await as(tokenAll).get('/api/tenant/ops/clps?family=FCL&limit=100');
+
+    expect(idsOf(onlyLcl.body)).toContain(orphanId);
+    expect(idsOf(onlyFcl.body)).not.toContain(orphanId);
+    expect(onlyLcl.body.data.find((r: { id: string }) => r.id === orphanId).family).toBe('LCL');
+  });
+
+  it('combines with the status filter rather than replacing it', async () => {
+    const res = await as(tokenAll).get('/api/tenant/ops/clps?family=FCL&status=DRAFT&limit=100');
+    expect(res.status).toBe(200);
+    expect(res.body.data.length).toBeGreaterThan(0);
+    for (const row of res.body.data) {
+      expect(row.status).toBe('DRAFT');
+      expect(row.family).toBe('FCL');
+    }
+  });
+
+  it('combines with search rather than replacing it', async () => {
+    // Two narrowings at once must intersect: an FCL search must not start
+    // returning LCL rows merely because the term matched.
+    const res = await as(tokenAll).get(
+      `/api/tenant/ops/clp-bookings?family=FCL&search=BKGRT-${RUN}&limit=100`,
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.data.length).toBeGreaterThan(0);
+    for (const row of res.body.data) {
+      expect(row.code).toContain(`BKGRT-${RUN}`);
+      expect(row.family).toBe('FCL');
+    }
+  });
+
+  it('rejects a family that is not a workflow', async () => {
+    for (const path of [
+      '/api/tenant/ops/clp-bookings?family=CONSOL_BOX',
+      '/api/tenant/ops/clps?family=AIR',
+    ]) {
+      const res = await as(tokenAll).get(path);
+      expect(res.status).toBe(400);
+    }
+  });
+
+  it('still requires VIEW', async () => {
+    const none = await signAccessToken({
+      sub: plannerId.toString(),
+      tenantId: tenantId.toString(),
+      isSuperadmin: false,
+      permissions: [],
+      tokenVersion: 0,
+    });
+    for (const path of [
+      '/api/tenant/ops/clp-bookings?family=FCL',
+      '/api/tenant/ops/clps?family=LCL',
+    ]) {
+      expect((await as(none).get(path)).status).toBe(403);
+    }
+  });
+});
