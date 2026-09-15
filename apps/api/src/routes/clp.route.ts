@@ -144,6 +144,20 @@ function describeContainers(names: string[]): string {
 async function bookingRow(db: TenantDb, row: BookingRow): Promise<ClpBookingRow> {
   const so = row.shippingOrders[0] ?? null;
 
+  const schedule = await db.shipmentSchedule.findFirst({
+    where: { shipmentId: row.id, deletedAt: null, status: 'APPROVED' },
+    orderBy: { versionNo: 'desc' },
+    select: {
+      legs: {
+        where: { deletedAt: null },
+        orderBy: { legNo: 'asc' },
+        take: 1,
+        select: { voyageNo: true, vessel: { select: { name: true } } },
+      },
+    },
+  });
+  const sailing = schedule?.legs[0] ?? null;
+
   const cargoLines = await db.shipmentCargoLine.findMany({
     where: { shipmentId: row.id, deletedAt: null },
     select: { id: true },
@@ -184,6 +198,10 @@ async function bookingRow(db: TenantDb, row: BookingRow): Promise<ClpBookingRow>
     podCode: row.pod?.portCode ?? '',
     requiredContainer: renderRequiredContainer(row.quotation.lines, row.quotation.inquiry?.volumes ?? []),
     carrierName: row.carrier?.name ?? null,
+    // The sailing identity CR-002 §2 settled on: first leg of the APPROVED
+    // schedule, never shipment_schedule.id.
+    vesselName: sailing?.vessel?.name ?? null,
+    voyageNo: sailing?.voyageNo ?? null,
     cutOff: so?.cutOff?.toISOString() ?? null,
     etd: so?.etd?.toISOString() ?? null,
     eta: so?.eta?.toISOString() ?? null,
@@ -473,6 +491,7 @@ async function cards(db: TenantDb, shipmentId: bigint): Promise<ClpCard[]> {
         select: {
           id: true,
           shipmentCargoLineId: true,
+          shipmentCargoLine: { select: { shipmentId: true } },
           poNo: true,
           itemCode: true,
           sku: true,
@@ -554,6 +573,7 @@ async function cards(db: TenantDb, shipmentId: bigint): Promise<ClpCard[]> {
     lines: row.lines.map((l) => ({
       id: l.id.toString(),
       cargoLineId: l.shipmentCargoLineId.toString(),
+      shipmentId: l.shipmentCargoLine.shipmentId.toString(),
       poNo: l.poNo,
       itemCode: l.itemCode,
       sku: l.sku,

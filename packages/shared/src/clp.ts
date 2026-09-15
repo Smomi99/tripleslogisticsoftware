@@ -34,6 +34,9 @@ export interface ClpBookingRow {
   /** "20STD(1) + 40HC(1)" — what the booking says it needs. */
   requiredContainer: string;
   carrierName: string | null;
+  /** The sailing, from the approved schedule's first leg (CR-002 §2). */
+  vesselName: string | null;
+  voyageNo: string | null;
   cutOff: string | null;
   etd: string | null;
   eta: string | null;
@@ -117,6 +120,8 @@ export interface ClpPoolRow {
 export interface ClpLineRow {
   id: string;
   cargoLineId: string;
+  /** Whose cargo this is — needed once a container holds several bookings. */
+  shipmentId: string;
   poNo: string;
   itemCode: string;
   sku: string | null;

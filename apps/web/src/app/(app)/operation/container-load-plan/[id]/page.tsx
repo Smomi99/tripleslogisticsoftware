@@ -2,6 +2,7 @@
 
 import {
   CLP_OVER_VOLUME,
+  type ClpBillingCbm,
   type ClpCard,
   type ClpDetailsInput,
   type ClpFinaliseInput,
@@ -16,6 +17,7 @@ import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
 import { ClpCostPanel } from '@/components/ops/clp-cost-panel';
+import { ClpFinalReview } from '@/components/ops/clp-final-review';
 import { VirtualContainer } from '@/components/ops/virtual-container';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -678,6 +680,8 @@ function ClpCardView({
     One band per PO (§5.1). A PO split across two containers appears on both,
     which is the point of the picture: you can see where it went.
   */
+  const [billing, setBilling] = useState<ClpBillingCbm[] | null>(null);
+
   const bands = clp.lines.map((line) => ({
     poNo: line.poNo,
     volumeCbm: Number(line.volumeCbm ?? 0),
@@ -825,7 +829,21 @@ function ClpCardView({
 
       {/* CR-002 §7 and §9 — measured cargo, what the box cost, and whose. */}
       {clp.bookings.length > 0 && (
-        <ClpCostPanel clp={clp} plan={plan} busy={busy} onChanged={onChanged} />
+        <ClpCostPanel
+          clp={clp}
+          plan={plan}
+          busy={busy}
+          onChanged={onChanged}
+          onBilling={setBilling}
+        />
+      )}
+
+      {/*
+        Stage H. Shown while a plan can still be changed, and kept afterwards
+        as the record of what was signed off.
+      */}
+      {clp.bookings.length > 0 && clp.status !== 'CANCELLED' && (
+        <ClpFinalReview clp={clp} plan={plan} billing={billing} />
       )}
 
       {(

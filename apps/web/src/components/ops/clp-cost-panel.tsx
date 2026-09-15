@@ -46,11 +46,14 @@ export function ClpCostPanel({
   plan,
   busy,
   onChanged,
+  onBilling,
 }: {
   clp: ClpCard;
   plan: ClpPlan;
   busy: boolean;
   onChanged: (next: ClpPlan) => void;
+  /** Published upward so the final review shows the same figures, not a second fetch. */
+  onBilling?: (rows: ClpBillingCbm[]) => void;
 }) {
   const { authorizedRequest, can } = useSession();
   const [billing, setBilling] = useState<ClpBillingCbm[] | null>(null);
@@ -74,13 +77,15 @@ export function ClpCostPanel({
 
   const loadBilling = useCallback(async () => {
     try {
-      setBilling(
-        await authorizedRequest<ClpBillingCbm[]>(`/api/tenant/ops/clps/${clp.id}/billing`),
+      const rows = await authorizedRequest<ClpBillingCbm[]>(
+        `/api/tenant/ops/clps/${clp.id}/billing`,
       );
+      setBilling(rows);
+      onBilling?.(rows);
     } catch (error) {
       toast.error(error instanceof ApiError ? error.message : 'Could not load the CBM figures.');
     }
-  }, [authorizedRequest, clp.id]);
+  }, [authorizedRequest, clp.id, onBilling]);
 
   useEffect(() => {
     void loadBilling();
