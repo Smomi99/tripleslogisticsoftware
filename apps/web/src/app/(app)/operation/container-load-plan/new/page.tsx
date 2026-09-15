@@ -60,6 +60,21 @@ export default function NewConsolidatedClpPage() {
   const [sizeId, setSizeId] = useState('');
   const [cfs, setCfs] = useState('');
   const [busy, setBusy] = useState(false);
+  /*
+    The `Make CLP` shortcut (CR-002 §12) arrives here with one booking named.
+    It is only an entry point: it preselects, and everything after that is the
+    ordinary flow — the same compatibility call, the same review, the same
+    create button. Nothing is created by arriving.
+
+    Read from the URL once rather than through useSearchParams, which would
+    need a Suspense boundary around a screen that is otherwise plain.
+  */
+  const [preselect] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return new URLSearchParams(window.location.search).get('booking');
+  });
+  const [preselectDone, setPreselectDone] = useState(false);
+  const [preselectIssue, setPreselectIssue] = useState<string | null>(null);
 
   const mayCreate = can('OPERATION.CONTAINER_LOAD_PLAN.CREATE');
 
@@ -88,11 +103,17 @@ export default function NewConsolidatedClpPage() {
     return () => clearTimeout(id);
   }, [load, family, search]);
 
-  /* Switching workflow clears the selection: §3 never mixes the two. */
+  /*
+    Switching workflow clears the selection: §3 never mixes the two. Skipped
+    while a shortcut's preselection is still landing, which sets the family
+    and the booking together.
+  */
+  const [familyTouched, setFamilyTouched] = useState(false);
   useEffect(() => {
+    if (!familyTouched) return;
     setPicked([]);
     setCheck(null);
-  }, [family]);
+  }, [family, familyTouched]);
 
   // Sizes arrive with the candidates, so this screen needs no Settings right
   // to show what a planner is filling.
@@ -100,6 +121,44 @@ export default function NewConsolidatedClpPage() {
   useEffect(() => {
     setSizeId((current) => current || (sizes[0]?.id ?? ''));
   }, [sizes]);
+
+  /*
+    A booking handed in by the shortcut. The server is asked which workflow it
+    belongs to and whether it is eligible at all — the same endpoint the
+    selection uses, so there is no second set of rules to keep in step.
+  */
+  useEffect(() => {
+    if (preselect === null || preselectDone) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await authorizedRequest<ClpCompatibilityResult>(
+          '/api/tenant/ops/clp-candidates/check',
+          { method: 'POST', body: { shipmentIds: [preselect] } },
+        );
+        if (cancelled) return;
+        if (result.family !== null) setFamily(result.family);
+        // Ineligible bookings never reach the candidate list, so the reason
+        // is carried here rather than leaving an empty screen.
+        const blocked = result.issues.filter((i) => i.blocking);
+        if (blocked.length > 0) {
+          setPreselectIssue(blocked.map((i) => i.reason).join(' '));
+        }
+        setPicked([preselect]);
+      } catch (error) {
+        if (!cancelled) {
+          setPreselectIssue(
+            error instanceof ApiError ? error.message : 'That booking could not be checked.',
+          );
+        }
+      } finally {
+        if (!cancelled) setPreselectDone(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [authorizedRequest, preselect, preselectDone]);
 
   /*
     Every change of selection asks the SERVER. The alternative — mirroring the
@@ -206,7 +265,10 @@ export default function NewConsolidatedClpPage() {
               type="button"
               role="tab"
               aria-selected={family === f}
-              onClick={() => setFamily(f)}
+              onClick={() => {
+                setFamilyTouched(true);
+                setFamily(f);
+              }}
               className={
                 family === f
                   ? 'rounded-[3px] bg-harbour px-3 py-1.5 text-cell font-semibold text-white'
@@ -233,6 +295,13 @@ export default function NewConsolidatedClpPage() {
             : 'Many shippers sharing one box, across customers.'}
         </p>
       </div>
+
+      {preselectIssue !== null && (
+        <p className="rounded-manifest border border-alert/40 bg-alert/5 px-3 py-2 text-body text-hull">
+          <span className="label-manifest text-alert">Cannot be planned yet</span>{' '}
+          {preselectIssue}
+        </p>
+      )}
 
       {/* --------------------------------------- Stage B: the suggestions */}
       {(list?.suggestions ?? []).filter((g) => g.shipmentIds.length > 1).length > 0 && (

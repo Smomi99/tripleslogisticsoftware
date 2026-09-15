@@ -473,6 +473,12 @@ export interface ClpCompatibilityIssue {
 
 export interface ClpCompatibilityResult {
   ok: boolean;
+  /**
+   * Which workflow the selection belongs to, so an entry point that knows only
+   * a booking id can open the right one. Null when the bookings disagree or
+   * none has a loading type.
+   */
+  family: 'FCL' | 'LCL' | null;
   issues: ClpCompatibilityIssue[];
   /** Distinct CFS locations across the selection (§8). */
   cfsLocations: string[];

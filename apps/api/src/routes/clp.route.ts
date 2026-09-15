@@ -1416,8 +1416,13 @@ clpRouter.post('/clp-candidates/check', requirePermission(`${FEATURE}.VIEW`), as
     const candidates = await loadCandidates(db, ids);
     const issues = checkCompatibility(candidates);
 
+    const families = new Set(candidates.map((c) => c.family).filter((f) => f !== null));
+
     return {
       ok: isCompatible(issues),
+      // One family or none — a mixed selection is refused anyway, and saying
+      // "FCL" about a mixed one would send an entry point to the wrong list.
+      family: families.size === 1 ? ([...families][0] ?? null) : null,
       issues,
       cfsLocations: cfsLocations(candidates),
       totalCtnQty: candidates.reduce((s, c) => s + c.receivedCtnQty, 0),

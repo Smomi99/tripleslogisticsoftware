@@ -288,6 +288,24 @@ export function WorklistScreen({ worklist }: { worklist: ShipmentWorklistId }) {
             >
               Booking
             </Link>
+            {/*
+              CR-002 §12 — straight from the receipt to the load plan, with
+              this booking already chosen.
+
+              An entry point and nothing more: it creates nothing, carries no
+              rules of its own, and lands on the same screen with the same
+              server-side compatibility check. A second creation path is
+              exactly what §12 forbids, and the eligibility rules would be the
+              first thing to drift.
+            */}
+            {worklist === 'CARGO_RECEIPT' && can('OPERATION.CONTAINER_LOAD_PLAN.CREATE') && (
+              <Link
+                href={`/operation/container-load-plan/new?booking=${row.id}`}
+                className="text-body text-harbour hover:underline"
+              >
+                Make CLP
+              </Link>
+            )}
           </>
         )}
         empty={
