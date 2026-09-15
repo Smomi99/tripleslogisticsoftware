@@ -74,6 +74,13 @@ export default function ContainerLoadPlanPage() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Cargo Load Plan"
+        action={
+          can('OPERATION.CONTAINER_LOAD_PLAN.CREATE') ? (
+            <Button variant="primary" asChild>
+              <Link href="/operation/container-load-plan/new">+ New container plan</Link>
+            </Button>
+          ) : undefined
+        }
         description={
           view === 'bookings'
             ? 'Bookings with cargo received at CFS, waiting to be planned into containers.'

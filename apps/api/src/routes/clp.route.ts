@@ -1328,7 +1328,19 @@ clpRouter.get('/clp-candidates', requirePermission(`${FEATURE}.VIEW`), async (re
 
     const byId = new Map(candidates.map((c) => [c.shipmentId.toString(), c]));
 
+    const sizes = await db.containerSize.findMany({
+      where: { deletedAt: null, isActive: true },
+      orderBy: [{ sortOrder: 'asc' }, { code: 'asc' }],
+      select: { id: true, code: true, maxVolumeCbm: true, maxWeightKg: true },
+    });
+
     return {
+      containerSizes: sizes.map((s) => ({
+        id: s.id.toString(),
+        code: s.code,
+        maxVolumeCbm: dec(s.maxVolumeCbm),
+        maxWeightKg: dec(s.maxWeightKg),
+      })),
       candidates: candidates.map(toRow),
       // Suggestions only. §4: the user may split any of these.
       suggestions: suggestGroups(candidates).map((g) => {

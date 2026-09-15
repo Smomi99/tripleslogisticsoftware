@@ -443,6 +443,12 @@ export interface ClpSuggestedGroup {
 export interface ClpCandidateList {
   candidates: ClpCandidateRow[];
   suggestions: ClpSuggestedGroup[];
+  /*
+    Sent with the list rather than fetched from the Settings lookup, which is
+    guarded by SETTING.CONTAINER_SIZE.VIEW — a load planner need not hold a
+    settings right to pick the box they are filling.
+  */
+  containerSizes: { id: string; code: string; maxVolumeCbm: string | null; maxWeightKg: string | null }[];
 }
 
 /** Why a selection cannot share a container — or merely should be looked at. */
