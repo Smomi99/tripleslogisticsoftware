@@ -120,6 +120,12 @@ export const ACTIONS = [
   'SPLIT',
   'FINALISE',
   'OVERRIDE_CAPACITY',
+  /*
+   * CR-002 §9. Changing a container's cost split by hand moves money between
+   * customers' invoices, so it is its own right rather than something anyone
+   * who can edit a load plan may do.
+   */
+  'OVERRIDE_COST',
 ] as const;
 
 export type Action = (typeof ACTIONS)[number];
@@ -191,6 +197,7 @@ const CLP: readonly Action[] = [
   'FINALISE',
   'CANCEL',
   'OVERRIDE_CAPACITY',
+  'OVERRIDE_COST',
 ];
 
 const READ_ONLY: readonly Action[] = ['VIEW', 'EXPORT'];

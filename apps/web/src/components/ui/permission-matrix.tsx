@@ -75,6 +75,7 @@ const ACTION_LABEL: Record<Action, string> = {
   SPLIT: 'Split',
   FINALISE: 'Finalise',
   OVERRIDE_CAPACITY: 'Override capacity',
+  OVERRIDE_COST: 'Override cost split',
   SET_OUTCOME: 'Won / lost',
   PRICE_CHECK: 'Price check',
   SEND: 'Send',
