@@ -220,6 +220,12 @@ export interface ClpPlan {
   }[];
   /** §5.2's Supervisor lookup — the tenant's active employees. */
   supervisors: { id: string; name: string }[];
+  /*
+    CR-002 §9's cost is entered here, so the picker travels with the plan
+    rather than through the Settings currency lookup — a load planner should
+    not need SETTING.CURRENCY.VIEW to say what a container cost.
+  */
+  currencies: { id: string; code: string; name: string; isBase: boolean }[];
   /** §4.4: what the booking declared against what this plan actually uses. */
   reconciliation: {
     required: string;

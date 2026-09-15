@@ -27,6 +27,7 @@ import { Router } from 'express';
 
 import { allocate, availableCartons, cancelClp, deallocate } from '../lib/clp-allocate';
 import { billingCbmForBooking } from '../lib/clp-billing';
+import { baseCurrency } from '../lib/currency-rate';
 import {
   type CostParticipant,
   assertReconciles,
@@ -662,6 +663,17 @@ async function buildPlan(db: TenantDb, shipmentId: bigint): Promise<ClpPlan> {
     the plan rather than fetched separately: the panel is on every card, and
     a list per card would be one request each.
   */
+  const [currencies, base] = await Promise.all([
+    db.currency.findMany({
+      where: { deletedAt: null, isActive: true },
+      orderBy: { code: 'asc' },
+      select: { id: true, code: true, currency: true },
+    }),
+    db.shipment
+      .findFirstOrThrow({ where: { id: shipmentId }, select: { tenantId: true } })
+      .then((s) => baseCurrency(db, s.tenantId)),
+  ]);
+
   const supervisors = await db.employee.findMany({
     where: { deletedAt: null, isActive: true },
     orderBy: { name: 'asc' },
@@ -684,6 +696,12 @@ async function buildPlan(db: TenantDb, shipmentId: bigint): Promise<ClpPlan> {
     pool: poolRows,
     clps,
     supervisors: supervisors.map((e) => ({ id: e.id.toString(), name: e.name })),
+    currencies: currencies.map((c) => ({
+      id: c.id.toString(),
+      code: c.code,
+      name: c.currency,
+      isBase: base !== null && c.id === base.id,
+    })),
     containerSizes: sizes.map((s) => ({
       id: s.id.toString(),
       code: s.code,

@@ -15,6 +15,7 @@ import { useParams } from 'next/navigation';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
+import { ClpCostPanel } from '@/components/ops/clp-cost-panel';
 import { VirtualContainer } from '@/components/ops/virtual-container';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -551,6 +552,8 @@ export default function ClpBuilderPage() {
               largestCbm={largestCbm}
               isTarget={clp.id === target}
               supervisors={plan.supervisors}
+              plan={plan}
+              onChanged={apply}
               mayFinalise={mayFinalise}
               mayCancelFinal={mayCancelFinal}
               mayPrint={mayPrint}
@@ -643,6 +646,8 @@ function ClpCardView({
   mayCancelFinal,
   mayPrint,
   supervisors,
+  plan,
+  onChanged,
   busy,
   onRemoveLine,
   onRemove,
@@ -659,6 +664,8 @@ function ClpCardView({
   mayCancelFinal: boolean;
   mayPrint: boolean;
   supervisors: { id: string; name: string }[];
+  plan: ClpPlan;
+  onChanged: (next: ClpPlan) => void;
   busy: boolean;
   onRemoveLine: (id: string, label: string) => void;
   onRemove: () => void;
@@ -815,6 +822,11 @@ function ClpCardView({
             </Button>
           )}
       </div>
+
+      {/* CR-002 §7 and §9 — measured cargo, what the box cost, and whose. */}
+      {clp.bookings.length > 0 && (
+        <ClpCostPanel clp={clp} plan={plan} busy={busy} onChanged={onChanged} />
+      )}
 
       {(
         <FinalisePanel
