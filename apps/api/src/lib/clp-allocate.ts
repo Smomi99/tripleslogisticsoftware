@@ -392,7 +392,12 @@ async function recomputeClp(db: TenantDb, actor: Actor, clpId: bigint): Promise<
  */
 function assertWithinCapacity(
   load: ClpLoad,
-  clpSeq: number,
+  /*
+    How to name the container in the refusal. "CLP 1" for a plan that belongs
+    to one booking; its document number for a consolidated one, which has no
+    position within any single booking (CR-002).
+  */
+  label: string,
   override: { reason: string } | null,
 ): { overVolume: boolean } {
   const fmt = (v: Prisma.Decimal, dp: number) =>
@@ -403,7 +408,7 @@ function assertWithinCapacity(
 
   if (load.maxWeightKg !== null && load.grossWeightKg.greaterThan(load.maxWeightKg)) {
     throw HttpError.conflict(
-      `That would put CLP ${clpSeq} at ${fmt(load.grossWeightKg, 0)} kg in a ` +
+      `That would put ${label} at ${fmt(load.grossWeightKg, 0)} kg in a ` +
         `${fmt(load.maxWeightKg, 0)} kg ${load.sizeCode} — ` +
         `${fmt(load.grossWeightKg.minus(load.maxWeightKg), 0)} kg over. ` +
         'An overweight container cannot be loaded, and this one cannot be overridden.',
@@ -417,7 +422,7 @@ function assertWithinCapacity(
     throw new HttpError(
       409,
       CLP_OVER_VOLUME,
-      `That would put CLP ${clpSeq} at ${fmt(load.volumeCbm, 2)} CBM in a ` +
+      `That would put ${label} at ${fmt(load.volumeCbm, 2)} CBM in a ` +
         `${fmt(load.maxVolumeCbm!, 0)} CBM ${load.sizeCode} — ` +
         `${fmt(load.volumeCbm.minus(load.maxVolumeCbm!), 2)} CBM over. ` +
         'A supervisor can override this with a reason.',
@@ -522,7 +527,7 @@ export async function allocate(
 
   const plan = await db.clp.findFirst({
     where: { id: input.clpId, deletedAt: null },
-    select: { id: true, status: true, clpSeq: true },
+    select: { id: true, status: true, clpSeq: true, code: true },
   });
   if (plan === null) throw HttpError.notFound('That load plan no longer exists.');
   if (plan.status !== 'DRAFT') {
@@ -594,7 +599,8 @@ export async function allocate(
   */
   const load = loads.get(input.clpId.toString());
   if (load !== undefined) {
-    const { overVolume } = assertWithinCapacity(load, plan.clpSeq, input.override ?? null);
+    const label = plan.clpSeq === null ? plan.code : `CLP ${plan.clpSeq}`;
+    const { overVolume } = assertWithinCapacity(load, label, input.override ?? null);
     // §4.2: recorded on the plan, and in audit_log by the row trigger.
     await syncOverride(db, actor, input.clpId, overVolume, input.override ?? null);
   }

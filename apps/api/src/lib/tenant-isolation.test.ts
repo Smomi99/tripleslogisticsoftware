@@ -205,8 +205,9 @@ describe('model tier registry', () => {
     expect(missingFromDb, `registry names with no table: ${missingFromDb.join(', ')}`).toEqual([]);
     // 64 + the five quotation tables + mail_signature_logo + the four
     // shipment tables + the two schedule tables + shipping_order + the two
-    // cargo receipt tables + commodity_business_port + the two CLP tables.
-    expect(known.length).toBe(82);
+    // cargo receipt tables + commodity_business_port + the two CLP tables
+    // + clp_booking (CR-002).
+    expect(known.length).toBe(83);
   });
 
   it('applies the caller row level security to every view', async () => {

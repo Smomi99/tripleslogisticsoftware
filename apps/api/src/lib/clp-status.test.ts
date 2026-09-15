@@ -647,7 +647,7 @@ describe('clp_seq after a cancellation', () => {
       select: { clpSeq: true },
     });
 
-    expect(after.clpSeq).toBeGreaterThan(before.clpSeq);
+    expect(after.clpSeq!).toBeGreaterThan(before.clpSeq!);
     // And the cancelled one still carries its own.
     const cancelled = await owner.clp.findFirstOrThrow({
       where: { id: firstId },

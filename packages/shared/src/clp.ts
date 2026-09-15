@@ -61,7 +61,7 @@ export const clpBookingListQuerySchema = listQuerySchema.extend({
 export interface ClpListRow {
   id: string;
   code: string;
-  clpSeq: number;
+  clpSeq: number | null;
   status: ClpStatus;
   containerSizeCode: string;
   containerNo: string | null;
@@ -70,6 +70,8 @@ export interface ClpListRow {
 
   shipmentId: string;
   bookingCode: string;
+  /** More than one when the container is shared (CR-002). */
+  bookingCount: number;
   shippingOrderCode: string | null;
   customerName: string;
   exporterName: string | null;
@@ -129,10 +131,26 @@ export interface ClpLineRow {
 
 export type ClpStatus = 'DRAFT' | 'FINAL' | 'CANCELLED';
 
+/** One booking sharing a container (CR-002). */
+export interface ClpParticipant {
+  shipmentId: string;
+  bookingCode: string;
+  customerName: string;
+  exporterName: string | null;
+  /** §9 — what this booking's share of the container cost came to. */
+  defaultCostAmount: string | null;
+  allocatedCostAmount: string | null;
+  costOverriddenBy: string | null;
+  costOverrideReason: string | null;
+}
+
+export type ClpConsolidationType = 'SINGLE' | 'FCL_QUOTATION' | 'LCL_CONSOLIDATION';
+
 export interface ClpCard {
   id: string;
   code: string;
-  clpSeq: number;
+  /** Null on a consolidated plan: it has no position "within a booking". */
+  clpSeq: number | null;
   status: ClpStatus;
   containerSizeId: string;
   containerSizeCode: string;
@@ -177,6 +195,14 @@ export interface ClpCard {
   cancelledAt: string | null;
   cancelledBy: string | null;
   cancelReason: string | null;
+
+  /* CR-002 — who is in this box, and what it cost them. */
+  consolidationType: ClpConsolidationType;
+  bookings: ClpParticipant[];
+  actualContainerCost: string | null;
+  costCurrencyCode: string | null;
+  costAllocationBasis: 'CBM' | 'WEIGHT' | 'MANUAL' | null;
+  finalCfsLocation: string | null;
 
   lines: ClpLineRow[];
 }

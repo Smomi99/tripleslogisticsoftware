@@ -54,8 +54,12 @@ export interface ClpPrintDoc {
   workspaceName: string;
   status: 'DRAFT' | 'FINAL' | 'CANCELLED';
   code: string;
-  clpSeq: number;
+  clpSeq: number | null;
   bookingCode: string;
+  /** CR-002 §16 — every booking in the box, not just the first. */
+  bookingCodes?: string[];
+  consolidated?: boolean;
+  finalCfsLocation?: string | null;
   shippingOrderCode: string | null;
   carrierName: string;
   containerSizeCode: string;

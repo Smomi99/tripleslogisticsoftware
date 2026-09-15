@@ -170,6 +170,27 @@ async function bookingRow(db: TenantDb, row: BookingRow): Promise<ClpBookingRow>
 }
 
 /**
+ * Which booking's plan view to rebuild after changing a CLP.
+ *
+ * A consolidated container belongs to several bookings, so "the" shipment is
+ * no longer a column. The first participant is used — stable, because
+ * clp_booking is read in id order — and for every plan built before CR-002
+ * that is the one booking it always had.
+ */
+async function planShipmentId(db: TenantDb, clpId: bigint): Promise<bigint> {
+  const row = await db.clp.findFirst({
+    where: { id: clpId, deletedAt: null },
+    select: {
+      shipmentId: true,
+      bookings: { where: { deletedAt: null }, orderBy: { id: 'asc' }, take: 1, select: { shipmentId: true } },
+    },
+  });
+  const found = row?.bookings[0]?.shipmentId ?? row?.shipmentId ?? null;
+  if (found === null) throw HttpError.notFound('That load plan no longer exists.');
+  return found;
+}
+
+/**
  * GET /clp-bookings — the §5.1 selector.
  *
  * Only bookings whose goods are actually in: the CLP is made after cargo
@@ -289,6 +310,13 @@ clpRouter.get('/clps', requirePermission(`${FEATURE}.VIEW`), async (req, res) =>
           volumeUtilisation: true,
           containerSize: { select: { code: true } },
           carrier: { select: { name: true } },
+          // CR-002: who is in the box. Ordered so the "primary" booking is
+          // stable between requests.
+          bookings: {
+            where: { deletedAt: null },
+            orderBy: { id: 'asc' },
+            select: { shipmentId: true },
+          },
         },
       }),
       db.clp.count({ where }),
@@ -302,16 +330,19 @@ clpRouter.get('/clps', requirePermission(`${FEATURE}.VIEW`), async (req, res) =>
     */
     const bookings = new Map<string, ClpBookingRow>();
     for (const row of rows) {
-      const key = row.shipmentId.toString();
+      const primary = row.bookings[0]?.shipmentId ?? row.shipmentId;
+      if (primary === null) continue;
+      const key = primary.toString();
       if (!bookings.has(key)) {
-        bookings.set(key, await bookingRow(db, await findBooking(db, row.shipmentId)));
+        bookings.set(key, await bookingRow(db, await findBooking(db, primary)));
       }
     }
 
     return {
       total,
       rows: rows.map((row): ClpListRow => {
-        const booking = bookings.get(row.shipmentId.toString())!;
+        const primary = (row.bookings[0]?.shipmentId ?? row.shipmentId)!;
+        const booking = bookings.get(primary.toString())!;
         return {
           id: row.id.toString(),
           code: row.code,
@@ -322,8 +353,9 @@ clpRouter.get('/clps', requirePermission(`${FEATURE}.VIEW`), async (req, res) =>
           sealNo: row.sealNo,
           loadDatetime: row.loadDatetime?.toISOString() ?? null,
 
-          shipmentId: row.shipmentId.toString(),
+          shipmentId: primary.toString(),
           bookingCode: booking.code,
+          bookingCount: Math.max(1, row.bookings.length),
           shippingOrderCode: booking.shippingOrderCode,
           customerName: booking.customerName,
           exporterName: booking.exporterName,
@@ -353,8 +385,12 @@ clpRouter.get('/clps', requirePermission(`${FEATURE}.VIEW`), async (req, res) =>
 /** Every plan on the booking, with its lines. */
 async function cards(db: TenantDb, shipmentId: bigint): Promise<ClpCard[]> {
   const rows = await db.clp.findMany({
-    where: { shipmentId, deletedAt: null },
-    orderBy: { clpSeq: 'asc' },
+    /*
+      CR-002 — the plans this booking takes part in, which on a consolidated
+      container includes plans other bookings also appear on.
+    */
+    where: { deletedAt: null, bookings: { some: { shipmentId, deletedAt: null } } },
+    orderBy: [{ clpSeq: 'asc' }, { id: 'asc' }],
     select: {
       id: true,
       code: true,
@@ -384,6 +420,28 @@ async function cards(db: TenantDb, shipmentId: bigint): Promise<ClpCard[]> {
       cancelledAt: true,
       cancelReason: true,
       cancelledByUser: { select: { username: true, employee: { select: { name: true } } } },
+      consolidationType: true,
+      actualContainerCost: true,
+      costAllocationBasis: true,
+      finalCfsLocation: true,
+      costCurrency: { select: { code: true } },
+      bookings: {
+        where: { deletedAt: null },
+        orderBy: { id: 'asc' },
+        select: {
+          shipmentId: true,
+          defaultCostAmount: true,
+          allocatedCostAmount: true,
+          costOverriddenBy: true,
+          costOverrideReason: true,
+          shipment: {
+            select: { code: true, exporterName: true, customer: { select: { name: true } } },
+          },
+          overriddenByUser: {
+            select: { username: true, employee: { select: { name: true } } },
+          },
+        },
+      },
       lines: {
         where: { deletedAt: null },
         orderBy: { id: 'asc' },
@@ -450,6 +508,24 @@ async function cards(db: TenantDb, shipmentId: bigint): Promise<ClpCard[]> {
       row.cancelledByUser === null
         ? null
         : (row.cancelledByUser.employee?.name ?? row.cancelledByUser.username),
+    consolidationType: row.consolidationType,
+    actualContainerCost: dec(row.actualContainerCost),
+    costCurrencyCode: row.costCurrency?.code ?? null,
+    costAllocationBasis: row.costAllocationBasis,
+    finalCfsLocation: row.finalCfsLocation,
+    bookings: row.bookings.map((b) => ({
+      shipmentId: b.shipmentId.toString(),
+      bookingCode: b.shipment.code,
+      customerName: b.shipment.customer.name,
+      exporterName: b.shipment.exporterName,
+      defaultCostAmount: dec(b.defaultCostAmount),
+      allocatedCostAmount: dec(b.allocatedCostAmount),
+      costOverriddenBy:
+        b.overriddenByUser === null
+          ? null
+          : (b.overriddenByUser.employee?.name ?? b.overriddenByUser.username),
+      costOverrideReason: b.costOverrideReason,
+    })),
     lines: row.lines.map((l) => ({
       id: l.id.toString(),
       cargoLineId: l.shipmentCargoLineId.toString(),
@@ -743,7 +819,7 @@ clpRouter.post('/clps/:id/lines', requirePermission(`${FEATURE}.CREATE`), async 
       { tenantId: auth.tenantId, userId: auth.userId },
       { cargoLineId, clpId, ctnQty: input.ctnQty, override },
     );
-    return buildPlan(db, plan.shipmentId);
+    return buildPlan(db, await planShipmentId(db, clpId));
   });
 
   const payload: ApiSuccess<ClpPlan> = { success: true, data };
@@ -758,12 +834,12 @@ clpRouter.delete('/clp-lines/:id', requirePermission(`${FEATURE}.EDIT`), async (
   const data = await withTenant(auth.tenantId, async (db) => {
     const row = await db.clpLine.findFirst({
       where: { id: clpLineId, deletedAt: null },
-      select: { clp: { select: { shipmentId: true } } },
+      select: { clpId: true },
     });
     if (row === null) throw HttpError.notFound('That allocation no longer exists.');
 
     await deallocate(db, { tenantId: auth.tenantId, userId: auth.userId }, clpLineId);
-    return buildPlan(db, row.clp.shipmentId);
+    return buildPlan(db, await planShipmentId(db, row.clpId));
   });
 
   const payload: ApiSuccess<ClpPlan> = { success: true, data };
@@ -806,7 +882,7 @@ clpRouter.delete('/clps/:id', requirePermission(`${FEATURE}.EDIT`), async (req, 
       where: { id: clpId },
       data: { deletedAt: new Date(), isActive: false, updatedBy: auth.userId },
     });
-    return buildPlan(db, plan.shipmentId);
+    return buildPlan(db, await planShipmentId(db, clpId));
   });
 
   const payload: ApiSuccess<ClpPlan> = { success: true, data };
@@ -851,7 +927,7 @@ clpRouter.patch('/clps/:id', requirePermission(`${FEATURE}.EDIT`), async (req, r
         updatedBy: auth.userId,
       },
     });
-    return buildPlan(db, plan.shipmentId);
+    return buildPlan(db, await planShipmentId(db, clpId));
   });
 
   const payload: ApiSuccess<ClpPlan> = { success: true, data };
@@ -944,7 +1020,7 @@ clpRouter.post('/clps/:id/finalise', requirePermission(`${FEATURE}.FINALISE`), a
         updatedBy: auth.userId,
       },
     });
-    return buildPlan(db, plan.shipmentId);
+    return buildPlan(db, await planShipmentId(db, clpId));
   });
 
   const payload: ApiSuccess<ClpPlan> = { success: true, data };
@@ -980,7 +1056,7 @@ clpRouter.post('/clps/:id/cancel', requirePermission(`${FEATURE}.EDIT`), async (
         mayCancelFinal: auth.isSuperadmin || auth.permissions.has(`${FEATURE}.CANCEL`),
       },
     );
-    return buildPlan(db, plan.shipmentId);
+    return buildPlan(db, await planShipmentId(db, clpId));
   });
 
   const payload: ApiSuccess<ClpPlan> = { success: true, data };
@@ -1016,18 +1092,29 @@ clpRouter.get('/clps/:id/print', requirePermission(`${FEATURE}.EXPORT`), async (
         containerSize: { select: { code: true } },
         carrier: { select: { name: true } },
         supervisor: { select: { name: true } },
-        shipment: {
+        finalCfsLocation: true,
+        consolidationType: true,
+        // CR-002 §16: the document has to name every booking in the box. A
+        // warehouse loading a shared container needs to see whose cartons
+        // these are.
+        bookings: {
+          where: { deletedAt: null },
+          orderBy: { id: 'asc' },
           select: {
-            code: true,
-            exporterName: true,
-            customer: { select: { name: true } },
-            pol: { select: { name: true } },
-            pod: { select: { name: true } },
-            shippingOrders: {
-              where: { deletedAt: null },
-              orderBy: { id: 'desc' },
-              take: 1,
-              select: { code: true },
+            shipment: {
+              select: {
+                code: true,
+                exporterName: true,
+                customer: { select: { name: true } },
+                pol: { select: { name: true } },
+                pod: { select: { name: true } },
+                shippingOrders: {
+                  where: { deletedAt: null },
+                  orderBy: { id: 'desc' },
+                  take: 1,
+                  select: { code: true },
+                },
+              },
             },
           },
         },
@@ -1061,13 +1148,24 @@ clpRouter.get('/clps/:id/print', requirePermission(`${FEATURE}.EXPORT`), async (
       select: { username: true, employee: { select: { name: true } } },
     });
 
+    const first = row.bookings[0]?.shipment ?? null;
+
     const doc: ClpPrintDoc = {
       workspaceName: workspace.name,
       status: row.status,
       code: row.code,
       clpSeq: row.clpSeq,
-      bookingCode: row.shipment.code,
-      shippingOrderCode: row.shipment.shippingOrders[0]?.code ?? null,
+      /*
+        The first participant carries the header fields; every booking is
+        listed separately below it. On a single-booking plan — which is every
+        plan built before CR-002 — this is identical to what it printed
+        before.
+      */
+      bookingCode: first?.code ?? '—',
+      bookingCodes: row.bookings.map((b) => b.shipment.code),
+      consolidated: row.consolidationType !== 'SINGLE',
+      finalCfsLocation: row.finalCfsLocation,
+      shippingOrderCode: first?.shippingOrders[0]?.code ?? null,
       carrierName: row.carrier.name,
       containerSizeCode: row.containerSize.code,
       containerNo: row.containerNo,
@@ -1076,10 +1174,10 @@ clpRouter.get('/clps/:id/print', requirePermission(`${FEATURE}.EXPORT`), async (
       loadedBy: row.loadedBy,
       supervisorName: row.supervisor?.name ?? null,
       tallyManName: row.tallyManName,
-      polName: row.shipment.pol.name,
-      podName: row.shipment.pod.name,
-      customerName: row.shipment.customer.name,
-      exporterName: row.shipment.exporterName,
+      polName: first?.pol.name ?? '—',
+      podName: first?.pod.name ?? '—',
+      customerName: first?.customer.name ?? '—',
+      exporterName: first?.exporterName ?? null,
       generatedBy: me.employee?.name ?? me.username,
       lines: row.lines.map((l) => ({
         poNo: l.poNo,
