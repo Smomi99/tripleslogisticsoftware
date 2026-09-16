@@ -181,8 +181,38 @@ async function recomputeCargoLine(
   const rows = await db.clpLine.findMany({
     where: liveAllocations(cargoLineId),
     orderBy: { id: 'asc' },
-    select: { id: true, clpId: true, ctnQty: true },
+    select: {
+      id: true,
+      clpId: true,
+      ctnQty: true,
+      // The stored figures, needed for a row this recompute may not rewrite.
+      pcsQty: true,
+      netWeightKg: true,
+      grossWeightKg: true,
+      volumeCbm: true,
+      clp: { select: { status: true } },
+    },
   });
+
+  /*
+    A finalised or cancelled plan is frozen — §4.3's "FINAL has no edit path",
+    applied to the rows as well as the columns.
+
+    Its allocations still COUNT: they hold cartons, so they stay in
+    `liveAllocations` and in `allocated` below, and the space they occupy is
+    not offered to anyone else. What changes is that they are never rewritten.
+    Before this, a second delivery against the same cargo line moved the
+    per-carton rate, and the next allocation into any draft container silently
+    re-priced the cartons on a plan that had already been printed and signed.
+
+    The remainder therefore lands on the last DRAFT row rather than the last
+    row overall. That is what keeps both promises at once: the frozen rows
+    keep the figures they were signed off on, and the parts still sum to what
+    arrived, because the difference is carried by a row nobody has committed
+    to paper yet.
+  */
+  const editable = rows.filter((r) => r.clp.status === 'DRAFT');
+  const lastEditableId = editable.length === 0 ? null : editable[editable.length - 1]!.id;
 
   const arrived = await receivedBasis(db, cargoLineId);
   const received = arrived.ctnQty;
@@ -238,9 +268,22 @@ async function recomputeCargoLine(
   let usedGwt = ZERO;
   let usedCbm = ZERO;
 
-  for (const [index, row] of rows.entries()) {
-    const isLast = index === rows.length - 1;
-    const carriesRemainder = isLast && complete;
+  for (const row of rows) {
+    /*
+      A frozen row contributes what it already holds and is not touched. Its
+      `is_final_allocation` flag can go stale when the remainder moves to a
+      draft row; nothing reads that flag to make a decision, and rewriting it
+      would mean writing to the very record this is protecting.
+    */
+    if (row.clp.status !== 'DRAFT') {
+      if (row.pcsQty !== null) usedPcs += row.pcsQty;
+      usedNwt = usedNwt.plus(D(row.netWeightKg));
+      usedGwt = usedGwt.plus(D(row.grossWeightKg));
+      usedCbm = usedCbm.plus(D(row.volumeCbm));
+      continue;
+    }
+
+    const carriesRemainder = row.id === lastEditableId && complete;
     const n = new Prisma.Decimal(row.ctnQty);
 
     // Intermediate splits multiply out and round to the column's own scale;
@@ -273,6 +316,27 @@ async function recomputeCargoLine(
           ? basisCbm.minus(usedCbm)
           : cbmRate.times(n).toDecimalPlaces(4);
 
+    /*
+      The balance cannot be negative. It only can be if what the frozen plans
+      already hold exceeds what the receipts now say arrived — a receipt
+      edited downwards after a plan was finalised on it. That is a real
+      contradiction in the data, not a rounding artefact, and the check
+      constraint on this table would refuse the write anyway; saying so here
+      names the cargo line instead of surfacing a constraint violation.
+    */
+    if (
+      carriesRemainder &&
+      ((nwt !== null && nwt.lessThan(0)) ||
+        (gwt !== null && gwt.lessThan(0)) ||
+        (cbm !== null && cbm.lessThan(0)) ||
+        (pcs !== null && pcs < 0))
+    ) {
+      throw HttpError.conflict(
+        'Finalised containers on this cargo line already hold more than the receipts ' +
+          'now say arrived. Check the cargo receipt before planning any more of it.',
+      );
+    }
+
     await db.clpLine.update({
       where: { id: row.id },
       data: {
@@ -293,7 +357,12 @@ async function recomputeCargoLine(
     if (cbm !== null) usedCbm = usedCbm.plus(cbm);
   }
 
-  return [...new Set(rows.map((r) => r.clpId.toString()))].map((id) => BigInt(id));
+  /*
+    Only the plans this actually rewrote. A frozen plan's rollups describe
+    what it held, so handing its id back would invite the caller to recompute
+    totals that must not move.
+  */
+  return [...new Set(editable.map((r) => r.clpId.toString()))].map((id) => BigInt(id));
 }
 
 /**
@@ -325,12 +394,32 @@ async function recomputeClp(db: TenantDb, actor: Actor, clpId: bigint): Promise<
     db.clp.findFirstOrThrow({
       where: { id: clpId },
       select: {
+        status: true,
+        totalGrossWeightKg: true,
+        totalVolumeCbm: true,
         containerSize: {
           select: { code: true, maxVolumeCbm: true, maxWeightKg: true },
         },
       },
     }),
   ]);
+
+  /*
+    A plan that is not a draft keeps the rollups it was closed with. Callers
+    still get a ClpLoad so the capacity wording downstream has something to
+    read; it describes the plan as it stands, which for a frozen plan is what
+    it held. The backstop for the loop above, in the one function that writes
+    these columns.
+  */
+  if (plan.status !== 'DRAFT') {
+    return {
+      sizeCode: plan.containerSize.code,
+      volumeCbm: D(plan.totalVolumeCbm),
+      grossWeightKg: D(plan.totalGrossWeightKg),
+      maxVolumeCbm: plan.containerSize.maxVolumeCbm,
+      maxWeightKg: plan.containerSize.maxWeightKg,
+    };
+  }
 
   const ctn = lines.reduce((s, l) => s + l.ctnQty, 0);
   const pcs = lines.reduce((s, l) => s + (l.pcsQty ?? 0), 0);
@@ -450,6 +539,14 @@ async function syncOverride(
   overVolume: boolean,
   override: { reason: string } | null,
 ): Promise<void> {
+  /*
+    Frozen plans keep the reason they were closed with. `deallocate` allows a
+    line to be taken off a CANCELLED plan, and clearing the excuse off that
+    record would rewrite why a container was signed for the way it was.
+  */
+  const plan = await db.clp.findFirstOrThrow({ where: { id: clpId }, select: { status: true } });
+  if (plan.status !== 'DRAFT') return;
+
   if (overVolume && override !== null) {
     await db.clp.update({
       where: { id: clpId },

@@ -885,3 +885,362 @@ describe('the audit trail', () => {
     expect(said).not.toMatch(/[$]2[aby][$]/); // a bcrypt hash
   });
 });
+
+// ==================================== a finalised plan's figures never move
+
+/**
+ * §4.3's "FINAL has no edit path", applied to the numbers as well as the
+ * columns.
+ *
+ * The allocation engine re-derives a whole cargo line whenever any part of it
+ * moves (§2.3), because the remainder belongs to whichever allocation
+ * completes the line. That re-derivation used to rewrite EVERY live
+ * allocation of the line — including rows on a plan that had already been
+ * finalised and printed. So a second delivery that measured differently
+ * changed the per-carton rate, and the next allocation into any draft
+ * container silently re-priced cartons on a document somebody had signed.
+ *
+ * The fixture below is the shape that makes it visible: two deliveries with
+ * DIFFERENT carton sizes. A second delivery at the same size cannot show it,
+ * because the rate does not move and every figure recomputes to what it
+ * already was.
+ */
+describe('a finalised plan keeps the figures it was closed with', () => {
+  /** Its own cargo line and receipts, so the shared fixture is untouched. */
+  async function twoDeliveries() {
+    const line = await owner.shipmentCargoLine.create({
+      data: {
+        tenantId,
+        shipmentId,
+        shipmentPoId: poId,
+        itemCode: `STFRZ-${RUN}`,
+        ctnQty: 60,
+        pcsQty: 600,
+        grossWeightKg: '600',
+        netWeightKg: '540',
+        cartonLengthCm: '100',
+        cartonWidthCm: '50',
+        cartonHeightCm: '50',
+      },
+      select: { id: true },
+    });
+
+    // First delivery: 40 cartons, measured at 0.25 CBM each — 10.0000 CBM.
+    await owner.cargoReceiptLine.create({
+      data: {
+        tenantId,
+        cargoReceiptId: receiptId,
+        shipmentCargoLineId: line.id,
+        receivedCtnQty: 40,
+        receivedGrossWeightKg: '400',
+        cartonLengthCm: '100',
+        cartonWidthCm: '50',
+        cartonHeightCm: '50',
+        lineStatus: 'ACCEPTED',
+      },
+    });
+
+    return line.id;
+  }
+
+  /**
+   * The second delivery, measured BIGGER, which is what moves the rate.
+   *
+   * Its own receipt, because one receipt carries one line per cargo line —
+   * a second truck on a later day is a second receipt, which is exactly the
+   * situation §7 describes.
+   */
+  let deliveries = 0;
+  async function secondDelivery(lineId: bigint) {
+    deliveries += 1;
+    const later = await owner.cargoReceipt.create({
+      data: {
+        tenantId,
+        code: `CRFRZ-${RUN}-${deliveries}`,
+        seriesYear: 2026,
+        shipmentId,
+        receiptSeq: 9400 + deliveries,
+        receiveDate: new Date('2026-09-15'),
+        status: 'CONFIRMED',
+        confirmedAt: new Date(),
+        receivedBy: userId,
+      },
+      select: { id: true },
+    });
+    await owner.cargoReceiptLine.create({
+      data: {
+        tenantId,
+        cargoReceiptId: later.id,
+        shipmentCargoLineId: lineId,
+        receivedCtnQty: 20,
+        receivedGrossWeightKg: '400',
+        cartonLengthCm: '100',
+        cartonWidthCm: '80',
+        cartonHeightCm: '50', // 0.40 CBM each — 8.0000 CBM
+        lineStatus: 'ACCEPTED',
+      },
+    });
+  }
+
+  async function cleanup(lineId: bigint) {
+    await owner.clpLine.deleteMany({ where: { shipmentCargoLineId: lineId } });
+    await owner.cargoReceiptLine.deleteMany({ where: { shipmentCargoLineId: lineId } });
+    await owner.shipmentCargoLine.deleteMany({ where: { id: lineId } });
+    await owner.cargoReceipt.deleteMany({ where: { code: { startsWith: `CRFRZ-${RUN}` } } });
+  }
+
+  const lineOn = (clpId: bigint, cargoId: bigint) =>
+    owner.clpLine.findFirstOrThrow({
+      where: { clpId, shipmentCargoLineId: cargoId, deletedAt: null },
+      select: { ctnQty: true, pcsQty: true, volumeCbm: true, grossWeightKg: true, netWeightKg: true, isFinalAllocation: true },
+    });
+
+  const totalsOf = (clpId: bigint) =>
+    owner.clp.findFirstOrThrow({
+      where: { id: clpId },
+      select: {
+        totalCtnQty: true,
+        totalPcsQty: true,
+        totalVolumeCbm: true,
+        totalGrossWeightKg: true,
+        volumeUtilisation: true,
+      },
+    });
+
+  it('does not re-price a finalised plan when a later delivery changes the rate', async () => {
+    const cargoId = await twoDeliveries();
+    try {
+      const first = await makeClp();
+      await withTenant(tenantId, (db) =>
+        allocate(db, { tenantId, userId }, { cargoLineId: cargoId, clpId: first, ctnQty: 40 }),
+      );
+
+      // 40 of 40 received, so this row completes the line and carries the
+      // remainder: the whole 10 CBM the CFS measured.
+      const before = await lineOn(first, cargoId);
+      const beforeTotals = await totalsOf(first);
+      expect(before.volumeCbm?.toString()).toBe('10');
+
+      const finalised = await as(tokenAll)
+        .post(`/api/tenant/ops/clps/${first}/finalise`)
+        .send({ ...FINALISE_BODY, containerNo: 'MSKU0000011' });
+      expect(finalised.status).toBe(200);
+
+      // The delivery that moves the rate from 0.25 to 0.30 a carton.
+      await secondDelivery(cargoId);
+
+      const second = await makeClp();
+      await withTenant(tenantId, (db) =>
+        allocate(db, { tenantId, userId }, { cargoLineId: cargoId, clpId: second, ctnQty: 20 }),
+      );
+
+      /*
+        The whole point. Before this was fixed the finalised row became
+        0.30 x 40 = 12 CBM, and the plan's rollups moved with it.
+      */
+      const after = await lineOn(first, cargoId);
+      expect(after.volumeCbm?.toString()).toBe(before.volumeCbm?.toString());
+      expect(after.grossWeightKg?.toString()).toBe(before.grossWeightKg?.toString());
+      expect(after.netWeightKg?.toString()).toBe(before.netWeightKg?.toString());
+      expect(after.pcsQty).toBe(before.pcsQty);
+      expect(after.ctnQty).toBe(before.ctnQty);
+
+      const afterTotals = await totalsOf(first);
+      expect(afterTotals).toEqual(beforeTotals);
+    } finally {
+      await cleanup(cargoId);
+    }
+  });
+
+  it('gives the balance to the draft container instead, so the parts still sum', async () => {
+    /*
+      Freezing one row must not lose the remainder. 18 CBM arrived across the
+      two deliveries; the finalised plan keeps the 10 it was signed for, so
+      the draft has to carry 8 — not the 6 it would get if the frozen row had
+      been re-priced to 12 first.
+    */
+    const cargoId = await twoDeliveries();
+    try {
+      const first = await makeClp();
+      await withTenant(tenantId, (db) =>
+        allocate(db, { tenantId, userId }, { cargoLineId: cargoId, clpId: first, ctnQty: 40 }),
+      );
+      // Asserted, not assumed: a refused finalise would leave a DRAFT behind
+      // and this whole test would quietly prove nothing.
+      expect(
+        (
+          await as(tokenAll)
+            .post(`/api/tenant/ops/clps/${first}/finalise`)
+            .send({ ...FINALISE_BODY, containerNo: 'MSKU0000027' })
+        ).status,
+      ).toBe(200);
+
+      await secondDelivery(cargoId);
+
+      const second = await makeClp();
+      await withTenant(tenantId, (db) =>
+        allocate(db, { tenantId, userId }, { cargoLineId: cargoId, clpId: second, ctnQty: 20 }),
+      );
+
+      const draft = await lineOn(second, cargoId);
+      expect(draft.volumeCbm?.toString()).toBe('8');
+      expect(draft.isFinalAllocation).toBe(true);
+
+      // Conservation, stated as the sum rather than as two separate figures.
+      const all = await owner.clpLine.findMany({
+        where: { shipmentCargoLineId: cargoId, deletedAt: null },
+        select: { volumeCbm: true, grossWeightKg: true, ctnQty: true },
+      });
+      const sum = all.reduce((s, r) => s + Number(r.volumeCbm ?? 0), 0);
+      expect(sum).toBeCloseTo(18, 4);
+      expect(all.reduce((s, r) => s + r.ctnQty, 0)).toBe(60);
+      expect(all.reduce((s, r) => s + Number(r.grossWeightKg ?? 0), 0)).toBeCloseTo(800, 3);
+    } finally {
+      await cleanup(cargoId);
+    }
+  });
+
+  it('leaves the figures on a cancelled plan alone too', async () => {
+    /*
+      Cancelling already says the totals are "the record of what it held".
+      The same re-derivation used to walk over them from the other direction:
+      a cancelled plan's rows leave `liveAllocations`, but a plan cancelled
+      AFTER being finalised keeps its own rollups either way.
+    */
+    const cargoId = await twoDeliveries();
+    try {
+      const first = await makeClp();
+      await withTenant(tenantId, (db) =>
+        allocate(db, { tenantId, userId }, { cargoLineId: cargoId, clpId: first, ctnQty: 40 }),
+      );
+      expect(
+        (
+          await as(tokenAll)
+            .post(`/api/tenant/ops/clps/${first}/finalise`)
+            .send({ ...FINALISE_BODY, containerNo: 'MSKU0000032' })
+        ).status,
+      ).toBe(200);
+      const held = await totalsOf(first);
+
+      await as(tokenAll)
+        .post(`/api/tenant/ops/clps/${first}/cancel`)
+        .send({ reason: 'Box swapped at the yard; re-planning.' });
+
+      await secondDelivery(cargoId);
+      const second = await makeClp();
+      await withTenant(tenantId, (db) =>
+        allocate(db, { tenantId, userId }, { cargoLineId: cargoId, clpId: second, ctnQty: 60 }),
+      );
+
+      expect(await totalsOf(first)).toEqual(held);
+    } finally {
+      await cleanup(cargoId);
+    }
+  });
+
+  it('writes nothing at all to a finalised plan, so its trail stays closed', async () => {
+    /*
+      The rollups are a pure function of the lines, so re-running them on a
+      frozen plan would land on the same numbers — which is exactly why this
+      needs its own test. The damage is not a wrong figure, it is the write:
+      Prisma issues the UPDATE regardless, `updated_at` moves, and the audit
+      trigger files an entry against a document that was closed. Somebody
+      reading the history of a signed CLP would find modifications nobody made.
+    */
+    const cargoId = await twoDeliveries();
+    try {
+      const first = await makeClp();
+      await withTenant(tenantId, (db) =>
+        allocate(db, { tenantId, userId }, { cargoLineId: cargoId, clpId: first, ctnQty: 40 }),
+      );
+      expect(
+        (
+          await as(tokenAll)
+            .post(`/api/tenant/ops/clps/${first}/finalise`)
+            .send({ ...FINALISE_BODY, containerNo: 'MSKU0000053' })
+        ).status,
+      ).toBe(200);
+
+      const trailBefore = (await owner.auditLog.count({
+        where: { tableName: 'clp', recordId: first },
+      })) as number;
+      const stamp = await owner.clp.findFirstOrThrow({
+        where: { id: first },
+        select: { updatedAt: true },
+      });
+
+      await secondDelivery(cargoId);
+      const second = await makeClp();
+      await withTenant(tenantId, (db) =>
+        allocate(db, { tenantId, userId }, { cargoLineId: cargoId, clpId: second, ctnQty: 20 }),
+      );
+
+      expect(
+        await owner.auditLog.count({ where: { tableName: 'clp', recordId: first } }),
+      ).toBe(trailBefore);
+      expect(
+        (await owner.clp.findFirstOrThrow({ where: { id: first }, select: { updatedAt: true } }))
+          .updatedAt.getTime(),
+      ).toBe(stamp.updatedAt.getTime());
+    } finally {
+      await cleanup(cargoId);
+    }
+  });
+
+  it('still recomputes an ordinary draft alongside a frozen one', async () => {
+    /*
+      The freeze must not turn into "stop recomputing". Two drafts and one
+      finalised plan on one line: the drafts still re-derive normally.
+    */
+    const cargoId = await twoDeliveries();
+    try {
+      // 10 cartons at the first delivery's 0.25 a carton — 2.5 CBM, frozen.
+      const frozen = await makeClp();
+      await withTenant(tenantId, (db) =>
+        allocate(db, { tenantId, userId }, { cargoLineId: cargoId, clpId: frozen, ctnQty: 10 }),
+      );
+      expect(
+        (
+          await as(tokenAll)
+            .post(`/api/tenant/ops/clps/${frozen}/finalise`)
+            .send({ ...FINALISE_BODY, containerNo: 'MSKU0000048' })
+        ).status,
+      ).toBe(200);
+      const held = await lineOn(frozen, cargoId);
+      expect(held.volumeCbm?.toString()).toBe('2.5');
+
+      // 60 cartons arrived in total, 18 CBM, so the rate is now 0.30.
+      await secondDelivery(cargoId);
+
+      const a = await makeClp();
+      await withTenant(tenantId, (db) =>
+        allocate(db, { tenantId, userId }, { cargoLineId: cargoId, clpId: a, ctnQty: 20 }),
+      );
+      // 30 of 60 allocated: an intermediate split, so it multiplies out.
+      expect((await lineOn(a, cargoId)).volumeCbm?.toString()).toBe('6');
+      expect((await lineOn(a, cargoId)).isFinalAllocation).toBe(false);
+
+      const b = await makeClp();
+      await withTenant(tenantId, (db) =>
+        allocate(db, { tenantId, userId }, { cargoLineId: cargoId, clpId: b, ctnQty: 30 }),
+      );
+
+      // Now the line is complete, so b carries the balance — 18 - 2.5 - 6.
+      const bRow = await lineOn(b, cargoId);
+      expect(bRow.volumeCbm?.toString()).toBe('9.5');
+      expect(bRow.isFinalAllocation).toBe(true);
+      // a re-derived normally alongside the frozen row, and the frozen row
+      // did not move.
+      expect((await lineOn(a, cargoId)).volumeCbm?.toString()).toBe('6');
+      expect((await lineOn(frozen, cargoId)).volumeCbm?.toString()).toBe('2.5');
+
+      const all = await owner.clpLine.findMany({
+        where: { shipmentCargoLineId: cargoId, deletedAt: null },
+        select: { volumeCbm: true },
+      });
+      expect(all.reduce((s, r) => s + Number(r.volumeCbm ?? 0), 0)).toBeCloseTo(18, 4);
+    } finally {
+      await cleanup(cargoId);
+    }
+  });
+});
