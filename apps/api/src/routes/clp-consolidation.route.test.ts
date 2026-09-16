@@ -1243,7 +1243,7 @@ describe('whose cargo is in the box — every path, both shapes', () => {
     expect(printed).toContain(shipment.customer.name);
   });
 
-  it('B2 — a consolidated plan prints its header booking', async () => {
+  it('B2 — a consolidated plan names every booking in the box', async () => {
     const a = await booking({ label: 'p2b', loadingType: 'FCL' });
     const b = await booking({ label: 'p2c', loadingType: 'FCL' });
     const made = await as(tokenAll)
@@ -1258,22 +1258,10 @@ describe('whose cargo is in the box — every path, both shapes', () => {
     const printed = extractPdfText(
       (await as(tokenAll).get(`/api/tenant/ops/clps/${clpId}/print`)).body as Buffer,
     );
+    // §16, now implemented: every booking in the box is named.
     expect(printed).toContain(a.code);
-
-    /*
-      Only the header booking, and that is the current truth rather than the
-      intent. The route builds `bookingCodes` and `consolidated` for exactly
-      §16's "the document has to name every booking in the box", and
-      clp-print.ts declares both fields on ClpPrintDoc — and then renders
-      neither. So a shared container prints as if it held one booking's cargo.
-
-      Not fixed here: B2 was a header going blank, which is a consistency bug
-      in the read path. This is a §16 requirement that was never implemented
-      in the renderer, which is new work and someone's decision to schedule.
-      Asserted as it stands so the day it IS implemented, this test says so
-      instead of passing silently.
-    */
-    expect(printed).not.toContain(b.code);
+    expect(printed).toContain(b.code);
+    expect(printed).toMatch(/CONSOLIDATED CONTAINER/);
   });
 
   // ------------------------------------------------------------------- B3
@@ -1594,5 +1582,186 @@ describe('B5 — finalising against a container number already in use', () => {
     } finally {
       await owner.tenant.delete({ where: { id: other.id } });
     }
+  });
+});
+
+// ============= §16 through the route — real participation, not a fixture list
+
+/**
+ * The renderer tests hand `buildClpPdf` a list of codes. These prove the list
+ * the ROUTE hands it is the real participation of the container, for both
+ * shapes, and that asking for the document changes nothing.
+ */
+describe('§16 — the printed booking list comes from real participation', () => {
+  async function consolidatedOf(labels: string[]) {
+    const made: { id: bigint; code: string }[] = [];
+    for (const label of labels) made.push(await booking({ label, loadingType: 'FCL', ctn: 4 }));
+    const res = await as(tokenAll)
+      .post('/api/tenant/ops/clps/consolidate')
+      .send({
+        shipmentIds: made.map((b) => b.id.toString()),
+        containerSizeId: size20.toString(),
+      });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const clpId = track(res.body.data.id);
+    const line = await owner.shipmentCargoLine.findFirstOrThrow({
+      where: { shipmentId: made[0]!.id, deletedAt: null },
+      select: { id: true },
+    });
+    await as(tokenAll)
+      .post(`/api/tenant/ops/clps/${clpId}/lines`)
+      .send({ cargoLineId: line.id.toString(), ctnQty: 1 });
+    return { clpId, made };
+  }
+
+  const printed = async (clpId: bigint) => {
+    const res = await as(tokenAll).get(`/api/tenant/ops/clps/${clpId}/print`);
+    expect(res.status).toBe(200);
+    return extractPdfText(res.body as Buffer);
+  };
+
+  it('names all three bookings of a three-way consolidation, once each', async () => {
+    const { clpId, made } = await consolidatedOf(['s16a', 's16b', 's16c']);
+    const text = await printed(clpId);
+
+    expect(text).toMatch(/CONSOLIDATED CONTAINER/);
+    expect(text).toMatch(/3 BOOKINGS/);
+    for (const b of made) {
+      expect(text.split(b.code).length - 1).toBe(1);
+    }
+  });
+
+  it('prints them in participation order', async () => {
+    /*
+      clp_booking.id — the order the consolidation was built in, which is the
+      order `participantShipmentIds` returns and the only ordering this
+      document should ever use.
+    */
+    const { clpId } = await consolidatedOf(['s16d', 's16e', 's16f']);
+    const order = await owner.clpBooking.findMany({
+      where: { clpId, deletedAt: null },
+      orderBy: { id: 'asc' },
+      select: { shipment: { select: { code: true } } },
+    });
+    const text = await printed(clpId);
+    const at = order.map((row) => text.indexOf(row.shipment.code));
+    expect(at.every((p) => p >= 0)).toBe(true);
+    expect(at).toEqual([...at].sort((a, b) => a - b));
+  });
+
+  it('prints a legacy plan as the single-booking document it is', async () => {
+    const b = await booking({ label: 's16leg', loadingType: 'FCL', ctn: 4 });
+    const made = await as(tokenAll)
+      .post(`/api/tenant/ops/bookings/${b.id}/clps`)
+      .send({ containerSizeId: size20.toString() });
+    const clpId = track(made.body.data.id);
+    expect(await owner.clpBooking.count({ where: { clpId } })).toBe(0);
+    const line = await owner.shipmentCargoLine.findFirstOrThrow({
+      where: { shipmentId: b.id, deletedAt: null },
+      select: { id: true },
+    });
+    await as(tokenAll)
+      .post(`/api/tenant/ops/clps/${clpId}/lines`)
+      .send({ cargoLineId: line.id.toString(), ctnQty: 1 });
+
+    const text = await printed(clpId);
+    // The fallback, unchanged: one booking, named, no consolidation block.
+    expect(text).toContain('BOOKING NO');
+    expect(text).toContain(b.code);
+    expect(text).not.toMatch(/CONSOLIDATED CONTAINER/);
+  });
+
+  it('cannot name a booking from another workspace', async () => {
+    /*
+      The list is built from participation ids read inside withTenant, so a
+      foreign booking has no route onto the page. Proven from both ends: the
+      document names only this workspace's bookings, and the database refuses
+      to link a foreign one in the first place.
+    */
+    const { clpId, made } = await consolidatedOf(['s16iso']);
+    const stranger = await owner.tenant.create({
+      data: { name: 'S16 isolation', slug: `s16-${RUN}`, country: 'Bangladesh' },
+      select: { id: true },
+    });
+    try {
+      await expect(
+        owner.clpBooking.create({
+          data: { tenantId: stranger.id, clpId, shipmentId: made[0]!.id },
+        }),
+      ).rejects.toThrow();
+
+      const text = await printed(clpId);
+      const foreign = await owner.shipment.findFirst({
+        where: { tenantId: { not: tenantId }, deletedAt: null },
+        select: { code: true },
+      });
+      if (foreign !== null) expect(text).not.toContain(foreign.code);
+      expect(text).toContain(made[0]!.code);
+    } finally {
+      await owner.tenant.delete({ where: { id: stranger.id } });
+    }
+  });
+
+  it('printing a finalised plan changes nothing about it', async () => {
+    /*
+      §16 is a rendering requirement and printing stays a read. Checked
+      against the allocations, the plan row, the receipt lines' billing basis
+      and the audit trail — the four things earlier findings showed a read
+      path can quietly disturb.
+    */
+    const { clpId, made } = await consolidatedOf(['s16fz']);
+    const done = await as(tokenAll)
+      .post(`/api/tenant/ops/clps/${clpId}/finalise`)
+      .send({
+        containerNo: 'SEGU1234569',
+        sealNo: `SL-S16-${RUN}`,
+        loadDatetime: '2026-09-16T10:00:00.000Z',
+      });
+    expect(done.status, JSON.stringify(done.body)).toBe(200);
+
+    const before = {
+      plan: await owner.clp.findFirstOrThrow({
+        where: { id: clpId },
+        select: { updatedAt: true, totalCtnQty: true, totalVolumeCbm: true, status: true },
+      }),
+      lines: await owner.clpLine.findMany({
+        where: { clpId, deletedAt: null },
+        orderBy: { id: 'asc' },
+        select: { id: true, ctnQty: true, volumeCbm: true, updatedAt: true },
+      }),
+      basis: await owner.cargoReceiptLine.findMany({
+        where: { cargoLine: { shipmentId: made[0]!.id }, deletedAt: null },
+        orderBy: { id: 'asc' },
+        select: { id: true, billingBasis: true, updatedAt: true },
+      }),
+      audit: await owner.auditLog.count({ where: { tableName: 'clp', recordId: clpId } }),
+    };
+
+    // Print it three times, which is what a warehouse actually does.
+    for (let i = 0; i < 3; i += 1) await printed(clpId);
+
+    expect(
+      await owner.clp.findFirstOrThrow({
+        where: { id: clpId },
+        select: { updatedAt: true, totalCtnQty: true, totalVolumeCbm: true, status: true },
+      }),
+    ).toEqual(before.plan);
+    expect(
+      await owner.clpLine.findMany({
+        where: { clpId, deletedAt: null },
+        orderBy: { id: 'asc' },
+        select: { id: true, ctnQty: true, volumeCbm: true, updatedAt: true },
+      }),
+    ).toEqual(before.lines);
+    expect(
+      await owner.cargoReceiptLine.findMany({
+        where: { cargoLine: { shipmentId: made[0]!.id }, deletedAt: null },
+        orderBy: { id: 'asc' },
+        select: { id: true, billingBasis: true, updatedAt: true },
+      }),
+    ).toEqual(before.basis);
+    expect(await owner.auditLog.count({ where: { tableName: 'clp', recordId: clpId } })).toBe(
+      before.audit,
+    );
   });
 });

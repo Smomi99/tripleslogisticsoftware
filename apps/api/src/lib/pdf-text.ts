@@ -94,3 +94,64 @@ function unescapePdf(literal: string): string {
   return literal.replace(/\\([()\\])/g, '$1');
 }
 
+
+/** One piece of text with the y it was placed at, in PDF user space. */
+export interface PdfPlacement {
+  y: number;
+  text: string;
+}
+
+/**
+ * Where each run of text actually sits on the page.
+ *
+ * `extractPdfText` gives reading order, which is not the same claim: pdfkit
+ * positions by coordinate, so a block written with a wrong y would still come
+ * out in sequence while printing over whatever is beneath it. This reads the
+ * Td/Tm placements alongside the runs, so a test can assert that one block is
+ * above another rather than merely before it.
+ *
+ * y grows UPWARD in PDF user space — a larger y is higher on the page.
+ */
+export function placements(pdf: Buffer): PdfPlacement[] {
+  const out: PdfPlacement[] = [];
+  let index = 0;
+
+  while (index < pdf.length) {
+    const start = pdf.indexOf('stream', index);
+    if (start === -1) break;
+    let from = start + 'stream'.length;
+    if (pdf[from] === 0x0d) from += 1;
+    if (pdf[from] === 0x0a) from += 1;
+    const end = pdf.indexOf('endstream', from);
+    if (end === -1) break;
+
+    let body: string;
+    try {
+      body = zlib.inflateSync(pdf.subarray(from, end)).toString('latin1');
+    } catch {
+      body = pdf.subarray(from, end).toString('latin1');
+    }
+
+    let y = 0;
+    const ops =
+      /([-\d.]+)\s+([-\d.]+)\s+Td|([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+Tm|\[([^\]]*)\]\s*TJ|<([0-9A-Fa-f]+)>\s*Tj/g;
+    for (const op of body.matchAll(ops)) {
+      if (op[2] !== undefined) {
+        y = Number(op[2]);
+      } else if (op[8] !== undefined) {
+        y = Number(op[8]);
+      } else {
+        let run = '';
+        if (op[9] !== undefined) {
+          for (const part of op[9].matchAll(/<([0-9A-Fa-f]+)>/g)) run += fromHex(part[1]!);
+        } else if (op[10] !== undefined) {
+          run = fromHex(op[10]);
+        }
+        if (run.trim() !== '') out.push({ y, text: run });
+      }
+    }
+    index = end + 1;
+  }
+
+  return out;
+}

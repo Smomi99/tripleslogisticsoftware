@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildClpPdf, type ClpPrintDoc, clpPdfFilename } from './clp-print';
-import { extractPdfText } from './pdf-text';
+import { extractPdfText, placements } from './pdf-text';
 
 /**
  * The CLP document — MODULE_CLP.md §5.3, and §4.3's DRAFT watermark.
@@ -208,5 +208,125 @@ describe('what the built-in font can draw', () => {
   it('keeps the punctuation WinAnsi does have', async () => {
     const text = extractPdfText(await buildClpPdf(doc({ sealNo: 'SL—992' })));
     expect(text).toContain('SL—992');
+  });
+});
+
+// ==================== CR-002 §16 — a shared container names everyone in it
+
+/**
+ * A consolidated load plan is signed on a warehouse floor by someone who has
+ * to know whose cartons are going into the box. Printing only the first
+ * booking is how the third customer's cargo gets loaded without anybody
+ * noticing it was there.
+ *
+ * `bookingCodes` is the server's participation list, built from
+ * `participantShipmentIds`. The renderer never works out who is in the box
+ * for itself, and there is no second definition of participation here — these
+ * tests hand it a list and check what comes out on the page.
+ */
+describe('§16 — every booking in the box', () => {
+  const codes = (n: number) =>
+    Array.from({ length: n }, (_, i) => `BKG-2026-${String(i + 1).padStart(6, '0')}`);
+
+  const once = (text: string, needle: string) => text.split(needle).length - 1;
+
+  it('a single-booking plan reads exactly as it did', async () => {
+    const text = extractPdfText(await buildClpPdf(doc({ status: 'FINAL' })));
+    // The ordinary document: one labelled booking field, no consolidation
+    // furniture at all.
+    expect(text).toContain('BOOKING NO');
+    expect(text).toContain('BKG-2026-000004');
+    expect(text).not.toMatch(/CONSOLIDATED CONTAINER/);
+    expect(text).not.toContain('BOOKINGS IN THIS CONTAINER');
+  });
+
+  it('a canonical single-booking plan reads the same way', async () => {
+    /*
+      A selection of one through /clps/consolidate is still a SINGLE plan, and
+      it must not sprout a consolidation block just because it came down the
+      newer route.
+    */
+    const text = extractPdfText(
+      await buildClpPdf(doc({ consolidated: false, bookingCodes: ['BKG-2026-000004'] })),
+    );
+    expect(text).toContain('BOOKING NO');
+    expect(text).toContain('BKG-2026-000004');
+    expect(text).not.toMatch(/CONSOLIDATED CONTAINER/);
+  });
+
+  it('two bookings: both named, and the sheet says it is consolidated', async () => {
+    const text = extractPdfText(
+      await buildClpPdf(doc({ consolidated: true, bookingCodes: codes(2) })),
+    );
+    expect(text).toMatch(/CONSOLIDATED CONTAINER\s+·\s+2 BOOKINGS/);
+    expect(text).toContain('BOOKINGS IN THIS CONTAINER');
+    expect(text).toContain('BKG-2026-000001');
+    expect(text).toContain('BKG-2026-000002');
+    /*
+      And the header field carries the COUNT rather than one of the two. A
+      field labelled "BOOKING NO" showing one of several is the thing §16
+      exists to prevent.
+    */
+    expect(text).toContain('BOOKINGS');
+    expect(text).not.toContain('BOOKING NO');
+  });
+
+  it('five bookings: every one, exactly once', async () => {
+    const wanted = codes(5);
+    const text = extractPdfText(
+      await buildClpPdf(doc({ consolidated: true, bookingCodes: wanted })),
+    );
+    expect(text).toMatch(/5 BOOKINGS/);
+    for (const code of wanted) {
+      expect(once(text, code)).toBe(1);
+    }
+  });
+
+  it('keeps the order the server gave, not a sorted or reversed one', async () => {
+    /*
+      Participation order is clp_booking.id — the order the consolidation was
+      built in. Deliberately fed out of alphabetical sequence so a silent sort
+      would show up.
+    */
+    const given = ['BKG-2026-000019', 'BKG-2026-000004', 'BKG-2026-000011'];
+    const text = extractPdfText(
+      await buildClpPdf(doc({ consolidated: true, bookingCodes: given })),
+    );
+    const positions = given.map((code) => text.indexOf(code));
+    expect(positions.every((p) => p >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((a, b) => a - b));
+  });
+
+  it('a long list wraps instead of running over the table', async () => {
+    /*
+      Fourteen bookings is more than one line at this width. The block is laid
+      out through pdfkit's own flow and the table takes its y from `doc.y`
+      afterwards, so the table moves DOWN rather than the list writing over
+      it. Checked as placements in the content stream rather than as reading
+      order, because reading order would look fine either way.
+    */
+    const wanted = codes(14);
+    const pdf = await buildClpPdf(doc({ consolidated: true, bookingCodes: wanted }));
+    const text = extractPdfText(pdf);
+    for (const code of wanted) expect(once(text, code)).toBe(1);
+
+    const placed = placements(pdf);
+    const listYs = placed.filter((r) => r.text.includes('BKG-2026-')).map((r) => r.y);
+    const tableY = placed.find((r) => r.text.trim() === 'PO')?.y;
+    expect(listYs.length).toBeGreaterThan(1); // it really did wrap
+    expect(tableY).toBeDefined();
+    // PDF user space grows upward, so every line of the list sits above the
+    // table header.
+    expect(Math.min(...listYs)).toBeGreaterThan(tableY!);
+  });
+
+  it('is still a valid PDF, and still carries its watermark', async () => {
+    const pdf = await buildClpPdf(
+      doc({ status: 'DRAFT', consolidated: true, bookingCodes: codes(8) }),
+    );
+    expect(pdf.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+    const text = extractPdfText(pdf);
+    expect(text).toContain('DRAFT');
+    expect(text).toContain('BOOKINGS IN THIS CONTAINER');
   });
 });

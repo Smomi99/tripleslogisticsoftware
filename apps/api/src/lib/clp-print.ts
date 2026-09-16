@@ -241,6 +241,30 @@ export function buildClpPdf(clp: ClpPrintDoc): Promise<Buffer> {
       .fontSize(16)
       .fillColor(HULL)
       .text('CONTAINER LOAD PLAN', left, doc.y + 2);
+
+    /*
+      CR-002 §16 — a shared container says so, at the top, before anything
+      else on the sheet is read.
+
+      `bookingCodes` is the server's participation list and the only source
+      used here; the renderer never works out who is in the box for itself.
+      Keyed on more-than-one as well as the flag, so a plan that somehow
+      carries several bookings without the flag is still described honestly
+      rather than printed as if it held one.
+    */
+    const codes = clp.bookingCodes ?? [clp.bookingCode];
+    const shared = codes.length > 1 || clp.consolidated === true;
+    if (shared) {
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(8.5)
+        .fillColor(STEEL)
+        .text(
+          `CONSOLIDATED CONTAINER  ·  ${codes.length} BOOKING${codes.length === 1 ? '' : 'S'}`,
+          left,
+          doc.y + 1,
+        );
+    }
     doc.moveDown(0.4);
 
     const headerY = doc.y;
@@ -251,7 +275,15 @@ export function buildClpPdf(clp: ClpPrintDoc): Promise<Buffer> {
     */
     const fields: [string, string][] = [
       ['CLP NO', `${clp.code}  ·  ${clp.clpSeq}`],
-      ['BOOKING NO', clp.bookingCode],
+      /*
+        On a shared container this deliberately carries the COUNT rather than
+        the first code. A field labelled "BOOKING NO" showing one of three is
+        the thing §16 exists to prevent; the codes themselves are listed in
+        full below the grid, where they have room to wrap.
+      */
+      shared
+        ? ['BOOKINGS', String(codes.length)]
+        : ['BOOKING NO', clp.bookingCode],
       ['S/O NO', clp.shippingOrderCode ?? '—'],
       ['CARRIER', clp.carrierName],
       ['CONTAINER NO', clp.containerNo ?? '—'],
@@ -287,6 +319,35 @@ export function buildClpPdf(clp: ClpPrintDoc): Promise<Buffer> {
     });
 
     let y = headerY + Math.ceil(fields.length / 3) * 30 + 8;
+
+    /*
+      CR-002 §16 — every booking in the box, named.
+
+      Full width and laid out by pdfkit's own wrapping rather than by
+      coordinates: a container shared by eight bookings runs to a second line
+      and the table below simply starts lower, because `y` is taken from
+      `doc.y` after the text rather than computed from a row count. The
+      header grid already flows this way; this follows it.
+
+      The separator is the same middle dot the CLP NO field uses, so a
+      multi-value field reads the way the rest of the document does.
+    */
+    if (shared) {
+      doc
+        .font('Helvetica')
+        .fontSize(6.5)
+        .fillColor(STEEL)
+        .text('BOOKINGS IN THIS CONTAINER', left, y, { width: fullWidth });
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(9)
+        .fillColor(HULL)
+        .text(codes.map((code) => winAnsi(code)).join('  ·  '), left, doc.y + 1, {
+          width: fullWidth,
+          lineGap: 1,
+        });
+      y = doc.y + 8;
+    }
 
     // -------------------------------------------------------------- table
     const tableWidth = COLUMNS.reduce((total, c) => total + c.width, 0);
