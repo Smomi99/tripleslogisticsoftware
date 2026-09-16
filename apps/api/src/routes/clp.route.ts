@@ -1075,7 +1075,6 @@ clpRouter.post('/clps/:id/finalise', requirePermission(`${FEATURE}.FINALISE`), a
     const plan = await db.clp.findFirst({
       where: { id: clpId, deletedAt: null },
       select: {
-        shipmentId: true,
         status: true,
         code: true,
         clpSeq: true,
@@ -1104,27 +1103,42 @@ clpRouter.post('/clps/:id/finalise', requirePermission(`${FEATURE}.FINALISE`), a
       cargo has been promised to that box twice, and the second lot is
       discovered at the gate.
 
-      Deliberately scoped to this booking. The same physical container carries
-      cargo to Hamburg, comes back, and carries more; a check across all
-      bookings would refuse the second voyage of every box the company uses.
-      Telling whether two shipments overlap in time needs sailing dates this
-      table does not have, so the narrow rule is the one that has no false
-      refusals.
+      Deliberately scoped to the bookings in THIS box. The same physical
+      container carries cargo to Hamburg, comes back, and carries more; a
+      check across all bookings would refuse the second voyage of every box
+      the company uses. Telling whether two shipments overlap in time needs
+      sailing dates this table does not have, so the narrow rule is the one
+      that has no false refusals.
+
+      Scoped through the participants rather than `clp.shipment_id`, which is
+      what it used to compare. On a consolidated plan that column is NULL, and
+      Prisma renders `shipmentId: null` as `shipment_id IS NULL` — so the
+      check quietly became "any FINAL consolidated plan in this workspace
+      using this container number", across every booking and every voyage. It
+      refused legitimate finalisations while naming a CLP the operator had
+      nothing to do with, and the message still said "for this booking".
     */
-    const clash = await db.clp.findFirst({
-      where: {
-        shipmentId: plan.shipmentId,
-        containerNo: input.containerNo,
-        status: 'FINAL',
-        deletedAt: null,
-        id: { not: clpId },
-      },
-      select: { code: true, clpSeq: true },
-    });
+    const participants = await participantShipmentIds(db, clpId);
+    const clash =
+      participants.length === 0
+        ? null
+        : await db.clp.findFirst({
+            where: {
+              containerNo: input.containerNo,
+              status: 'FINAL',
+              deletedAt: null,
+              id: { not: clpId },
+              // Any plan that any of this box's bookings is also in, read
+              // through the one definition so both shapes are found.
+              OR: participants.map((shipmentId) => plansOfBooking(shipmentId)),
+            },
+            select: { code: true, clpSeq: true },
+          });
     if (clash !== null) {
       throw HttpError.conflict(
-        `Container ${input.containerNo} is already on CLP ${clash.clpSeq} (${clash.code}) ` +
-          'for this booking. Check the number, or cancel that plan first.',
+        `Container ${input.containerNo} is already on CLP ${clash.clpSeq ?? clash.code} ` +
+          `(${clash.code}) for a booking in this container. Check the number, or cancel ` +
+          'that plan first.',
       );
     }
 

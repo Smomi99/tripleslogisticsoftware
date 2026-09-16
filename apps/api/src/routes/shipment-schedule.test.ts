@@ -7,6 +7,7 @@ import { createApp } from '../app';
 import { env } from '../config/env';
 import { PrismaClient } from '../generated/prisma/client';
 import { signAccessToken } from '../lib/jwt';
+import { withTenant } from '../lib/tenant-client';
 
 /**
  * Vessel / Flight Booking — docs/MODULE_BOOKING_CARGO.md §4.2 and §6.4, phase E.
@@ -1413,6 +1414,272 @@ describe('cargo receipt (§4.4, §5.5, §6.7)', () => {
       select: { receivedVolumeCbm: true },
     });
     expect(Number(line.receivedVolumeCbm)).toBe(7.2);
+  });
+
+  // ================= B7 — the billing basis is recorded, not just computed
+
+  /**
+   * `cargo_receipt_line.billing_basis` says WHY a charge rests on the CBM it
+   * rests on — the one thing the column exists for, per §7: "changing the
+   * rule later cannot silently rewrite what a customer was billed".
+   *
+   * It was created NOT NULL DEFAULT 'BOOKED', backfilled once by the
+   * consolidation migration, and then never written by any code. Every line
+   * recorded since claimed a booked basis even where the CFS had re-measured.
+   * The computed figure was right throughout — billingCbmForBooking reads the
+   * measurement directly — but the stored answer to "and why" was not.
+   *
+   * It is now written where receipt lines are saved, from the value the
+   * DATABASE generated rather than from a second reading of the dimensions on
+   * the way in, so the record and the figure cannot disagree.
+   */
+  describe('B7 — billing basis is persisted with the receipt', () => {
+    const MEASURED = { cartonLengthCm: '100', cartonWidthCm: '50', cartonHeightCm: '50' };
+
+    const body = (lines: Record<string, unknown>[]) => ({
+      receiveDate: '2026-11-05',
+      unloadLocation: 'Pangaon ICT',
+      lines,
+    });
+
+    const lineOf = (cargoLineId: string) =>
+      owner.cargoReceiptLine.findFirstOrThrow({
+        where: { shipmentCargoLineId: BigInt(cargoLineId), deletedAt: null },
+        select: { id: true, billingBasis: true, receivedVolumeCbm: true, updatedAt: true },
+      });
+
+    const save = (id: bigint, payload: object) =>
+      as(token).post(`/api/tenant/ops/bookings/${id}/cargo-receipts`).send(payload);
+
+    it('records BOOKED when the CFS did not measure', async () => {
+      const { id, lineIds } = await readyToReceive(1);
+      const saved = await save(id, body([{ cargoLineId: lineIds[0]!, receivedCtnQty: 10 }]));
+      expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+
+      const line = await lineOf(lineIds[0]!);
+      // No carton on the receipt, so the generated volume is null and the
+      // charge can only rest on what was booked.
+      expect(line.receivedVolumeCbm).toBeNull();
+      expect(line.billingBasis).toBe('BOOKED');
+    });
+
+    it('records ACTUAL when it did', async () => {
+      const { id, lineIds } = await readyToReceive(1);
+      const saved = await save(
+        id,
+        body([{ cargoLineId: lineIds[0]!, receivedCtnQty: 10, ...MEASURED }]),
+      );
+      expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+
+      const line = await lineOf(lineIds[0]!);
+      expect(line.receivedVolumeCbm).not.toBeNull();
+      expect(line.billingBasis).toBe('ACTUAL');
+    });
+
+    it('follows a measurement back down when it is corrected away', async () => {
+      /*
+        The case a default could never handle: the column has to move in both
+        directions, or it records a decision that was true once.
+      */
+      const { id, lineIds } = await readyToReceive(1);
+      const first = await save(
+        id,
+        body([{ cargoLineId: lineIds[0]!, receivedCtnQty: 10, ...MEASURED }]),
+      );
+      const receiptId = (first.body as { data: { id: string } }).data.id;
+      expect((await lineOf(lineIds[0]!)).billingBasis).toBe('ACTUAL');
+
+      const again = await save(id, {
+        ...body([{ cargoLineId: lineIds[0]!, receivedCtnQty: 10 }]),
+        id: receiptId,
+      });
+      expect(again.status, JSON.stringify(again.body)).toBe(200);
+      expect((await lineOf(lineIds[0]!)).billingBasis).toBe('BOOKED');
+    });
+
+    it('never persists MIXED — that is a booking-level reading, not a line', async () => {
+      /*
+        §7's MIXED describes a BOOKING whose deliveries disagree. The column is
+        per line and its enum holds two values, so the mixed case is carried by
+        the lines differing from one another, never by a third value.
+      */
+      const { id, lineIds } = await readyToReceive(2);
+      const saved = await save(
+        id,
+        body([
+          { cargoLineId: lineIds[0]!, receivedCtnQty: 10, ...MEASURED },
+          { cargoLineId: lineIds[1]!, receivedCtnQty: 10 },
+        ]),
+      );
+      expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+
+      expect((await lineOf(lineIds[0]!)).billingBasis).toBe('ACTUAL');
+      expect((await lineOf(lineIds[1]!)).billingBasis).toBe('BOOKED');
+
+      const stored = await owner.cargoReceiptLine.findMany({
+        where: { shipmentCargoLineId: { in: lineIds.map((l) => BigInt(l)) }, deletedAt: null },
+        select: { billingBasis: true },
+      });
+      expect(stored).toHaveLength(2);
+      expect(stored.every((r) => r.billingBasis === 'ACTUAL' || r.billingBasis === 'BOOKED')).toBe(
+        true,
+      );
+    });
+
+    it('agrees with the basis the billing route serves', async () => {
+      /*
+        What makes the column worth keeping: the stored "why" and the served
+        "what" are the same decision. Read through the CLP billing endpoint,
+        which is what the screen shows and an invoice would follow.
+      */
+      const { id, lineIds } = await readyToReceive(1);
+      const saved = await save(
+        id,
+        body([{ cargoLineId: lineIds[0]!, receivedCtnQty: 10, ...MEASURED }]),
+      );
+      const receiptId = (saved.body as { data: { id: string } }).data.id;
+      expect(
+        (await as(token).post(`/api/tenant/ops/bookings/${id}/cargo-receipts/${receiptId}/confirm`))
+          .status,
+      ).toBe(200);
+
+      const size = await owner.containerSize.findFirstOrThrow({
+        where: { deletedAt: null },
+        select: { id: true },
+      });
+      const made = await as(token)
+        .post(`/api/tenant/ops/bookings/${id}/clps`)
+        .send({ containerSizeId: size.id.toString() });
+      expect(made.status, JSON.stringify(made.body)).toBe(201);
+      const clpId = (made.body as { data: { id: string } }).data.id;
+
+      try {
+        const billing = await as(token).get(`/api/tenant/ops/clps/${clpId}/billing`);
+        expect(billing.status).toBe(200);
+        expect(billing.body.data).toHaveLength(1);
+        expect(billing.body.data[0].basis).toBe('ACTUAL');
+        expect((await lineOf(lineIds[0]!)).billingBasis).toBe('ACTUAL');
+      } finally {
+        await owner.clpLine.deleteMany({ where: { clpId: BigInt(clpId) } });
+        await owner.clp.deleteMany({ where: { id: BigInt(clpId) } });
+      }
+    });
+
+    it('is not rewritten by finalising a plan, nor by reading one', async () => {
+      /*
+        Nothing about closing a container changes what the CFS measured, and
+        no read may repair what it notices. Asserted against the stored value,
+        its updated_at, and the audit trail of the receipt line itself.
+      */
+      const { id, lineIds } = await readyToReceive(1);
+      const saved = await save(
+        id,
+        body([{ cargoLineId: lineIds[0]!, receivedCtnQty: 10, ...MEASURED }]),
+      );
+      const receiptId = (saved.body as { data: { id: string } }).data.id;
+      await as(token).post(
+        `/api/tenant/ops/bookings/${id}/cargo-receipts/${receiptId}/confirm`,
+      );
+
+      const before = await lineOf(lineIds[0]!);
+      const auditBefore = await owner.auditLog.count({
+        where: { tableName: 'cargo_receipt_line', recordId: before.id },
+      });
+
+      const size = await owner.containerSize.findFirstOrThrow({
+        where: { deletedAt: null },
+        select: { id: true },
+      });
+      const made = await as(token)
+        .post(`/api/tenant/ops/bookings/${id}/clps`)
+        .send({ containerSizeId: size.id.toString() });
+      const clpId = (made.body as { data: { id: string } }).data.id;
+
+      try {
+        expect(
+          (
+            await as(token)
+              .post(`/api/tenant/ops/clps/${clpId}/lines`)
+              .send({ cargoLineId: lineIds[0]!, ctnQty: 10 })
+          ).status,
+        ).toBe(201);
+        const done = await as(token)
+          .post(`/api/tenant/ops/clps/${clpId}/finalise`)
+          .send({
+            containerNo: 'CAIU1234561',
+            sealNo: 'SL-B7',
+            loadDatetime: '2026-09-16T09:00:00.000Z',
+          });
+        expect(done.status, JSON.stringify(done.body)).toBe(200);
+
+        for (const path of [
+          `/api/tenant/ops/clps/${clpId}/billing`,
+          `/api/tenant/ops/bookings/${id}/clp`,
+          `/api/tenant/ops/clps/${clpId}/print`,
+        ]) {
+          expect((await as(token).get(path)).status).toBe(200);
+        }
+
+        const after = await lineOf(lineIds[0]!);
+        expect(after.billingBasis).toBe(before.billingBasis);
+        expect(after.updatedAt.getTime()).toBe(before.updatedAt.getTime());
+        expect(
+          await owner.auditLog.count({
+            where: { tableName: 'cargo_receipt_line', recordId: before.id },
+          }),
+        ).toBe(auditBefore);
+      } finally {
+        await owner.clpLine.deleteMany({ where: { clpId: BigInt(clpId) } });
+        await owner.clp.deleteMany({ where: { id: BigInt(clpId) } });
+      }
+    });
+
+    it('writes nothing when the basis has not moved', async () => {
+      /*
+        The audit trigger files an entry for every UPDATE, so the write is
+        conditional: a receipt saved twice with the same measurement must not
+        grow a history of changes nobody made.
+      */
+      const { id, lineIds } = await readyToReceive(1);
+      const payload = body([{ cargoLineId: lineIds[0]!, receivedCtnQty: 10, ...MEASURED }]);
+      const first = await save(id, payload);
+      const receiptId = (first.body as { data: { id: string } }).data.id;
+
+      const line = await lineOf(lineIds[0]!);
+      const before = await owner.auditLog.count({
+        where: { tableName: 'cargo_receipt_line', recordId: line.id, action: 'UPDATE' },
+      });
+
+      await save(id, { ...payload, id: receiptId });
+
+      const after = await owner.auditLog.count({
+        where: { tableName: 'cargo_receipt_line', recordId: line.id, action: 'UPDATE' },
+      });
+      // One entry for the line's own re-save; none for a basis that did not
+      // move. Without the guard this would be two.
+      expect(after - before).toBe(1);
+      expect((await lineOf(lineIds[0]!)).billingBasis).toBe('ACTUAL');
+    });
+
+    it('stays inside the workspace', async () => {
+      const { id, lineIds } = await readyToReceive(1);
+      await save(id, body([{ cargoLineId: lineIds[0]!, receivedCtnQty: 10, ...MEASURED }]));
+
+      const other = await owner.tenant.create({
+        data: { name: 'B7 isolation', slug: `b7-iso-${Date.now()}`, country: 'Bangladesh' },
+        select: { id: true },
+      });
+      try {
+        const seen = await withTenant(other.id, (tx) =>
+          tx.$queryRaw<{ n: bigint }[]>`
+            SELECT count(*)::bigint AS n FROM cargo_receipt_line
+             WHERE shipment_cargo_line_id = ${BigInt(lineIds[0]!)}`,
+        );
+        expect(Number(seen[0]!.n)).toBe(0);
+      } finally {
+        await owner.tenant.delete({ where: { id: other.id } });
+      }
+    });
   });
 });
 

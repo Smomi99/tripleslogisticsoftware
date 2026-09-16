@@ -1384,3 +1384,215 @@ describe('whose cargo is in the box — every path, both shapes', () => {
     }
   });
 });
+
+// ============================= B5 — the container-number clash at finalisation
+
+/**
+ * "This container number is already on another plan for a booking in this
+ * box" — and nothing wider than that.
+ *
+ * The check compared `clp.shipment_id`. On a consolidated plan that column is
+ * NULL and Prisma renders `shipmentId: null` as `shipment_id IS NULL`, so the
+ * rule silently became "any FINAL consolidated plan in this workspace using
+ * this container number" — every booking, every voyage. It refused
+ * legitimate finalisations while naming a CLP the operator had nothing to do
+ * with, and it did not actually check the thing it claimed to.
+ *
+ * Scoped through `participantShipmentIds` now, so both shapes are found on
+ * both sides of the comparison.
+ */
+describe('B5 — finalising against a container number already in use', () => {
+  const BOX = 'TCLU1234568';
+  const OTHER_BOX = 'TGHU1234567';
+
+  async function loaded(shipmentIds: bigint[]) {
+    const made = await as(tokenAll)
+      .post('/api/tenant/ops/clps/consolidate')
+      .send({
+        shipmentIds: shipmentIds.map((id) => id.toString()),
+        containerSizeId: size20.toString(),
+      });
+    expect(made.status).toBe(201);
+    const clpId = track(made.body.data.id);
+    for (const shipmentId of shipmentIds) {
+      const line = await owner.shipmentCargoLine.findFirstOrThrow({
+        where: { shipmentId, deletedAt: null },
+        select: { id: true },
+      });
+      await as(tokenAll)
+        .post(`/api/tenant/ops/clps/${clpId}/lines`)
+        .send({ cargoLineId: line.id.toString(), ctnQty: 1 });
+    }
+    return clpId;
+  }
+
+  /** A plan made the legacy way, with cargo in it. */
+  async function legacyLoaded(shipmentId: bigint) {
+    const made = await as(tokenAll)
+      .post(`/api/tenant/ops/bookings/${shipmentId}/clps`)
+      .send({ containerSizeId: size20.toString() });
+    const clpId = track(made.body.data.id);
+    const line = await owner.shipmentCargoLine.findFirstOrThrow({
+      where: { shipmentId, deletedAt: null },
+      select: { id: true },
+    });
+    await as(tokenAll)
+      .post(`/api/tenant/ops/clps/${clpId}/lines`)
+      .send({ cargoLineId: line.id.toString(), ctnQty: 1 });
+    expect(await owner.clpBooking.count({ where: { clpId } })).toBe(0);
+    return clpId;
+  }
+
+  const finalise = (clpId: bigint, containerNo: string) =>
+    as(tokenAll)
+      .post(`/api/tenant/ops/clps/${clpId}/finalise`)
+      .send({
+        containerNo,
+        sealNo: `SL-B5-${RUN}`,
+        loadDatetime: '2026-09-16T08:00:00.000Z',
+      });
+
+  it('catches a second plan on the same booking — legacy shape', async () => {
+    const b = await booking({ label: 'b5la', loadingType: 'FCL', ctn: 4 });
+    expect((await finalise(await legacyLoaded(b.id), BOX)).status).toBe(200);
+
+    const second = await legacyLoaded(b.id);
+    const refused = await finalise(second, BOX);
+    expect(refused.status).toBe(409);
+    expect(JSON.stringify(refused.body)).toMatch(/already on CLP/i);
+  });
+
+  it('catches it through the participation of a consolidated plan', async () => {
+    const a = await booking({ label: 'b5ca', loadingType: 'FCL', ctn: 4 });
+    const b = await booking({ label: 'b5cb', loadingType: 'FCL', ctn: 4 });
+    expect((await finalise(await loaded([a.id, b.id]), BOX)).status).toBe(200);
+
+    // A later plan for one of those same bookings, same box number.
+    const again = await loaded([a.id]);
+    const refused = await finalise(again, BOX);
+    expect(refused.status).toBe(409);
+  });
+
+  it('catches it whichever shape recorded the booking', async () => {
+    // Legacy first, canonical second: the booking is the same either way.
+    const b = await booking({ label: 'b5mx', loadingType: 'FCL', ctn: 4 });
+    expect((await finalise(await legacyLoaded(b.id), BOX)).status).toBe(200);
+    expect((await finalise(await loaded([b.id]), BOX)).status).toBe(409);
+  });
+
+  it('does NOT refuse a consolidated plan that shares no booking', async () => {
+    /*
+      The regression. Two unrelated consolidations reusing one container
+      number on different voyages is ordinary; the NULL comparison refused the
+      second one and blamed the first.
+    */
+    const a = await booking({ label: 'b5na', loadingType: 'FCL', ctn: 4 });
+    const b = await booking({ label: 'b5nb', loadingType: 'FCL', ctn: 4 });
+    const c = await booking({ label: 'b5nc', loadingType: 'FCL', ctn: 4 });
+    const d = await booking({ label: 'b5nd', loadingType: 'FCL', ctn: 4 });
+
+    expect((await finalise(await loaded([a.id, b.id]), OTHER_BOX)).status).toBe(200);
+    // Different bookings entirely, same steel box, later sailing.
+    expect((await finalise(await loaded([c.id, d.id]), OTHER_BOX)).status).toBe(200);
+  });
+
+  it('does not refuse an unrelated legacy plan either', async () => {
+    const a = await booking({ label: 'b5ua', loadingType: 'FCL', ctn: 4 });
+    const b = await booking({ label: 'b5ub', loadingType: 'FCL', ctn: 4 });
+    expect((await finalise(await legacyLoaded(a.id), 'CSQU3054383')).status).toBe(200);
+    expect((await finalise(await legacyLoaded(b.id), 'CSQU3054383')).status).toBe(200);
+  });
+
+  it('checks every booking in the box, not just the first', async () => {
+    const a = await booking({ label: 'b5ea', loadingType: 'FCL', ctn: 4 });
+    const b = await booking({ label: 'b5eb', loadingType: 'FCL', ctn: 4 });
+    const c = await booking({ label: 'b5ec', loadingType: 'FCL', ctn: 4 });
+
+    // The box is already used by b — which is the SECOND participant below.
+    expect((await finalise(await loaded([b.id]), 'MSKU0000109')).status).toBe(200);
+    const shared = await loaded([a.id, b.id, c.id]);
+    expect((await finalise(shared, 'MSKU0000109')).status).toBe(409);
+  });
+
+  it('ignores a soft-deleted plan and a soft-deleted participation', async () => {
+    const a = await booking({ label: 'b5da', loadingType: 'FCL', ctn: 4 });
+    const gone = await loaded([a.id]);
+    expect((await finalise(gone, 'FCIU1234560')).status).toBe(200);
+
+    // §4 rule 3's soft delete: the plan is no longer a record of anything.
+    await owner.clp.update({ where: { id: gone }, data: { deletedAt: new Date() } });
+    expect((await finalise(await loaded([a.id]), 'FCIU1234560')).status).toBe(200);
+
+    /*
+      A dropped participation stops linking the two — but only on a plan that
+      has nothing else recording the booking. A CONSOLIDATED plan carries
+      shipment_id NULL, so its participations are the only link and removing
+      them removes it.
+    */
+    const b = await booking({ label: 'b5db', loadingType: 'FCL', ctn: 4 });
+    const c = await booking({ label: 'b5dc', loadingType: 'FCL', ctn: 4 });
+    const held = await loaded([b.id, c.id]);
+    expect(
+      (await owner.clp.findFirstOrThrow({ where: { id: held }, select: { shipmentId: true } }))
+        .shipmentId,
+    ).toBeNull();
+    expect((await finalise(held, 'HLXU1234561')).status).toBe(200);
+    await owner.clpBooking.updateMany({
+      where: { clpId: held },
+      data: { deletedAt: new Date() },
+    });
+    expect((await finalise(await loaded([b.id, c.id]), 'HLXU1234561')).status).toBe(200);
+  });
+
+  it('a dropped participation still leaves a single plan linked by shipment_id', async () => {
+    /*
+      The other half of the rule, and the one that surprised this test first
+      time. A selection of ONE comes through /clps/consolidate as a SINGLE
+      plan, which writes clp_booking AND keeps clp.shipment_id in step. Drop
+      the participation and the legacy column still records the booking — so
+      the plan is still that booking's, and the clash is real.
+
+      That is `plansOfBooking` behaving exactly as it does everywhere else,
+      stated here so nobody later reads the case above as "deleting a
+      participation always unlinks".
+    */
+    const b = await booking({ label: 'b5sg', loadingType: 'FCL', ctn: 4 });
+    const single = await loaded([b.id]);
+    expect(
+      (await owner.clp.findFirstOrThrow({ where: { id: single }, select: { shipmentId: true } }))
+        .shipmentId,
+    ).toBe(b.id);
+    expect((await finalise(single, 'TRLU1234567')).status).toBe(200);
+
+    await owner.clpBooking.updateMany({
+      where: { clpId: single },
+      data: { deletedAt: new Date() },
+    });
+    expect((await finalise(await loaded([b.id]), 'TRLU1234567')).status).toBe(409);
+  });
+
+  it('never sees another workspace plan', async () => {
+    /*
+      The clash query has no tenant clause of its own — it does not need one,
+      and that is the point worth pinning: withTenant scopes it and RLS
+      enforces it. A plan in another workspace holding this container number
+      must not block a finalisation here.
+    */
+    const mine = await booking({ label: 'b5iso', loadingType: 'FCL', ctn: 4 });
+    const other = await owner.tenant.create({
+      data: { name: 'CLP clash isolation', slug: `clp-b5-${RUN}`, country: 'Bangladesh' },
+      select: { id: true },
+    });
+    try {
+      const seen = await withTenant(other.id, (tx) =>
+        tx.$queryRaw<{ n: bigint }[]>`SELECT count(*)::bigint AS n FROM clp WHERE container_no = ${BOX}`,
+      );
+      expect(Number(seen[0]!.n)).toBe(0);
+
+      // And finalising here is unaffected by anything outside this workspace.
+      expect((await finalise(await loaded([mine.id]), 'OOLU1234567')).status).toBe(200);
+    } finally {
+      await owner.tenant.delete({ where: { id: other.id } });
+    }
+  });
+});
