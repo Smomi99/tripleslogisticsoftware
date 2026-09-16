@@ -7,7 +7,7 @@ import type {
   ClpSuggestedGroup,
 } from '@ff/shared';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -102,30 +102,55 @@ function NewConsolidatedClpScreen() {
 
   const mayCreate = can('OPERATION.CONTAINER_LOAD_PLAN.CREATE');
 
-  const load = useCallback(
-    async (f: Family, term: string) => {
-      setLoading(true);
-      try {
-        const params = new URLSearchParams({ family: f });
-        if (term.trim() !== '') params.set('search', term.trim());
-        setList(
-          await authorizedRequest<ClpCandidateList>(
-            `/api/tenant/ops/clp-candidates?${params.toString()}`,
-          ),
-        );
-      } catch (error) {
-        toast.error(error instanceof ApiError ? error.message : 'Could not load the bookings.');
-      } finally {
-        setLoading(false);
-      }
-    },
-    [authorizedRequest],
-  );
-
+  /**
+   * The candidate list for the workflow on screen.
+   *
+   * The answer is applied only if it is still the answer to the question that
+   * was asked. Two of these are in flight whenever the workflow changes while
+   * one is loading — which the `Make CLP` shortcut does on every arrival,
+   * because it opens on one family and the server's reading of the booking
+   * moves it to the other. Without the guard the LAST response won regardless
+   * of which family it was for, so roughly one arrival in eight left the FCL
+   * candidates on screen under an LCL tab, with the named booking nowhere in
+   * the list and nothing selected. Not a flicker: it stayed that way.
+   *
+   * Cancellation lives in the effect rather than in the request, so it covers
+   * the debounce window too — a keystroke that has not yet fired its fetch is
+   * dropped by the same cleanup.
+   */
   useEffect(() => {
-    const id = setTimeout(() => void load(family, search), search === '' ? 0 : 300);
-    return () => clearTimeout(id);
-  }, [load, family, search]);
+    let cancelled = false;
+
+    const id = setTimeout(() => {
+      void (async () => {
+        setLoading(true);
+        try {
+          const params = new URLSearchParams({ family });
+          if (search.trim() !== '') params.set('search', search.trim());
+          const result = await authorizedRequest<ClpCandidateList>(
+            `/api/tenant/ops/clp-candidates?${params.toString()}`,
+          );
+          if (!cancelled) setList(result);
+        } catch (error) {
+          if (!cancelled) {
+            toast.error(error instanceof ApiError ? error.message : 'Could not load the bookings.');
+          }
+        } finally {
+          /*
+            Left true when superseded: the request that replaced this one owns
+            the spinner, and clearing it here would flash "no bookings" over a
+            list that is still arriving.
+          */
+          if (!cancelled) setLoading(false);
+        }
+      })();
+    }, search === '' ? 0 : 300);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(id);
+    };
+  }, [authorizedRequest, family, search]);
 
   /*
     Switching workflow clears the selection: §3 never mixes the two. Skipped
