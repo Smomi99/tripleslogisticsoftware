@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildClpPdf, type ClpPrintDoc, clpPdfFilename } from './clp-print';
+import { extractPdfText } from './pdf-text';
 
 /**
  * The CLP document — MODULE_CLP.md §5.3, and §4.3's DRAFT watermark.
@@ -11,94 +12,6 @@ import { buildClpPdf, type ClpPrintDoc, clpPdfFilename } from './clp-print';
  * the string in an uncompressed font or metadata blob) or fails for the wrong
  * one. `extractText` below inflates the streams first.
  */
-
-const zlib = await import('node:zlib');
-
-/**
- * Pull the readable text out of a pdfkit buffer.
- *
- * Two things make this less obvious than it sounds. The content streams are
- * Flate-compressed, so the words are not in the file as ASCII. And pdfkit
- * writes text as HEX runs inside a kerned TJ array — "CONTAINER LOAD PLAN"
- * ships as `[<434f4e54> 90 <41494e4552204c4f> 50 <414420504c414e>] TJ`, three
- * runs with kerning numbers between them.
- *
- * So: inflate, then decode each hex run, joining the runs WITHIN one TJ array
- * (that is one word broken by kerning) and separating different TJ operators
- * with a newline (those are different pieces of text, and running them
- * together would manufacture matches that are not on the page).
- */
-function extractText(pdf: Buffer): string {
-  const pieces: string[] = [];
-  let index = 0;
-
-  while (index < pdf.length) {
-    const start = pdf.indexOf('stream', index);
-    if (start === -1) break;
-    let from = start + 'stream'.length;
-    if (pdf[from] === 0x0d) from += 1;
-    if (pdf[from] === 0x0a) from += 1;
-    const end = pdf.indexOf('endstream', from);
-    if (end === -1) break;
-
-    let body: string;
-    try {
-      body = zlib.inflateSync(pdf.subarray(from, end)).toString('latin1');
-    } catch {
-      body = pdf.subarray(from, end).toString('latin1');
-    }
-
-    // Each text-showing operator, with its operand array.
-    for (const op of body.matchAll(/\[([^\]]*)\]\s*TJ|<([0-9A-Fa-f]+)>\s*Tj|\(((?:\\.|[^\\)])*)\)\s*Tj/g)) {
-      if (op[1] !== undefined) {
-        // A kerned array: concatenate its hex and literal runs.
-        let run = '';
-        for (const part of op[1].matchAll(/<([0-9A-Fa-f]+)>|\(((?:\\.|[^\\)])*)\)/g)) {
-          run += part[1] !== undefined ? fromHex(part[1]) : unescapePdf(part[2] ?? '');
-        }
-        pieces.push(run);
-      } else if (op[2] !== undefined) {
-        pieces.push(fromHex(op[2]));
-      } else if (op[3] !== undefined) {
-        pieces.push(unescapePdf(op[3]));
-      }
-    }
-    index = end + 1;
-  }
-
-  return pieces.join(String.fromCharCode(10));
-}
-
-/*
-  WinAnsi is not Latin-1 in the 0x80-0x9F range: pdfkit writes an em dash as
-  the single byte 0x97, which decodes to a control character if you treat the
-  bytes as latin1. Without this map the extractor silently loses every piece
-  of punctuation the document actually renders correctly.
-*/
-const WIN_ANSI_HIGH: Readonly<Record<number, string>> = {
-  0x80: "\u20ac",
-  0x85: "\u2026",
-  0x91: "\u2018",
-  0x92: "\u2019",
-  0x93: "\u201c",
-  0x94: "\u201d",
-  0x96: "\u2013",
-  0x97: "\u2014",
-};
-
-function fromHex(hex: string): string {
-  const even = hex.length % 2 === 0 ? hex : `${hex}0`;
-  let out = "";
-  for (let i = 0; i < even.length; i += 2) {
-    const code = Number.parseInt(even.slice(i, i + 2), 16);
-    out += WIN_ANSI_HIGH[code] ?? String.fromCharCode(code);
-  }
-  return out;
-}
-
-function unescapePdf(literal: string): string {
-  return literal.replace(/\\([()\\])/g, '$1');
-}
 
 const LINES = [
   {
@@ -157,25 +70,25 @@ function doc(overrides: Partial<ClpPrintDoc> = {}): ClpPrintDoc {
 
 describe('the DRAFT watermark (§4.3)', () => {
   it('stamps a draft', async () => {
-    const text = extractText(await buildClpPdf(doc({ status: 'DRAFT' })));
+    const text = extractPdfText(await buildClpPdf(doc({ status: 'DRAFT' })));
     expect(text).toMatch(/DRAFT/);
   });
 
   it('does not stamp a final plan', async () => {
     // The whole point of the mark is that it distinguishes the two.
-    const text = extractText(await buildClpPdf(doc({ status: 'FINAL' })));
+    const text = extractPdfText(await buildClpPdf(doc({ status: 'FINAL' })));
     expect(text).not.toMatch(/DRAFT/);
   });
 
   it('stamps a cancelled plan too', async () => {
-    const text = extractText(await buildClpPdf(doc({ status: 'CANCELLED' })));
+    const text = extractPdfText(await buildClpPdf(doc({ status: 'CANCELLED' })));
     expect(text).toMatch(/CANCELLED/);
   });
 
   it('leaves the figures readable under the stamp', async () => {
     // A watermark that obscured the carton counts would just be printed
     // again without it. Everything still has to be on the page.
-    const text = extractText(await buildClpPdf(doc({ status: 'DRAFT' })));
+    const text = extractPdfText(await buildClpPdf(doc({ status: 'DRAFT' })));
     expect(text).toMatch(/PO-001/);
     expect(text).toMatch(/120/);
     expect(text).toMatch(/11.5200/);
@@ -193,7 +106,7 @@ describe('the DRAFT watermark (§4.3)', () => {
 
 describe('§5.3 content', () => {
   it('carries the header the client asked for', async () => {
-    const text = extractText(await buildClpPdf(doc()));
+    const text = extractPdfText(await buildClpPdf(doc()));
     for (const wanted of [
       'CONTAINER LOAD PLAN',
       'Triples Logistics',
@@ -209,7 +122,7 @@ describe('§5.3 content', () => {
   });
 
   it('carries every line, with its own carton measurements', async () => {
-    const text = extractText(await buildClpPdf(doc()));
+    const text = extractPdfText(await buildClpPdf(doc()));
     expect(text).toContain('PO-001');
     expect(text).toContain('SHIRT-A');
     expect(text).toContain('WHT-M');
@@ -222,7 +135,7 @@ describe('§5.3 content', () => {
       The client's own TOTAL row reads "3 PO · 780 · 11,000 · …", so the PO
       count sits in the first cell rather than on a line of its own.
     */
-    const text = extractText(await buildClpPdf(doc()));
+    const text = extractPdfText(await buildClpPdf(doc()));
     expect(text).toContain('2 PO');
     expect(text).toContain('200'); // 120 + 80 cartons
     expect(text).toContain('4,000'); // 2400 + 1600 pieces
@@ -232,12 +145,12 @@ describe('§5.3 content', () => {
   it('counts POs, not lines', async () => {
     // Two allocations of one PO is one PO on the sheet.
     const samePo = LINES.map((l) => ({ ...l, poNo: 'PO-001' }));
-    const text = extractText(await buildClpPdf(doc({ lines: samePo })));
+    const text = extractPdfText(await buildClpPdf(doc({ lines: samePo })));
     expect(text).toContain('1 PO');
   });
 
   it('draws the three signature blocks', async () => {
-    const text = extractText(await buildClpPdf(doc()));
+    const text = extractPdfText(await buildClpPdf(doc()));
     expect(text).toContain('SUPERVISOR');
     expect(text).toContain('TALLY MAN');
     expect(text).toContain('CARRIER REPRESENTATIVE');
@@ -249,7 +162,7 @@ describe('§5.3 content', () => {
   it('shows an empty container number as a blank to fill in, not as nothing', async () => {
     // A draft has no container number yet. The person on the floor needs to
     // see there is a box for it.
-    const text = extractText(
+    const text = extractPdfText(
       await buildClpPdf(doc({ status: 'DRAFT', containerNo: null, sealNo: null })),
     );
     expect(text).toContain('CONTAINER NO');
@@ -259,7 +172,7 @@ describe('§5.3 content', () => {
   it('prints a plan with no cargo rather than failing', async () => {
     const pdf = await buildClpPdf(doc({ status: 'DRAFT', lines: [] }));
     expect(pdf.length).toBeGreaterThan(500);
-    expect(extractText(pdf)).toContain('Nothing loaded');
+    expect(extractPdfText(pdf)).toContain('Nothing loaded');
   });
 
   it('produces a real PDF', async () => {
@@ -276,7 +189,7 @@ describe('what the built-in font can draw', () => {
       WinAnsi, and printed as mojibake. The two ports are separate fields now.
     */
     return buildClpPdf(doc()).then((pdf) => {
-      const text = extractText(pdf);
+      const text = extractPdfText(pdf);
       expect(text).toContain('Hamburg');
       expect(text).toContain('Chattogram');
       expect(text).not.toMatch(/[←-⇿]/);
@@ -286,14 +199,14 @@ describe('what the built-in font can draw', () => {
   it('replaces anything outside the set with a visible question mark', async () => {
     // Ugly on purpose. A question mark gets reported; a silently wrong glyph
     // gets signed for.
-    const text = extractText(
+    const text = extractPdfText(
       await buildClpPdf(doc({ customerName: 'Aঢাকা Traders' })),
     );
     expect(text).toMatch(/A\?+ Traders/);
   });
 
   it('keeps the punctuation WinAnsi does have', async () => {
-    const text = extractText(await buildClpPdf(doc({ sealNo: 'SL—992' })));
+    const text = extractPdfText(await buildClpPdf(doc({ sealNo: 'SL—992' })));
     expect(text).toContain('SL—992');
   });
 });

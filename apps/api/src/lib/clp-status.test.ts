@@ -1244,3 +1244,286 @@ describe('a finalised plan keeps the figures it was closed with', () => {
     }
   });
 });
+
+// ============================ frozen allocations, the cases B1 did not cover
+
+/**
+ * The invariant, pushed at the three shapes B1's own tests did not reach:
+ * several frozen plans at once, a frozen plan sharing a line with a draft,
+ * and a receipt edited downward under a plan that was already signed.
+ *
+ * Same fixture idea as above — two deliveries measured differently, because
+ * that is the only thing that moves the per-carton rate and therefore the only
+ * thing that can expose a row being rewritten.
+ */
+describe('frozen allocations hold their ground', () => {
+  let n = 0;
+
+  /** A cargo line with one delivery of `ctn` cartons at 0.25 CBM each. */
+  async function lineWithFirstDelivery(ctn: number) {
+    n += 1;
+    const line = await owner.shipmentCargoLine.create({
+      data: {
+        tenantId,
+        shipmentId,
+        shipmentPoId: poId,
+        itemCode: `STFZ2-${RUN}-${n}`,
+        ctnQty: 100,
+        pcsQty: 1000,
+        grossWeightKg: '1000',
+        netWeightKg: '900',
+        cartonLengthCm: '100',
+        cartonWidthCm: '50',
+        cartonHeightCm: '50',
+      },
+      select: { id: true },
+    });
+    const receipt = await owner.cargoReceipt.create({
+      data: {
+        tenantId,
+        code: `CRFZ2-${RUN}-${n}-a`,
+        seriesYear: 2026,
+        shipmentId,
+        receiptSeq: 9500 + n * 2,
+        receiveDate: new Date('2026-09-13'),
+        status: 'CONFIRMED',
+        confirmedAt: new Date(),
+        receivedBy: userId,
+      },
+      select: { id: true },
+    });
+    const rl = await owner.cargoReceiptLine.create({
+      data: {
+        tenantId,
+        cargoReceiptId: receipt.id,
+        shipmentCargoLineId: line.id,
+        receivedCtnQty: ctn,
+        cartonLengthCm: '100',
+        cartonWidthCm: '50',
+        cartonHeightCm: '50',
+        lineStatus: 'ACCEPTED',
+      },
+      select: { id: true },
+    });
+    return { cargoId: line.id, firstReceiptLineId: rl.id };
+  }
+
+  /** A second delivery of `ctn` cartons measured at 0.40 CBM each. */
+  async function laterDelivery(cargoId: bigint, ctn: number) {
+    n += 1;
+    const receipt = await owner.cargoReceipt.create({
+      data: {
+        tenantId,
+        code: `CRFZ2-${RUN}-${n}-b`,
+        seriesYear: 2026,
+        shipmentId,
+        receiptSeq: 9600 + n * 2,
+        receiveDate: new Date('2026-09-15'),
+        status: 'CONFIRMED',
+        confirmedAt: new Date(),
+        receivedBy: userId,
+      },
+      select: { id: true },
+    });
+    await owner.cargoReceiptLine.create({
+      data: {
+        tenantId,
+        cargoReceiptId: receipt.id,
+        shipmentCargoLineId: cargoId,
+        receivedCtnQty: ctn,
+        cartonLengthCm: '100',
+        cartonWidthCm: '80',
+        cartonHeightCm: '50',
+        lineStatus: 'ACCEPTED',
+      },
+    });
+  }
+
+  async function scrub(cargoId: bigint) {
+    await owner.clpLine.deleteMany({ where: { shipmentCargoLineId: cargoId } });
+    await owner.cargoReceiptLine.deleteMany({ where: { shipmentCargoLineId: cargoId } });
+    await owner.shipmentCargoLine.deleteMany({ where: { id: cargoId } });
+    await owner.cargoReceipt.deleteMany({ where: { code: { startsWith: `CRFZ2-${RUN}` } } });
+  }
+
+  const cbmOn = async (clpId: bigint, cargoId: bigint) =>
+    (
+      await owner.clpLine.findFirstOrThrow({
+        where: { clpId, shipmentCargoLineId: cargoId, deletedAt: null },
+        select: { volumeCbm: true },
+      })
+    ).volumeCbm?.toString();
+
+  const load = (clpId: bigint, cargoId: bigint, ctnQty: number) =>
+    withTenant(tenantId, (db) =>
+      allocate(db, { tenantId, userId }, { cargoLineId: cargoId, clpId, ctnQty }),
+    );
+
+  const freeOn = (cargoId: bigint) =>
+    withTenant(tenantId, (db) => availableCartons(db, cargoId));
+
+  const seal = async (clpId: bigint, containerNo: string) => {
+    const res = await as(tokenAll)
+      .post(`/api/tenant/ops/clps/${clpId}/finalise`)
+      .send({ ...FINALISE_BODY, containerNo });
+    expect(res.status).toBe(200);
+  };
+
+  it('scenario 2 — a frozen plan and a draft share one line without double-counting', async () => {
+    const { cargoId } = await lineWithFirstDelivery(40);
+    try {
+      const frozen = await makeClp();
+      await load(frozen, cargoId, 25);
+      await seal(frozen, 'MSKU0000069');
+
+      // The frozen plan still OWNS its cartons: they are not offered again.
+      expect(await freeOn(cargoId)).toBe(15);
+
+      const draft = await makeClp();
+      await load(draft, cargoId, 15);
+      expect(await freeOn(cargoId)).toBe(0);
+
+      // And there is nothing left to give, stated as a refusal rather than a
+      // negative balance.
+      await expect(load(draft, cargoId, 1)).rejects.toThrow(/0 cartons left/i);
+      expect(await freeOn(cargoId)).toBe(0);
+      expect(await freeOn(cargoId)).toBeGreaterThanOrEqual(0);
+
+      // 25 at 0.25 apiece, untouched; the draft completes the line.
+      expect(await cbmOn(frozen, cargoId)).toBe('6.25');
+      expect(await cbmOn(draft, cargoId)).toBe('3.75');
+    } finally {
+      await scrub(cargoId);
+    }
+  });
+
+  it('scenario 3 — several frozen plans, one draft, conservation exact', async () => {
+    const { cargoId } = await lineWithFirstDelivery(40);
+    try {
+      const a = await makeClp();
+      await load(a, cargoId, 20);
+      await seal(a, 'MSKU0000074');
+
+      const b = await makeClp();
+      await load(b, cargoId, 10);
+      await seal(b, 'MSKU0000080');
+
+      expect(await cbmOn(a, cargoId)).toBe('5');
+      expect(await cbmOn(b, cargoId)).toBe('2.5');
+
+      // 20 more cartons at 0.40 — the whole line is now 10 + 8 = 18 CBM.
+      await laterDelivery(cargoId, 20);
+
+      const draft = await makeClp();
+      await load(draft, cargoId, 30);
+
+      // Both frozen plans unmoved, and the draft absorbs the whole balance.
+      expect(await cbmOn(a, cargoId)).toBe('5');
+      expect(await cbmOn(b, cargoId)).toBe('2.5');
+      expect(await cbmOn(draft, cargoId)).toBe('10.5');
+
+      const all = await owner.clpLine.findMany({
+        where: { shipmentCargoLineId: cargoId, deletedAt: null },
+        select: { volumeCbm: true, ctnQty: true },
+      });
+      expect(all.reduce((s, r) => s + Number(r.volumeCbm ?? 0), 0)).toBeCloseTo(18, 4);
+      expect(all.reduce((s, r) => s + r.ctnQty, 0)).toBe(60);
+      expect(await freeOn(cargoId)).toBe(0);
+    } finally {
+      await scrub(cargoId);
+    }
+  });
+
+  it('scenario 4 — a receipt edited below what frozen plans hold fails as a domain error', async () => {
+    /*
+      The contradiction: a plan was finalised on 10 CBM, and the delivery it
+      was measured from is afterwards corrected down to 0.32. The balance the
+      draft would carry goes negative, which is not a rounding artefact — it
+      means the paperwork and the receipts disagree.
+
+      The check constraint on clp_line would refuse the write either way. What
+      is being proven here is that the operator gets a sentence about their
+      cargo instead of a database error, and that nothing is written.
+    */
+    const { cargoId, firstReceiptLineId } = await lineWithFirstDelivery(40);
+    try {
+      const frozen = await makeClp();
+      await load(frozen, cargoId, 40);
+      await seal(frozen, 'MSKU0000095');
+      expect(await cbmOn(frozen, cargoId)).toBe('10');
+
+      await laterDelivery(cargoId, 20); // 8 CBM
+
+      // The correction: the first delivery was not 0.25 a carton after all.
+      await owner.cargoReceiptLine.update({
+        where: { id: firstReceiptLineId },
+        data: { cartonLengthCm: '20', cartonWidthCm: '20', cartonHeightCm: '20' },
+      });
+
+      const draft = await makeClp();
+      await expect(load(draft, cargoId, 20)).rejects.toThrow(
+        /already hold more than the receipts now say arrived/i,
+      );
+
+      // Not a raw constraint violation surfacing as a 500.
+      await expect(load(draft, cargoId, 20)).rejects.not.toThrow(/violates check constraint/i);
+
+      // And the transaction unwound: the frozen plan is untouched and the
+      // draft holds nothing.
+      expect(await cbmOn(frozen, cargoId)).toBe('10');
+      expect(
+        await owner.clpLine.count({ where: { clpId: draft, deletedAt: null } }),
+      ).toBe(0);
+    } finally {
+      await scrub(cargoId);
+    }
+  });
+
+  it('scenario 5 — reading a finalised plan writes nothing to it', async () => {
+    /*
+      Every GET a planner can reach for a closed container. A read that
+      repaired what it noticed would move updated_at and file audit entries
+      against a signed document — so this asserts the absence of writes, not
+      the correctness of the figures.
+    */
+    const { cargoId } = await lineWithFirstDelivery(40);
+    try {
+      const frozen = await makeClp();
+      await load(frozen, cargoId, 40);
+      await seal(frozen, 'MSKU0000109');
+
+      const before = await owner.clp.findFirstOrThrow({
+        where: { id: frozen },
+        select: { updatedAt: true },
+      });
+      const auditBefore = await owner.auditLog.count({
+        where: { tableName: 'clp', recordId: frozen },
+      });
+
+      for (const path of [
+        `/api/tenant/ops/bookings/${shipmentId}/clp`,
+        `/api/tenant/ops/clps/${frozen}/billing`,
+        `/api/tenant/ops/clps/${frozen}/print`,
+        `/api/tenant/ops/clps?limit=50`,
+        `/api/tenant/ops/clp-bookings?limit=50`,
+      ]) {
+        expect((await as(tokenAll).get(path)).status).toBe(200);
+      }
+      // The cost preview is a POST, but it is a read in every sense that
+      // matters here: §9 gives it VIEW precisely because it saves nothing.
+      await as(tokenAll)
+        .post(`/api/tenant/ops/clps/${frozen}/cost/preview`)
+        .send({ actualContainerCost: '1000', costCurrencyId: '1', basis: 'CBM' });
+
+      expect(
+        (await owner.clp.findFirstOrThrow({ where: { id: frozen }, select: { updatedAt: true } }))
+          .updatedAt.getTime(),
+      ).toBe(before.updatedAt.getTime());
+      expect(await owner.auditLog.count({ where: { tableName: 'clp', recordId: frozen } })).toBe(
+        auditBefore,
+      );
+    } finally {
+      await scrub(cargoId);
+    }
+  });
+});

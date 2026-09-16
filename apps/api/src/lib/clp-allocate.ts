@@ -2,6 +2,7 @@ import { CLP_OVER_VOLUME } from '@ff/shared';
 
 import { Prisma } from '../generated/prisma/client';
 import { HttpError } from './http-error';
+import { isParticipant } from './clp-participants';
 import type { TenantDb } from './tenant-client';
 
 /**
@@ -128,13 +129,26 @@ async function receivedBasis(db: TenantDb, cargoLineId: bigint): Promise<Receive
   };
 }
 
-/** Allocations that still count — a cancelled plan holds nothing (§4.1). */
+/**
+ * What makes a clp_line still count — a cancelled plan holds nothing (§4.1).
+ *
+ * Exported because the candidate list asks the same question across many
+ * bookings at once and was stating the rule a second time. One definition:
+ * "cancelled releases its cargo" is a business rule, and two copies of it is
+ * one copy waiting to be forgotten.
+ *
+ * Note it includes FINAL. A finalised plan's cartons are genuinely still in
+ * that box and are never offered to anyone else; what B1 froze is whether
+ * those rows may be REWRITTEN, which is a different question from whether
+ * they count.
+ */
+export const LIVE_ALLOCATION = {
+  deletedAt: null,
+  clp: { status: { not: 'CANCELLED' as const }, deletedAt: null },
+};
+
 function liveAllocations(cargoLineId: bigint) {
-  return {
-    shipmentCargoLineId: cargoLineId,
-    deletedAt: null,
-    clp: { status: { not: 'CANCELLED' as const }, deletedAt: null },
-  };
+  return { shipmentCargoLineId: cargoLineId, ...LIVE_ALLOCATION };
 }
 
 /** Cartons of this line still free to plan. */
@@ -611,6 +625,7 @@ export async function allocate(
     where: { id: input.cargoLineId, deletedAt: null },
     select: {
       id: true,
+      shipmentId: true,
       shipmentPoId: true,
       itemCode: true,
       sku: true,
@@ -633,6 +648,27 @@ export async function allocate(
       plan.status === 'FINAL'
         ? 'This load plan is final. Cancel it and make a new one to change what it carries.'
         : 'This load plan has been cancelled.',
+    );
+  }
+
+  /*
+    §14 — the cargo has to belong to this container.
+
+    RLS already stops another workspace's cargo reaching here, so this is
+    about the boundary INSIDE a tenant: without it any cargo line could be
+    loaded into any draft plan, and the consequences run past the plan itself.
+    The cost split measures each participant's loaded volume, so a stranger's
+    cartons would take up the box, print on the document and count toward
+    capacity while contributing nothing to the basis the cost is divided on —
+    a split that still reconciles, on the wrong denominator.
+
+    The screen only ever offers the booking's own lines. That is exactly why
+    this belongs here: the rule a screen enforces is not a rule the server
+    has.
+  */
+  if (!(await isParticipant(db, input.clpId, cargo.shipmentId))) {
+    throw HttpError.conflict(
+      `${plan.code} is not planning that booking, so its cargo cannot be loaded into it.`,
     );
   }
 

@@ -6,6 +6,7 @@ import { createApp } from '../app';
 import { env } from '../config/env';
 import { PrismaClient } from '../generated/prisma/client';
 import { signAccessToken } from '../lib/jwt';
+import { extractPdfText } from '../lib/pdf-text';
 import { withTenant } from '../lib/tenant-client';
 
 /**
@@ -1110,6 +1111,270 @@ describe('the booking detail sees plans made by either path', () => {
       ).rejects.toThrow();
 
       // And the read is scoped too, not merely the write.
+      const seen = await withTenant(other.id, (tx) =>
+        tx.$queryRaw<{ n: bigint }[]>`SELECT count(*)::bigint AS n FROM clp WHERE shipment_id = ${mine.id}`,
+      );
+      expect(Number(seen[0]!.n)).toBe(0);
+    } finally {
+      await owner.tenant.delete({ where: { id: other.id } });
+    }
+  });
+});
+
+// ================================ B2 / B3 / B4 / B6 — one shape, four paths
+
+/**
+ * Every path that asks "whose cargo is in this box" now asks it the same way.
+ *
+ * Two creation routes record the answer differently — clp_booking rows from
+ * /clps/consolidate, clp.shipment_id alone from the legacy "Add another
+ * container" — and four separate reads had been written against the first
+ * shape only. Each failed differently and none of them loudly: the printed
+ * document lost its header, the cost split refused to run, the billing panel
+ * came back empty, and allocation never checked membership at all.
+ *
+ * `participantShipmentIds` is now the single answer. These tests drive each
+ * path through both shapes, because a helper that is only ever exercised on
+ * the canonical shape is the bug that was just fixed, one layer down.
+ */
+describe('whose cargo is in the box — every path, both shapes', () => {
+  /** A plan made the legacy way: clp.shipment_id, no participation row. */
+  async function legacyPlan(label: string) {
+    const b = await booking({ label, loadingType: 'FCL' });
+    const made = await as(tokenAll)
+      .post(`/api/tenant/ops/bookings/${b.id}/clps`)
+      .send({ containerSizeId: size20.toString() });
+    expect(made.status).toBe(201);
+    const clpId = track(made.body.data.id);
+    // The premise of every test below, asserted rather than assumed.
+    expect(await owner.clpBooking.count({ where: { clpId } })).toBe(0);
+    return { booking: b, clpId };
+  }
+
+  /** Puts every carton of the booking's cargo into the plan. */
+  async function fill(clpId: bigint, shipmentId: bigint) {
+    const line = await owner.shipmentCargoLine.findFirstOrThrow({
+      where: { shipmentId, deletedAt: null },
+      select: { id: true },
+    });
+    const res = await as(tokenAll)
+      .post(`/api/tenant/ops/clps/${clpId}/lines`)
+      .send({ cargoLineId: line.id.toString(), ctnQty: 1 });
+    return { res, cargoLineId: line.id };
+  }
+
+  // ------------------------------------------------------------------- B6
+  it('B6 — refuses cargo from a booking the container is not planning', async () => {
+    /*
+      RLS stops another workspace's cargo. This is the boundary INSIDE a
+      workspace, which nothing enforced: the screen only offers the booking's
+      own lines, and §14 is explicit that a rule a screen enforces is not a
+      rule the server has.
+    */
+    const mine = await booking({ label: 'p6a', loadingType: 'FCL' });
+    const stranger = await booking({ label: 'p6b', loadingType: 'FCL' });
+
+    const made = await as(tokenAll)
+      .post('/api/tenant/ops/clps/consolidate')
+      .send({ shipmentIds: [mine.id.toString()], containerSizeId: size20.toString() });
+    const clpId = track(made.body.data.id);
+
+    const theirs = await owner.shipmentCargoLine.findFirstOrThrow({
+      where: { shipmentId: stranger.id, deletedAt: null },
+      select: { id: true },
+    });
+    const refused = await as(tokenAll)
+      .post(`/api/tenant/ops/clps/${clpId}/lines`)
+      .send({ cargoLineId: theirs.id.toString(), ctnQty: 1 });
+
+    expect(refused.status).toBe(409);
+    expect(JSON.stringify(refused.body)).toMatch(/not planning that booking/i);
+    // Nothing went in.
+    expect(await owner.clpLine.count({ where: { clpId, deletedAt: null } })).toBe(0);
+
+    // And the container's own booking still loads normally.
+    const ok = await fill(clpId, mine.id);
+    expect(ok.res.status).toBe(201);
+  });
+
+  it('B6 — a consolidated container takes cargo from every participant', async () => {
+    const a = await booking({ label: 'p6c', loadingType: 'FCL' });
+    const b = await booking({ label: 'p6d', loadingType: 'FCL' });
+    const made = await as(tokenAll)
+      .post('/api/tenant/ops/clps/consolidate')
+      .send({
+        shipmentIds: [a.id.toString(), b.id.toString()],
+        containerSizeId: size20.toString(),
+      });
+    const clpId = track(made.body.data.id);
+
+    expect((await fill(clpId, a.id)).res.status).toBe(201);
+    expect((await fill(clpId, b.id)).res.status).toBe(201);
+    expect(await owner.clpLine.count({ where: { clpId, deletedAt: null } })).toBe(2);
+  });
+
+  it('B6 — a legacy plan takes its own booking, through the same check', async () => {
+    // The membership test must read clp.shipment_id too, or "Add another
+    // container" would refuse the cargo it was made for.
+    const { booking: b, clpId } = await legacyPlan('p6e');
+    expect((await fill(clpId, b.id)).res.status).toBe(201);
+  });
+
+  // ------------------------------------------------------------------- B2
+  it('B2 — a legacy plan prints its booking, POL, POD and customer', async () => {
+    const { booking: b, clpId } = await legacyPlan('p2a');
+    await fill(clpId, b.id);
+
+    const res = await as(tokenAll).get(`/api/tenant/ops/clps/${clpId}/print`);
+    expect(res.status).toBe(200);
+    const printed = extractPdfText(res.body as Buffer);
+
+    /*
+      The failure this replaces printed "—" in all four places: a load plan
+      handed to the carrier with no booking number and no ports on it.
+    */
+    expect(printed).toContain(b.code);
+    const shipment = await owner.shipment.findFirstOrThrow({
+      where: { id: b.id },
+      select: { pol: { select: { name: true } }, pod: { select: { name: true } }, customer: { select: { name: true } } },
+    });
+    expect(printed).toContain(shipment.pol!.name);
+    expect(printed).toContain(shipment.pod!.name);
+    expect(printed).toContain(shipment.customer.name);
+  });
+
+  it('B2 — a consolidated plan prints its header booking', async () => {
+    const a = await booking({ label: 'p2b', loadingType: 'FCL' });
+    const b = await booking({ label: 'p2c', loadingType: 'FCL' });
+    const made = await as(tokenAll)
+      .post('/api/tenant/ops/clps/consolidate')
+      .send({
+        shipmentIds: [a.id.toString(), b.id.toString()],
+        containerSizeId: size20.toString(),
+      });
+    const clpId = track(made.body.data.id);
+    await fill(clpId, a.id);
+
+    const printed = extractPdfText(
+      (await as(tokenAll).get(`/api/tenant/ops/clps/${clpId}/print`)).body as Buffer,
+    );
+    expect(printed).toContain(a.code);
+
+    /*
+      Only the header booking, and that is the current truth rather than the
+      intent. The route builds `bookingCodes` and `consolidated` for exactly
+      §16's "the document has to name every booking in the box", and
+      clp-print.ts declares both fields on ClpPrintDoc — and then renders
+      neither. So a shared container prints as if it held one booking's cargo.
+
+      Not fixed here: B2 was a header going blank, which is a consistency bug
+      in the read path. This is a §16 requirement that was never implemented
+      in the renderer, which is new work and someone's decision to schedule.
+      Asserted as it stands so the day it IS implemented, this test says so
+      instead of passing silently.
+    */
+    expect(printed).not.toContain(b.code);
+  });
+
+  // ------------------------------------------------------------------- B3
+  it('B3 — a legacy plan can record a container cost, and it lands on its booking', async () => {
+    /*
+      This used to refuse with "there are no bookings in this container to
+      split the cost across" — in front of an operator looking at a container
+      that plainly holds their cargo.
+    */
+    const { booking: b, clpId } = await legacyPlan('p3a');
+    await fill(clpId, b.id);
+
+    const preview = await as(tokenAll)
+      .post(`/api/tenant/ops/clps/${clpId}/cost/preview`)
+      .send({ actualContainerCost: '2000', costCurrencyId: currencyId.toString(), basis: 'CBM' });
+    expect(preview.status).toBe(200);
+    expect(preview.body.data.shares).toHaveLength(1);
+    expect(preview.body.data.shares[0].bookingCode).toBe(b.code);
+    expect(preview.body.data.reconciles).toBe(true);
+
+    const saved = await as(tokenAll)
+      .patch(`/api/tenant/ops/clps/${clpId}/cost`)
+      .send({ actualContainerCost: '2000', costCurrencyId: currencyId.toString(), basis: 'CBM' });
+    expect(saved.status).toBe(200);
+
+    /*
+      The plan has no clp_booking row to write the share onto, so the figure
+      is computed and reconciled but nothing is persisted per booking. That is
+      the honest outcome of a read-side fallback: it does not invent the row
+      the legacy path never wrote, and it does not silently backfill one.
+    */
+    expect(await owner.clpBooking.count({ where: { clpId } })).toBe(0);
+    const plan = await owner.clp.findFirstOrThrow({
+      where: { id: clpId },
+      select: { actualContainerCost: true, costAllocationBasis: true },
+    });
+    expect(plan.actualContainerCost?.toString()).toBe('2000');
+    expect(plan.costAllocationBasis).toBe('CBM');
+  });
+
+  // ------------------------------------------------------------------- B4
+  it('B4 — a legacy plan reports its billing CBM instead of an empty table', async () => {
+    const { booking: b, clpId } = await legacyPlan('p4a');
+    await fill(clpId, b.id);
+
+    const res = await as(tokenAll).get(`/api/tenant/ops/clps/${clpId}/billing`);
+    expect(res.status).toBe(200);
+    expect(res.body.data).toHaveLength(1);
+    expect(res.body.data[0].bookingCode).toBe(b.code);
+    expect(res.body.data[0].basis).not.toBeNull();
+  });
+
+  it('B4 — and a consolidated plan reports one row per participant', async () => {
+    const a = await booking({ label: 'p4b', loadingType: 'FCL' });
+    const b = await booking({ label: 'p4c', loadingType: 'FCL' });
+    const made = await as(tokenAll)
+      .post('/api/tenant/ops/clps/consolidate')
+      .send({
+        shipmentIds: [a.id.toString(), b.id.toString()],
+        containerSizeId: size20.toString(),
+      });
+    const clpId = track(made.body.data.id);
+
+    const res = await as(tokenAll).get(`/api/tenant/ops/clps/${clpId}/billing`);
+    expect(res.body.data.map((r: { bookingCode: string }) => r.bookingCode).sort()).toEqual(
+      [a.code, b.code].sort(),
+    );
+  });
+
+  // ------------------------------------------------------- scenario 7
+  it('no path reaches another workspace through the fallback', async () => {
+    /*
+      The fallback reads a column rather than following a join, which is
+      exactly where a leak would hide. Two guards, both asserted: the
+      composite FK means clp.shipment_id can only ever name a booking in the
+      same tenant, and RLS scopes the read regardless.
+    */
+    const mine = await booking({ label: 'p7a', loadingType: 'FCL' });
+    const other = await owner.tenant.create({
+      data: { name: 'CLP participant isolation', slug: `clp-p7-${RUN}`, country: 'Bangladesh' },
+      select: { id: true },
+    });
+    try {
+      const carrier = await owner.shipment.findFirstOrThrow({
+        where: { id: mine.id },
+        select: { carrierId: true },
+      });
+      await expect(
+        owner.clp.create({
+          data: {
+            tenantId: other.id,
+            code: `CLP-P7-${RUN}`,
+            seriesYear: 2026,
+            clpSeq: 1,
+            shipmentId: mine.id, // another tenant's booking
+            containerSizeId: size20,
+            carrierId: carrier.carrierId!,
+          },
+        }),
+      ).rejects.toThrow();
+
       const seen = await withTenant(other.id, (tx) =>
         tx.$queryRaw<{ n: bigint }[]>`SELECT count(*)::bigint AS n FROM clp WHERE shipment_id = ${mine.id}`,
       );

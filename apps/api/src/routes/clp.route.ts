@@ -25,7 +25,13 @@ import {
 } from '@ff/shared';
 import { Router } from 'express';
 
-import { allocate, availableCartons, cancelClp, deallocate } from '../lib/clp-allocate';
+import {
+  allocate,
+  availableCartons,
+  cancelClp,
+  deallocate,
+  LIVE_ALLOCATION,
+} from '../lib/clp-allocate';
 import { billingCbmForBooking } from '../lib/clp-billing';
 import { baseCurrency } from '../lib/currency-rate';
 import {
@@ -44,6 +50,10 @@ import {
   loadingTypesOf,
   suggestGroups,
 } from '../lib/clp-consolidation';
+import {
+  participantShipmentIds,
+  plansOfBooking,
+} from '../lib/clp-participants';
 import { buildClpPdf, type ClpPrintDoc, clpPdfFilename } from '../lib/clp-print';
 import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
 import { HttpError } from '../lib/http-error';
@@ -228,15 +238,8 @@ async function bookingRow(db: TenantDb, row: BookingRow): Promise<ClpBookingRow>
  * that is the one booking it always had.
  */
 async function planShipmentId(db: TenantDb, clpId: bigint): Promise<bigint> {
-  const row = await db.clp.findFirst({
-    where: { id: clpId, deletedAt: null },
-    select: {
-      shipmentId: true,
-      bookings: { where: { deletedAt: null }, orderBy: { id: 'asc' }, take: 1, select: { shipmentId: true } },
-    },
-  });
-  const found = row?.bookings[0]?.shipmentId ?? row?.shipmentId ?? null;
-  if (found === null) throw HttpError.notFound('That load plan no longer exists.');
+  const [found] = await participantShipmentIds(db, clpId);
+  if (found === undefined) throw HttpError.notFound('That load plan no longer exists.');
   return found;
 }
 
@@ -489,27 +492,9 @@ async function cards(db: TenantDb, shipmentId: bigint): Promise<ClpCard[]> {
     */
     where: {
       deletedAt: null,
-      /*
-        Two shapes, the same pair the register reads (§13). A consolidated
-        plan holds clp_booking rows; a plan made by "Add another container"
-        (POST /bookings/:id/clps) holds only clp.shipment_id and writes no
-        participation, so a query joined to the participation table alone
-        cannot see the plan it just created.
-
-        `none` narrows the second branch to exactly the legacy shape: a plan
-        that recorded no participation at all. It is deliberately narrower
-        than it needs to be — dropping it changes no observable behaviour,
-        because a consolidated plan's shipment_id is NULL and a row matching
-        both branches is still returned once — so it is a statement of scope,
-        not a guard the tests can prove load-bearing.
-
-        clp.shipment_id keeps the meaning it always had. This reads it; it
-        does not make it a second source of truth, and nothing here writes.
-      */
-      OR: [
-        { bookings: { some: { shipmentId, deletedAt: null } } },
-        { bookings: { none: { deletedAt: null } }, shipmentId },
-      ],
+      // The one definition of "a plan this booking is in" — see
+      // clp-participants.ts for why both shapes exist.
+      ...plansOfBooking(shipmentId),
     },
     orderBy: [{ clpSeq: 'asc' }, { id: 'asc' }],
     select: {
@@ -1234,30 +1219,6 @@ clpRouter.get('/clps/:id/print', requirePermission(`${FEATURE}.EXPORT`), async (
         supervisor: { select: { name: true } },
         finalCfsLocation: true,
         consolidationType: true,
-        // CR-002 §16: the document has to name every booking in the box. A
-        // warehouse loading a shared container needs to see whose cartons
-        // these are.
-        bookings: {
-          where: { deletedAt: null },
-          orderBy: { id: 'asc' },
-          select: {
-            shipment: {
-              select: {
-                code: true,
-                exporterName: true,
-                customer: { select: { name: true } },
-                pol: { select: { name: true } },
-                pod: { select: { name: true } },
-                shippingOrders: {
-                  where: { deletedAt: null },
-                  orderBy: { id: 'desc' },
-                  take: 1,
-                  select: { code: true },
-                },
-              },
-            },
-          },
-        },
         lines: {
           where: { deletedAt: null },
           orderBy: { id: 'asc' },
@@ -1288,7 +1249,38 @@ clpRouter.get('/clps/:id/print', requirePermission(`${FEATURE}.EXPORT`), async (
       select: { username: true, employee: { select: { name: true } } },
     });
 
-    const first = row.bookings[0]?.shipment ?? null;
+    /*
+      B2 — the bookings in the box, both shapes.
+
+      This read joined clp_booking alone, so a plan made by "Add another
+      container" printed with no booking number, no POL, no POD and no
+      customer: the document that goes to the carrier, blank where it matters
+      most. CR-002 §16 wants every booking named; that is what the header and
+      the list below are for, and a plan that recorded its booking the legacy
+      way has one to name like any other.
+    */
+    const participants = await participantShipmentIds(db, clpId);
+    const inTheBox = await db.shipment.findMany({
+      where: { id: { in: participants } },
+      select: {
+        id: true,
+        code: true,
+        exporterName: true,
+        customer: { select: { name: true } },
+        pol: { select: { name: true } },
+        pod: { select: { name: true } },
+        shippingOrders: {
+          where: { deletedAt: null },
+          orderBy: { id: 'desc' },
+          take: 1,
+          select: { code: true },
+        },
+      },
+    });
+    // Back into participation order, which findMany does not promise.
+    const byId = new Map(inTheBox.map((b) => [b.id.toString(), b]));
+    const bookings = participants.map((id) => byId.get(id.toString())).filter((b) => b !== undefined);
+    const first = bookings[0] ?? null;
 
     const doc: ClpPrintDoc = {
       workspaceName: workspace.name,
@@ -1302,7 +1294,7 @@ clpRouter.get('/clps/:id/print', requirePermission(`${FEATURE}.EXPORT`), async (
         before.
       */
       bookingCode: first?.code ?? '—',
-      bookingCodes: row.bookings.map((b) => b.shipment.code),
+      bookingCodes: bookings.map((b) => b.code),
       consolidated: row.consolidationType !== 'SINGLE',
       finalCfsLocation: row.finalCfsLocation,
       shippingOrderCode: first?.shippingOrders[0]?.code ?? null,
@@ -1410,8 +1402,7 @@ clpRouter.get('/clp-candidates', requirePermission(`${FEATURE}.VIEW`), async (re
     const planned = new Map<string, number>();
     for (const line of await db.clpLine.findMany({
       where: {
-        deletedAt: null,
-        clp: { deletedAt: null, status: { not: 'CANCELLED' } },
+        ...LIVE_ALLOCATION,
         shipmentCargoLine: { shipmentId: { in: rows.map((r) => r.id) } },
       },
       select: { ctnQty: true, shipmentCargoLine: { select: { shipmentId: true } } },
@@ -1630,14 +1621,17 @@ clpRouter.post('/clps/consolidate', requirePermission(`${FEATURE}.CREATE`), asyn
  * the share it actually occupies.
  */
 async function costParticipants(db: TenantDb, clpId: bigint): Promise<CostParticipant[]> {
+  /*
+    B3 — whose cargo is in the box, both shapes. A plan made by "Add another
+    container" has no clp_booking row, so this used to come back empty and
+    splitCost refused with "there are no bookings in this container", in front
+    of an operator looking at a container that plainly holds their cargo.
+  */
+  const participants = await participantShipmentIds(db, clpId);
+
   const plan = await db.clp.findFirst({
     where: { id: clpId, deletedAt: null },
     select: {
-      bookings: {
-        where: { deletedAt: null },
-        orderBy: { id: 'asc' },
-        select: { shipmentId: true, shipment: { select: { code: true } } },
-      },
       lines: {
         where: { deletedAt: null },
         select: {
@@ -1660,16 +1654,28 @@ async function costParticipants(db: TenantDb, clpId: bigint): Promise<CostPartic
   }
 
   /*
-    Every participating booking, in clp_booking order — including one with
+    Every participating booking, in participation order — including one with
     nothing loaded yet, which gets a zero share rather than disappearing. A
     booking that vanished from the split would be money quietly landing on the
     others.
+
+    The codes are read in one query and mapped back, so the order above is the
+    order here whichever shape the plan used.
   */
-  return plan.bookings.map((b) => {
-    const got = loaded.get(b.shipmentId.toString());
+  const codes = new Map(
+    (
+      await db.shipment.findMany({
+        where: { id: { in: participants } },
+        select: { id: true, code: true },
+      })
+    ).map((row) => [row.id.toString(), row.code]),
+  );
+
+  return participants.map((shipmentId) => {
+    const got = loaded.get(shipmentId.toString());
     return {
-      shipmentId: b.shipmentId,
-      code: b.shipment.code,
+      shipmentId,
+      code: codes.get(shipmentId.toString()) ?? '—',
       cbm: got?.cbm ?? new Prisma.Decimal(0),
       weightKg: got?.kg ?? new Prisma.Decimal(0),
     };
@@ -1705,24 +1711,39 @@ clpRouter.get('/clps/:id/billing', requirePermission(`${FEATURE}.VIEW`), async (
   const data = await withTenant(auth.tenantId, async (db): Promise<ClpBillingCbm[]> => {
     const plan = await db.clp.findFirst({
       where: { id: clpId, deletedAt: null },
-      select: {
-        bookings: {
-          where: { deletedAt: null },
-          orderBy: { id: 'asc' },
-          select: { shipmentId: true, shipment: { select: { code: true } } },
-        },
-      },
+      select: { id: true },
     });
     if (plan === null) throw HttpError.notFound('That load plan no longer exists.');
 
+    /*
+      B4 — both shapes, so a plan made by "Add another container" reports its
+      booking instead of an empty table.
+
+      Read-only, and deliberately so. The figures below come from the cargo
+      receipts, not from the plan: §7's billing CBM is what a BOOKING is
+      charged on, which spans every delivery against it, and it is not a
+      per-container snapshot. So on a finalised container this can legitimately
+      move after the fact when a later delivery is re-measured, while the
+      plan's own stored figures stay frozen. Nothing here writes either way.
+    */
+    const participants = await participantShipmentIds(db, clpId);
+    const codes = new Map(
+      (
+        await db.shipment.findMany({
+          where: { id: { in: participants } },
+          select: { id: true, code: true },
+        })
+      ).map((row) => [row.id.toString(), row.code]),
+    );
+
     const out: ClpBillingCbm[] = [];
-    for (const booking of plan.bookings) {
+    for (const shipmentId of participants) {
       const lines = await db.cargoReceiptLine.findMany({
         where: {
           deletedAt: null,
           lineStatus: 'ACCEPTED',
           receipt: { status: 'CONFIRMED', deletedAt: null },
-          cargoLine: { shipmentId: booking.shipmentId, deletedAt: null },
+          cargoLine: { shipmentId, deletedAt: null },
         },
         select: {
           receivedCtnQty: true,
@@ -1740,8 +1761,8 @@ clpRouter.get('/clps/:id/billing', requirePermission(`${FEATURE}.VIEW`), async (
       );
 
       out.push({
-        shipmentId: booking.shipmentId.toString(),
-        bookingCode: booking.shipment.code,
+        shipmentId: shipmentId.toString(),
+        bookingCode: codes.get(shipmentId.toString()) ?? '—',
         basis: r.basis,
         billingCbm: r.cbm.toFixed(4),
         bookedCbm: r.bookedCbm.toFixed(4),
