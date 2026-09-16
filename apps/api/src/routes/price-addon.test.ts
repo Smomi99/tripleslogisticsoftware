@@ -321,38 +321,20 @@ describe('§5.2 — one transaction, all or nothing', () => {
     expect((await lineState(lineBId)).sellPrice?.toFixed(4)).toBe('2250.0000');
   });
 
-  it('rolls back a write already applied when a later line is refused', async () => {
+  it('rolls back a write already applied when a later line fails', async () => {
     // The unknown-line case is caught before anything is written. This one is
-    // not: line A updates, then line B's expired rate throws — so it only
-    // passes if the surrounding transaction actually rolls the update back.
-    const expired = await owner.freightRate.create({
-      data: {
-        tenantId,
-        code: 'RATE-ADDON-EXP',
-        mode: 'SEA_FCL',
-        polId,
-        podId,
-        carrierId,
-        goodsTypeId,
-        purchaseSourceType: 'CARRIER',
-        purchaseCarrierId: carrierId,
-        currencyId,
-        validFrom: new Date('2021-01-01'),
-        validTo: new Date('2021-12-31'),
-        status: 'EXPIRED',
-        lines: { create: [{ tierId: tierAId, buyPrice: '500.0000' }] },
-      },
-      select: { lines: { select: { id: true } } },
-    });
-
+    // not: line A updates, then line B's margin overflows the generated sell
+    // price in Postgres — so it only passes if the surrounding transaction
+    // actually rolls the update back. (This used to be line B on an expired
+    // rate, until expired rates became editable on 2026-09-16.)
     const response = await saveMargins(tokenAll, {
       mode: 'SEA_FCL',
       edits: [
         { rateLineId: lineAId.toString(), profitType: 'FLAT', profitValue: '888.0000' },
-        { rateLineId: expired.lines[0]!.id.toString(), profitType: 'FLAT', profitValue: '1.0000' },
+        { rateLineId: lineBId.toString(), profitType: 'PERCENT', profitValue: '99999999999999' },
       ],
     });
-    expect(response.status).toBe(409);
+    expect(response.status).toBeGreaterThanOrEqual(400);
 
     const line = await lineState(lineAId);
     expect(line.profitValue.toFixed(4)).toBe('0.0000');
@@ -514,19 +496,20 @@ describe('§4 rule 5 — MANAGE_PROFIT does not imply seeing what was paid', () 
   });
 });
 
-describe('an expired rate cannot be re-priced', () => {
-  it('refuses the save and leaves the margin alone', async () => {
+describe('an expired rate can be re-priced (client decision, 2026-09-16)', () => {
+  it('saves the margin, and logs it like any other', async () => {
     await owner.freightRate.update({
       where: { id: rateId },
       data: { status: 'EXPIRED' },
     });
+    const before = await lineState(lineAId);
+    const next = before.profitValue.add(10).toFixed(4);
 
     const response = await saveMargins(tokenAll, {
       mode: 'SEA_FCL',
-      edits: [{ rateLineId: lineAId.toString(), profitType: 'FLAT', profitValue: '10.0000' }],
+      edits: [{ rateLineId: lineAId.toString(), profitType: 'FLAT', profitValue: next }],
     });
-    expect(response.status).toBe(409);
-
-    expect((await lineState(lineAId)).profitValue.toFixed(4)).toBe('0.0000');
+    expect(response.status).toBe(200);
+    expect((await lineState(lineAId)).profitValue.toFixed(4)).toBe(next);
   });
 });

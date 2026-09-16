@@ -209,6 +209,24 @@ describe('§4 rule 2 — the price list shows what sales may actually quote', ()
     );
     expect(codesOf(response.body)).toContain('RATE-PL-OLD');
   });
+
+  it('shows a rate the nightly job has marked expired under the toggle alone', async () => {
+    // The screen sends includeExpired and nothing else. Filtering on PUBLISHED
+    // as well hid every rate the job had already reached.
+    const response = await as(tokenAll)(
+      '/api/tenant/purchase/price-list?mode=SEA_FCL&limit=100&includeExpired=true',
+    );
+    const codes = codesOf(response.body);
+    expect(codes).toContain('RATE-PL-OLD');
+    expect(codes).toContain('RATE-PL-A');
+    // Still a list of quotable-or-formerly-quotable rates, never drafts.
+    expect(codes).not.toContain('RATE-PL-DRAFT');
+
+    const old = (response.body.data as { code: string; isExpired: boolean }[]).find(
+      (r) => r.code === 'RATE-PL-OLD',
+    );
+    expect(old?.isExpired).toBe(true);
+  });
 });
 
 describe('§4 rule 7 — multi-POD filtering', () => {

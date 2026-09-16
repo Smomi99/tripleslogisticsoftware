@@ -13,6 +13,7 @@ import {
   type RateLineDto,
   type RateMode,
   RATE_SORT_FIELDS,
+  type RateStatus,
   type RateSortField,
   portLabel,
 } from '@ff/shared';
@@ -219,6 +220,8 @@ function toDto(rate: RateWithRelations, today: Date): FreightRateDto {
     status: rate.status,
     isActive: rate.isActive,
     expiringSoon: daysToExpiry >= 0 && daysToExpiry <= EXPIRING_SOON_DAYS,
+    isExpired: rate.status === 'EXPIRED' || daysToExpiry < 0,
+    isSuperseded: rate.supersededById !== null,
     lines,
     localCharges,
     localChargeTotal: total.toFixed(4),
@@ -497,9 +500,23 @@ async function localChargeRows(
   }));
 }
 
+/**
+ * The status a rate is stored with.
+ *
+ * A published rate whose validity has already ended is expired, which is what
+ * the nightly job (§4 rule 3) would make it tonight. Deciding at save time
+ * keeps the Status column truthful in the meantime — an expired rate edited
+ * without moving its dates would otherwise read Published until the job ran.
+ * A save that moves Valid to back to today or later publishes it again.
+ */
+function storedStatus(status: RateStatus, validTo: Date, today: Date): RateStatus {
+  return status === 'PUBLISHED' && validTo < today ? 'EXPIRED' : status;
+}
+
 freightRateRouter.post('/rates', requireModePermission('CREATE'), async (req, res) => {
   const auth = req.auth!;
   const input = freightRateInputSchema.parse(req.body);
+  const today = startOfToday();
 
   // §4 rule 6: only the price team may set a margin. Without it a rate can
   // still be entered, but at zero profit — the buyer records the cost, the
@@ -539,7 +556,7 @@ freightRateRouter.post('/rates', requireModePermission('CREATE'), async (req, re
                 ? null
                 : Number(input.freeDays),
             remarks: input.remarks === undefined || input.remarks === '' ? null : input.remarks,
-            status: input.status,
+            status: storedStatus(input.status, new Date(input.validTo), today),
             createdBy: auth.userId,
             updatedBy: auth.userId,
             lines: {
@@ -570,7 +587,6 @@ freightRateRouter.post('/rates', requireModePermission('CREATE'), async (req, re
     throw new HttpError(409, 'CODE_GENERATION_FAILED', 'Could not create the rate. Try again.');
   });
 
-  const today = new Date(new Date().toISOString().slice(0, 10));
   const payload: ApiSuccess<FreightRateDto> = {
     success: true,
     data: visibleRate(toDto(created, today), canSeeBuyPrice(auth)),
@@ -627,6 +643,11 @@ freightRateRouter.get('/rates/:id', requireModePermission('VIEW'), async (req, r
 // The exclusion constraint (§4 rule 8) still allows one published rate per
 // lane, so an edit that moves a rate onto a lane that already has one is
 // refused — correctly, and with the message translateWriteError gives it.
+//
+// Expired rates are editable too (client decision, 2026-09-16). They used to be
+// refused as closed history, but the same two guarantees apply to them: the
+// audit trigger records the change, and no issued quotation reads the rate.
+// Refusing only left the buyer unable to correct a lapsed lane or extend it.
 // ===========================================================================
 
 freightRateRouter.patch('/rates/:id', requireModePermission('EDIT'), async (req, res) => {
@@ -639,16 +660,9 @@ freightRateRouter.patch('/rates/:id', requireModePermission('EDIT'), async (req,
   const updated = await withTenant(auth.tenantId, async (db) => {
     const existing = await db.freightRate.findFirst({
       where: { id, deletedAt: null },
-      select: { id: true, status: true, validFrom: true, supersededById: true },
+      select: { id: true, validFrom: true, supersededById: true },
     });
     if (existing === null) throw HttpError.notFound('Rate not found.');
-    if (existing.status === 'EXPIRED') {
-      // An expired rate is history. Editing one would rewrite what the company
-      // was buying at during a period that has closed.
-      throw HttpError.conflict(
-        'An expired rate cannot be edited. Buy the lane again as a new rate.',
-      );
-    }
     if (existing.supersededById !== null) {
       /*
        * A rate superseded before this route stopped versioning. Its successor
@@ -694,7 +708,7 @@ freightRateRouter.patch('/rates/:id', requireModePermission('EDIT'), async (req,
       freeDays:
         input.freeDays === undefined || input.freeDays === '' ? null : Number(input.freeDays),
       remarks: input.remarks === undefined || input.remarks === '' ? null : input.remarks,
-      status: input.status,
+      status: storedStatus(input.status, new Date(input.validTo), today),
     };
 
     // ---- Edited in place, draft or published --------------------------------
@@ -948,7 +962,6 @@ freightRateRouter.patch(
           id: true,
           profitType: true,
           profitValue: true,
-          rate: { select: { status: true } },
         },
       });
 
@@ -963,11 +976,6 @@ freightRateRouter.patch(
 
       for (const edit of input.edits) {
         const previous = before.get(edit.rateLineId)!;
-
-        // §4 rule 1 again: a published rate's price is what quotations quoted.
-        if (previous.rate.status === 'EXPIRED') {
-          throw HttpError.conflict('An expired rate cannot be re-priced.');
-        }
 
         const sameType = previous.profitType === edit.profitType;
         const sameValue = previous.profitValue.equals(new Prisma.Decimal(edit.profitValue));
@@ -1101,8 +1109,15 @@ async function priceListRows(
   const today = startOfToday();
   const where: Prisma.FreightRateWhereInput = {
     ...rateWhere(query, today),
-    // §4 rule 2: the price list shows what sales may actually quote.
-    ...(query.status === undefined ? { status: 'PUBLISHED' } : {}),
+    /*
+     * §4 rule 2: the price list shows what sales may actually quote — and,
+     * with Include expired ticked, what they used to. EXPIRED belongs in that
+     * second set: filtering on PUBLISHED alone meant a lapsed rate showed under
+     * the toggle only until the nightly job marked it, then vanished for good.
+     */
+    ...(query.status === undefined
+      ? { status: query.includeExpired ? { in: ['PUBLISHED', 'EXPIRED'] } : 'PUBLISHED' }
+      : {}),
   };
 
   const { rows, total } = await withTenant(auth.tenantId, async (db) => {

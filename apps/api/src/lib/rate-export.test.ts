@@ -57,6 +57,8 @@ const rate = (over: Partial<FreightRateDto> = {}): FreightRateDto =>
     freeDays: 7,
     remarks: null,
     expiringSoon: false,
+    isExpired: false,
+    isSuperseded: false,
     purchaseSourceType: 'CARRIER',
     purchaseSourceName: 'Maersk',
     lines: [

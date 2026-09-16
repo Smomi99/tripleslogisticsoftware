@@ -139,7 +139,12 @@ export function RateEntryScreen({
     totalPages: 1,
   });
   const [page, setPage] = useState(1);
-  const [includeExpired, setIncludeExpired] = useState(false);
+  /*
+   * On by default (client decision, 2026-09-16). This is the buyer's own record
+   * of what was bought, and a rate dropping off it the day after it lapsed read
+   * as the rate having been deleted. Untick to see only live rates.
+   */
+  const [includeExpired, setIncludeExpired] = useState(true);
   /*
    * The same filters the price list carries. These screens are where rates are
    * bought, and a buyer works one lane at a time — without them, finding the
@@ -266,8 +271,7 @@ export function RateEntryScreen({
    *
    * §5.1's list carries Edit | Delete, and this screen's shape is a row of
    * inputs — so Edit fills that row rather than opening a second form the user
-   * would have to learn. On a published rate the save supersedes it (§4 rule 1);
-   * on a draft it edits in place. Either way the server decides, not this.
+   * would have to learn. The save edits the rate in place, expired or not.
    */
   function beginEdit(rate: FreightRateDto): void {
     const prices: Record<string, string> = {};
@@ -291,6 +295,8 @@ export function RateEntryScreen({
       route: rate.route ?? '',
       transitDays: rate.transitDays === null ? '' : String(rate.transitDays),
       freeDays: rate.freeDays === null ? '' : String(rate.freeDays),
+      // Expired is not a choice on the form. Saved as Published, the server
+      // keeps it expired unless Valid to has moved to today or later.
       status: rate.status === 'EXPIRED' ? 'PUBLISHED' : rate.status,
       prices,
       profitType: first?.profitType ?? 'FLAT',
@@ -372,11 +378,7 @@ export function RateEntryScreen({
           method: 'PATCH',
           body,
         });
-        // §4 rule 1: a published rate is replaced by a new version rather than
-        // changed, so say which happened instead of a bare "Saved".
-        toast.success(
-          editing.status === 'PUBLISHED' ? 'Rate superseded by a new version' : 'Rate saved',
-        );
+        toast.success('Rate saved');
         setEditing(null);
       }
       setDraft(emptyDraft(draft.currencyId));
@@ -694,9 +696,9 @@ export function RateEntryScreen({
           {editing !== null && (
             <p className="mt-2 text-cell text-steel">
               Editing <span className="font-mono tabular-nums text-hull">{editing.code}</span>
-              {editing.status === 'PUBLISHED'
-                ? ' — saving closes this rate off and records a new version, so quotations already issued against it stay correct.'
-                : ' — this draft will be updated in place.'}
+              {editing.isExpired
+                ? ' — this rate has expired. Saving updates it in place; move Valid to to today or later to make it quotable again.'
+                : ' — saving updates this rate in place.'}
             </p>
           )}
 
@@ -897,6 +899,7 @@ export function RateEntryScreen({
                   <div className={rate.expiringSoon ? 'text-signal' : 'text-steel'}>
                     {rate.validTo}
                     {rate.expiringSoon && ' • expiring'}
+                    {rate.isExpired && ' • expired'}
                   </div>
                 </td>
                 <Td>{rate.purchaseSourceName}</Td>
@@ -916,8 +919,10 @@ export function RateEntryScreen({
                 <td className="whitespace-nowrap px-2.5 py-2">
                   {/* Editing rewrites every price, so it needs the buy prices
                       to load. Without VIEW_BUY_PRICE they arrive absent
-                      (§4 rule 5) and saving would silently blank the costs. */}
-                  {canEdit && options.canSeeBuyPrice && rate.status !== 'EXPIRED' && (
+                      (§4 rule 5) and saving would silently blank the costs.
+                      Expired rates are editable; a superseded version is not,
+                      because its successor carries the live figures. */}
+                  {canEdit && options.canSeeBuyPrice && !rate.isSuperseded && (
                     <Button variant="text" size="inline" onClick={() => beginEdit(rate)}>
                       Edit
                     </Button>

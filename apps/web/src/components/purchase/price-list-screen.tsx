@@ -486,7 +486,9 @@ export function PriceListScreen({
                               the buyer reading across four tiers should not
                               have to remember which row they are on.
                             */}
-                            <div className="cursor-help">
+                            {/* Dimmed when expired (§4 rule 2), so a lapsed
+                                price never reads as one sales can quote. */}
+                            <div className={rate.isExpired ? 'cursor-help text-steel' : 'cursor-help'}>
                               {purchasePrice(line.sellPrice)}{' '}
                               <span className="text-steel">{rate.currencyCode}</span>
                             </div>
@@ -530,8 +532,13 @@ export function PriceListScreen({
                     {rate.freeDays ?? '—'}
                   </td>
                   <td className="whitespace-nowrap px-2.5 py-2 font-mono text-cell tabular-nums">
-                    <div className={rate.expiringSoon ? 'text-signal' : 'text-hull'}>
+                    <div
+                      className={
+                        rate.isExpired ? 'text-steel' : rate.expiringSoon ? 'text-signal' : 'text-hull'
+                      }
+                    >
                       {rate.validTo}
+                      {rate.isExpired && ' • expired'}
                     </div>
                     <div className="text-steel">from {rate.validFrom}</div>
                   </td>

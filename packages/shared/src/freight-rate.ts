@@ -270,6 +270,13 @@ export interface FreightRateDto {
   isActive: boolean;
   /** §4 rule 3: within 7 days of expiry, so the list can flag it. */
   expiringSoon: boolean;
+  /** Past its validity, whether or not the nightly job has marked it yet. */
+  isExpired: boolean;
+  /**
+   * Replaced by a newer version before rates stopped versioning. The server
+   * refuses to edit these, so the screens do not offer it.
+   */
+  isSuperseded: boolean;
   lines: RateLineDto[];
   localCharges: LocalChargeDto[];
   localChargeTotal: string;

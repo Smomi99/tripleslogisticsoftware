@@ -318,6 +318,15 @@ describe('the lane check', () => {
     expect(response.body.data.status).toBe('EXPIRED');
     // The screen tells the operator how stale the lane has gone.
     expect(response.body.data.latestValidTo).toBe('2020-12-31');
+
+    // And still does once the nightly job has marked it.
+    await owner.freightRate.updateMany({
+      where: { tenantId, code: 'IP-RATE-OLD' },
+      data: { status: 'EXPIRED' },
+    });
+    const afterJob = await check();
+    expect(afterJob.body.data.status).toBe('EXPIRED');
+    expect(afterJob.body.data.latestValidTo).toBe('2020-12-31');
   });
 
   it('treats an air lane as a different question from a sea one', async () => {

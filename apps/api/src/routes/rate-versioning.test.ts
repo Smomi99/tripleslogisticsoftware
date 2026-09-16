@@ -553,20 +553,53 @@ describe('editing a published rate', () => {
     expect(response.body.data.id).toBe(draftId);
   });
 
-  it('refuses to edit an expired rate at all', async () => {
-    // Unchanged, and for the reason it always held: an expired rate describes a
-    // period that has closed, and editing one rewrites history rather than
-    // correcting a mistake.
+  it('edits an expired rate in place (client decision, 2026-09-16)', async () => {
     const rateId = await createRate();
     await owner.freightRate.update({
       where: { id: BigInt(rateId) },
-      data: { status: 'EXPIRED' },
+      data: {
+        status: 'EXPIRED',
+        validFrom: new Date('2020-01-01'),
+        validTo: new Date('2020-12-31'),
+      },
     });
-    const response = await api
+
+    // Corrected without moving its dates: still the same row, still expired.
+    const corrected = await api
       .patch(`/api/tenant/purchase/rates/${rateId}`)
-      .send(rateBody({ remarks: 'too late' }));
-    expect(response.status).toBe(409);
-    expect(response.body.error.message).toContain('expired rate cannot be edited');
+      .send(rateBody({ validFrom: '2020-01-01', validTo: '2020-12-31', remarks: 'typo fixed' }));
+    expect(corrected.status).toBe(200);
+    expect(corrected.body.data.id).toBe(rateId);
+    expect(corrected.body.data.status).toBe('EXPIRED');
+    expect(corrected.body.data.isExpired).toBe(true);
+    expect(corrected.body.data.remarks).toBe('typo fixed');
+  });
+
+  it('publishes an expired rate again when its validity is extended', async () => {
+    const rateId = await createRate();
+    await owner.freightRate.update({
+      where: { id: BigInt(rateId) },
+      data: {
+        status: 'EXPIRED',
+        validFrom: new Date('2020-01-01'),
+        validTo: new Date('2020-12-31'),
+      },
+    });
+
+    const extended = await api
+      .patch(`/api/tenant/purchase/rates/${rateId}`)
+      .send(rateBody({ validFrom: '2020-01-01', validTo: '2033-12-31' }));
+    expect(extended.status).toBe(200);
+    expect(extended.body.data.status).toBe('PUBLISHED');
+    expect(extended.body.data.isExpired).toBe(false);
+  });
+
+  it('stores a rate published with a validity already past as expired', async () => {
+    const response = await api
+      .post('/api/tenant/purchase/rates')
+      .send(rateBody({ validFrom: '2019-01-01', validTo: '2019-06-30' }));
+    expect(response.status).toBe(201);
+    expect(response.body.data.status).toBe('EXPIRED');
   });
 
   it('refuses to edit a row superseded before the rule changed', async () => {
@@ -585,6 +618,7 @@ describe('editing a published rate', () => {
       .patch(`/api/tenant/purchase/rates/${oldId}`)
       .send(rateBody({ remarks: 'no' }));
     expect(response.status).toBe(409);
+    expect(response.body.error.message).toContain('replaced by a newer version');
   });
 });
 

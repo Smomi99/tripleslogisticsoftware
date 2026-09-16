@@ -978,8 +978,10 @@ inquiryRouter.get('/lane-check', requirePermission(`${FEATURE}.VIEW`), async (re
 
     // Nothing live. Was there something, and when did it lapse? The newest
     // expiry is the useful one to show — it says how stale the lane has gone.
+    // EXPIRED as well as PUBLISHED: once the nightly job marks a lapsed rate,
+    // a PUBLISHED-only lookup reported the lane as never rated at all.
     const lapsed = await db.freightRate.findFirst({
-      where: { ...lane, validTo: { lt: today } },
+      where: { ...lane, status: { in: ['PUBLISHED', 'EXPIRED'] }, validTo: { lt: today } },
       select: { validTo: true },
       orderBy: { validTo: 'desc' },
     });
