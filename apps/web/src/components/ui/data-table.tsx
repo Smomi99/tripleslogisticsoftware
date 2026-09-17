@@ -222,7 +222,7 @@ export function DataTable<T extends RowData>({
                   anchor the eye returns to when scanning.
                 */}
                 <td className="sticky left-14 z-10 border-r border-line bg-paper/60 px-3 transition-colors duration-[120ms] group-hover:bg-row-hover">
-                  <span className="font-mono text-hull" data-numeric="">
+                  <span className="whitespace-nowrap font-mono text-hull" data-numeric="">
                     {getCode(row.original)}
                   </span>
                 </td>

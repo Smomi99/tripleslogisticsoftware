@@ -82,6 +82,10 @@ async function booking(opts: {
   cfs?: string;
   status?: 'CARGO_RECEIVED' | 'PART_RECEIVED' | 'APPROVED_FOR_SHIPMENT';
   receipts?: number;
+  /** Another customer, for the cases that cross customers. */
+  customerId?: bigint;
+  /** Written on every receipt, as the cargo receipt screen records it. */
+  efrNo?: string;
 }): Promise<Fixture> {
   const src = await owner.shipment.findFirstOrThrow({
     where: { deletedAt: null, shipmentType: 'SEA' },
@@ -102,7 +106,7 @@ async function booking(opts: {
       code,
       seriesYear: src.seriesYear,
       quotationId: src.quotationId,
-      customerId: src.customerId,
+      customerId: opts.customerId ?? src.customerId,
       carrierId: src.carrierId,
       polId: src.polId,
       podId: opts.podId ?? src.podId,
@@ -182,6 +186,7 @@ async function booking(opts: {
         confirmedAt: new Date(),
         receivedBy: superadminId,
         unloadLocation: i === 0 ? (opts.cfs ?? 'CFS Alpha') : `${opts.cfs ?? 'CFS Alpha'} ${i}`,
+        efrNo: opts.efrNo ?? null,
       },
       select: { id: true },
     });
@@ -299,19 +304,37 @@ describe('what the server refuses, whatever the screen believed', () => {
     expect(write.status).toBe(409);
   });
 
-  it('accepts FCL with CONSOL_BOX', async () => {
-    const a = await booking({ label: 'fcl2', loadingType: 'FCL' });
-    const b = await booking({ label: 'cbox', loadingType: 'CONSOL_BOX' });
+  it('rejects CONSOL_BOX with FCL and with LCL — its own workflow now', async () => {
+    // The client's loading-type sheet, 2026-09-16, superseding 2026-09-15.
+    const box = await booking({ label: 'cbox', loadingType: 'CONSOL_BOX' });
+    for (const [label, loadingType] of [['cbf', 'FCL'], ['cbl', 'LCL']] as const) {
+      const other = await booking({ label, loadingType });
+      const res = await as(tokenAll)
+        .post('/api/tenant/ops/clps/consolidate')
+        .send({ shipmentIds: [box.id.toString(), other.id.toString()], containerSizeId: size20.toString() });
+      if (res.status === 201) track(res.body.data.id);
+      expect(res.status).toBe(409);
+      expect(JSON.stringify(res.body)).toMatch(/Different loading types never share a container/);
+    }
+  });
+
+  it('rejects two FCL bookings on one quotation and one sailing', async () => {
+    const a = await booking({ label: 'fclA', loadingType: 'FCL' });
+    const b = await booking({ label: 'fclB', loadingType: 'FCL' });
+    const before = await owner.clp.count();
     const res = await as(tokenAll)
       .post('/api/tenant/ops/clps/consolidate')
       .send({ shipmentIds: [a.id.toString(), b.id.toString()], containerSizeId: size20.toString() });
-    expect(res.status).toBe(201);
-    track(res.body.data.id);
+    // Tracked if it wrongly succeeds, so a regression cannot leave an orphan plan behind.
+    if (res.status === 201) track(res.body.data.id);
+    expect(res.status).toBe(409);
+    expect(res.body.error.message).toMatch(/separate FCL bookings, and an FCL container holds one booking/);
+    expect(await owner.clp.count()).toBe(before);
   });
 
   it('rejects a different voyage on the same vessel', async () => {
-    const a = await booking({ label: 'v1', loadingType: 'FCL' });
-    const b = await booking({ label: 'v2', loadingType: 'FCL', voyageNo: 'V-RT-9' });
+    const a = await booking({ label: 'v1', loadingType: 'LCL' });
+    const b = await booking({ label: 'v2', loadingType: 'LCL', voyageNo: 'V-RT-9' });
     const res = await as(tokenAll)
       .post('/api/tenant/ops/clps/consolidate')
       .send({ shipmentIds: [a.id.toString(), b.id.toString()], containerSizeId: size20.toString() });
@@ -325,8 +348,8 @@ describe('what the server refuses, whatever the screen believed', () => {
       orderBy: { id: 'desc' },
       select: { id: true },
     });
-    const a = await booking({ label: 'd1', loadingType: 'FCL' });
-    const b = await booking({ label: 'd2', loadingType: 'FCL', podId: other.id });
+    const a = await booking({ label: 'd1', loadingType: 'LCL' });
+    const b = await booking({ label: 'd2', loadingType: 'LCL', podId: other.id });
     const res = await as(tokenAll)
       .post('/api/tenant/ops/clps/consolidate')
       .send({ shipmentIds: [a.id.toString(), b.id.toString()], containerSizeId: size20.toString() });
@@ -347,8 +370,8 @@ describe('what the server refuses, whatever the screen believed', () => {
   });
 
   it('reports a cut-off mismatch without refusing it', async () => {
-    const a = await booking({ label: 'co1', loadingType: 'FCL' });
-    const b = await booking({ label: 'co2', loadingType: 'FCL' });
+    const a = await booking({ label: 'co1', loadingType: 'LCL' });
+    const b = await booking({ label: 'co2', loadingType: 'LCL' });
     await owner.shipmentSchedule.updateMany({
       where: { shipmentId: b.id },
       data: { cutOffDate: new Date('2026-10-05T00:00:00Z') },
@@ -378,20 +401,23 @@ describe('what the server refuses, whatever the screen believed', () => {
     expect(check.body.data.cfsLocations.length).toBe(3);
   });
 
-  it('keeps FCL and LCL in separate candidate lists', async () => {
+  it('keeps FCL, LCL and Consol box in separate candidate lists', async () => {
     await booking({ label: 'sepf', loadingType: 'FCL' });
     await booking({ label: 'sepl', loadingType: 'LCL' });
+    await booking({ label: 'sepb', loadingType: 'CONSOL_BOX' });
 
-    const fcl = await as(tokenAll).get('/api/tenant/ops/clp-candidates?family=FCL&search=' + RUN);
-    const lcl = await as(tokenAll).get('/api/tenant/ops/clp-candidates?family=LCL&search=' + RUN);
-    expect(fcl.status).toBe(200);
     const families = (rows: { family: string }[]) => [...new Set(rows.map((r) => r.family))];
-    expect(families(fcl.body.data.candidates)).toEqual(['FCL']);
-    expect(families(lcl.body.data.candidates)).toEqual(['LCL']);
+    for (const family of ['FCL', 'LCL', 'CONSOL_BOX']) {
+      const res = await as(tokenAll).get(
+        `/api/tenant/ops/clp-candidates?family=${family}&search=${RUN}`,
+      );
+      expect(res.status).toBe(200);
+      expect(families(res.body.data.candidates)).toEqual([family]);
+    }
   });
 
   it('suggests a group without making it a rule', async () => {
-    const res = await as(tokenAll).get('/api/tenant/ops/clp-candidates?family=FCL&search=' + RUN);
+    const res = await as(tokenAll).get('/api/tenant/ops/clp-candidates?family=LCL&search=' + RUN);
     // Suggestions exist, and every booking in one is genuinely compatible.
     expect(Array.isArray(res.body.data.suggestions)).toBe(true);
     for (const group of res.body.data.suggestions) {
@@ -411,10 +437,10 @@ describe('booking selection through to a finalised, costed container', () => {
     // Two bookings, one measured at the CFS and one not, so both billing
     // bases appear on the same container.
     const a = await booking({
-      label: 'e2eA', loadingType: 'FCL', ctn: 40,
+      label: 'e2eA', loadingType: 'LCL', ctn: 40,
       measured: { l: 55, w: 50, h: 50 }, // 0.1375 measured vs 0.125 booked
     });
-    const b = await booking({ label: 'e2eB', loadingType: 'FCL', ctn: 20, measured: null });
+    const b = await booking({ label: 'e2eB', loadingType: 'LCL', ctn: 20, measured: null });
 
     // --- 1. compatibility
     const check = await as(tokenAll)
@@ -437,7 +463,7 @@ describe('booking selection through to a finalised, costed container', () => {
       where: { id: clpId },
       select: { consolidationType: true, clpSeq: true, shipmentId: true, finalCfsLocation: true },
     });
-    expect(row.consolidationType).toBe('FCL_QUOTATION');
+    expect(row.consolidationType).toBe('LCL_CONSOLIDATION');
     // A shared container has no position within any one booking.
     expect(row.clpSeq).toBeNull();
     expect(row.shipmentId).toBeNull();
@@ -718,40 +744,54 @@ describe('the FCL/LCL view split', () => {
 
     const q = `&search=BKGRT-${RUN}-vs&limit=100`;
     const all = await as(tokenAll).get(`/api/tenant/ops/clp-bookings?page=1${q}`);
-    const asFcl = await as(tokenAll).get(`/api/tenant/ops/clp-bookings?family=FCL${q}`);
-    const asLcl = await as(tokenAll).get(`/api/tenant/ops/clp-bookings?family=LCL${q}`);
+    const view = async (family: string) =>
+      codesOf((await as(tokenAll).get(`/api/tenant/ops/clp-bookings?family=${family}${q}`)).body);
     expect(all.status).toBe(200);
 
     // Unfiltered is unchanged — the split adds a view, it removes nothing.
     expect(codesOf(all.body)).toEqual(expect.arrayContaining([fcl.code, lcl.code, box.code]));
 
-    expect(codesOf(asFcl.body)).toEqual(expect.arrayContaining([fcl.code, box.code]));
-    expect(codesOf(asFcl.body)).not.toContain(lcl.code);
+    const asFcl = await view('FCL');
+    expect(asFcl).toContain(fcl.code);
+    expect(asFcl).not.toContain(lcl.code);
+    // The client's sheet of 2026-09-16: a consol box is its own workflow,
+    // superseding the 2026-09-15 decision that filed it under FCL.
+    expect(asFcl).not.toContain(box.code);
 
-    expect(codesOf(asLcl.body)).toContain(lcl.code);
-    expect(codesOf(asLcl.body)).not.toContain(fcl.code);
-    // The decision of 2026-09-15, enforced at the view: a consol box is a
-    // whole container the forwarder fills, and is never LCL work.
-    expect(codesOf(asLcl.body)).not.toContain(box.code);
+    const asLcl = await view('LCL');
+    expect(asLcl).toContain(lcl.code);
+    expect(asLcl).not.toContain(fcl.code);
+    expect(asLcl).not.toContain(box.code);
+
+    const asBox = await view('CONSOL_BOX');
+    expect(asBox).toContain(box.code);
+    expect(asBox).not.toContain(fcl.code);
+    expect(asBox).not.toContain(lcl.code);
   });
 
   it('filters the count too, not just the page', async () => {
     // Otherwise the pager would offer pages that come back empty.
     const q = `&search=BKGRT-${RUN}-vs&limit=100`;
-    const asFcl = await as(tokenAll).get(`/api/tenant/ops/clp-bookings?family=FCL${q}`);
-    const asLcl = await as(tokenAll).get(`/api/tenant/ops/clp-bookings?family=LCL${q}`);
-    expect(asFcl.body.meta.total).toBe(asFcl.body.data.length);
-    expect(asLcl.body.meta.total).toBe(asLcl.body.data.length);
-    expect(asFcl.body.meta.total).toBeGreaterThan(asLcl.body.meta.total);
+    const all = await as(tokenAll).get(`/api/tenant/ops/clp-bookings?page=1${q}`);
+    let sum = 0;
+    for (const family of ['FCL', 'LCL', 'CONSOL_BOX']) {
+      const res = await as(tokenAll).get(`/api/tenant/ops/clp-bookings?family=${family}${q}`);
+      expect(res.body.meta.total).toBe(res.body.data.length);
+      expect(res.body.meta.total).toBeGreaterThan(0);
+      sum += res.body.meta.total;
+    }
+    // Every booking with a loading type is counted in exactly one view.
+    const typed = all.body.data.filter((r: { loadingType: string | null }) => r.loadingType !== null);
+    expect(sum).toBe(typed.length);
   });
 
   it('carries the loading type and its family on every row', async () => {
     const res = await as(tokenAll).get(
-      `/api/tenant/ops/clp-bookings?family=FCL&search=BKGRT-${RUN}-vs&limit=100`,
+      `/api/tenant/ops/clp-bookings?family=CONSOL_BOX&search=BKGRT-${RUN}-vs&limit=100`,
     );
     const box = res.body.data.find((r: { code: string }) => r.code.endsWith('vsbox'));
     expect(box.loadingType).toBe('CONSOL_BOX');
-    expect(box.family).toBe('FCL');
+    expect(box.family).toBe('CONSOL_BOX');
   });
 
   it('shows a booking with no loading type under neither view, but never hides it', async () => {
@@ -769,45 +809,51 @@ describe('the FCL/LCL view split', () => {
     expect(row.loadingType).toBeNull();
     expect(row.family).toBeNull();
 
-    for (const family of ['FCL', 'LCL']) {
+    for (const family of ['FCL', 'LCL', 'CONSOL_BOX']) {
       const res = await as(tokenAll).get(`/api/tenant/ops/clp-bookings?family=${family}${q}`);
       expect(codesOf(res.body)).not.toContain(bare.code);
     }
   });
 
   it('splits the register by the participating bookings', async () => {
-    const a = await booking({ label: 'vsra', loadingType: 'FCL' });
-    const b = await booking({ label: 'vsrb', loadingType: 'FCL' });
-    const c = await booking({ label: 'vsrc', loadingType: 'LCL', voyageNo: 'V-VS-L' });
+    const a = await booking({ label: 'vsra', loadingType: 'LCL' });
+    const b = await booking({ label: 'vsrb', loadingType: 'LCL' });
+    const c = await booking({ label: 'vsrc', loadingType: 'CONSOL_BOX', voyageNo: 'V-VS-B' });
+    const d = await booking({ label: 'vsrd', loadingType: 'FCL', voyageNo: 'V-VS-F' });
 
-    const consolidated = await as(tokenAll)
-      .post('/api/tenant/ops/clps/consolidate')
-      .send({
-        shipmentIds: [a.id.toString(), b.id.toString()],
-        containerSizeId: size20.toString(),
-      });
-    expect(consolidated.status).toBe(201);
-    const fclId = track(consolidated.body.data.id).toString();
+    const plan = async (ids: bigint[]) => {
+      const res = await as(tokenAll)
+        .post('/api/tenant/ops/clps/consolidate')
+        .send({ shipmentIds: ids.map((id) => id.toString()), containerSizeId: size20.toString() });
+      expect(res.status, JSON.stringify(res.body)).toBe(201);
+      return track(res.body.data.id).toString();
+    };
+    const lclId = await plan([a.id, b.id]);
+    const boxId = await plan([c.id]);
+    const fclId = await plan([d.id]);
 
-    const lclPlan = await as(tokenAll)
-      .post('/api/tenant/ops/clps/consolidate')
-      .send({ shipmentIds: [c.id.toString()], containerSizeId: size20.toString() });
-    expect(lclPlan.status).toBe(201);
-    const lclId = track(lclPlan.body.data.id).toString();
+    const register = async (family: string) =>
+      (await as(tokenAll).get(`/api/tenant/ops/clps?family=${family}&limit=100`)).body;
+    const onlyFcl = await register('FCL');
+    const onlyLcl = await register('LCL');
+    const onlyBox = await register('CONSOL_BOX');
 
-    const onlyFcl = await as(tokenAll).get('/api/tenant/ops/clps?family=FCL&limit=100');
-    const onlyLcl = await as(tokenAll).get('/api/tenant/ops/clps?family=LCL&limit=100');
-
-    expect(idsOf(onlyFcl.body)).toContain(fclId);
-    expect(idsOf(onlyFcl.body)).not.toContain(lclId);
-    expect(idsOf(onlyLcl.body)).toContain(lclId);
-    expect(idsOf(onlyLcl.body)).not.toContain(fclId);
+    expect(idsOf(onlyLcl)).toContain(lclId);
+    expect(idsOf(onlyLcl)).not.toContain(boxId);
+    expect(idsOf(onlyLcl)).not.toContain(fclId);
+    expect(idsOf(onlyBox)).toContain(boxId);
+    expect(idsOf(onlyBox)).not.toContain(lclId);
+    expect(idsOf(onlyBox)).not.toContain(fclId);
+    expect(idsOf(onlyFcl)).toContain(fclId);
+    expect(idsOf(onlyFcl)).not.toContain(lclId);
+    expect(idsOf(onlyFcl)).not.toContain(boxId);
 
     // And the row says which, so the column is not guesswork on the client.
-    const fclRow = onlyFcl.body.data.find((r: { id: string }) => r.id === fclId);
-    expect(fclRow.family).toBe('FCL');
-    expect(fclRow.loadingType).toBe('FCL');
-    expect(fclRow.bookingCount).toBe(2);
+    const lclRow = onlyLcl.data.find((r: { id: string }) => r.id === lclId);
+    expect(lclRow.family).toBe('LCL');
+    expect(lclRow.loadingType).toBe('LCL');
+    expect(lclRow.bookingCount).toBe(2);
+    expect(onlyBox.data.find((r: { id: string }) => r.id === boxId).family).toBe('CONSOL_BOX');
   });
 
   it('classifies a plan that has no participation row at all', async () => {
@@ -860,8 +906,9 @@ describe('the FCL/LCL view split', () => {
 
   it('rejects a family that is not a workflow', async () => {
     for (const path of [
-      '/api/tenant/ops/clp-bookings?family=CONSOL_BOX',
-      '/api/tenant/ops/clps?family=AIR',
+      '/api/tenant/ops/clp-bookings?family=AIR',
+      '/api/tenant/ops/clps?family=FCL_QUOTATION',
+      '/api/tenant/ops/clp-candidates?family=CONSOL',
     ]) {
       const res = await as(tokenAll).get(path);
       expect(res.status).toBe(400);
@@ -907,7 +954,7 @@ describe('the booking detail sees plans made by either path', () => {
     res.body.data.clps;
 
   it('finds a plan created by the legacy Add another container route', async () => {
-    const b = await booking({ label: 'cdlegacy', loadingType: 'FCL' });
+    const b = await booking({ label: 'cdlegacy', loadingType: 'LCL' });
 
     const empty = await as(tokenAll).get(detail(b.id));
     expect(empty.status).toBe(200);
@@ -933,7 +980,7 @@ describe('the booking detail sees plans made by either path', () => {
       could match both, the screen would show the same container twice and an
       operator would load cargo into a duplicate that does not exist.
     */
-    const b = await booking({ label: 'cdonce', loadingType: 'FCL' });
+    const b = await booking({ label: 'cdonce', loadingType: 'LCL' });
     const made = await as(tokenAll)
       .post(`/api/tenant/ops/bookings/${b.id}/clps`)
       .send({ containerSizeId: size20.toString() });
@@ -960,8 +1007,8 @@ describe('the booking detail sees plans made by either path', () => {
   });
 
   it('still finds a consolidated plan through clp_booking', async () => {
-    const a = await booking({ label: 'cdca', loadingType: 'FCL' });
-    const b = await booking({ label: 'cdcb', loadingType: 'FCL' });
+    const a = await booking({ label: 'cdca', loadingType: 'LCL' });
+    const b = await booking({ label: 'cdcb', loadingType: 'LCL' });
 
     const made = await as(tokenAll)
       .post('/api/tenant/ops/clps/consolidate')
@@ -993,8 +1040,8 @@ describe('the booking detail sees plans made by either path', () => {
       The real state of a booking planned across two containers by two
       different routes. Neither branch may swallow the other.
     */
-    const a = await booking({ label: 'cdmixa', loadingType: 'FCL' });
-    const b = await booking({ label: 'cdmixb', loadingType: 'FCL' });
+    const a = await booking({ label: 'cdmixa', loadingType: 'LCL' });
+    const b = await booking({ label: 'cdmixb', loadingType: 'LCL' });
 
     const consolidated = await as(tokenAll)
       .post('/api/tenant/ops/clps/consolidate')
@@ -1018,13 +1065,13 @@ describe('the booking detail sees plans made by either path', () => {
   });
 
   it('hides a soft-deleted plan of either shape', async () => {
-    const a = await booking({ label: 'cddela', loadingType: 'FCL' });
+    const a = await booking({ label: 'cddela', loadingType: 'LCL' });
     const legacy = await as(tokenAll)
       .post(`/api/tenant/ops/bookings/${a.id}/clps`)
       .send({ containerSizeId: size20.toString() });
     const legacyId = track(legacy.body.data.id);
 
-    const b = await booking({ label: 'cddelb', loadingType: 'FCL' });
+    const b = await booking({ label: 'cddelb', loadingType: 'LCL' });
     const consolidated = await as(tokenAll)
       .post('/api/tenant/ops/clps/consolidate')
       .send({ shipmentIds: [b.id.toString()], containerSizeId: size20.toString() });
@@ -1051,8 +1098,8 @@ describe('the booking detail sees plans made by either path', () => {
       consolidated plan that column is NULL, so it cannot — this is the test
       that says so rather than trusting it.
     */
-    const a = await booking({ label: 'cdorph', loadingType: 'FCL' });
-    const b = await booking({ label: 'cdorpi', loadingType: 'FCL' });
+    const a = await booking({ label: 'cdorph', loadingType: 'LCL' });
+    const b = await booking({ label: 'cdorpi', loadingType: 'LCL' });
     const made = await as(tokenAll)
       .post('/api/tenant/ops/clps/consolidate')
       .send({
@@ -1079,7 +1126,7 @@ describe('the booking detail sees plans made by either path', () => {
       let the fallback cross a tenant boundary cannot be written at all.
       Second: RLS scopes the read regardless.
     */
-    const mine = await booking({ label: 'cdiso', loadingType: 'FCL' });
+    const mine = await booking({ label: 'cdiso', loadingType: 'LCL' });
     const other = await owner.tenant.create({
       data: { name: 'CLP fallback isolation', slug: `clp-iso-${RUN}`, country: 'Bangladesh' },
       select: { id: true },
@@ -1140,7 +1187,7 @@ describe('the booking detail sees plans made by either path', () => {
 describe('whose cargo is in the box — every path, both shapes', () => {
   /** A plan made the legacy way: clp.shipment_id, no participation row. */
   async function legacyPlan(label: string) {
-    const b = await booking({ label, loadingType: 'FCL' });
+    const b = await booking({ label, loadingType: 'LCL' });
     const made = await as(tokenAll)
       .post(`/api/tenant/ops/bookings/${b.id}/clps`)
       .send({ containerSizeId: size20.toString() });
@@ -1171,8 +1218,8 @@ describe('whose cargo is in the box — every path, both shapes', () => {
       own lines, and §14 is explicit that a rule a screen enforces is not a
       rule the server has.
     */
-    const mine = await booking({ label: 'p6a', loadingType: 'FCL' });
-    const stranger = await booking({ label: 'p6b', loadingType: 'FCL' });
+    const mine = await booking({ label: 'p6a', loadingType: 'LCL' });
+    const stranger = await booking({ label: 'p6b', loadingType: 'LCL' });
 
     const made = await as(tokenAll)
       .post('/api/tenant/ops/clps/consolidate')
@@ -1198,8 +1245,8 @@ describe('whose cargo is in the box — every path, both shapes', () => {
   });
 
   it('B6 — a consolidated container takes cargo from every participant', async () => {
-    const a = await booking({ label: 'p6c', loadingType: 'FCL' });
-    const b = await booking({ label: 'p6d', loadingType: 'FCL' });
+    const a = await booking({ label: 'p6c', loadingType: 'LCL' });
+    const b = await booking({ label: 'p6d', loadingType: 'LCL' });
     const made = await as(tokenAll)
       .post('/api/tenant/ops/clps/consolidate')
       .send({
@@ -1244,8 +1291,8 @@ describe('whose cargo is in the box — every path, both shapes', () => {
   });
 
   it('B2 — a consolidated plan names every booking in the box', async () => {
-    const a = await booking({ label: 'p2b', loadingType: 'FCL' });
-    const b = await booking({ label: 'p2c', loadingType: 'FCL' });
+    const a = await booking({ label: 'p2b', loadingType: 'LCL' });
+    const b = await booking({ label: 'p2c', loadingType: 'LCL' });
     const made = await as(tokenAll)
       .post('/api/tenant/ops/clps/consolidate')
       .send({
@@ -1315,8 +1362,8 @@ describe('whose cargo is in the box — every path, both shapes', () => {
   });
 
   it('B4 — and a consolidated plan reports one row per participant', async () => {
-    const a = await booking({ label: 'p4b', loadingType: 'FCL' });
-    const b = await booking({ label: 'p4c', loadingType: 'FCL' });
+    const a = await booking({ label: 'p4b', loadingType: 'LCL' });
+    const b = await booking({ label: 'p4c', loadingType: 'LCL' });
     const made = await as(tokenAll)
       .post('/api/tenant/ops/clps/consolidate')
       .send({
@@ -1339,7 +1386,7 @@ describe('whose cargo is in the box — every path, both shapes', () => {
       composite FK means clp.shipment_id can only ever name a booking in the
       same tenant, and RLS scopes the read regardless.
     */
-    const mine = await booking({ label: 'p7a', loadingType: 'FCL' });
+    const mine = await booking({ label: 'p7a', loadingType: 'LCL' });
     const other = await owner.tenant.create({
       data: { name: 'CLP participant isolation', slug: `clp-p7-${RUN}`, country: 'Bangladesh' },
       select: { id: true },
@@ -1441,7 +1488,7 @@ describe('B5 — finalising against a container number already in use', () => {
       });
 
   it('catches a second plan on the same booking — legacy shape', async () => {
-    const b = await booking({ label: 'b5la', loadingType: 'FCL', ctn: 4 });
+    const b = await booking({ label: 'b5la', loadingType: 'LCL', ctn: 4 });
     expect((await finalise(await legacyLoaded(b.id), BOX)).status).toBe(200);
 
     const second = await legacyLoaded(b.id);
@@ -1451,8 +1498,8 @@ describe('B5 — finalising against a container number already in use', () => {
   });
 
   it('catches it through the participation of a consolidated plan', async () => {
-    const a = await booking({ label: 'b5ca', loadingType: 'FCL', ctn: 4 });
-    const b = await booking({ label: 'b5cb', loadingType: 'FCL', ctn: 4 });
+    const a = await booking({ label: 'b5ca', loadingType: 'LCL', ctn: 4 });
+    const b = await booking({ label: 'b5cb', loadingType: 'LCL', ctn: 4 });
     expect((await finalise(await loaded([a.id, b.id]), BOX)).status).toBe(200);
 
     // A later plan for one of those same bookings, same box number.
@@ -1463,7 +1510,7 @@ describe('B5 — finalising against a container number already in use', () => {
 
   it('catches it whichever shape recorded the booking', async () => {
     // Legacy first, canonical second: the booking is the same either way.
-    const b = await booking({ label: 'b5mx', loadingType: 'FCL', ctn: 4 });
+    const b = await booking({ label: 'b5mx', loadingType: 'LCL', ctn: 4 });
     expect((await finalise(await legacyLoaded(b.id), BOX)).status).toBe(200);
     expect((await finalise(await loaded([b.id]), BOX)).status).toBe(409);
   });
@@ -1474,10 +1521,10 @@ describe('B5 — finalising against a container number already in use', () => {
       number on different voyages is ordinary; the NULL comparison refused the
       second one and blamed the first.
     */
-    const a = await booking({ label: 'b5na', loadingType: 'FCL', ctn: 4 });
-    const b = await booking({ label: 'b5nb', loadingType: 'FCL', ctn: 4 });
-    const c = await booking({ label: 'b5nc', loadingType: 'FCL', ctn: 4 });
-    const d = await booking({ label: 'b5nd', loadingType: 'FCL', ctn: 4 });
+    const a = await booking({ label: 'b5na', loadingType: 'LCL', ctn: 4 });
+    const b = await booking({ label: 'b5nb', loadingType: 'LCL', ctn: 4 });
+    const c = await booking({ label: 'b5nc', loadingType: 'LCL', ctn: 4 });
+    const d = await booking({ label: 'b5nd', loadingType: 'LCL', ctn: 4 });
 
     expect((await finalise(await loaded([a.id, b.id]), OTHER_BOX)).status).toBe(200);
     // Different bookings entirely, same steel box, later sailing.
@@ -1485,16 +1532,16 @@ describe('B5 — finalising against a container number already in use', () => {
   });
 
   it('does not refuse an unrelated legacy plan either', async () => {
-    const a = await booking({ label: 'b5ua', loadingType: 'FCL', ctn: 4 });
-    const b = await booking({ label: 'b5ub', loadingType: 'FCL', ctn: 4 });
+    const a = await booking({ label: 'b5ua', loadingType: 'LCL', ctn: 4 });
+    const b = await booking({ label: 'b5ub', loadingType: 'LCL', ctn: 4 });
     expect((await finalise(await legacyLoaded(a.id), 'CSQU3054383')).status).toBe(200);
     expect((await finalise(await legacyLoaded(b.id), 'CSQU3054383')).status).toBe(200);
   });
 
   it('checks every booking in the box, not just the first', async () => {
-    const a = await booking({ label: 'b5ea', loadingType: 'FCL', ctn: 4 });
-    const b = await booking({ label: 'b5eb', loadingType: 'FCL', ctn: 4 });
-    const c = await booking({ label: 'b5ec', loadingType: 'FCL', ctn: 4 });
+    const a = await booking({ label: 'b5ea', loadingType: 'LCL', ctn: 4 });
+    const b = await booking({ label: 'b5eb', loadingType: 'LCL', ctn: 4 });
+    const c = await booking({ label: 'b5ec', loadingType: 'LCL', ctn: 4 });
 
     // The box is already used by b — which is the SECOND participant below.
     expect((await finalise(await loaded([b.id]), 'MSKU0000109')).status).toBe(200);
@@ -1503,7 +1550,7 @@ describe('B5 — finalising against a container number already in use', () => {
   });
 
   it('ignores a soft-deleted plan and a soft-deleted participation', async () => {
-    const a = await booking({ label: 'b5da', loadingType: 'FCL', ctn: 4 });
+    const a = await booking({ label: 'b5da', loadingType: 'LCL', ctn: 4 });
     const gone = await loaded([a.id]);
     expect((await finalise(gone, 'FCIU1234560')).status).toBe(200);
 
@@ -1517,8 +1564,8 @@ describe('B5 — finalising against a container number already in use', () => {
       shipment_id NULL, so its participations are the only link and removing
       them removes it.
     */
-    const b = await booking({ label: 'b5db', loadingType: 'FCL', ctn: 4 });
-    const c = await booking({ label: 'b5dc', loadingType: 'FCL', ctn: 4 });
+    const b = await booking({ label: 'b5db', loadingType: 'LCL', ctn: 4 });
+    const c = await booking({ label: 'b5dc', loadingType: 'LCL', ctn: 4 });
     const held = await loaded([b.id, c.id]);
     expect(
       (await owner.clp.findFirstOrThrow({ where: { id: held }, select: { shipmentId: true } }))
@@ -1544,7 +1591,7 @@ describe('B5 — finalising against a container number already in use', () => {
       stated here so nobody later reads the case above as "deleting a
       participation always unlinks".
     */
-    const b = await booking({ label: 'b5sg', loadingType: 'FCL', ctn: 4 });
+    const b = await booking({ label: 'b5sg', loadingType: 'LCL', ctn: 4 });
     const single = await loaded([b.id]);
     expect(
       (await owner.clp.findFirstOrThrow({ where: { id: single }, select: { shipmentId: true } }))
@@ -1566,7 +1613,7 @@ describe('B5 — finalising against a container number already in use', () => {
       enforces it. A plan in another workspace holding this container number
       must not block a finalisation here.
     */
-    const mine = await booking({ label: 'b5iso', loadingType: 'FCL', ctn: 4 });
+    const mine = await booking({ label: 'b5iso', loadingType: 'LCL', ctn: 4 });
     const other = await owner.tenant.create({
       data: { name: 'CLP clash isolation', slug: `clp-b5-${RUN}`, country: 'Bangladesh' },
       select: { id: true },
@@ -1595,7 +1642,7 @@ describe('B5 — finalising against a container number already in use', () => {
 describe('§16 — the printed booking list comes from real participation', () => {
   async function consolidatedOf(labels: string[]) {
     const made: { id: bigint; code: string }[] = [];
-    for (const label of labels) made.push(await booking({ label, loadingType: 'FCL', ctn: 4 }));
+    for (const label of labels) made.push(await booking({ label, loadingType: 'LCL', ctn: 4 }));
     const res = await as(tokenAll)
       .post('/api/tenant/ops/clps/consolidate')
       .send({
@@ -1650,7 +1697,7 @@ describe('§16 — the printed booking list comes from real participation', () =
   });
 
   it('prints a legacy plan as the single-booking document it is', async () => {
-    const b = await booking({ label: 's16leg', loadingType: 'FCL', ctn: 4 });
+    const b = await booking({ label: 's16leg', loadingType: 'LCL', ctn: 4 });
     const made = await as(tokenAll)
       .post(`/api/tenant/ops/bookings/${b.id}/clps`)
       .send({ containerSizeId: size20.toString() });
@@ -1762,6 +1809,480 @@ describe('§16 — the printed booking list comes from real participation', () =
     ).toEqual(before.basis);
     expect(await owner.auditLog.count({ where: { tableName: 'clp', recordId: clpId } })).toBe(
       before.audit,
+    );
+  });
+});
+
+// ============================ the client's loading-type sheet, 2026-09-16
+
+/**
+ * The four tables on the client's sheet, through HTTP.
+ *
+ *   FCL         one booking, its POs, one EFR — refused the moment a second
+ *               FCL booking is ticked into the same box
+ *   LCL         one customer's three exporters, a booking and an EFR each,
+ *               in one box; and, confirmed the same day, across customers
+ *   CONSOL_BOX  small shipments, across customers, never with LCL
+ *
+ * and the way the sheet says the plan is made: "multiple exporter's PO will
+ * select by check box and make CLP". Ticking POs creates the plan and loads
+ * them, so what is proven here is the loading as much as the refusal — the
+ * right cartons, in the right box, named in the order they were ticked, and
+ * nothing at all left behind when the request is refused.
+ */
+describe('tick POs, make the CLP — the loading-type sheet', () => {
+  let receiptSeq = 0;
+
+  const poIdsOf = async (shipmentId: bigint) =>
+    (
+      await owner.shipmentPo.findMany({
+        where: { shipmentId, deletedAt: null },
+        orderBy: { id: 'asc' },
+        select: { id: true },
+      })
+    ).map((p) => p.id.toString());
+
+  /** A further PO on a booking, delivered on its own receipt. */
+  async function addPo(b: Fixture, label: string, ctn: number, efrNo: string | null): Promise<string> {
+    const po = await owner.shipmentPo.create({
+      data: { tenantId, shipmentId: b.id, poNo: `PO-${label}` },
+      select: { id: true },
+    });
+    const line = await owner.shipmentCargoLine.create({
+      data: {
+        tenantId,
+        shipmentId: b.id,
+        shipmentPoId: po.id,
+        itemCode: `IT-${label}`,
+        ctnQty: ctn,
+        grossWeightKg: String(ctn * 25),
+        cartonLengthCm: '50', cartonWidthCm: '50', cartonHeightCm: '50',
+      },
+      select: { id: true },
+    });
+    receiptSeq += 1;
+    const receipt = await owner.cargoReceipt.create({
+      data: {
+        tenantId,
+        code: `CRRT-${RUN}-${label}`,
+        seriesYear: 2026,
+        shipmentId: b.id,
+        receiptSeq: 9900 + receiptSeq,
+        receiveDate: new Date('2026-09-15'),
+        status: 'CONFIRMED',
+        confirmedAt: new Date(),
+        receivedBy: superadminId,
+        unloadLocation: 'CFS Alpha',
+        efrNo,
+      },
+      select: { id: true },
+    });
+    await owner.cargoReceiptLine.create({
+      data: {
+        tenantId,
+        cargoReceiptId: receipt.id,
+        shipmentCargoLineId: line.id,
+        receivedCtnQty: ctn,
+        lineStatus: 'ACCEPTED',
+      },
+    });
+    return po.id.toString();
+  }
+
+  const consolidate = (body: object) =>
+    as(tokenAll)
+      .post('/api/tenant/ops/clps/consolidate')
+      .send({ containerSizeId: size20.toString(), ...body });
+
+  const check = (shipmentPoIds: string[]) =>
+    as(tokenAll).post('/api/tenant/ops/clp-candidates/check').send({ shipmentPoIds });
+
+  /** Everything a refused request must leave exactly as it was. */
+  const footprint = async () => ({
+    clps: await owner.clp.count(),
+    lines: await owner.clpLine.count(),
+    participations: await owner.clpBooking.count(),
+  });
+
+  async function anotherCustomer(than: Fixture): Promise<bigint> {
+    const mine = await owner.shipment.findFirstOrThrow({
+      where: { id: than.id },
+      select: { customerId: true },
+    });
+    return (
+      await owner.customer.findFirstOrThrow({
+        where: { tenantId, deletedAt: null, id: { not: mine.customerId } },
+        select: { id: true },
+      })
+    ).id;
+  }
+
+  it('FCL: loads exactly the ticked POs of one booking, in one step', async () => {
+    const b = await booking({ label: 'shf', loadingType: 'FCL', ctn: 5, efrNo: 'EFR-F01' });
+    const [po1] = await poIdsOf(b.id);
+    const po2 = await addPo(b, 'shf2', 10, 'EFR-F01');
+    const po3 = await addPo(b, 'shf3', 8, 'EFR-F01');
+
+    const res = await consolidate({ shipmentPoIds: [po1!, po2] });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(res.body.data.shipmentId).toBe(b.id.toString());
+    const clpId = track(res.body.data.id);
+
+    const plan = await owner.clp.findFirstOrThrow({
+      where: { id: clpId },
+      select: {
+        consolidationType: true,
+        clpSeq: true,
+        shipmentId: true,
+        totalCtnQty: true,
+        lines: { where: { deletedAt: null }, select: { shipmentPoId: true, ctnQty: true } },
+      },
+    });
+    expect(plan.consolidationType).toBe('SINGLE');
+    expect(plan.clpSeq).not.toBeNull();
+    expect(plan.shipmentId).toBe(b.id);
+    expect(plan.totalCtnQty).toBe(15);
+    expect(plan.lines.map((l) => l.shipmentPoId.toString()).sort()).toEqual([po1!, po2].sort());
+
+    // The PO nobody ticked is still waiting, with its EFR.
+    const pool = (await as(tokenAll).get(`/api/tenant/ops/bookings/${b.id}/clp`)).body.data.pool;
+    expect(pool.map((r: { poId: string }) => r.poId)).toEqual([po3]);
+    expect(pool[0].efrNos).toEqual(['EFR-F01']);
+  });
+
+  it('FCL: refuses POs from two FCL bookings, and creates and loads nothing', async () => {
+    const a = await booking({ label: 'shfa', loadingType: 'FCL', ctn: 5 });
+    const b = await booking({ label: 'shfb', loadingType: 'FCL', ctn: 5 });
+    const ticked = [...(await poIdsOf(a.id)), ...(await poIdsOf(b.id))];
+
+    const judged = await check(ticked);
+    expect(judged.status).toBe(200);
+    expect(judged.body.data.ok).toBe(false);
+    expect(JSON.stringify(judged.body.data.issues)).toMatch(/separate FCL bookings/);
+
+    const before = await footprint();
+    const res = await consolidate({ shipmentPoIds: ticked });
+    if (res.status === 201) track(res.body.data.id);
+    expect(res.status).toBe(409);
+    expect(res.body.error.message).toMatch(/book them as LCL/);
+    expect(await footprint()).toEqual(before);
+  });
+
+  it('LCL: three exporters of one customer share a box, named in tick order, EFR on every line', async () => {
+    const a = await booking({ label: 'shla', loadingType: 'LCL', ctn: 5, efrNo: 'EFR-L01' });
+    const b = await booking({ label: 'shlb', loadingType: 'LCL', ctn: 10, efrNo: 'EFR-L02' });
+    const c = await booking({ label: 'shlc', loadingType: 'LCL', ctn: 15, efrNo: 'EFR-L03' });
+    const [poA] = await poIdsOf(a.id);
+    const [poB] = await poIdsOf(b.id);
+    const [poC] = await poIdsOf(c.id);
+
+    const judged = await check([poC!, poA!, poB!]);
+    expect(judged.body.data.ok, JSON.stringify(judged.body.data.issues)).toBe(true);
+    expect(judged.body.data.family).toBe('LCL');
+    expect(judged.body.data.totalCtnQty).toBe(30);
+    expect(Number(judged.body.data.totalCbm)).toBeCloseTo(30 * 0.125, 4);
+
+    const res = await consolidate({ shipmentPoIds: [poC!, poA!, poB!] });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const clpId = track(res.body.data.id);
+    // The first ticked booking is the one the planner lands on.
+    expect(res.body.data.shipmentId).toBe(c.id.toString());
+
+    const plan = await owner.clp.findFirstOrThrow({
+      where: { id: clpId },
+      select: {
+        consolidationType: true,
+        shipmentId: true,
+        totalCtnQty: true,
+        bookings: { orderBy: { id: 'asc' }, select: { shipmentId: true } },
+      },
+    });
+    expect(plan.consolidationType).toBe('LCL_CONSOLIDATION');
+    expect(plan.shipmentId).toBeNull();
+    expect(plan.totalCtnQty).toBe(30);
+    expect(plan.bookings.map((p) => p.shipmentId)).toEqual([c.id, a.id, b.id]);
+
+    const cards = (await as(tokenAll).get(`/api/tenant/ops/bookings/${a.id}/clp`)).body.data.clps;
+    const card = cards.find((x: { id: string }) => x.id === clpId.toString());
+    expect(card.loadingType).toBe('LCL');
+    expect(
+      card.lines.map((l: { poNo: string; efrNos: string[] }) => `${l.poNo}=${l.efrNos.join(',')}`).sort(),
+    ).toEqual(['PO-shla=EFR-L01', 'PO-shlb=EFR-L02', 'PO-shlc=EFR-L03']);
+
+    const printed = extractPdfText(
+      (await as(tokenAll).get(`/api/tenant/ops/clps/${clpId}/print`)).body as Buffer,
+    );
+    expect(printed).toContain('EFR NO');
+    for (const efr of ['EFR-L01', 'EFR-L02', 'EFR-L03']) expect(printed).toContain(efr);
+  });
+
+  it('LCL: bookings of different customers share a box', async () => {
+    const a = await booking({ label: 'shlx', loadingType: 'LCL', ctn: 4 });
+    const b = await booking({
+      label: 'shly', loadingType: 'LCL', ctn: 4, customerId: await anotherCustomer(a),
+    });
+    const res = await consolidate({
+      shipmentPoIds: [...(await poIdsOf(a.id)), ...(await poIdsOf(b.id))],
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    track(res.body.data.id);
+  });
+
+  it('Consol box: takes different customers, and is never mixed with LCL', async () => {
+    const box1 = await booking({ label: 'shb1', loadingType: 'CONSOL_BOX', ctn: 4 });
+    const box2 = await booking({
+      label: 'shb2', loadingType: 'CONSOL_BOX', ctn: 4, customerId: await anotherCustomer(box1),
+    });
+    const lcl = await booking({ label: 'shbl', loadingType: 'LCL', ctn: 4 });
+
+    const res = await consolidate({
+      shipmentPoIds: [...(await poIdsOf(box1.id)), ...(await poIdsOf(box2.id))],
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const clpId = track(res.body.data.id);
+    const cards = (await as(tokenAll).get(`/api/tenant/ops/bookings/${box1.id}/clp`)).body.data.clps;
+    expect(cards.find((x: { id: string }) => x.id === clpId.toString()).loadingType).toBe('CONSOL_BOX');
+
+    const mixed = await check([...(await poIdsOf(box1.id)), ...(await poIdsOf(lcl.id))]);
+    expect(mixed.body.data.ok).toBe(false);
+    expect(JSON.stringify(mixed.body.data.issues)).toMatch(
+      /is LCL and .* is Consol box\. Different loading types never share a container/,
+    );
+  });
+
+  it('offers each PO with what ticking it would load, not what arrived', async () => {
+    const b = await booking({ label: 'shrun', loadingType: 'LCL', ctn: 20, efrNo: 'EFR-R01' });
+    const [po] = await poIdsOf(b.id);
+
+    // Eight of the twenty cartons are already in another container.
+    const legacy = await as(tokenAll)
+      .post(`/api/tenant/ops/bookings/${b.id}/clps`)
+      .send({ containerSizeId: size20.toString() });
+    const legacyId = track(legacy.body.data.id);
+    const line = await owner.shipmentCargoLine.findFirstOrThrow({
+      where: { shipmentId: b.id },
+      select: { id: true },
+    });
+    const put = await as(tokenAll)
+      .post(`/api/tenant/ops/clps/${legacyId}/lines`)
+      .send({ cargoLineId: line.id.toString(), ctnQty: 8 });
+    expect(put.status, JSON.stringify(put.body)).toBe(201);
+
+    const list = await as(tokenAll).get(`/api/tenant/ops/clp-candidates?family=LCL&search=${b.code}`);
+    const offered = list.body.data.candidates[0].pos[0];
+    expect(offered).toMatchObject({ poId: po, ctnQty: 12, receivedCtnQty: 20, efrNos: ['EFR-R01'] });
+    expect(Number(offered.cbm)).toBeCloseTo(12 * 0.125, 4);
+
+    const judged = await check([po!]);
+    expect(judged.body.data.totalCtnQty).toBe(12);
+    expect(Number(judged.body.data.totalCbm)).toBeCloseTo(1.5, 4);
+
+    // ...and ticking it loads those twelve, no more.
+    const res = await consolidate({ shipmentPoIds: [po!] });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const made = await owner.clp.findFirstOrThrow({
+      where: { id: track(res.body.data.id) },
+      select: { totalCtnQty: true },
+    });
+    expect(made.totalCtnQty).toBe(12);
+  });
+
+  it('refuses a PO with nothing left to load, naming it', async () => {
+    const b = await booking({ label: 'shdone', loadingType: 'LCL', ctn: 4 });
+    const [po] = await poIdsOf(b.id);
+    const first = await consolidate({ shipmentPoIds: [po!] });
+    expect(first.status).toBe(201);
+    track(first.body.data.id);
+
+    const judged = await check([po!]);
+    expect(judged.body.data.ok).toBe(false);
+    expect(JSON.stringify(judged.body.data.issues)).toMatch(/PO-shdone on .* has nothing left to load/);
+
+    const before = await footprint();
+    const again = await consolidate({ shipmentPoIds: [po!] });
+    if (again.status === 201) track(again.body.data.id);
+    expect(again.status).toBe(409);
+    expect(again.body.error.message).toMatch(/all 4 received cartons are already in a plan/);
+    expect(await footprint()).toEqual(before);
+  });
+
+  it('refuses POs that overfill the container before anything is written', async () => {
+    // 240 cartons at 0.125 CBM is 30 CBM, into a 28 CBM 20STD.
+    const b = await booking({ label: 'shbig', loadingType: 'LCL', ctn: 240 });
+    const before = await footprint();
+    const res = await consolidate({ shipmentPoIds: await poIdsOf(b.id) });
+    if (res.status === 201) track(res.body.data.id);
+    expect(res.status).toBe(409);
+    expect(res.body.error.message).toBe(
+      'The ticked POs come to 30.00 CBM, and a 20STD holds 28 CBM. ' +
+        'Untick some POs or choose a bigger container.',
+    );
+    expect(await footprint()).toEqual(before);
+  });
+
+  it('refuses a PO from another workspace, and a request naming POs and bookings both', async () => {
+    const mine = await booking({ label: 'shiso', loadingType: 'LCL', ctn: 4 });
+    const [po] = await poIdsOf(mine.id);
+
+    const both = await consolidate({ shipmentPoIds: [po!], shipmentIds: [mine.id.toString()] });
+    expect(both.status).toBe(400);
+
+    const stranger = await owner.shipmentPo.findFirst({
+      where: { tenantId: { not: tenantId }, deletedAt: null },
+      select: { id: true },
+    });
+    if (stranger === null) return; // single-tenant dev database
+    const res = await consolidate({ shipmentPoIds: [po!, stranger.id.toString()] });
+    expect(res.status).toBe(404);
+    expect((await check([stranger.id.toString()])).status).toBe(404);
+  });
+});
+
+// ================================ one Container Load Plan screen (2026-09-17)
+
+/**
+ * What the merged screen reads from the server: the To plan tab's "All"
+ * workflow, the Required Container its group header prints, a search by PO
+ * number, and a planned count that includes shared containers.
+ */
+describe('the Container Load Plan screen — what its two tabs read', () => {
+  it('offers every workflow at once when no family is asked for', async () => {
+    const fcl = await booking({ label: 'osfcl', loadingType: 'FCL' });
+    const lcl = await booking({ label: 'oslcl', loadingType: 'LCL' });
+    const box = await booking({ label: 'osbox', loadingType: 'CONSOL_BOX' });
+    const bare = await booking({ label: 'osnone', loadingType: null });
+
+    const res = await as(tokenAll).get(`/api/tenant/ops/clp-candidates?search=BKGRT-${RUN}-os`);
+    expect(res.status).toBe(200);
+    const codes = res.body.data.candidates.map((c: { code: string }) => c.code);
+    expect(codes).toEqual(expect.arrayContaining([fcl.code, lcl.code, box.code]));
+    // Still the refusal to guess: no loading type, no workflow, not listed.
+    expect(codes).not.toContain(bare.code);
+  });
+
+  it('carries the Required Container the quotation agreed', async () => {
+    const b = await booking({ label: 'osreq', loadingType: 'FCL' });
+    const res = await as(tokenAll).get(`/api/tenant/ops/clp-candidates?family=FCL&search=${b.code}`);
+    const row = res.body.data.candidates[0];
+    const booked = await as(tokenAll).get(`/api/tenant/ops/bookings/${b.id}/clp`);
+    // The same string the booking's own plan page shows, from the same helper.
+    expect(typeof row.requiredContainer).toBe('string');
+    expect(row.requiredContainer).toBe(booked.body.data.booking.requiredContainer);
+  });
+
+  it('finds a booking by one of its PO numbers', async () => {
+    const b = await booking({ label: 'ospo', loadingType: 'LCL' });
+    const res = await as(tokenAll).get(`/api/tenant/ops/clp-candidates?family=LCL&search=PO-ospo`);
+    expect(res.body.data.candidates.map((c: { code: string }) => c.code)).toEqual([b.code]);
+  });
+
+  it('counts a shared container as planned for every booking in it', async () => {
+    const a = await booking({ label: 'osca', loadingType: 'LCL', ctn: 4 });
+    const b = await booking({ label: 'oscb', loadingType: 'LCL', ctn: 4 });
+    const pos = [
+      ...(await owner.shipmentPo.findMany({ where: { shipmentId: { in: [a.id, b.id] } }, select: { id: true } })),
+    ].map((p) => p.id.toString());
+    const made = await as(tokenAll)
+      .post('/api/tenant/ops/clps/consolidate')
+      .send({ shipmentPoIds: pos, containerSizeId: size20.toString() });
+    expect(made.status, JSON.stringify(made.body)).toBe(201);
+    track(made.body.data.id);
+
+    /*
+      Read through the booking's own plan, which is where the screen shows it.
+      Not through GET /clp-bookings: that queue's where clause nests four
+      sequential scans under RLS and takes seconds once this file has built a
+      few dozen bookings, which says nothing about the count under test.
+    */
+    for (const bk of [a, b]) {
+      const res = await as(tokenAll).get(`/api/tenant/ops/bookings/${bk.id}/clp`);
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      // It read 0 beside "All assigned" before: the count looked only at clp.shipment_id.
+      expect(res.body.data.booking.plannedCount).toBe(1);
+      expect(res.body.data.booking.unallocatedCtnQty).toBe(0);
+    }
+  });
+});
+
+describe('Container plans — searching the register', () => {
+  it('finds a shared container by any of its bookings, and by their customer', async () => {
+    const other = await owner.customer.findFirstOrThrow({
+      where: { tenantId, deletedAt: null, name: { not: '' } },
+      orderBy: { id: 'desc' },
+      select: { id: true, name: true },
+    });
+    const a = await booking({ label: 'rsa', loadingType: 'LCL', ctn: 4 });
+    const b = await booking({ label: 'rsb', loadingType: 'LCL', ctn: 4, customerId: other.id });
+    const pos = (
+      await owner.shipmentPo.findMany({ where: { shipmentId: { in: [a.id, b.id] } }, select: { id: true } })
+    ).map((p) => p.id.toString());
+    const made = await as(tokenAll)
+      .post('/api/tenant/ops/clps/consolidate')
+      .send({ shipmentPoIds: pos, containerSizeId: size20.toString() });
+    expect(made.status, JSON.stringify(made.body)).toBe(201);
+    const clpId = track(made.body.data.id).toString();
+
+    // The plan is consolidated, so clp.shipment_id is NULL — the case that hid it.
+    expect(
+      (await owner.clp.findFirstOrThrow({ where: { id: BigInt(clpId) }, select: { shipmentId: true } }))
+        .shipmentId,
+    ).toBeNull();
+
+    for (const term of [a.code, b.code]) {
+      const res = await as(tokenAll).get(`/api/tenant/ops/clps?search=${encodeURIComponent(term)}&limit=100`);
+      expect(res.status).toBe(200);
+      expect(res.body.data.map((r: { id: string }) => r.id)).toContain(clpId);
+    }
+    const byCustomer = await as(tokenAll).get(
+      `/api/tenant/ops/clps?search=${encodeURIComponent(other.name)}&limit=100`,
+    );
+    expect(byCustomer.body.data.map((r: { id: string }) => r.id)).toContain(clpId);
+  });
+});
+
+describe('To plan — "Same sailing" suggestions', () => {
+  it('leave out bookings already planned in full, and total what is left to load', async () => {
+    const done = await booking({ label: 'sgdone', loadingType: 'LCL', ctn: 6 });
+    const a = await booking({ label: 'sga', loadingType: 'LCL', ctn: 4 });
+    const b = await booking({ label: 'sgb', loadingType: 'LCL', ctn: 5 });
+
+    const donePos = (
+      await owner.shipmentPo.findMany({ where: { shipmentId: done.id }, select: { id: true } })
+    ).map((p) => p.id.toString());
+    const made = await as(tokenAll)
+      .post('/api/tenant/ops/clps/consolidate')
+      .send({ shipmentPoIds: donePos, containerSizeId: size20.toString() });
+    expect(made.status, JSON.stringify(made.body)).toBe(201);
+    track(made.body.data.id);
+
+    const res = await as(tokenAll).get(`/api/tenant/ops/clp-candidates?family=LCL&search=BKGRT-${RUN}-sg`);
+    expect(res.status).toBe(200);
+    // The planned booking is still listed — it just has nothing left to tick.
+    expect(res.body.data.candidates.map((c: { code: string }) => c.code)).toContain(done.code);
+
+    const groups = res.body.data.suggestions as { shipmentIds: string[]; totalCtnQty: number; totalCbm: string }[];
+    expect(groups).toHaveLength(1);
+    expect([...groups[0]!.shipmentIds].sort()).toEqual([a.id.toString(), b.id.toString()].sort());
+    expect(groups[0]!.totalCtnQty).toBe(9);
+    expect(Number(groups[0]!.totalCbm)).toBeCloseTo(9 * 0.125, 4);
+  });
+
+  it('the planning queue still answers once this file has built its bookings', async () => {
+    /*
+      Last in the file on purpose: by now dozens of received bookings exist,
+      which is the size at which GET /clp-bookings once spent 9 s nesting full
+      scans and failed on the 5 s transaction limit.
+
+      A smoke check, not the proof. Whether the planner picks that plan also
+      depends on how many pages the tables physically occupy, so this passed
+      under the old policies too once the dev tables had grown. The
+      deterministic checks — policy form and row estimate — are in
+      tenant-isolation.test.ts (20260917090000_rls_estimable_tenant_check).
+    */
+    const res = await as(tokenAll).get(`/api/tenant/ops/clp-bookings?family=LCL&search=BKGRT-${RUN}-sg&limit=50`);
+    expect(res.status, JSON.stringify(res.body).slice(0, 300)).toBe(200);
+    expect(res.body.data.map((r: { code: string }) => r.code)).toEqual(
+      expect.arrayContaining([`BKGRT-${RUN}-sgdone`, `BKGRT-${RUN}-sga`, `BKGRT-${RUN}-sgb`]),
     );
   });
 });

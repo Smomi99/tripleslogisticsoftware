@@ -16,8 +16,10 @@ import { PrismaClient } from '../apps/api/src/generated/prisma/client';
  * DEMO-, and `--clear` deletes exactly those, so it cannot damage anything a
  * person typed in.
  *
- *   pnpm db:demo          seed it (clears and rebuilds, so it is repeatable)
- *   pnpm db:demo:clear    take it all out again
+ *   pnpm db:demo                seed it (clears and rebuilds, so it is repeatable)
+ *   pnpm db:demo:clear          take it all out again
+ *   pnpm db:demo:sheet          rebuild only the loading-type sheet's bookings
+ *   pnpm db:demo:sheet:clear    take only those out
  *
  * The dataset is built backwards from what there is to look at:
  *
@@ -31,7 +33,10 @@ import { PrismaClient } from '../apps/api/src/generated/prisma/client';
  *   - inquiries in all four shapes — FCL, LCL, Consol Box and Air;
  *   - rates carrying a Route, priced with local charges;
  *   - bookings parked in six different states, so Shipment Approval, Shipping
- *     Order and Cargo Receipt each open with rows waiting rather than empty.
+ *     Order and Cargo Receipt each open with rows waiting rather than empty;
+ *   - the client's loading-type sheet (2026-09-16) as eight received bookings
+ *     on one sailing — FCL, LCL and Consol box, with their EFR numbers — so
+ *     the Container Load Plan screen has POs to tick in every workflow.
  */
 
 const connectionString = process.env['DATABASE_URL'];
@@ -78,10 +83,13 @@ const day = (d: Date): Date => new Date(`${d.toISOString().slice(0, 10)}T00:00:0
  * deleted_at stamps behind would mean the next run collided with codes nobody
  * can see. Restricted to DEMO- codes throughout, and to rows that hang off a
  * DEMO- parent where the child has no code of its own.
+ *
+ * `prefix` narrows it further: the loading-type sheet's rows start DEMO-SHEET-,
+ * so they can be removed and rebuilt without touching the rest.
  */
-async function clear(tenantId: bigint): Promise<void> {
+async function clear(tenantId: bigint, prefix: string = P): Promise<void> {
   const t = { tenantId };
-  const demoCode = { code: { startsWith: P } };
+  const demoCode = { code: { startsWith: prefix } };
 
   const shipmentIds = (
     await prisma.shipment.findMany({ where: { ...t, ...demoCode }, select: { id: true } })
@@ -105,6 +113,88 @@ async function clear(tenantId: bigint): Promise<void> {
     await prisma.employee.findMany({ where: { ...t, ...demoCode }, select: { id: true } })
   ).map((r) => r.id);
 
+  /*
+   * Container load plans on demo bookings — the point of the loading-type
+   * sheet's bookings is to be planned, so a clear has to expect them. A plan
+   * that ALSO holds a booking somebody really made is as much theirs as ours,
+   * and is treated like the held quotations below.
+   */
+  const plans = await prisma.clp.findMany({
+    where: {
+      ...t,
+      OR: [
+        { shipmentId: { in: shipmentIds } },
+        { bookings: { some: { shipmentId: { in: shipmentIds } } } },
+        { lines: { some: { shipmentCargoLine: { shipmentId: { in: shipmentIds } } } } },
+      ],
+    },
+    select: {
+      id: true,
+      code: true,
+      shipmentId: true,
+      bookings: { select: { shipmentId: true } },
+      lines: { select: { shipmentCargoLine: { select: { shipmentId: true } } } },
+    },
+  });
+  const demoShipment = new Set(shipmentIds.map((id) => id.toString()));
+  const heldPlans = plans.filter((plan) =>
+    [
+      plan.shipmentId,
+      ...plan.bookings.map((b) => b.shipmentId),
+      ...plan.lines.map((l) => l.shipmentCargoLine.shipmentId),
+    ].some((id) => id !== null && !demoShipment.has(id.toString())),
+  );
+
+  /*
+   * Anything of the user's OWN hanging off demo data stops the clear.
+   *
+   * Raising a quotation on a demo inquiry, or an inquiry for a demo customer,
+   * is the obvious way to try the product — and it leaves real work pointing
+   * at scenery. Deleting it to tidy up would destroy something somebody did;
+   * crashing with a foreign-key stack trace explains nothing. So: stop before
+   * touching anything, name exactly what is in the way, and let them decide.
+   *
+   * Checked BEFORE the first delete, so "Nothing has been changed" is true.
+   */
+  const [heldQuotations, heldInquiries] = await Promise.all([
+    prisma.quotation.findMany({
+      where: {
+        ...t,
+        deletedAt: null,
+        code: { not: { startsWith: prefix } },
+        inquiry: { code: { startsWith: prefix } },
+      },
+      select: { code: true, inquiry: { select: { code: true } } },
+    }),
+    prisma.inquiry.findMany({
+      where: {
+        ...t,
+        deletedAt: null,
+        code: { not: { startsWith: prefix } },
+        customer: { code: { startsWith: prefix } },
+      },
+      select: { code: true, customer: { select: { code: true } } },
+    }),
+  ]);
+
+  const blocking = [
+    ...heldQuotations.map((q) => `  ${q.code} — quotation on ${q.inquiry.code}`),
+    ...heldInquiries.map((i) => `  ${i.code} — inquiry for ${i.customer?.code ?? "a demo customer"}`),
+    ...heldPlans.map((p) => `  ${p.code} — container plan that also holds a booking which is not demo data`),
+  ];
+  if (blocking.length > 0) {
+    throw new Error(
+      'Cannot remove the demo data — this work of yours is built on it:' +
+        `\n${blocking.join('\n')}\n\n` +
+        'Delete those records first, or leave the demo data in place. Nothing has been changed.',
+    );
+  }
+
+  const planIds = plans.map((p) => p.id);
+  await prisma.clpLine.deleteMany({ where: { ...t, clpId: { in: planIds } } });
+  await prisma.clpBooking.deleteMany({ where: { ...t, clpId: { in: planIds } } });
+  await prisma.clp.deleteMany({ where: { ...t, id: { in: planIds } } });
+
   await prisma.cargoReceiptLine.deleteMany({
     where: { ...t, receipt: { shipmentId: { in: shipmentIds } } },
   });
@@ -122,48 +212,6 @@ async function clear(tenantId: bigint): Promise<void> {
   await prisma.quotationCommodity.deleteMany({ where: { ...t, quotationId: { in: quotationIds } } });
   await prisma.quotationLine.deleteMany({ where: { ...t, quotationId: { in: quotationIds } } });
   await prisma.quotation.deleteMany({ where: { ...t, id: { in: quotationIds } } });
-
-  /*
-   * Anything of the user's OWN hanging off demo data stops the clear.
-   *
-   * Raising a quotation on a demo inquiry, or an inquiry for a demo customer,
-   * is the obvious way to try the product — and it leaves real work pointing
-   * at scenery. Deleting it to tidy up would destroy something somebody did;
-   * crashing with a foreign-key stack trace explains nothing. So: stop before
-   * touching anything, name exactly what is in the way, and let them decide.
-   */
-  const [heldQuotations, heldInquiries] = await Promise.all([
-    prisma.quotation.findMany({
-      where: {
-        ...t,
-        deletedAt: null,
-        code: { not: { startsWith: P } },
-        inquiry: { code: { startsWith: P } },
-      },
-      select: { code: true, inquiry: { select: { code: true } } },
-    }),
-    prisma.inquiry.findMany({
-      where: {
-        ...t,
-        deletedAt: null,
-        code: { not: { startsWith: P } },
-        customer: { code: { startsWith: P } },
-      },
-      select: { code: true, customer: { select: { code: true } } },
-    }),
-  ]);
-
-  const blocking = [
-    ...heldQuotations.map((q) => `  ${q.code} — quotation on ${q.inquiry.code}`),
-    ...heldInquiries.map((i) => `  ${i.code} — inquiry for ${i.customer?.code ?? "a demo customer"}`),
-  ];
-  if (blocking.length > 0) {
-    throw new Error(
-      'Cannot remove the demo data — this work of yours is built on it:' +
-        `\n${blocking.join('\n')}\n\n` +
-        'Delete those records first, or leave the demo data in place. Nothing has been changed.',
-    );
-  }
 
   await prisma.agentQuoteLine.deleteMany({
     where: { ...t, option: { quote: { inquiryId: { in: inquiryIds } } } },
@@ -188,15 +236,15 @@ async function clear(tenantId: bigint): Promise<void> {
   await prisma.freightRate.deleteMany({ where: { ...t, id: { in: rateIds } } });
 
   await prisma.salesLeadFollowup.deleteMany({
-    where: { ...t, lead: { code: { startsWith: P } } },
+    where: { ...t, lead: { code: { startsWith: prefix } } },
   });
   await prisma.salesLead.deleteMany({ where: { ...t, ...demoCode } });
 
-  await prisma.emailLog.deleteMany({ where: { ...t, templateKey: { startsWith: P } } });
-  await prisma.customerPic.deleteMany({ where: { ...t, customer: { code: { startsWith: P } } } });
+  await prisma.emailLog.deleteMany({ where: { ...t, templateKey: { startsWith: prefix } } });
+  await prisma.customerPic.deleteMany({ where: { ...t, customer: { code: { startsWith: prefix } } } });
   await prisma.customer.deleteMany({ where: { ...t, ...demoCode } });
   await prisma.commodityItem.deleteMany({
-    where: { ...t, industrySector: { code: { startsWith: P } } },
+    where: { ...t, industrySector: { code: { startsWith: prefix } } },
   });
   await prisma.industrySector.deleteMany({ where: { ...t, ...demoCode } });
   await prisma.costHead.deleteMany({ where: { ...t, ...demoCode } });
@@ -207,24 +255,24 @@ async function clear(tenantId: bigint): Promise<void> {
   // The agent login, its role, and the agent it belongs to.
   await prisma.user.deleteMany({ where: { ...t, ...demoCode } });
   await prisma.rolePermission.deleteMany({
-    where: { ...t, role: { code: { startsWith: P } } },
+    where: { ...t, role: { code: { startsWith: prefix } } },
   });
   await prisma.role.deleteMany({ where: { ...t, ...demoCode } });
-  await prisma.agentPic.deleteMany({ where: { ...t, agent: { code: { startsWith: P } } } });
+  await prisma.agentPic.deleteMany({ where: { ...t, agent: { code: { startsWith: prefix } } } });
   await prisma.agentExpertArea.deleteMany({
-    where: { ...t, agent: { code: { startsWith: P } } },
+    where: { ...t, agent: { code: { startsWith: prefix } } },
   });
   await prisma.agentPortCoverage.deleteMany({
-    where: { ...t, agent: { code: { startsWith: P } } },
+    where: { ...t, agent: { code: { startsWith: prefix } } },
   });
   await prisma.agentNetworkMember.deleteMany({
-    where: { ...t, agent: { code: { startsWith: P } } },
+    where: { ...t, agent: { code: { startsWith: prefix } } },
   });
   await prisma.agent.deleteMany({ where: { ...t, ...demoCode } });
 
   // The audit trail for rows that no longer exist is noise, not history.
   await prisma.$executeRawUnsafe(
-    `DELETE FROM audit_log WHERE tenant_id = ${tenantId} AND new_values->>'code' LIKE '${P}%'`,
+    `DELETE FROM audit_log WHERE tenant_id = ${tenantId} AND new_values->>'code' LIKE '${prefix}%'`,
   );
 }
 
@@ -249,7 +297,7 @@ async function seed(tenantId: bigint): Promise<void> {
     ),
   );
 
-  await Promise.all([
+  const commodities = await Promise.all([
     prisma.commodityItem.create({
       data: {
         ...t,
@@ -783,6 +831,7 @@ async function seed(tenantId: bigint): Promise<void> {
     });
 
     // Two POs, so the Approval screen has something to decide per PO.
+    const lines: { id: bigint; ctn: number }[] = [];
     for (const n of [1, 2]) {
       const po = await prisma.shipmentPo.create({
         data: {
@@ -802,7 +851,7 @@ async function seed(tenantId: bigint): Promise<void> {
         },
         select: { id: true },
       });
-      await prisma.shipmentCargoLine.create({
+      const line = await prisma.shipmentCargoLine.create({
         data: {
           ...t,
           shipmentId: shipment.id,
@@ -817,7 +866,9 @@ async function seed(tenantId: bigint): Promise<void> {
           cartonWidthCm: '40',
           cartonHeightCm: '30',
         },
+        select: { id: true },
       });
+      lines.push({ id: line.id, ctn: 60 + n * 15 });
     }
 
     if (b.schedule) {
@@ -858,7 +909,7 @@ async function seed(tenantId: bigint): Promise<void> {
       });
 
       if (b.so) {
-        await prisma.shippingOrder.create({
+        const so = await prisma.shippingOrder.create({
           data: {
             ...t,
             code: `${P}SO-${i + 1}`,
@@ -874,16 +925,614 @@ async function seed(tenantId: bigint): Promise<void> {
             status: 'ISSUED',
             qrPayload: `SO:${P}SO-${i + 1}\nBKG:${P}${b.s}`,
           },
+          select: { id: true },
+        });
+
+        /*
+          A booking that says its cargo is in has a receipt that says so. Part
+          received takes the first PO only; received takes both. Without these
+          the two bookings read as received on every list and have nothing to
+          show on Cargo Receipt or to load into a container.
+        */
+        if (b.status === 'PART_RECEIVED' || b.status === 'CARGO_RECEIVED') {
+          await receive(tenantId, employees[2]!.userId, {
+            code: `${P}CR-B${i + 1}`,
+            shipmentId: shipment.id,
+            shippingOrderId: so.id,
+            seq: 1,
+            efrNo: `EFR-10${i + 1}`,
+            when: daysAgo(4 + i * 6 - 7),
+            lines: b.status === 'PART_RECEIVED' ? lines.slice(0, 1) : lines,
+          });
+        }
+      }
+    }
+  }
+
+  await seedLoadingTypeSheet(tenantId);
+}
+
+// ------------------------------------------- the loading-type sheet (CLP)
+
+/** The sheet's own rows carry this, so they can be rebuilt on their own. */
+const SHEET = `${P}SHEET-`;
+
+/**
+ * A confirmed cargo receipt that takes the given lines in full.
+ *
+ * What was counted and weighed is the booked figure, and the cartons were
+ * not re-measured — so the billing basis stays BOOKED, which is what the
+ * column defaults to. The EFR No is the receipt's, as the Cargo Receipt
+ * screen records it.
+ */
+async function receive(
+  tenantId: bigint,
+  receivedBy: bigint,
+  r: {
+    code: string;
+    shipmentId: bigint;
+    shippingOrderId: bigint;
+    seq: number;
+    efrNo: string;
+    when: Date;
+    lines: { id: bigint }[];
+  },
+): Promise<void> {
+  const t = { tenantId };
+  const receipt = await prisma.cargoReceipt.create({
+    data: {
+      ...t,
+      code: r.code,
+      seriesYear: r.when.getUTCFullYear(),
+      shipmentId: r.shipmentId,
+      shippingOrderId: r.shippingOrderId,
+      receiveDate: day(r.when),
+      unloadLocation: 'Pangaon Inland Container Terminal',
+      efrNo: r.efrNo,
+      receiptSeq: r.seq,
+      status: 'CONFIRMED',
+      // cargo_receipt_confirmed_ck: a confirmed receipt names who and when.
+      receivedBy,
+      confirmedAt: r.when,
+      createdAt: r.when,
+    },
+    select: { id: true },
+  });
+  for (const { id } of r.lines) {
+    const booked = await prisma.shipmentCargoLine.findUniqueOrThrow({
+      where: { id },
+      select: { ctnQty: true, pcsQty: true, netWeightKg: true, grossWeightKg: true },
+    });
+    await prisma.cargoReceiptLine.create({
+      data: {
+        ...t,
+        cargoReceiptId: receipt.id,
+        shipmentCargoLineId: id,
+        receivedCtnQty: booked.ctnQty,
+        receivedPcsQty: booked.pcsQty,
+        receivedNetWeightKg: booked.netWeightKg,
+        receivedGrossWeightKg: booked.grossWeightKg,
+        lineStatus: 'ACCEPTED',
+        createdAt: r.when,
+      },
+    });
+  }
+}
+
+/**
+ * The client's loading-type sheet (2026-09-16), one file per table, with the
+ * sheet's own CTN / CBM / N.WT / G.WT so what the screen shows can be read
+ * off against the paper:
+ *
+ *   FCL, customer is the exporter      1 booking, 2 POs, 1×40HC, one EFR
+ *   FCL, customer is not the exporter  1 booking, 2 POs, 1×40HC, one EFR
+ *   LCL                                3 bookings for one customer — exporters
+ *                                      ABC, XYZ and KLM — 1×40HC, an EFR each
+ *   Consol box                         1 booking, 2 POs, no container, EFR per PO
+ *
+ * and one more LCL and Consol box booking each for OTHER customers, so "any
+ * customer may share" can be tried in both. Every booking is fully received at
+ * the CFS and sits on one sailing, so what decides which POs may share a box
+ * on the New container plan screen is the loading-type rule alone.
+ *
+ * Its own function, reading the demo masters by code rather than from seed()'s
+ * locals, so `pnpm db:demo:sheet` can rebuild just this part — the full rebuild
+ * refuses whenever somebody's own work sits on a demo customer, and that should
+ * not stand between a planner and something to plan.
+ */
+async function seedLoadingTypeSheet(tenantId: bigint): Promise<void> {
+  const t = { tenantId };
+  const shared = { OR: [{ tenantId }, { tenantId: null }], deletedAt: null };
+  const demo = async <T>(what: string, find: Promise<T | null>): Promise<T> => {
+    const found = await find;
+    if (found === null) {
+      throw new Error(`The loading-type sheet needs the demo ${what}. Run \`pnpm db:demo\` once first.`);
+    }
+    return found;
+  };
+
+  const [salesman, csUser, garments, knitwear, leather] = await Promise.all([
+    demo('salesman DEMO-EMP-1', prisma.employee.findFirst({ where: { ...t, code: `${P}EMP-1` }, select: { id: true } })),
+    demo(
+      'CS officer login DEMO-USR-3',
+      prisma.user.findFirst({ where: { ...t, code: `${P}USR-3` }, select: { id: true } }),
+    ),
+    demo('sector DEMO-IS1', prisma.industrySector.findFirst({ where: { ...t, code: `${P}IS1` }, select: { id: true } })),
+    demo(
+      'customer DEMO-CUS-2',
+      prisma.customer.findFirst({ where: { ...t, code: `${P}CUS-2` }, select: { id: true, name: true } }),
+    ),
+    demo(
+      'customer DEMO-CUS-3',
+      prisma.customer.findFirst({ where: { ...t, code: `${P}CUS-3` }, select: { id: true, name: true } }),
+    ),
+  ]);
+  const commodity = (code: string) =>
+    demo(
+      `commodity ${P}${code}`,
+      prisma.commodityItem.findFirst({
+        where: { ...t, code: `${P}${code}` },
+        select: { id: true, code: true, name: true, hsCode: true },
+      }),
+    );
+  const commodities = [await commodity('CI1'), await commodity('CI2'), await commodity('CI3')];
+  const costHead = (code: string) =>
+    demo(
+      `cost head ${P}${code}`,
+      prisma.costHead.findFirst({ where: { ...t, code: `${P}${code}` }, select: { id: true, name: true } }),
+    );
+  const [freight, terminal, documentation] = [await costHead('CH1'), await costHead('CH3'), await costHead('CH4')];
+
+  const port = (portCode: string) =>
+    prisma.port.findFirstOrThrow({ where: { portCode, OR: [{ tenantId }, { tenantId: null }] }, select: { id: true } });
+  const [cgp, ham] = [await port('BDCGP'), await port('DEHAM')];
+  // A shipping line, never an airline: these are sea bookings, and the first
+  // carrier by name is Biman.
+  const carrier = await prisma.carrier.findFirstOrThrow({
+    where: { ...shared, type: { name: { not: 'Airline' } } },
+    orderBy: { name: 'asc' },
+    select: { id: true },
+  });
+  const currency = await prisma.currency.findFirstOrThrow({
+    where: { currency: { startsWith: 'BDT' } },
+    select: { id: true, conversion: true },
+  });
+  const goodsType = await prisma.goodsType.findFirstOrThrow({ where: shared, select: { id: true } });
+  const source = await prisma.inquirySource.findFirstOrThrow({ where: shared, select: { id: true } });
+  const hc40 = await prisma.containerSize.findFirstOrThrow({
+    where: { code: '40HC', ...shared },
+    select: { id: true, name: true },
+  });
+  // Vessels are the workspace's own — there is no shared vessel master.
+  const vessel = await prisma.vessel.findFirst({
+    where: { ...t, deletedAt: null },
+    orderBy: { id: 'asc' },
+    select: { id: true, name: true },
+  });
+  if (vessel === null) {
+    throw new Error('The loading-type sheet needs a vessel. Add one under Setting → Vessel first.');
+  }
+
+  const sailing = { voyageNo: 'V2609E', cutOff: day(daysAgo(-7)), etd: day(daysAgo(-9)), eta: day(daysAgo(-40)) };
+  const cfs = 'Pangaon Inland Container Terminal';
+
+  const abc = await prisma.customer.create({
+    data: {
+      ...t,
+      code: `${SHEET}CUS-1`,
+      name: 'ABC Apparels Ltd',
+      country: 'Bangladesh',
+      address: 'Plot 12, Dhaka EPZ, Savar',
+      customerType: 'EXPORTER',
+      businessArea: 'OUTBOUND',
+      industrySectorId: garments.id,
+      salesmanId: salesman.id,
+      createdAt: daysAgo(90),
+    },
+    select: { id: true, name: true },
+  });
+  await prisma.customerPic.create({
+    data: {
+      ...t,
+      code: `${SHEET}PIC-1`,
+      customerId: abc.id,
+      name: 'ABC Desk',
+      designation: 'Merchandising Manager',
+      email: 'export@abc-apparels.test',
+      mobile: '+8801911223344',
+    },
+  });
+
+  interface SheetPo {
+    poNo: string;
+    ctn: number;
+    cbm: number;
+    nwt: number;
+    gwt: number;
+    efr: string;
+  }
+  interface SheetBooking {
+    customer: { id: bigint; name: string };
+    exporter: string;
+    exporterAddress: string;
+    importer: string | null;
+    commodity: number;
+    pos: SheetPo[];
+    /** Consol box: each PO arrived on its own receipt, so each has its own EFR. */
+    receiptPerPo: boolean;
+  }
+  interface SheetFile {
+    label: string;
+    load: 'FCL' | 'LCL' | 'CONSOL_BOX';
+    /** Quoted as one 40HC; a consol box is quoted per CBM with no container. */
+    container: boolean;
+    bookings: SheetBooking[];
+  }
+
+  const bnm = 'BNM Retail GmbH';
+  const abcExporter = { exporter: 'ABC Apparels Ltd', exporterAddress: 'Plot 12, Dhaka EPZ, Savar' };
+  const xyzExporter = { exporter: 'XYZ Knit Composite Ltd', exporterAddress: 'Kashimpur, Gazipur' };
+  const sheet: SheetFile[] = [
+    {
+      label: 'FCL — customer is the exporter',
+      load: 'FCL',
+      container: true,
+      bookings: [
+        {
+          customer: abc, ...abcExporter, importer: bnm, commodity: 0, receiptPerPo: false,
+          pos: [
+            { poNo: 'PO-4501', ctn: 5, cbm: 15, nwt: 20, gwt: 22, efr: 'EFR-001' },
+            { poNo: 'PO-4502', ctn: 10, cbm: 13, nwt: 30, gwt: 32, efr: 'EFR-001' },
+          ],
+        },
+      ],
+    },
+    {
+      label: 'FCL — customer is not the exporter',
+      load: 'FCL',
+      container: true,
+      bookings: [
+        {
+          customer: abc, ...xyzExporter, importer: bnm, commodity: 0, receiptPerPo: false,
+          pos: [
+            { poNo: 'PO-4511', ctn: 5, cbm: 15, nwt: 20, gwt: 22, efr: 'EFR-002' },
+            { poNo: 'PO-4512', ctn: 10, cbm: 13, nwt: 30, gwt: 32, efr: 'EFR-002' },
+          ],
+        },
+      ],
+    },
+    {
+      label: 'LCL — one customer, three exporters',
+      load: 'LCL',
+      container: true,
+      bookings: [
+        {
+          customer: abc, ...abcExporter, importer: bnm, commodity: 0, receiptPerPo: false,
+          pos: [{ poNo: 'PO-4521', ctn: 5, cbm: 10, nwt: 20, gwt: 22, efr: 'EFR-003' }],
+        },
+        {
+          customer: abc, ...xyzExporter, importer: bnm, commodity: 0, receiptPerPo: false,
+          pos: [{ poNo: 'PO-4522', ctn: 10, cbm: 12, nwt: 30, gwt: 32, efr: 'EFR-004' }],
+        },
+        {
+          customer: abc, exporter: 'KLM Denim Mills Ltd', exporterAddress: 'BSCIC, Narayanganj',
+          importer: bnm, commodity: 1, receiptPerPo: false,
+          pos: [{ poNo: 'PO-4523', ctn: 15, cbm: 6, nwt: 35, gwt: 38, efr: 'EFR-005' }],
+        },
+      ],
+    },
+    {
+      label: 'Consol box — small quantity, no container of its own',
+      load: 'CONSOL_BOX',
+      container: false,
+      bookings: [
+        {
+          customer: abc, ...abcExporter, importer: null, commodity: 0, receiptPerPo: true,
+          pos: [
+            { poNo: 'PO-4531', ctn: 5, cbm: 2, nwt: 20, gwt: 22, efr: 'EFR-006' },
+            { poNo: 'PO-4532', ctn: 10, cbm: 3, nwt: 30, gwt: 32, efr: 'EFR-007' },
+          ],
+        },
+      ],
+    },
+    {
+      label: 'LCL — another customer, to share an LCL box with',
+      load: 'LCL',
+      container: true,
+      bookings: [
+        {
+          customer: knitwear, exporter: knitwear.name, exporterAddress: 'Kalurghat I/A, Chattogram',
+          importer: 'Nordic Home AB', commodity: 0, receiptPerPo: false,
+          pos: [{ poNo: 'PO-4541', ctn: 8, cbm: 4, nwt: 96, gwt: 104, efr: 'EFR-008' }],
+        },
+      ],
+    },
+    {
+      label: 'Consol box — another customer, to share a consol box with',
+      load: 'CONSOL_BOX',
+      container: false,
+      bookings: [
+        {
+          customer: leather, exporter: leather.name, exporterAddress: 'Hemayetpur, Savar',
+          importer: null, commodity: 2, receiptPerPo: true,
+          pos: [{ poNo: 'PO-4551', ctn: 6, cbm: 1.8, nwt: 54, gwt: 60, efr: 'EFR-009' }],
+        },
+      ],
+    },
+  ];
+
+  let bookingNo = 0;
+  for (const [f, file] of sheet.entries()) {
+    const n = f + 1;
+    const customer = file.bookings[0]!.customer;
+    const item = commodities[file.bookings[0]!.commodity]!;
+    const cbm = file.bookings.flatMap((b) => b.pos).reduce((s, po) => s + po.cbm, 0);
+    const gwt = file.bookings.flatMap((b) => b.pos).reduce((s, po) => s + po.gwt, 0);
+    const asked = daysAgo(20 - f);
+
+    const inquiry = await prisma.inquiry.create({
+      data: {
+        ...t,
+        code: `${SHEET}INQ-${n}`,
+        seriesYear: asked.getUTCFullYear(),
+        inquiryDate: day(asked),
+        sourceId: source.id,
+        shipmentType: 'SEA',
+        customerId: customer.id,
+        movementType: 'OUTBOUND',
+        loadingType: file.load,
+        polId: cgp.id,
+        podId: ham.id,
+        goodsTypeId: goodsType.id,
+        salesmanId: salesman.id,
+        status: 'WON',
+        weightKg: String(gwt),
+        validTo: day(daysAgo(-20)),
+        remarks: `Demo data (${file.label}) — safe to delete with pnpm db:demo:sheet:clear.`,
+        createdAt: asked,
+      },
+      select: { id: true },
+    });
+    await prisma.inquiryVolume.create({
+      data:
+        file.load === 'FCL'
+          ? { ...t, inquiryId: inquiry.id, volumeKind: 'FCL', containerSizeId: hc40.id, quantity: 1 }
+          : // LCL and Consol box are measured in CBM (see the LoadingType enum).
+            { ...t, inquiryId: inquiry.id, volumeKind: 'LCL', cbm: String(cbm), weightKg: String(gwt) },
+    });
+    await prisma.inquiryCommodity.create({
+      data: { ...t, inquiryId: inquiry.id, commodityItemId: item.id, hsCode: item.hsCode },
+    });
+
+    const quoted = daysAgo(19 - f);
+    const quotation = await prisma.quotation.create({
+      data: {
+        ...t,
+        code: `${SHEET}QTN-${n}`,
+        seriesYear: quoted.getUTCFullYear(),
+        inquiryId: inquiry.id,
+        quotationDate: day(quoted),
+        validityDate: day(daysAgo(-30)),
+        customerId: customer.id,
+        shipmentType: 'SEA',
+        movementType: 'OUTBOUND',
+        loadingType: file.load,
+        polId: cgp.id,
+        podId: ham.id,
+        carrierId: carrier.id,
+        localCurrencyId: currency.id,
+        conversionRate: currency.conversion,
+        status: 'ACCEPTED',
+        sentAt: quoted,
+        createdAt: quoted,
+      },
+      select: { id: true },
+    });
+    const quoteLines = [
+      file.container
+        ? // The container on this line is what the booking's Required Container reads.
+          { head: freight, group: 'STANDARD' as const, size: hc40, qty: '1', price: '2450.0000' }
+        : { head: freight, group: 'STANDARD' as const, size: null, qty: String(cbm), price: '85.0000' },
+      { head: terminal, group: 'ADDITIONAL' as const, size: null, qty: '1', price: '110.0000' },
+      { head: documentation, group: 'ADDITIONAL' as const, size: null, qty: '1', price: '35.0000' },
+    ];
+    for (const [j, line] of quoteLines.entries()) {
+      await prisma.quotationLine.create({
+        data: {
+          ...t,
+          quotationId: quotation.id,
+          lineGroup: line.group,
+          sortOrder: j + 1,
+          costHeadId: line.head.id,
+          costHeadName: line.head.name,
+          containerSizeId: line.size?.id ?? null,
+          containerSizeName: line.size?.name ?? null,
+          quantity: line.qty,
+          sellingPrice: line.price,
+          currencyId: currency.id,
+          currencyCode: 'BDT',
+          conversionRate: currency.conversion,
+          source: 'MANUAL',
+        },
+      });
+    }
+    await prisma.quotationCommodity.create({
+      data: {
+        ...t,
+        quotationId: quotation.id,
+        commodityItemId: item.id,
+        commodityName: item.name,
+        hsCode: item.hsCode,
+      },
+    });
+
+    for (const booking of file.bookings) {
+      bookingNo += 1;
+      const code = `${SHEET}BKG-${bookingNo}`;
+      const booked = daysAgo(15 - f);
+      const goods = commodities[booking.commodity]!;
+
+      const shipment = await prisma.shipment.create({
+        data: {
+          ...t,
+          code,
+          seriesYear: booked.getUTCFullYear(),
+          quotationId: quotation.id,
+          shipmentType: 'SEA',
+          customerId: booking.customer.id,
+          exporterName: booking.exporter,
+          exporterAddress: booking.exporterAddress,
+          importerName: booking.importer,
+          importerAddress: booking.importer === null ? null : 'Spitalerstrasse 12, 20095 Hamburg',
+          carrierId: carrier.id,
+          polId: cgp.id,
+          podId: ham.id,
+          loadingType: file.load,
+          transitType: 'DIRECT',
+          warehouseCfs: cfs,
+          etd: sailing.etd,
+          eta: sailing.eta,
+          goodsHandoverDate: day(daysAgo(4)),
+          status: 'CARGO_RECEIVED',
+          createdAt: booked,
+        },
+        select: { id: true },
+      });
+      await prisma.shipmentCommodity.create({
+        data: { ...t, shipmentId: shipment.id, commodityItemId: goods.id, hsCode: goods.hsCode },
+      });
+
+      const lines: { id: bigint }[] = [];
+      for (const [k, po] of booking.pos.entries()) {
+        const created = await prisma.shipmentPo.create({
+          data: {
+            ...t,
+            shipmentId: shipment.id,
+            poNo: po.poNo,
+            approvalStatus: 'APPROVED',
+            approvedBy: csUser.id,
+            approvedAt: daysAgo(13 - f),
+            approvedOnBehalf: true,
+          },
+          select: { id: true },
+        });
+        /*
+          The sheet gives CBM, not carton size, so the carton is sized to give
+          it back exactly: 100 × 100 × (CBM a carton × 100) cm. volume_cbm is
+          generated from these, so it has to be exact rather than close.
+        */
+        const line = await prisma.shipmentCargoLine.create({
+          data: {
+            ...t,
+            shipmentId: shipment.id,
+            shipmentPoId: created.id,
+            itemCode: `${goods.code.replace(P, '')}-${k + 1}`,
+            sku: `${po.poNo}-S1`,
+            ctnQty: po.ctn,
+            pcsQty: po.ctn * 24,
+            netWeightKg: String(po.nwt),
+            grossWeightKg: String(po.gwt),
+            cartonLengthCm: '100',
+            cartonWidthCm: '100',
+            cartonHeightCm: String(Math.round((po.cbm / po.ctn) * 10000) / 100),
+          },
+          select: { id: true },
+        });
+        lines.push({ id: line.id });
+      }
+
+      const schedule = await prisma.shipmentSchedule.create({
+        data: {
+          ...t,
+          code: `${SHEET}SCH-${bookingNo}`,
+          shipmentId: shipment.id,
+          carrierId: carrier.id,
+          transitType: 'DIRECT',
+          cutOffDate: sailing.cutOff,
+          vgmDate: day(daysAgo(-6)),
+          siDate: day(daysAgo(-5)),
+          status: 'APPROVED',
+          proposedBy: csUser.id,
+          proposedAt: daysAgo(13 - f),
+          decidedBy: csUser.id,
+          decidedAt: daysAgo(12 - f),
+        },
+        select: { id: true },
+      });
+      // One vessel and voyage for every booking here: the sailing is a hard
+      // rule, and a demo that failed it would hide the rule being shown.
+      await prisma.shipmentScheduleLeg.create({
+        data: {
+          ...t,
+          scheduleId: schedule.id,
+          legNo: 1,
+          vesselId: vessel.id,
+          voyageNo: sailing.voyageNo,
+          originPortId: cgp.id,
+          destinationPortId: ham.id,
+          etd: sailing.etd,
+          eta: sailing.eta,
+        },
+      });
+
+      const so = await prisma.shippingOrder.create({
+        data: {
+          ...t,
+          code: `${SHEET}SO-${bookingNo}`,
+          seriesYear: booked.getUTCFullYear(),
+          shipmentId: shipment.id,
+          scheduleId: schedule.id,
+          issueDate: day(daysAgo(10 - f)),
+          issuedBy: csUser.id,
+          firstVesselId: vessel.id,
+          firstVesselName: vessel.name,
+          cutOff: sailing.cutOff,
+          etd: sailing.etd,
+          eta: sailing.eta,
+          warehouseCfs: cfs,
+          status: 'ISSUED',
+          qrPayload: `SO:${SHEET}SO-${bookingNo}\nBKG:${code}`,
+        },
+        select: { id: true },
+      });
+
+      const receipts = booking.receiptPerPo
+        ? booking.pos.map((po, k) => ({ efr: po.efr, lines: [lines[k]!] }))
+        : [{ efr: booking.pos[0]!.efr, lines }];
+      for (const [k, r] of receipts.entries()) {
+        await receive(tenantId, csUser.id, {
+          code: `${SHEET}CR-${bookingNo}-${k + 1}`,
+          shipmentId: shipment.id,
+          shippingOrderId: so.id,
+          seq: k + 1,
+          efrNo: r.efr,
+          when: daysAgo(3 - k),
+          lines: r.lines,
         });
       }
     }
   }
 }
 
+/** What the sheet made, so a planner knows which booking is which table. */
+function printSheet(): void {
+  console.log('\n  Container load plan — the loading-type sheet, all received at CFS on one sailing:');
+  console.log(`    FCL         ${SHEET}BKG-1  ABC Apparels, exporter ABC  PO-4501 + PO-4502  EFR-001`);
+  console.log(`    FCL         ${SHEET}BKG-2  ABC Apparels, exporter XYZ  PO-4511 + PO-4512  EFR-002`);
+  console.log(`    LCL         ${SHEET}BKG-3  ABC Apparels, exporter ABC  PO-4521            EFR-003`);
+  console.log(`    LCL         ${SHEET}BKG-4  ABC Apparels, exporter XYZ  PO-4522            EFR-004`);
+  console.log(`    LCL         ${SHEET}BKG-5  ABC Apparels, exporter KLM  PO-4523            EFR-005`);
+  console.log(`    Consol box  ${SHEET}BKG-6  ABC Apparels, exporter ABC  PO-4531 + PO-4532  EFR-006, EFR-007`);
+  console.log(`    LCL         ${SHEET}BKG-7  Chittagong Knitwear         PO-4541            EFR-008`);
+  console.log(`    Consol box  ${SHEET}BKG-8  Bengal Leather Works        PO-4551            EFR-009`);
+}
+
 // --------------------------------------------------------------------- main
 
 async function main(): Promise<void> {
   const clearOnly = process.argv.includes('--clear');
+  // Only the loading-type sheet's rows (DEMO-SHEET-), leaving the rest alone.
+  const sheetOnly = process.argv.includes('--sheet');
 
   const tenant = await prisma.tenant.findFirst({
     where: { slug: SLUG },
@@ -896,12 +1545,20 @@ async function main(): Promise<void> {
     );
   }
 
+  const prefix = sheetOnly ? SHEET : P;
   console.log(`Workspace: ${tenant.name} (${tenant.slug})`);
-  console.log(`Only rows whose code starts with "${P}" are touched.\n`);
+  console.log(`Only rows whose code starts with "${prefix}" are touched.\n`);
 
-  await clear(tenant.id);
+  await clear(tenant.id, prefix);
   if (clearOnly) {
-    console.log('Demo data removed.');
+    console.log(sheetOnly ? 'Loading-type sheet demo removed.' : 'Demo data removed.');
+    return;
+  }
+
+  if (sheetOnly) {
+    await seedLoadingTypeSheet(tenant.id);
+    printSheet();
+    console.log('\nDone. Remove it again with: pnpm db:demo:sheet:clear');
     return;
   }
 
@@ -924,6 +1581,7 @@ async function main(): Promise<void> {
   console.log(`  inquiries  : ${counts[4]}  (FCL, LCL, Consol Box and Air, over six months)`);
   console.log(`  quotations : ${counts[5]}`);
   console.log(`  bookings   : ${counts[6]}  (one in each state, so every worklist has rows)`);
+  printSheet();
   console.log('\nDone. Remove it again with: pnpm db:demo:clear');
 }
 

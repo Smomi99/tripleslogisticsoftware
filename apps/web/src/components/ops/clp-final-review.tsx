@@ -100,12 +100,20 @@ export function ClpFinalReview({
             {clp.status === 'FINAL' ? 'Final' : clp.status === 'CANCELLED' ? 'Cancelled' : 'Draft'}
           </Status>
         </Line>
+        {/*
+          The loading type is the bookings' own, and the count is who is in the
+          box. consolidation_type is not read for the name: an LCL and a Consol
+          box consolidation are stored alike, and a plan made before the
+          loading-type sheet may say FCL_QUOTATION.
+        */}
         <Line label="Type">
-          {clp.consolidationType === 'SINGLE'
-            ? 'One booking'
-            : clp.consolidationType === 'LCL_CONSOLIDATION'
-              ? 'LCL consolidation'
-              : 'FCL / consol box'}
+          {clp.loadingType === null
+            ? '—'
+            : clp.loadingType === 'CONSOL_BOX'
+              ? 'Consol box'
+              : clp.loadingType}
+          {' · '}
+          {clp.bookings.length > 1 ? `${clp.bookings.length} bookings` : 'one booking'}
         </Line>
         <Line label="Container">
           {clp.containerSizeCode}

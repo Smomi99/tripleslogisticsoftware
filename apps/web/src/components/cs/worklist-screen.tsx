@@ -300,7 +300,7 @@ export function WorklistScreen({ worklist }: { worklist: ShipmentWorklistId }) {
             */}
             {worklist === 'CARGO_RECEIPT' && can('OPERATION.CONTAINER_LOAD_PLAN.CREATE') && (
               <Link
-                href={`/operation/container-load-plan/new?booking=${row.id}`}
+                href={`/operation/container-load-plan?booking=${row.id}`}
                 className="text-body text-harbour hover:underline"
               >
                 Make CLP

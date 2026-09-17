@@ -17,6 +17,20 @@ import { normaliseContainerNo, validateContainerNo } from './iso6346';
 
 // ------------------------------------------------------------ the selector
 
+/**
+ * The three loading workflows, one per `shipment.loading_type` — the client's
+ * loading-type sheet of 2026-09-16.
+ *
+ *   FCL         one booking fills its own container. Two FCL bookings never
+ *               share one; several exporters in one box is LCL.
+ *   LCL         several bookings share a box, across exporters and customers.
+ *   CONSOL_BOX  small shipments in the forwarder's own box, across customers.
+ *
+ * They never share a container with each other.
+ */
+export const CLP_LOADING_FAMILIES = ['FCL', 'LCL', 'CONSOL_BOX'] as const;
+export type ClpLoadingFamily = (typeof CLP_LOADING_FAMILIES)[number];
+
 export interface ClpBookingRow {
   shipmentId: string;
   code: string;
@@ -34,11 +48,11 @@ export interface ClpBookingRow {
    */
   loadingType: string | null;
   /**
-   * Which workflow it belongs to. CONSOL_BOX is FCL-like (CR-002 §3), and
-   * null where the booking never stated a loading type — not defaulted, since
-   * a guess here decides which cargo may share a steel box.
+   * Which workflow it belongs to, and null where the booking never stated a
+   * loading type — not defaulted, since a guess here decides which cargo may
+   * share a steel box.
    */
-  family: 'FCL' | 'LCL' | null;
+  family: ClpLoadingFamily | null;
   polName: string;
   polCode: string;
   podName: string;
@@ -63,8 +77,8 @@ export interface ClpBookingRow {
 
 export const clpBookingListQuerySchema = listQuerySchema.extend({
   shipmentType: z.enum(['SEA', 'AIR']).optional(),
-  /** FCL and LCL are separate workflows, so the queue can be read as either. */
-  family: z.enum(['FCL', 'LCL']).optional(),
+  /** FCL, LCL and Consol box are separate workflows, so the queue can be read as any one. */
+  family: z.enum(CLP_LOADING_FAMILIES).optional(),
 });
 
 /**
@@ -96,8 +110,8 @@ export interface ClpListRow {
   shipmentType: string;
   /** Verbatim `shipment.loading_type` of the booking this plan is shown under. */
   loadingType: string | null;
-  /** The workflow the container belongs to — CONSOL_BOX counts as FCL. */
-  family: 'FCL' | 'LCL' | null;
+  /** The workflow the container belongs to. */
+  family: ClpLoadingFamily | null;
   polName: string;
   podName: string;
   requiredContainer: string;
@@ -111,11 +125,11 @@ export interface ClpListRow {
 export const clpListQuerySchema = listQuerySchema.extend({
   status: z.enum(['DRAFT', 'FINAL', 'CANCELLED']).optional(),
   /**
-   * The same FCL/LCL split the creation screen already uses, applied to the
+   * The same workflow split the creation screen uses, applied to the
    * register. Derived from the participating bookings' loading type at read
    * time — no column was added to `clp`, because the answer is already stored.
    */
-  family: z.enum(['FCL', 'LCL']).optional(),
+  family: z.enum(CLP_LOADING_FAMILIES).optional(),
 });
 
 // --------------------------------------------------------------- the plan
@@ -139,6 +153,8 @@ export interface ClpPoolRow {
   dc: string | null;
   /** What arrived in total, so the split dialog can show "available". */
   receivedCtnQty: number;
+  /** The EFR numbers of the receipts these cartons arrived on — see clp-efr.ts. */
+  efrNos: string[];
 }
 
 export interface ClpLineRow {
@@ -156,6 +172,8 @@ export interface ClpLineRow {
   volumeCbm: string | null;
   isSplit: boolean;
   isFinalAllocation: boolean;
+  /** The EFR numbers of the receipts this cargo line arrived on. */
+  efrNos: string[];
 }
 
 export type ClpStatus = 'DRAFT' | 'FINAL' | 'CANCELLED';
@@ -227,6 +245,11 @@ export interface ClpCard {
 
   /* CR-002 — who is in this box, and what it cost them. */
   consolidationType: ClpConsolidationType;
+  /**
+   * The participants' loading type. Every booking in one box shares it, so
+   * the first one's is the container's; null on a plan with no booking.
+   */
+  loadingType: string | null;
   bookings: ClpParticipant[];
   actualContainerCost: string | null;
   costCurrencyCode: string | null;
@@ -433,14 +456,34 @@ export function splitPreview(
 
 // ------------------------------------------------- CR-002: consolidation
 
+/**
+ * One PO of a candidate booking — the unit a planner ticks.
+ *
+ * The client's sheet: "multiple exporter's PO will select by check box and
+ * make CLP". Ticking a PO loads every carton of it that was received and is
+ * not already in a live plan, which is exactly what `ctnQty` says.
+ */
+export interface ClpCandidatePo {
+  poId: string;
+  poNo: string;
+  /** Received, accepted and in no live plan — what ticking it would load. */
+  ctnQty: number;
+  receivedCtnQty: number;
+  /** The share of the received CBM and weight those cartons carry. */
+  cbm: string;
+  grossKg: string;
+  efrNos: string[];
+}
+
 /** One booking offered for consolidation, with what the rules judge it on. */
 export interface ClpCandidateRow {
   shipmentId: string;
   code: string;
   customerName: string;
   exporterName: string | null;
+  importerName: string | null;
   loadingType: string | null;
-  family: 'FCL' | 'LCL' | null;
+  family: ClpLoadingFamily | null;
   polName: string;
   podName: string;
   carrierName: string;
@@ -456,6 +499,10 @@ export interface ClpCandidateRow {
   receivedGrossKg: string;
   /** Already planned into a container? Shown, not hidden. */
   plannedCtnQty: number;
+  /** "40' High Cube(1)" — what the quotation agreed, as the booking reads it. */
+  requiredContainer: string;
+  /** POs with cargo received, in booking order. */
+  pos: ClpCandidatePo[];
 }
 
 /**
@@ -502,31 +549,55 @@ export interface ClpCompatibilityResult {
    * a booking id can open the right one. Null when the bookings disagree or
    * none has a loading type.
    */
-  family: 'FCL' | 'LCL' | null;
+  family: ClpLoadingFamily | null;
   issues: ClpCompatibilityIssue[];
   /** Distinct CFS locations across the selection (§8). */
   cfsLocations: string[];
+  /**
+   * What the selection would load. For ticked POs, their cartons still to
+   * plan; for bookings alone, everything they received.
+   */
   totalCtnQty: number;
   totalCbm: string;
   totalGrossKg: string;
 }
 
 export const clpCandidateQuerySchema = z.object({
-  family: z.enum(['FCL', 'LCL']),
+  /** Omitted for every workflow at once — the screen's All tab. Mixing is still refused on the write. */
+  family: z.enum(CLP_LOADING_FAMILIES).optional(),
   search: z.string().trim().optional(),
 });
 
-export const clpCheckSchema = z.object({
-  shipmentIds: z.array(z.string().min(1)).min(1, 'Choose at least one booking.'),
-});
+/**
+ * A selection is POs (what the screen ticks) or bookings (an entry point that
+ * knows only a booking, such as `Make CLP`). The bookings of ticked POs are
+ * worked out on the server, never sent alongside them.
+ */
+const idList = z.array(z.string().min(1)).default([]);
+
+export const clpCheckSchema = z
+  .object({ shipmentIds: idList, shipmentPoIds: idList })
+  .refine((v) => v.shipmentIds.length + v.shipmentPoIds.length > 0, {
+    message: 'Choose at least one PO.',
+  });
 export type ClpCheckInput = z.input<typeof clpCheckSchema>;
 
-export const clpConsolidateSchema = z.object({
-  shipmentIds: z.array(z.string().min(1)).min(1, 'Choose at least one booking.'),
-  containerSizeId: z.string().min(1, 'Choose a container size.'),
-  /** §8 — an explicit choice, never derived from one receipt. */
-  finalCfsLocation: z.string().trim().max(200).optional(),
-});
+export const clpConsolidateSchema = z
+  .object({
+    /** Bookings to plan with nothing loaded yet. */
+    shipmentIds: idList,
+    /** POs to load in full; their bookings become the container's. */
+    shipmentPoIds: idList,
+    containerSizeId: z.string().min(1, 'Choose a container size.'),
+    /** §8 — an explicit choice, never derived from one receipt. */
+    finalCfsLocation: z.string().trim().max(200).optional(),
+  })
+  .refine((v) => v.shipmentIds.length + v.shipmentPoIds.length > 0, {
+    message: 'Choose at least one PO.',
+  })
+  .refine((v) => v.shipmentIds.length === 0 || v.shipmentPoIds.length === 0, {
+    message: 'Send the POs to load or the bookings to plan, not both.',
+  });
 export type ClpConsolidateInput = z.input<typeof clpConsolidateSchema>;
 
 // ------------------------------------------------------ CR-002: the money

@@ -498,6 +498,58 @@ describe('layer 2 — Postgres RLS, independent of the extension', () => {
     expect(rows.map((r) => r.table_name)).toEqual(allowed);
   });
 
+  it('writes every tenant-owned policy in the form the planner can estimate', async () => {
+    /*
+      20260917090000_rls_estimable_tenant_check. The older form,
+      `tenant_id = app_current_tenant() AND app_current_agent() IS NULL`,
+      admits the same rows but is estimated at 0.5% of any table, so a query
+      filtering through related tables nested full scans inside each other —
+      9 s for two rows at ~90 bookings. A new table's policy copied from an
+      older migration would bring that back for its table, silently.
+
+      The 16 system-capable tables (tenant_id IS NULL rows) keep their own
+      shape by design and are excluded here.
+    */
+    const rows = await owner.$queryRaw<{ tablename: string; qual: string; with_check: string | null }[]>`
+      SELECT tablename, qual, with_check
+      FROM pg_policies
+      WHERE schemaname = 'public'
+        AND policyname IN ('tenant_isolation', 'tenant_self')
+        AND qual NOT LIKE '%tenant_id IS NULL%'
+      ORDER BY tablename
+    `;
+    expect(rows.length).toBeGreaterThanOrEqual(65);
+    const estimable = /^\((tenant_id|id) = app_staff_tenant\(\)\)$/;
+    const slow = rows.filter((r) => !estimable.test(r.qual) || !estimable.test(r.with_check ?? ''));
+    expect(slow.map((r) => `${r.tablename}: ${r.qual}`)).toEqual([]);
+  });
+
+  it('lets the planner see how many rows a tenant table holds', async () => {
+    /*
+      Why the form above matters, measured rather than asserted from the text.
+      Under the older policy a tenant's table was estimated at one row however
+      many it held, which is what made nested lookups degrade into nested full
+      scans. Checked on the tenant with the most bookings, through the same
+      tenant-scoped connection the API uses.
+    */
+    const [busiest] = await owner.$queryRaw<{ tenant_id: bigint; count: bigint }[]>`
+      SELECT tenant_id, count(*)::bigint AS count FROM shipment GROUP BY tenant_id ORDER BY 2 DESC LIMIT 1
+    `;
+    expect(busiest, 'needs bookings to estimate').toBeDefined();
+    const actual = Number(busiest!.count);
+    expect(actual).toBeGreaterThanOrEqual(5);
+
+    const plan = await withTenant(busiest!.tenant_id, (db) =>
+      db.$queryRawUnsafe<{ 'QUERY PLAN': { Plan: { 'Plan Rows': number } }[] }[]>(
+        'EXPLAIN (FORMAT JSON) SELECT id FROM shipment',
+      ),
+    );
+    const estimated = plan[0]!['QUERY PLAN'][0]!.Plan['Plan Rows'];
+    expect(estimated, `estimated ${estimated} of ${actual} rows`).toBeGreaterThanOrEqual(
+      Math.max(2, Math.floor(actual * 0.1)),
+    );
+  });
+
   it('does not own any table, so policies actually bind', async () => {
     const rows = await owner.$queryRaw<{ count: bigint }[]>`
       SELECT count(*)::bigint AS count

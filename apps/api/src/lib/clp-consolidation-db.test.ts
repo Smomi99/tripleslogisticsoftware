@@ -64,7 +64,9 @@ async function twin(
       polId: src.polId,
       podId: src.podId,
       shipmentType: src.shipmentType,
-      loadingType: src.loadingType,
+      // LCL, so that two twins on one sailing may share a box at all: two FCL
+      // bookings never do (rule 9, client sheet 2026-09-16).
+      loadingType: 'LCL',
       transitType: src.transitType,
       status: 'CARGO_RECEIVED',
       createdBy: userId,
@@ -201,7 +203,7 @@ describe('reading the sailing out of the database', () => {
     expect(a!.polId).toBeTypeOf('bigint');
     expect(a!.podId).toBeTypeOf('bigint');
     expect(a!.carrierId).toBeTypeOf('bigint');
-    expect(a!.family).toBe('FCL');
+    expect(a!.family).toBe('LCL');
     expect(a!.polName.length).toBeGreaterThan(0);
   });
 

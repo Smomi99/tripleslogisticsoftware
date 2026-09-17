@@ -1,3 +1,6 @@
+import { Prisma } from '../generated/prisma/client';
+import { LIVE_ALLOCATION } from './clp-allocate';
+import { efrNosOfCargoLines } from './clp-efr';
 import { HttpError } from './http-error';
 import type { TenantDb } from './tenant-client';
 
@@ -25,13 +28,20 @@ import type { TenantDb } from './tenant-client';
  */
 
 /**
- * FCL and LCL are different workflows and never share a box.
+ * Three workflows, one per loading type, and they never share a box — the
+ * client's loading-type sheet of 2026-09-16:
  *
- * CONSOL_BOX is FCL-like (client decision, 2026-09-15): it is a whole
- * container the forwarder fills, so it follows the FCL physical rules and
- * appears in the FCL workflow. It is emphatically not LCL.
+ *   FCL         one booking fills its own container. One exporter, one EFR;
+ *               the booking may need several containers, but no other
+ *               booking joins it (rule 9).
+ *   LCL         several bookings share a box — different exporters, and
+ *               different customers too (confirmed 2026-09-16).
+ *   CONSOL_BOX  small shipments that cannot fill a container, loaded into the
+ *               forwarder's own box with other customers' cargo. Its own
+ *               workflow: the 2026-09-15 decision that made it FCL-like is
+ *               superseded, and it does not mix with LCL either.
  */
-export type LoadingFamily = 'FCL' | 'LCL';
+export type LoadingFamily = 'FCL' | 'LCL' | 'CONSOL_BOX';
 
 /**
  * Null where the booking never recorded one. Not defaulted to FCL: a guess
@@ -39,8 +49,9 @@ export type LoadingFamily = 'FCL' | 'LCL';
  * refusal, not a default.
  */
 export function loadingFamily(loadingType: string | null): LoadingFamily | null {
-  if (loadingType === null || loadingType === '') return null;
-  return loadingType === 'LCL' ? 'LCL' : 'FCL';
+  return loadingType === 'FCL' || loadingType === 'LCL' || loadingType === 'CONSOL_BOX'
+    ? loadingType
+    : null;
 }
 
 /**
@@ -49,13 +60,15 @@ export function loadingFamily(loadingType: string | null): LoadingFamily | null 
  *
  * Kept beside `loadingFamily` and used by every list that filters, so a view
  * can never disagree with the rule that decides what may share a box. A
- * booking with no loading type is in neither list — the same refusal to guess.
+ * booking with no loading type is in no list — the same refusal to guess.
  */
-export function loadingTypesOf(
-  family: LoadingFamily,
-): ('FCL' | 'LCL' | 'CONSOL_BOX')[] {
-  return family === 'LCL' ? ['LCL'] : ['FCL', 'CONSOL_BOX'];
+export function loadingTypesOf(family: LoadingFamily): LoadingFamily[] {
+  return [family];
 }
+
+/** How a workflow is named in a sentence a planner reads. */
+export const familyLabel = (family: LoadingFamily): string =>
+  family === 'CONSOL_BOX' ? 'Consol box' : family;
 
 /** Everything the rules need to judge one booking. */
 export interface ConsolidationCandidate {
@@ -63,6 +76,7 @@ export interface ConsolidationCandidate {
   code: string;
   customerName: string;
   exporterName: string | null;
+  importerName: string | null;
   loadingType: string | null;
   family: LoadingFamily | null;
   shipmentType: string;
@@ -173,12 +187,27 @@ export function checkCompatibility(candidates: ConsolidationCandidate[]): Incomp
   }
 
   for (const c of rest) {
-    // Rule 8 — never mix the two workflows.
+    // Rule 8 — never mix the workflows.
     if (c.family !== null && anchor.family !== null && c.family !== anchor.family) {
       fail(
         c,
-        `${c.code} is ${c.loadingType ?? 'unset'} and ${anchor.code} is ${anchor.loadingType ?? 'unset'}. ` +
-          'FCL and LCL cargo never share a container.',
+        `${c.code} is ${familyLabel(c.family)} and ${anchor.code} is ${familyLabel(anchor.family)}. ` +
+          'Different loading types never share a container.',
+      );
+    }
+
+    /*
+      Rule 9 — an FCL container is one booking's (client sheet, 2026-09-16).
+      The sheet defines FCL as one booking with one EFR; several exporters
+      sharing a box is what it calls LCL. So two FCL bookings are refused even
+      on the same quotation and sailing, and the message says what to do
+      instead rather than only that it is wrong.
+    */
+    if (c.family === 'FCL' && anchor.family === 'FCL') {
+      fail(
+        c,
+        `${c.code} and ${anchor.code} are separate FCL bookings, and an FCL container holds one ` +
+          'booking. If their cargo has to share a box, book them as LCL.',
       );
     }
 
@@ -249,11 +278,13 @@ export function cfsLocations(candidates: ConsolidationCandidate[]): string[] {
 }
 
 /**
- * §4 — the commercial default.
+ * Which bookings could go in one box, as a starting point.
  *
- * Bookings under one quotation are suggested together. This is a proposal the
- * user may split; nothing here is enforced, and a group it returns still has
- * to pass `checkCompatibility` before anything is created.
+ * LCL and Consol box bookings on one physical sailing are suggested together,
+ * whoever the customer. FCL is never grouped: rule 9 gives every FCL booking
+ * its own container, so each is a group of one — which the screen does not
+ * draw. A proposal the user may split; nothing here is enforced, and a group
+ * it returns still has to pass `checkCompatibility` before anything is created.
  */
 export function suggestGroups(
   candidates: ConsolidationCandidate[],
@@ -273,9 +304,7 @@ export function suggestGroups(
       c.podId.toString(),
       c.carrierId.toString(),
       sailingOf(c) ?? 'unscheduled',
-      // FCL groups default by quotation; LCL is consolidation across
-      // customers, so it has no commercial default to propose.
-      c.family === 'FCL' ? (c.quotationId?.toString() ?? `booking-${c.shipmentId}`) : 'lcl',
+      c.family === 'FCL' ? `booking-${c.shipmentId}` : 'shared',
     ].join('|');
 
     const found = groups.get(key);
@@ -311,6 +340,7 @@ export async function loadCandidates(
       shipmentType: true,
       status: true,
       exporterName: true,
+      importerName: true,
       polId: true,
       podId: true,
       carrierId: true,
@@ -405,6 +435,7 @@ export async function loadCandidates(
       code: row.code,
       customerName: row.customer.name,
       exporterName: row.exporterName,
+      importerName: row.importerName,
       loadingType: row.loadingType,
       family: loadingFamily(row.loadingType),
       shipmentType: row.shipmentType,
@@ -442,6 +473,206 @@ export async function loadCandidates(
   });
 }
 
+/** Candidates rearranged into the order their ids were given; findMany promises none. */
+export function inOrder(
+  candidates: ConsolidationCandidate[],
+  shipmentIds: bigint[],
+): ConsolidationCandidate[] {
+  const byId = new Map(candidates.map((c) => [c.shipmentId.toString(), c]));
+  return shipmentIds
+    .map((id) => byId.get(id.toString()))
+    .filter((c): c is ConsolidationCandidate => c !== undefined);
+}
+
+/**
+ * One PO as the creation screen offers it and the consolidation loads it.
+ *
+ * The client's sheet has planners tick POs rather than bookings ("multiple
+ * exporter's PO will select by check box and make CLP"), so the PO is the unit
+ * the selection is made in, while the booking stays the unit the rules judge.
+ */
+export interface CandidatePo {
+  poId: bigint;
+  shipmentId: bigint;
+  poNo: string;
+  /** Cartons that arrived and were accepted. */
+  receivedCtnQty: number;
+  /** Of those, the ones in no live plan — exactly what ticking the PO loads. */
+  ctnQty: number;
+  /** The received CBM and weight those cartons carry. */
+  cbm: Prisma.Decimal;
+  grossKg: Prisma.Decimal;
+  /** Lines with cartons still to load, in the order they are loaded. */
+  openCargoLineIds: bigint[];
+  efrNos: string[];
+}
+
+const ZERO = new Prisma.Decimal(0);
+
+/**
+ * Reads POs with what is left of them to load.
+ *
+ * Quantity comes from the allocation ledger exactly as `availableCartons`
+ * computes it: accepted receipts minus live allocations. CBM and weight are
+ * the received figures — the CFS's measurement where there is one, the booked
+ * per-carton rate otherwise, as `loadCandidates` reads them — apportioned to
+ * the cartons still free. They are what the running strip shows and what the
+ * capacity pre-check compares; `allocate` still writes and checks the real
+ * figures afterwards.
+ *
+ * Every PO matching the filter is returned, including one with nothing
+ * received, so a caller can say why it cannot be loaded rather than only that
+ * it is missing.
+ */
+export async function loadCandidatePos(
+  db: TenantDb,
+  filter: { shipmentIds: bigint[] } | { poIds: bigint[] },
+): Promise<CandidatePo[]> {
+  const byPo = 'poIds' in filter;
+  const wanted = byPo ? filter.poIds : filter.shipmentIds;
+  if (wanted.length === 0) return [];
+
+  const pos = await db.shipmentPo.findMany({
+    where: {
+      ...(byPo ? { id: { in: wanted } } : { shipmentId: { in: wanted } }),
+      deletedAt: null,
+    },
+    orderBy: { id: 'asc' },
+    select: {
+      id: true,
+      shipmentId: true,
+      poNo: true,
+      cargoLines: {
+        where: { deletedAt: null },
+        orderBy: { id: 'asc' },
+        select: {
+          id: true,
+          cbmPerCarton: true,
+          grossWeightPerCarton: true,
+          cargoReceiptLines: {
+            where: {
+              deletedAt: null,
+              lineStatus: 'ACCEPTED',
+              receipt: { status: 'CONFIRMED', deletedAt: null },
+            },
+            select: { receivedCtnQty: true, receivedVolumeCbm: true, receivedGrossWeightKg: true },
+          },
+        },
+      },
+    },
+  });
+
+  const lineIds = pos.flatMap((po) => po.cargoLines.map((line) => line.id));
+  const [allocations, efrs] = await Promise.all([
+    lineIds.length === 0
+      ? []
+      : db.clpLine.findMany({
+          where: { ...LIVE_ALLOCATION, shipmentCargoLineId: { in: lineIds } },
+          select: { shipmentCargoLineId: true, ctnQty: true },
+        }),
+    efrNosOfCargoLines(db, lineIds),
+  ]);
+
+  const planned = new Map<string, number>();
+  for (const a of allocations) {
+    const key = a.shipmentCargoLineId.toString();
+    planned.set(key, (planned.get(key) ?? 0) + a.ctnQty);
+  }
+
+  return pos.map((po): CandidatePo => {
+    let received = 0;
+    let free = 0;
+    let cbm = ZERO;
+    let kg = ZERO;
+    const open: bigint[] = [];
+    const lineEfrs: string[] = [];
+
+    for (const line of po.cargoLines) {
+      for (const efr of efrs.get(line.id.toString()) ?? []) {
+        if (!lineEfrs.includes(efr)) lineEfrs.push(efr);
+      }
+
+      let got = 0;
+      let lineCbm = ZERO;
+      let lineKg = ZERO;
+      for (const r of line.cargoReceiptLines) {
+        got += r.receivedCtnQty;
+        lineCbm = lineCbm.plus(
+          r.receivedVolumeCbm ?? new Prisma.Decimal(line.cbmPerCarton ?? 0).times(r.receivedCtnQty),
+        );
+        lineKg = lineKg.plus(
+          r.receivedGrossWeightKg ??
+            new Prisma.Decimal(line.grossWeightPerCarton ?? 0).times(r.receivedCtnQty),
+        );
+      }
+      received += got;
+
+      const left = got - (planned.get(line.id.toString()) ?? 0);
+      if (left <= 0) continue;
+      free += left;
+      open.push(line.id);
+      cbm = cbm.plus(lineCbm.times(left).dividedBy(got));
+      kg = kg.plus(lineKg.times(left).dividedBy(got));
+    }
+
+    return {
+      poId: po.id,
+      shipmentId: po.shipmentId,
+      poNo: po.poNo,
+      receivedCtnQty: received,
+      ctnQty: free,
+      cbm,
+      grossKg: kg,
+      openCargoLineIds: open,
+      efrNos: lineEfrs,
+    };
+  });
+}
+
+/**
+ * The ticked POs, in the order they were ticked.
+ *
+ * RLS has already removed another workspace's POs, so one that does not come
+ * back is deleted or not ours — either way not loadable, and the 404 does not
+ * say which.
+ */
+export async function loadSelectedPos(db: TenantDb, poIds: bigint[]): Promise<CandidatePo[]> {
+  const unique = [...new Set(poIds.map((id) => id.toString()))].map((id) => BigInt(id));
+  const found = await loadCandidatePos(db, { poIds: unique });
+  if (found.length !== unique.length) {
+    throw HttpError.notFound('One of those POs is no longer available.');
+  }
+  const byId = new Map(found.map((po) => [po.poId.toString(), po]));
+  return unique.map((id) => byId.get(id.toString())!);
+}
+
+/** A ticked PO with nothing to load, named with the reason. */
+export function unloadablePos(
+  pos: CandidatePo[],
+  bookingCodes: Map<string, string>,
+): Incompatibility[] {
+  return pos
+    .filter((po) => po.ctnQty <= 0)
+    .map((po) => {
+      const code = bookingCodes.get(po.shipmentId.toString()) ?? '';
+      return {
+        shipmentId: po.shipmentId.toString(),
+        code,
+        reason:
+          po.receivedCtnQty === 0
+            ? `${po.poNo} on ${code} has no cartons received yet.`
+            : `${po.poNo} on ${code} has nothing left to load — all ${po.receivedCtnQty} ` +
+              'received cartons are already in a plan.',
+        blocking: true,
+      };
+    });
+}
+
+/** Bookings in the order their first PO was ticked — the order the box is described in. */
+export function bookingsInTickOrder(pos: CandidatePo[]): bigint[] {
+  return [...new Set(pos.map((po) => po.shipmentId.toString()))].map((id) => BigInt(id));
+}
+
 /**
  * The gate every write goes through.
  *
@@ -457,12 +688,15 @@ export async function assertConsolidatable(
     throw HttpError.badRequest('Choose at least one booking.');
   }
 
-  const candidates = await loadCandidates(db, unique);
-  if (candidates.length !== unique.length) {
+  const found = await loadCandidates(db, unique);
+  if (found.length !== unique.length) {
     // RLS has already filtered another tenant's rows out, so a missing one is
     // either deleted or not ours. Either way it is not consolidatable.
     throw HttpError.notFound('One of those bookings is no longer available.');
   }
+  // In the order asked for, so the first booking chosen is the anchor the
+  // messages are written against and the first one the container names.
+  const candidates = inOrder(found, unique);
 
   const problems = checkCompatibility(candidates);
   if (!isCompatible(problems)) {

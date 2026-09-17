@@ -48,6 +48,8 @@ export interface ClpPrintLine {
   cartonWidthCm: string | null;
   cartonHeightCm: string | null;
   volumeCbm: string | null;
+  /** The receipts' EFR numbers, joined — the last column of the client's sheet. */
+  efrNo?: string | null;
 }
 
 export interface ClpPrintDoc {
@@ -182,6 +184,12 @@ const COLUMNS: Column[] = [
     value: (l) => num(l.volumeCbm, 4),
     total: (ls) => num(sum(ls, (l) => l.volumeCbm), 4),
   },
+  /*
+    Last, where the client's loading-type sheet (2026-09-16) draws it. On a
+    box shared by several exporters it is what tells the tally man whose
+    delivery a PO came in on.
+  */
+  { key: 'efr', label: 'EFR NO', width: 62, align: 'left', value: (l) => l.efrNo ?? '—' },
 ];
 
 /**

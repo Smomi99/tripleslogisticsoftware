@@ -18,6 +18,7 @@ import { toast } from 'sonner';
 
 import { ClpCostPanel } from '@/components/ops/clp-cost-panel';
 import { ClpFinalReview } from '@/components/ops/clp-final-review';
+import { requiredLabel } from '@/components/ops/clp-labels';
 import { VirtualContainer } from '@/components/ops/virtual-container';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -336,10 +337,15 @@ export default function ClpBuilderPage() {
   return (
     <div className="flex flex-col gap-4">
       <ChildScreenHeader
-        parentLabel="Cargo Load Plan"
+        parentLabel="Container Load Plan"
         parentName={`${plan.booking.code} · ${plan.booking.customerName}`}
-        title="Container Load Plan"
-        backHref={'/operation/container-load-plan' as Route}
+        title="Containers for this booking"
+        // Back to the workflow this booking is planned in, not to "All".
+        backHref={
+          (plan.booking.family === null
+            ? '/operation/container-load-plan'
+            : `/operation/container-load-plan?family=${plan.booking.family}`) as Route
+        }
       />
 
       {/* ------------------------------------------------- the booking (§5.1) */}
@@ -350,7 +356,7 @@ export default function ClpBuilderPage() {
             ['POL', plan.booking.polName],
             ['POD', plan.booking.podName],
             ['Carrier', plan.booking.carrierName ?? '—'],
-            ['Required', plan.booking.requiredContainer],
+            ['Required', requiredLabel(plan.booking.loadingType, plan.booking.requiredContainer)],
             ['Received CTN', whole(plan.booking.receivedCtnQty)],
           ].map(([label, value]) => (
             <div key={label}>
@@ -384,8 +390,19 @@ export default function ClpBuilderPage() {
       {/* --------------------------------------------- select container (§5.1) */}
       {mayEdit && (
         <section className="rounded-manifest border border-line bg-surface p-4 shadow-manifest">
+          {/*
+            Named, because without a heading this panel sat above "Nothing left
+            to assign" as an unexplained dropdown. Most plans are made by
+            ticking POs on the list; this is for the box after that one.
+          */}
+          <div className="mb-3">
+            <h2 className="text-section text-hull">Add a container</h2>
+            <p className="text-cell text-steel">
+              For cargo that does not fit the containers below. Load it with add or Split.
+            </p>
+          </div>
           <div className="flex flex-wrap items-end gap-3">
-            <Field id="containerSizeId" label="Select container">
+            <Field id="containerSizeId" label="Container size">
               <Select
                 id="containerSizeId"
                 value={sizeId}
@@ -452,6 +469,7 @@ export default function ClpBuilderPage() {
                   <th className="label-manifest px-3 py-2 text-right">G.WT</th>
                   <th className="label-manifest px-3 py-2 text-left">Carton (L·W·H)</th>
                   <th className="label-manifest px-3 py-2 text-right">CBM</th>
+                  <th className="label-manifest px-3 py-2 text-left">EFR No</th>
                   {mayEdit && <th className="label-manifest px-3 py-2 text-right">Action</th>}
                 </tr>
               </thead>
@@ -480,6 +498,14 @@ export default function ClpBuilderPage() {
                     </td>
                     <td className="px-3 py-2 text-right font-mono tabular-nums text-hull">
                       {num(row.volumeCbm, 4)}
+                    </td>
+                    {/* The receipts' EFR numbers — the client's sheet puts one on every PO row. */}
+                    <td className="px-3 py-2 font-mono tabular-nums text-hull">
+                      {row.efrNos.length === 0 ? (
+                        <span className="text-steel">—</span>
+                      ) : (
+                        row.efrNos.join(', ')
+                      )}
                     </td>
                     {mayEdit && (
                       <td className="px-3 py-2 text-right">
@@ -531,6 +557,7 @@ export default function ClpBuilderPage() {
                   <td className="px-3 py-2 text-right font-mono tabular-nums text-hull">
                     {num(plan.pool.reduce((s, r) => s + Number(r.volumeCbm ?? 0), 0), 4)}
                   </td>
+                  <td />
                   {mayEdit && <td />}
                 </tr>
               </tfoot>
@@ -776,6 +803,11 @@ function ClpCardView({
               <span className="text-body text-hull">
                 <span className="font-mono tabular-nums">{line.poNo}</span>{' '}
                 <span className="text-steel">{line.itemCode}</span>
+                {line.efrNos.length > 0 && (
+                  <span className="ml-2 font-mono text-cell tabular-nums text-steel">
+                    EFR {line.efrNos.join(', ')}
+                  </span>
+                )}
                 {line.isSplit && <span className="ml-2 text-cell text-signal">split</span>}
               </span>
               <span className="flex items-baseline gap-3">

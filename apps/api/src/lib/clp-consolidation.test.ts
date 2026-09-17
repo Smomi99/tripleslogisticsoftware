@@ -19,13 +19,19 @@ import {
  * planner who is refused needs to know which booking and why.
  */
 
+/*
+  LCL, because it is a workflow in which two bookings may share a box at all —
+  the physical rules below are the same in every workflow, and an FCL pair is
+  refused by rule 9 before any of them matters.
+*/
 const BASE: ConsolidationCandidate = {
   shipmentId: 1n,
   code: 'BKG-001',
   customerName: 'Shafidi',
   exporterName: 'Exporter A',
-  loadingType: 'FCL',
-  family: 'FCL',
+  importerName: 'Importer Z',
+  loadingType: 'LCL',
+  family: 'LCL',
   shipmentType: 'SEA',
   status: 'CARGO_RECEIVED',
   polId: 10n,
@@ -102,86 +108,121 @@ describe('sailing identity — vessel + voyage, never schedule id', () => {
   });
 });
 
-// ------------------------------------------------------------- FCL/LCL split
+// --------------------------------------------------------- the three workflows
 
-describe('FCL and LCL never share a box', () => {
-  it('allows FCL with FCL', () => {
-    expect(blocking([BASE, other()])).toEqual([]);
+const as = (type: 'FCL' | 'LCL' | 'CONSOL_BOX') => ({ loadingType: type, family: type });
+
+/*
+  The client's loading-type sheet, 2026-09-16: FCL is one booking with one
+  EFR; LCL is several exporters' bookings in one box, across customers
+  (confirmed the same day); Consol box is small shipments in the forwarder's
+  own box, across customers, and its own workflow.
+*/
+describe('loading types never share a box, and FCL never shares at all', () => {
+  it('lets one FCL booking have its container', () => {
+    expect(blocking([{ ...BASE, ...as('FCL') }])).toEqual([]);
   });
 
-  it('allows LCL with LCL', () => {
-    const a = { ...BASE, loadingType: 'LCL', family: 'LCL' as const };
-    const b = other({ loadingType: 'LCL', family: 'LCL' });
+  it('refuses two FCL bookings, even on one quotation and one sailing', () => {
+    const problems = blocking([{ ...BASE, ...as('FCL') }, other(as('FCL'))]);
+    expect(problems).toHaveLength(1);
+    expect(problems[0]!.code).toBe('BKG-002');
+    expect(problems[0]!.reason).toMatch(
+      /BKG-002 and BKG-001 are separate FCL bookings, and an FCL container holds one booking/,
+    );
+    // It says what to do instead, not only that it is wrong.
+    expect(problems[0]!.reason).toMatch(/book them as LCL/);
+  });
+
+  it('names every extra FCL booking, not just the first', () => {
+    const problems = blocking([
+      { ...BASE, ...as('FCL') },
+      other(as('FCL')),
+      other({ ...as('FCL'), shipmentId: 3n, code: 'BKG-003' }),
+    ]);
+    expect(problems.map((p) => p.code)).toEqual(['BKG-002', 'BKG-003']);
+  });
+
+  it('lets LCL bookings of different exporters and different customers share', () => {
+    const b = other({ exporterName: 'KLM', customerName: 'Another customer', quotationId: 51n });
+    expect(blocking([BASE, b])).toEqual([]);
+  });
+
+  it('lets Consol box bookings of different customers share', () => {
+    const a = { ...BASE, ...as('CONSOL_BOX') };
+    const b = other({ ...as('CONSOL_BOX'), customerName: 'Another customer', quotationId: 51n });
     expect(blocking([a, b])).toEqual([]);
   });
 
-  it('refuses FCL with LCL, and says so plainly', () => {
-    const problems = blocking([BASE, other({ loadingType: 'LCL', family: 'LCL' })]);
+  it.each([
+    ['FCL', 'LCL', 'BKG-002 is LCL and BKG-001 is FCL.'],
+    ['LCL', 'CONSOL_BOX', 'BKG-002 is Consol box and BKG-001 is LCL.'],
+    ['CONSOL_BOX', 'FCL', 'BKG-002 is FCL and BKG-001 is Consol box.'],
+  ] as const)('refuses %s with %s, and says so plainly', (first, second, said) => {
+    const problems = blocking([{ ...BASE, ...as(first) }, other(as(second))]);
     expect(problems).toHaveLength(1);
-    expect(problems[0]!.reason).toMatch(/FCL and LCL cargo never share a container/);
+    expect(problems[0]!.reason).toBe(`${said} Different loading types never share a container.`);
   });
 
-  it('treats CONSOL_BOX as FCL-like, so it may join FCL', () => {
-    // Client decision 2026-09-15. It is a whole container the forwarder
-    // fills, not many shippers sharing one.
-    expect(loadingFamily('CONSOL_BOX')).toBe('FCL');
-    expect(blocking([BASE, other({ loadingType: 'CONSOL_BOX', family: 'FCL' })])).toEqual([]);
-  });
-
-  it('refuses CONSOL_BOX with LCL', () => {
-    const a = { ...BASE, loadingType: 'CONSOL_BOX', family: 'FCL' as const };
-    const problems = blocking([a, other({ loadingType: 'LCL', family: 'LCL' })]);
-    expect(problems[0]!.reason).toMatch(/never share a container/);
+  it('maps each stored loading type to its own workflow', () => {
+    expect(loadingFamily('FCL')).toBe('FCL');
+    expect(loadingFamily('LCL')).toBe('LCL');
+    // Superseding the 2026-09-15 decision that made it FCL-like.
+    expect(loadingFamily('CONSOL_BOX')).toBe('CONSOL_BOX');
   });
 
   it('refuses a booking with no loading type rather than assuming one', () => {
     // A guess here decides what shares a steel box.
     expect(loadingFamily(null)).toBeNull();
+    expect(loadingFamily('')).toBeNull();
     const problems = blocking([BASE, other({ loadingType: null, family: null })]);
     expect(problems.some((p) => /no loading type set/.test(p.reason))).toBe(true);
   });
 });
 
 /*
-  §13 — the FCL/LCL view split filters on the same rule that decides what may
+  §13 — the workflow views filter on the same rule that decides what may
   share a box, through one helper rather than a second copy of the mapping.
   These tests exist so the two can never drift: if a view ever showed a set of
   loading types the compatibility rule disagreed with, a planner would be
   offered a booking the server would then refuse.
 */
 describe('loadingTypesOf — the query side of the same rule', () => {
-  it('puts CONSOL_BOX in the FCL workflow, never LCL', () => {
-    expect(loadingTypesOf('FCL')).toEqual(['FCL', 'CONSOL_BOX']);
+  const FAMILIES = ['FCL', 'LCL', 'CONSOL_BOX'] as const;
+
+  it('gives each workflow exactly its own loading type', () => {
+    expect(loadingTypesOf('FCL')).toEqual(['FCL']);
     expect(loadingTypesOf('LCL')).toEqual(['LCL']);
+    expect(loadingTypesOf('CONSOL_BOX')).toEqual(['CONSOL_BOX']);
   });
 
   it('is the exact inverse of loadingFamily, in both directions', () => {
     // Every stored value lands in exactly one workflow's list, and that list
     // is the one loadingFamily names.
-    for (const family of ['FCL', 'LCL'] as const) {
+    for (const family of FAMILIES) {
       for (const type of loadingTypesOf(family)) {
         expect(loadingFamily(type)).toBe(family);
       }
     }
-    // And nothing is in both, so a view can never show a row twice.
-    expect(loadingTypesOf('FCL').filter((t) => loadingTypesOf('LCL').includes(t))).toEqual([]);
+    // And nothing is in two, so a view can never show a row twice.
+    const all = FAMILIES.flatMap((f) => loadingTypesOf(f));
+    expect(new Set(all).size).toBe(all.length);
   });
 
   it('covers every loading type the schema allows', () => {
     /*
       A new enum value added to `shipment.loading_type` without a decision
-      about which workflow owns it would silently vanish from both views. This
+      about which workflow owns it would silently vanish from every view. This
       fails when that happens, which is the moment to ask rather than guess.
     */
     const stored = ['FCL', 'LCL', 'CONSOL_BOX'];
-    const covered = [...loadingTypesOf('FCL'), ...loadingTypesOf('LCL')].sort();
+    const covered = FAMILIES.flatMap((f) => loadingTypesOf(f)).sort();
     expect(covered).toEqual([...stored].sort());
   });
 
   it('never claims a booking with no loading type', () => {
     // The null case is not in any list: unstated is a refusal, not a default.
-    expect(loadingTypesOf('FCL')).not.toContain(null);
-    expect(loadingTypesOf('LCL')).not.toContain(null);
+    for (const family of FAMILIES) expect(loadingTypesOf(family)).not.toContain(null);
   });
 });
 
@@ -314,7 +355,7 @@ describe('CFS locations (§8)', () => {
 // ------------------------------------------------------- commercial default
 
 describe('grouping is a suggestion, not a decision', () => {
-  it('puts one quotation together', () => {
+  it('puts one sailing together', () => {
     const groups = suggestGroups([BASE, other(), other({ shipmentId: 3n, code: 'BKG-003' })]);
     expect(groups).toHaveLength(1);
     expect(groups[0]!.shipmentIds).toHaveLength(3);
@@ -330,24 +371,24 @@ describe('grouping is a suggestion, not a decision', () => {
     expect(groups).toHaveLength(2);
   });
 
-  it('splits two quotations apart, and each stays valid on its own', () => {
-    const groups = suggestGroups([BASE, other({ quotationId: 51n, quotationCode: 'QTN-032' })]);
-    expect(groups).toHaveLength(2);
-    // ...but the split is commercial only: physically they could share a box,
-    // which is exactly what §4 lets a user act on.
-    expect(blocking([BASE, other({ quotationId: 51n })])).toEqual([]);
-  });
-
-  it('does not group LCL by quotation — that is what LCL is', () => {
-    const a = { ...BASE, loadingType: 'LCL', family: 'LCL' as const };
-    const b = other({
-      loadingType: 'LCL',
-      family: 'LCL',
-      quotationId: 51n,
-      customerName: 'Another customer',
-    });
-    const groups = suggestGroups([a, b]);
+  it('does not group LCL by quotation or customer — that is what LCL is', () => {
+    const b = other({ quotationId: 51n, customerName: 'Another customer' });
+    const groups = suggestGroups([BASE, b]);
     expect(groups).toHaveLength(1);
     expect(groups[0]!.shipmentIds).toHaveLength(2);
+  });
+
+  it('groups Consol box the same way, but never with LCL', () => {
+    const boxA = { ...BASE, ...as('CONSOL_BOX') };
+    const boxB = other({ ...as('CONSOL_BOX'), customerName: 'Another customer' });
+    const lcl = other({ shipmentId: 3n, code: 'BKG-003' });
+    const groups = suggestGroups([boxA, boxB, lcl]);
+    expect(groups.map((g) => g.shipmentIds.length).sort()).toEqual([1, 2]);
+  });
+
+  it('suggests every FCL booking alone, since rule 9 gives each its own box', () => {
+    const groups = suggestGroups([{ ...BASE, ...as('FCL') }, other(as('FCL'))]);
+    expect(groups).toHaveLength(2);
+    for (const g of groups) expect(g.shipmentIds).toHaveLength(1);
   });
 });

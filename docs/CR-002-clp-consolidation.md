@@ -333,3 +333,70 @@ Sea/Air bookings.
 | LCL re-measurement (Q4) | 1.5 | 1.5 | unchanged |
 | Rework of built CLP screens, print document and 5 test files | — | 2 | not in the CR; this is the cost of arriving after Phase H |
 | **Total** | **~9** | **~12** | |
+
+---
+
+# ADDENDUM 2 — THE CLIENT'S LOADING-TYPE SHEET (2026-09-16)
+
+> The client sent a one-page sheet with four example tables, one per loading type.
+> Where it disagrees with §3 above or with the 2026-09-15 decisions, **the sheet wins**.
+> §1–§8 and Addendum 1 are left unaltered.
+
+## G. What the sheet says
+
+| Type | Inquiry → Quotation → Booking | Customer / Exporter | EFR No |
+|---|---|---|---|
+| **FCL** (customer = exporter) | 1 → 1 → 1 booking, 2 POs, `1x40HC` | ABC / ABC | one, `EFR-001`, covering both POs |
+| **FCL** (customer ≠ exporter) | 1 → 1 → 1 booking, 2 POs, `1x40HC` | ABC / XYZ | one, `EFR-001` ("1 HBL") |
+| **LCL** | 1 → 1 → 3 bookings, 1 PO each, `1x40HC` | ABC / ABC, XYZ, KLM | one per booking, `EFR-001…003` |
+| **Consol box** | 1 → 1 → 1 booking, 2 POs, no container | ABC / ABC | `EFR-001`, `EFR-002`, though the heading says "1 EFR" |
+
+And one instruction: *"multiple exporter's PO will select by check box and make CLP."*
+
+## H. Decisions, confirmed 2026-09-16
+
+| # | Question | Answer | Supersedes |
+|---|---|---|---|
+| 1 | Can two FCL bookings share one container? | **No.** An FCL container holds one booking. Several exporters in one box is LCL. | §3 "FCL — group by quotation", §4.1 |
+| 2 | Can LCL bookings from different customers share a container? | **Yes**, as §3 already said. The list gains an Inquiry → Quotation grouping. | — |
+| 3 | Which bookings can share a Consol box? | **Any customers.** Consol box is its **own workflow**, never mixed with FCL or LCL. | 2026-09-15 "CONSOL_BOX is FCL-like" |
+| 4 | How is the plan made? | **Tick POs.** `Create container plan` makes the plan *and* loads every received, unplanned carton of each ticked PO. Split and Remove still work inside the plan. | booking-level ticking |
+
+Physical rules 1–8 of §3 are unchanged and apply to every workflow.
+
+## I. How it is built
+
+- **Rule 9** in `clp-consolidation.ts`: a second FCL booking in a selection is refused, naming both bookings and saying to book them as LCL.
+- **Three workflows**, one per `shipment.loading_type`: `FCL`, `LCL`, `CONSOL_BOX`. The creation screen, the planning queue and the CLP register each have a tab per workflow.
+- **`POST /clps/consolidate`** takes `shipmentPoIds`. It checks the rules, refuses POs that would overfill the chosen container before writing anything, creates the plan, then loads each PO through the same `allocate()` that `add` uses, in one transaction. `shipmentIds` still works and creates an empty plan; sending both is refused.
+- **`POST /clp-candidates/check`** takes `shipmentPoIds` too. For ticked POs its totals are what ticking loads, not what arrived.
+- **EFR No** stays on `cargo_receipt.efr_no`, where the cargo receipt wireframe put it. A cargo line's EFR numbers are read from the confirmed receipts its accepted cartons came in on (`clp-efr.ts`). They show on the candidate list, the pool, the loaded lines and the printed CLP (new last column `EFR NO`). **No schema change**, and **no EFR count is enforced** — a booking delivered on two receipts has two, which is exactly the Consol box table.
+- **`consolidation_type`**: a new multi-booking plan (LCL or Consol box) is stored as `LCL_CONSOLIDATION`. Which of the two it is comes from the bookings' loading type. `FCL_QUOTATION` stays in the enum for plans that already have it, and can no longer be created.
+
+## J. Not done, and why
+
+- **Existing plans are not re-judged.** A draft that already merges two FCL bookings keeps its bookings. Rule 9 applies when a plan is created. The dev database has none; production was not checked.
+- **N.WT and Req. Cont.** are on the sheet's tables but not on the creation list. The plan screen still shows N.WT per line and the booking's Required Container in its reconciliation banner.
+- **The Consol box's "1 EFR" heading against its two-EFR table** is left unresolved, since nothing enforces a count. Raise it with the client if EFR ever needs to be one per booking.
+
+## K. One Container Load Plan screen (2026-09-17)
+
+The list and the "New container plan" screen showed the same bookings twice, in two layouts, under three names ("Cargo Load Plan", "Container Load Plan", "New container plan"), and the list's `Make CLP` opened a different way of planning from `+ New container plan`. They are now one screen, **Container Load Plan**, with the same controls on both tabs:
+
+| Tab | What it is |
+|---|---|
+| **To plan** | The PO-ticking view (§I): Inquiry · Quotation · customer as a group header, then booking → PO rows, the running strip and `Create container plan`. `Open` on each booking reaches its own plan page — more containers, Split, finalising. |
+| **Container plans** | The register, on the product's standard list table: row numbers, CLP No on the code gutter, pager, density toggle. |
+
+- One workflow switch, **All · FCL · LCL · Consol box**, on both tabs. The tab and workflow live in the URL, so Back from a booking's plan returns to them.
+- `/operation/container-load-plan/new` redirects to the To plan tab, keeping `booking` and `family`; Cargo Receipt's `Make CLP` links straight to the new address.
+- The booking plan page is headed "Container Load Plan · Containers for this booking", and its container picker is titled "Add a container".
+- A consol box's Required Container reads "None — our consol box" instead of the inquiry's weight ("60 Kg").
+
+Server changes that came with it:
+
+- `GET /clp-candidates` — `family` is optional (All), each row carries `requiredContainer`, search also matches PO numbers, and "Same sailing" suggestions count only bookings with cargo left, totalled on what is left.
+- `GET /clps` — search now finds a shared container by any of its bookings or their customer (it matched only `clp.shipment_id`, which a consolidated plan does not have).
+- `plannedCount` counts shared containers, so a booking in one no longer reads "0 planned" beside "All assigned".
+
+**Fixed (2026-09-17), migration `20260917090000_rls_estimable_tenant_check`:** the slow queue was not the CLP code. Every tenant-owned RLS policy read `tenant_id = app_current_tenant() AND app_current_agent() IS NULL`, which Postgres estimates at 0.5% of any table, so queries filtering through related tables nested full scans (`GET /clp-bookings`: 9 s at ~90 bookings, failing on the 5 s transaction limit). The 65 tenant-owned policies now read `tenant_id = app_staff_tenant()` — the tenant for staff, NULL for agents — which admits exactly the same rows and is estimated from real statistics. Proven in a rolled-back transaction: identical visibility for staff, another workspace, an agent and no workspace on all 81 RLS tables; forbidden writes still refused; the query 1,205 ms → 0.4 ms. The 16 system-capable policies and every agent-portal policy are unchanged. `tenant-isolation.test.ts` now fails if a new table's policy uses the old form, or if a tenant table is estimated at one row. **The VPS needs `pnpm db:deploy` with the release that carries it.**

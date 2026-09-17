@@ -1,6 +1,7 @@
 import {
   type ApiSuccess,
   buildMeta,
+  CLP_LOADING_FAMILIES,
   clpAllocateSchema,
   type ClpBookingRow,
   clpBookingListQuerySchema,
@@ -42,14 +43,20 @@ import {
 } from '../lib/clp-cost';
 import {
   assertConsolidatable,
+  bookingsInTickOrder,
   cfsLocations,
   checkCompatibility,
+  inOrder,
   isCompatible,
+  loadCandidatePos,
   loadCandidates,
   loadingFamily,
   loadingTypesOf,
+  loadSelectedPos,
   suggestGroups,
+  unloadablePos,
 } from '../lib/clp-consolidation';
+import { efrNosOfCargoLines } from '../lib/clp-efr';
 import {
   participantShipmentIds,
   plansOfBooking,
@@ -195,8 +202,13 @@ async function bookingRow(db: TenantDb, row: BookingRow): Promise<ClpBookingRow>
   });
   received = receivedRows.reduce((sum, r) => sum + r.receivedCtnQty, 0);
 
+  /*
+    Every live plan the booking is in, shared containers included. Counting
+    clp.shipment_id alone left a booking in a consolidated container reading
+    "0 planned" beside "All assigned".
+  */
   const plannedCount = await db.clp.count({
-    where: { shipmentId: row.id, deletedAt: null, status: { not: 'CANCELLED' } },
+    where: { deletedAt: null, status: { not: 'CANCELLED' }, ...plansOfBooking(row.id) },
   });
 
   return {
@@ -347,6 +359,25 @@ clpRouter.get('/clps', requirePermission(`${FEATURE}.VIEW`), async (req, res) =>
               {
                 shipment: {
                   customer: { name: { contains: search, mode: 'insensitive' as const } },
+                },
+              },
+              /*
+                A shared container records its bookings in clp_booking and has
+                no clp.shipment_id, so the two branches above never found it by
+                booking or customer — a planner searching the booking they had
+                just planned was told there was no plan.
+              */
+              {
+                bookings: {
+                  some: {
+                    deletedAt: null,
+                    shipment: {
+                      OR: [
+                        { code: { contains: search, mode: 'insensitive' as const } },
+                        { customer: { name: { contains: search, mode: 'insensitive' as const } } },
+                      ],
+                    },
+                  },
                 },
               },
             ],
@@ -531,6 +562,8 @@ async function cards(db: TenantDb, shipmentId: bigint): Promise<ClpCard[]> {
       costAllocationBasis: true,
       finalCfsLocation: true,
       costCurrency: { select: { code: true } },
+      // The legacy shape's booking, for its loading type — see clp-participants.ts.
+      shipment: { select: { loadingType: true } },
       bookings: {
         where: { deletedAt: null },
         orderBy: { id: 'asc' },
@@ -541,7 +574,12 @@ async function cards(db: TenantDb, shipmentId: bigint): Promise<ClpCard[]> {
           costOverriddenBy: true,
           costOverrideReason: true,
           shipment: {
-            select: { code: true, exporterName: true, customer: { select: { name: true } } },
+            select: {
+              code: true,
+              exporterName: true,
+              loadingType: true,
+              customer: { select: { name: true } },
+            },
           },
           overriddenByUser: {
             select: { username: true, employee: { select: { name: true } } },
@@ -569,6 +607,11 @@ async function cards(db: TenantDb, shipmentId: bigint): Promise<ClpCard[]> {
       },
     },
   });
+
+  const efrs = await efrNosOfCargoLines(
+    db,
+    rows.flatMap((row) => row.lines.map((l) => l.shipmentCargoLineId)),
+  );
 
   return rows.map((row) => ({
     id: row.id.toString(),
@@ -616,6 +659,7 @@ async function cards(db: TenantDb, shipmentId: bigint): Promise<ClpCard[]> {
         ? null
         : (row.cancelledByUser.employee?.name ?? row.cancelledByUser.username),
     consolidationType: row.consolidationType,
+    loadingType: row.bookings[0]?.shipment.loadingType ?? row.shipment?.loadingType ?? null,
     actualContainerCost: dec(row.actualContainerCost),
     costCurrencyCode: row.costCurrency?.code ?? null,
     costAllocationBasis: row.costAllocationBasis,
@@ -647,6 +691,7 @@ async function cards(db: TenantDb, shipmentId: bigint): Promise<ClpCard[]> {
       volumeCbm: dec(l.volumeCbm),
       isSplit: l.isSplit,
       isFinalAllocation: l.isFinalAllocation,
+      efrNos: efrs.get(l.shipmentCargoLineId.toString()) ?? [],
     })),
   }));
 }
@@ -681,6 +726,11 @@ async function pool(db: TenantDb, shipmentId: bigint): Promise<ClpPoolRow[]> {
     },
   });
 
+  const efrs = await efrNosOfCargoLines(
+    db,
+    lines.map((line) => line.id),
+  );
+
   const rows: ClpPoolRow[] = [];
   for (const line of lines) {
     const free = await availableCartons(db, line.id);
@@ -714,6 +764,7 @@ async function pool(db: TenantDb, shipmentId: bigint): Promise<ClpPoolRow[]> {
       volumeCbm: per(line.cbmPerCarton, 4),
       dc: line.dc,
       receivedCtnQty: received,
+      efrNos: efrs.get(line.id.toString()) ?? [],
     });
   }
   return rows;
@@ -1237,6 +1288,7 @@ clpRouter.get('/clps/:id/print', requirePermission(`${FEATURE}.EXPORT`), async (
           where: { deletedAt: null },
           orderBy: { id: 'asc' },
           select: {
+            shipmentCargoLineId: true,
             poNo: true,
             itemCode: true,
             sku: true,
@@ -1295,6 +1347,10 @@ clpRouter.get('/clps/:id/print', requirePermission(`${FEATURE}.EXPORT`), async (
     const byId = new Map(inTheBox.map((b) => [b.id.toString(), b]));
     const bookings = participants.map((id) => byId.get(id.toString())).filter((b) => b !== undefined);
     const first = bookings[0] ?? null;
+    const efrs = await efrNosOfCargoLines(
+      db,
+      row.lines.map((l) => l.shipmentCargoLineId),
+    );
 
     const doc: ClpPrintDoc = {
       workspaceName: workspace.name,
@@ -1343,6 +1399,7 @@ clpRouter.get('/clps/:id/print', requirePermission(`${FEATURE}.EXPORT`), async (
         cartonWidthCm: dec(l.cartonWidthCm),
         cartonHeightCm: dec(l.cartonHeightCm),
         volumeCbm: dec(l.volumeCbm),
+        efrNo: (efrs.get(l.shipmentCargoLineId.toString()) ?? []).join(', ') || null,
       })),
     };
 
@@ -1365,11 +1422,11 @@ clpRouter.get('/clps/:id/print', requirePermission(`${FEATURE}.EXPORT`), async (
 // ==========================================================================
 
 /**
- * GET /clp-candidates — the bookings one workflow may consolidate.
+ * GET /clp-candidates — the bookings one workflow may plan, with their POs.
  *
- * `family` is required rather than optional: FCL and LCL are separate
- * workflows (§3), and a list that mixed them would invite the one selection
- * the engine always refuses.
+ * `family` is required rather than optional: FCL, LCL and Consol box are
+ * separate workflows, and a list that mixed them would invite the one
+ * selection the engine always refuses.
  */
 clpRouter.get('/clp-candidates', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
   const auth = req.auth!;
@@ -1390,7 +1447,11 @@ clpRouter.get('/clp-candidates', requirePermission(`${FEATURE}.VIEW`), async (re
         deletedAt: null,
         shipmentType: 'SEA',
         status: { in: ['PART_RECEIVED', 'CARGO_RECEIVED'] },
-        loadingType: { in: loadingTypesOf(query.family) },
+        // No family means every workflow, which the screen's "All" tab shows;
+        // a booking with no loading type is still in none of them.
+        loadingType: {
+          in: query.family === undefined ? [...CLP_LOADING_FAMILIES] : loadingTypesOf(query.family),
+        },
         ...(search === null
           ? {}
           : {
@@ -1398,16 +1459,59 @@ clpRouter.get('/clp-candidates', requirePermission(`${FEATURE}.VIEW`), async (re
                 { code: { contains: search, mode: 'insensitive' as const } },
                 { customer: { name: { contains: search, mode: 'insensitive' as const } } },
                 { exporterName: { contains: search, mode: 'insensitive' as const } },
+                // POs are what a planner ticks, so a PO number finds its booking.
+                {
+                  pos: {
+                    some: { deletedAt: null, poNo: { contains: search, mode: 'insensitive' as const } },
+                  },
+                },
               ],
             }),
       },
       orderBy: { id: 'desc' },
       take: 200,
-      select: { id: true },
+      select: {
+        id: true,
+        // The quotation's containers, read exactly as bookingRow reads them.
+        quotation: {
+          select: {
+            lines: {
+              where: { deletedAt: null, isActive: true },
+              orderBy: { sortOrder: 'asc' },
+              select: { containerSizeName: true, quantity: true },
+            },
+            inquiry: {
+              select: {
+                volumes: {
+                  where: { deletedAt: null, isActive: true },
+                  select: {
+                    quantity: true,
+                    cbm: true,
+                    weightKg: true,
+                    containerSizeNote: true,
+                    containerSize: { select: { name: true } },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
     });
+    const requiredOf = new Map(
+      rows.map((r) => [
+        r.id.toString(),
+        renderRequiredContainer(r.quotation.lines, r.quotation.inquiry?.volumes ?? []),
+      ]),
+    );
 
-    const candidates = await loadCandidates(
-      db,
+    // Newest first, as queried — loadCandidates' findMany promises no order,
+    // and the screen groups by quotation in the order bookings arrive.
+    const candidates = inOrder(
+      await loadCandidates(
+        db,
+        rows.map((r) => r.id),
+      ),
       rows.map((r) => r.id),
     );
 
@@ -1425,11 +1529,43 @@ clpRouter.get('/clp-candidates', requirePermission(`${FEATURE}.VIEW`), async (re
       planned.set(key, (planned.get(key) ?? 0) + line.ctnQty);
     }
 
+    /*
+      The POs a planner ticks (client sheet, 2026-09-16). Only ones with cargo
+      received: a PO still at the supplier has nothing to load and no reason
+      to be on a loading screen. A fully planned PO stays, showing zero, so the
+      booking does not appear to have lost an order.
+    */
+    const posOf = new Map<string, ClpCandidateList['candidates'][number]['pos']>();
+    /** What each booking still has to load — what ticking all of it would put in a box. */
+    const leftOf = new Map<string, { ctn: number; cbm: Prisma.Decimal; kg: Prisma.Decimal }>();
+    for (const po of await loadCandidatePos(db, { shipmentIds: rows.map((r) => r.id) })) {
+      if (po.receivedCtnQty <= 0) continue;
+      const key = po.shipmentId.toString();
+      const left = leftOf.get(key) ?? { ctn: 0, cbm: new Prisma.Decimal(0), kg: new Prisma.Decimal(0) };
+      leftOf.set(key, {
+        ctn: left.ctn + po.ctnQty,
+        cbm: left.cbm.plus(po.cbm),
+        kg: left.kg.plus(po.grossKg),
+      });
+      const list = posOf.get(key) ?? [];
+      list.push({
+        poId: po.poId.toString(),
+        poNo: po.poNo,
+        ctnQty: po.ctnQty,
+        receivedCtnQty: po.receivedCtnQty,
+        cbm: po.cbm.toFixed(4),
+        grossKg: po.grossKg.toFixed(3),
+        efrNos: po.efrNos,
+      });
+      posOf.set(key, list);
+    }
+
     const toRow = (c: (typeof candidates)[number]) => ({
       shipmentId: c.shipmentId.toString(),
       code: c.code,
       customerName: c.customerName,
       exporterName: c.exporterName,
+      importerName: c.importerName,
       loadingType: c.loadingType,
       family: c.family,
       polName: c.polName,
@@ -1445,6 +1581,8 @@ clpRouter.get('/clp-candidates', requirePermission(`${FEATURE}.VIEW`), async (re
       receivedCbm: c.receivedCbm.toFixed(4),
       receivedGrossKg: c.receivedGrossKg.toFixed(3),
       plannedCtnQty: planned.get(c.shipmentId.toString()) ?? 0,
+      requiredContainer: requiredOf.get(c.shipmentId.toString()) ?? '—',
+      pos: posOf.get(c.shipmentId.toString()) ?? [],
     });
 
     const byId = new Map(candidates.map((c) => [c.shipmentId.toString(), c]));
@@ -1463,19 +1601,28 @@ clpRouter.get('/clp-candidates', requirePermission(`${FEATURE}.VIEW`), async (re
         maxWeightKg: dec(s.maxWeightKg),
       })),
       candidates: candidates.map(toRow),
-      // Suggestions only. §4: the user may split any of these.
-      suggestions: suggestGroups(candidates).map((g) => {
-        const members = g.shipmentIds.map((id) => byId.get(id.toString())!);
-        return {
-          key: g.key,
-          quotationCode: members[0]?.quotationCode ?? null,
-          inquiryCode: members[0]?.inquiryCode ?? null,
-          shipmentIds: g.shipmentIds.map((id) => id.toString()),
-          totalCtnQty: members.reduce((s, m) => s + m.receivedCtnQty, 0),
-          totalCbm: members.reduce((s, m) => s + m.receivedCbm, 0).toFixed(4),
-          totalGrossKg: members.reduce((s, m) => s + m.receivedGrossKg, 0).toFixed(3),
-        };
-      }),
+      /*
+        Suggestions only. §4: the user may split any of these.
+
+        Drawn from bookings that still have cargo to load, and totalled on what
+        is left. A booking already planned in full cannot be ticked, so counting
+        it made the chip promise 38 cartons and tick 8.
+      */
+      suggestions: suggestGroups(candidates.filter((c) => (leftOf.get(c.shipmentId.toString())?.ctn ?? 0) > 0))
+        .filter((g) => g.shipmentIds.length > 1)
+        .map((g) => {
+          const members = g.shipmentIds.map((id) => byId.get(id.toString())!);
+          const left = g.shipmentIds.map((id) => leftOf.get(id.toString())!);
+          return {
+            key: g.key,
+            quotationCode: members[0]?.quotationCode ?? null,
+            inquiryCode: members[0]?.inquiryCode ?? null,
+            shipmentIds: g.shipmentIds.map((id) => id.toString()),
+            totalCtnQty: left.reduce((s, l) => s + l.ctn, 0),
+            totalCbm: left.reduce((s, l) => s.plus(l.cbm), new Prisma.Decimal(0)).toFixed(4),
+            totalGrossKg: left.reduce((s, l) => s.plus(l.kg), new Prisma.Decimal(0)).toFixed(3),
+          };
+        }),
     };
   });
 
@@ -1493,24 +1640,42 @@ clpRouter.get('/clp-candidates', requirePermission(`${FEATURE}.VIEW`), async (re
 clpRouter.post('/clp-candidates/check', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
   const auth = req.auth!;
   const input = clpCheckSchema.parse(req.body);
-  const ids = input.shipmentIds.map((id) => parseId(id, 'booking'));
+  const bookingIds = input.shipmentIds.map((id) => parseId(id, 'booking'));
+  const poIds = input.shipmentPoIds.map((id) => parseId(id, 'PO'));
 
   const data = await withTenant(auth.tenantId, async (db): Promise<ClpCompatibilityResult> => {
-    const candidates = await loadCandidates(db, ids);
-    const issues = checkCompatibility(candidates);
+    const pos = await loadSelectedPos(db, poIds);
+    // The rules judge bookings, so ticked POs are judged through theirs.
+    const ids = [
+      ...new Set([...bookingIds, ...bookingsInTickOrder(pos)].map((id) => id.toString())),
+    ].map((id) => BigInt(id));
+    const candidates = inOrder(await loadCandidates(db, ids), ids);
+    const issues = [
+      ...checkCompatibility(candidates),
+      ...unloadablePos(pos, new Map(candidates.map((c) => [c.shipmentId.toString(), c.code]))),
+    ];
 
     const families = new Set(candidates.map((c) => c.family).filter((f) => f !== null));
+    const byPo = poIds.length > 0;
 
     return {
       ok: isCompatible(issues),
-      // One family or none — a mixed selection is refused anyway, and saying
-      // "FCL" about a mixed one would send an entry point to the wrong list.
+      // One family or none — a mixed selection is refused anyway, and naming
+      // one for a mixed selection would send an entry point to the wrong list.
       family: families.size === 1 ? ([...families][0] ?? null) : null,
       issues,
       cfsLocations: cfsLocations(candidates),
-      totalCtnQty: candidates.reduce((s, c) => s + c.receivedCtnQty, 0),
-      totalCbm: candidates.reduce((s, c) => s + c.receivedCbm, 0).toFixed(4),
-      totalGrossKg: candidates.reduce((s, c) => s + c.receivedGrossKg, 0).toFixed(3),
+      // Ticked POs are measured by what ticking them loads; a booking alone,
+      // by what it received — the answer an entry point asks for.
+      totalCtnQty: byPo
+        ? pos.reduce((s, p) => s + p.ctnQty, 0)
+        : candidates.reduce((s, c) => s + c.receivedCtnQty, 0),
+      totalCbm: byPo
+        ? pos.reduce((s, p) => s.plus(p.cbm), new Prisma.Decimal(0)).toFixed(4)
+        : candidates.reduce((s, c) => s + c.receivedCbm, 0).toFixed(4),
+      totalGrossKg: byPo
+        ? pos.reduce((s, p) => s.plus(p.grossKg), new Prisma.Decimal(0)).toFixed(3)
+        : candidates.reduce((s, c) => s + c.receivedGrossKg, 0).toFixed(3),
     };
   });
 
@@ -1519,27 +1684,70 @@ clpRouter.post('/clp-candidates/check', requirePermission(`${FEATURE}.VIEW`), as
 });
 
 /**
- * POST /clps/consolidate — one container for several bookings.
+ * POST /clps/consolidate — one container, from ticked POs or chosen bookings.
  *
  * The single-booking route above still exists and still works; this is the
  * path that writes clp_booking rows for a selection. A selection of one comes
  * through here perfectly well and produces a SINGLE plan.
+ *
+ * Ticked POs (the client's sheet, 2026-09-16) make the plan AND load it: every
+ * carton of each PO still free goes in, through the same `allocate` a planner's
+ * `add` uses, in the same transaction — so a refusal part-way leaves no plan
+ * behind. Their bookings are the container's participants; nobody sends those.
  */
 clpRouter.post('/clps/consolidate', requirePermission(`${FEATURE}.CREATE`), async (req, res) => {
   const auth = req.auth!;
   const input = clpConsolidateSchema.parse(req.body);
-  const shipmentIds = input.shipmentIds.map((id) => parseId(id, 'booking'));
+  const poIds = input.shipmentPoIds.map((id) => parseId(id, 'PO'));
   const containerSizeId = parseId(input.containerSizeId, 'container size');
 
   const data = await withTenant(auth.tenantId, async (db) => {
+    const pos = await loadSelectedPos(db, poIds);
+    const shipmentIds =
+      poIds.length > 0
+        ? bookingsInTickOrder(pos)
+        : input.shipmentIds.map((id) => parseId(id, 'booking'));
+
     // The gate. Hard rules, server-side, whatever the screen believed.
     const candidates = await assertConsolidatable(db, shipmentIds);
 
+    const empty = unloadablePos(pos, new Map(candidates.map((c) => [c.shipmentId.toString(), c.code])));
+    if (empty.length > 0) throw HttpError.conflict(empty.map((p) => p.reason).join(' '));
+
     const size = await db.containerSize.findFirst({
       where: { id: containerSizeId, deletedAt: null },
-      select: { id: true },
+      select: { id: true, code: true, maxVolumeCbm: true, maxWeightKg: true },
     });
     if (size === null) throw HttpError.notFound('That container size no longer exists.');
+
+    /*
+      §4.2, before anything is written. The plan does not exist yet, so the
+      refusal speaks about the ticked POs rather than a container number the
+      planner has never seen, and it offers no override: that is a supervisor's
+      call made on a real plan, from inside it. `allocate` checks the written
+      figures again below, which is the check that holds.
+    */
+    if (pos.length > 0) {
+      const cbm = pos.reduce((s, p) => s.plus(p.cbm), new Prisma.Decimal(0));
+      const kg = pos.reduce((s, p) => s.plus(p.grossKg), new Prisma.Decimal(0));
+      const fmt = (v: Prisma.Decimal, dp: number) =>
+        Number(v.toFixed(dp)).toLocaleString('en-US', {
+          minimumFractionDigits: dp,
+          maximumFractionDigits: dp,
+        });
+      if (size.maxWeightKg !== null && kg.greaterThan(size.maxWeightKg)) {
+        throw HttpError.conflict(
+          `The ticked POs weigh ${fmt(kg, 0)} kg, and a ${size.code} takes ` +
+            `${fmt(size.maxWeightKg, 0)} kg. Untick some POs or choose a bigger container.`,
+        );
+      }
+      if (size.maxVolumeCbm !== null && cbm.greaterThan(size.maxVolumeCbm)) {
+        throw HttpError.conflict(
+          `The ticked POs come to ${fmt(cbm, 2)} CBM, and a ${size.code} holds ` +
+            `${fmt(size.maxVolumeCbm, 0)} CBM. Untick some POs or choose a bigger container.`,
+        );
+      }
+    }
 
     const anchor = candidates[0]!;
     const consolidated = candidates.length > 1;
@@ -1551,7 +1759,8 @@ clpRouter.post('/clps/consolidate', requirePermission(`${FEATURE}.CREATE`), asyn
     */
     const year = seriesYearOf(new Date());
 
-    for (let attempt = 0; attempt < CODE_RETRY_LIMIT; attempt += 1) {
+    let clpId: bigint | null = null;
+    for (let attempt = 0; attempt < CODE_RETRY_LIMIT && clpId === null; attempt += 1) {
       const seqRows = await db.$queryRaw<{ max_seq: number | null }[]>`
         SELECT MAX((regexp_replace(code, '^.*-', ''))::int) AS max_seq
           FROM clp
@@ -1582,15 +1791,17 @@ clpRouter.post('/clps/consolidate', requirePermission(`${FEATURE}.CREATE`), asyn
             shipmentId: consolidated ? null : anchor.shipmentId,
             containerSizeId,
             carrierId: anchor.carrierId,
-            consolidationType: consolidated
-              ? anchor.family === 'LCL'
-                ? 'LCL_CONSOLIDATION'
-                : 'FCL_QUOTATION'
-              : 'SINGLE',
-            // The commercial grouping that was in force, recorded rather than
-            // enforced — every booking here already passed the physical rules.
-            quotationId:
-              consolidated && anchor.family === 'FCL' ? anchor.quotationId : null,
+            /*
+              Only LCL and Consol box bookings can share a box now (rule 9), and
+              both are consolidations across customers, so both are recorded
+              as one. Which of the two it is stays on the bookings' own
+              loading type, where the register already reads it.
+              FCL_QUOTATION remains in the enum for the plans that have it,
+              and no longer describes anything that can be created. Nor does
+              a quotation grouping, so quotation_id is left empty.
+            */
+            consolidationType: consolidated ? 'LCL_CONSOLIDATION' : 'SINGLE',
+            quotationId: null,
             finalCfsLocation: input.finalCfsLocation ?? null,
             createdBy: auth.userId,
             updatedBy: auth.userId,
@@ -1614,13 +1825,32 @@ clpRouter.post('/clps/consolidate', requirePermission(`${FEATURE}.CREATE`), asyn
           })),
         });
 
-        return { id: created.id.toString(), shipmentId: anchor.shipmentId.toString() };
+        clpId = created.id;
       } catch (error) {
         if (isUniqueViolation(error) && attempt < CODE_RETRY_LIMIT - 1) continue;
         throw error;
       }
     }
-    throw HttpError.conflict('Could not allocate a load plan number. Try again.');
+    if (clpId === null) throw HttpError.conflict('Could not allocate a load plan number. Try again.');
+
+    /*
+      Load what was ticked, PO by PO in the order ticked, each line's whole
+      free balance — `add` exactly, so conservation, the remainder rule and
+      capacity are the allocation service's and nobody else's.
+    */
+    for (const po of pos) {
+      for (const cargoLineId of po.openCargoLineIds) {
+        const free = await availableCartons(db, cargoLineId);
+        if (free <= 0) continue;
+        await allocate(
+          db,
+          { tenantId: auth.tenantId, userId: auth.userId },
+          { cargoLineId, clpId, ctnQty: free, override: null },
+        );
+      }
+    }
+
+    return { id: clpId.toString(), shipmentId: anchor.shipmentId.toString() };
   });
 
   const payload: ApiSuccess<{ id: string; shipmentId: string }> = { success: true, data };
