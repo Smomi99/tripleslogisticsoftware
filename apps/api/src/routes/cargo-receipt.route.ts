@@ -9,6 +9,7 @@ import {
   shortCloseSchema,
 } from '@ff/shared';
 
+import { billingBasisOf } from '../lib/clp-billing';
 import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
 import { Prisma } from '../generated/prisma/client';
 import { HttpError } from '../lib/http-error';
@@ -373,6 +374,7 @@ async function writeLines(
       }
     }
 
+    const already = existingByLine.get(line.cargoLineId);
     const data = {
       receivedCtnQty: line.receivedCtnQty,
       receivedPcsQty: line.receivedPcsQty ?? null,
@@ -388,22 +390,50 @@ async function writeLines(
       updatedBy: auth.userId,
     };
 
-    const already = existingByLine.get(line.cargoLineId);
-    if (already !== undefined) {
-      await db.cargoReceiptLine.update({ where: { id: already }, data });
-      kept.add(already);
-    } else {
-      const made = await db.cargoReceiptLine.create({
-        data: {
-          tenantId: await currentTenant(db),
-          cargoReceiptId: receiptId,
-          shipmentCargoLineId: parseRefId(line.cargoLineId, 'cargo line'),
-          ...data,
-          createdBy: auth.userId,
-        },
-        select: { id: true },
+    /*
+      `received_volume_cbm` is GENERATED from the carton the CFS measured, so
+      it is the database that decides whether this line has a measurement —
+      not this code. Selecting it back means the basis recorded below agrees
+      with the figure billing actually uses, rather than with a second guess
+      made from the dimensions on the way in.
+    */
+    const saved =
+      already === undefined
+        ? await db.cargoReceiptLine.create({
+            data: {
+              tenantId: await currentTenant(db),
+              cargoReceiptId: receiptId,
+              shipmentCargoLineId: parseRefId(line.cargoLineId, 'cargo line'),
+              ...data,
+              createdBy: auth.userId,
+            },
+            select: { id: true, receivedVolumeCbm: true, billingBasis: true },
+          })
+        : await db.cargoReceiptLine.update({
+            where: { id: already },
+            data,
+            select: { id: true, receivedVolumeCbm: true, billingBasis: true },
+          });
+    kept.add(saved.id);
+
+    /*
+      §7's decision, written down. The column existed and carried a default
+      of BOOKED that nothing ever changed, so every line recorded since the
+      consolidation migration claimed the charge rested on a booked figure
+      even where the CFS had re-measured. The computed billing CBM was right
+      throughout — it reads the measurement directly — but the stored answer
+      to "and why" was not, which is the one thing the column exists for.
+
+      Written only when it actually differs: the audit trigger files an entry
+      for every UPDATE, and a receipt saved twice should not grow a history of
+      changes nobody made.
+    */
+    const basis = billingBasisOf({ receivedVolumeCbm: saved.receivedVolumeCbm });
+    if (saved.billingBasis !== basis) {
+      await db.cargoReceiptLine.update({
+        where: { id: saved.id },
+        data: { billingBasis: basis, updatedBy: auth.userId },
       });
-      kept.add(made.id);
     }
   }
 

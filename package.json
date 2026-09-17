@@ -21,7 +21,9 @@
     "test": "pnpm --filter @ff/api test",
     "db:seed": "tsx prisma/seed.ts",
     "db:demo": "tsx prisma/demo-data.ts",
-    "db:demo:clear": "tsx prisma/demo-data.ts --clear"
+    "db:demo:clear": "tsx prisma/demo-data.ts --clear",
+    "db:demo:sheet": "tsx prisma/demo-data.ts --sheet",
+    "db:demo:sheet:clear": "tsx prisma/demo-data.ts --sheet --clear"
   },
   "devDependencies": {
     "concurrently": "10.0.5",

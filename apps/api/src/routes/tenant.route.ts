@@ -25,6 +25,7 @@ import { shipmentRouter } from './shipment.route';
 import { shipmentScheduleRouter } from './shipment-schedule.route';
 import { shippingOrderRouter } from './shipping-order.route';
 import { cargoReceiptRouter } from './cargo-receipt.route';
+import { clpRouter } from './clp.route';
 import { opsWorklistRouter, shipmentWorklistRouter } from './shipment-worklist.route';
 import { salesLeadRouter } from './sales-lead.route';
 import { portRouter } from './port.route';
@@ -75,6 +76,7 @@ tenantRouter.use('/cs', shippingOrderRouter);
 tenantRouter.use('/cs', shipmentWorklistRouter);
 // Operation — cargo receipt (MODULE_BOOKING_CARGO.md §6.7).
 tenantRouter.use('/ops', cargoReceiptRouter);
+tenantRouter.use('/ops', clpRouter);
 tenantRouter.use('/ops', opsWorklistRouter);
 tenantRouter.use('/sales', salesLeadRouter);
 

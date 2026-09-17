@@ -221,6 +221,26 @@ rateLookupRouter.post(
 // Container Size
 // ===========================================================================
 
+/** '' means the user left it blank, which is not the same as zero. */
+const capacity = (value: string | undefined): string | null =>
+  value === undefined || value.trim() === '' ? null : value.trim();
+
+/** A stored capacity for reading. Null stays null — "not recorded" is a fact. */
+const capacityOut = (value: unknown): string | null =>
+  value === null || value === undefined ? null : new Prisma.Decimal(String(value)).toFixed(2);
+
+const CONTAINER_SELECT = {
+  id: true,
+  code: true,
+  name: true,
+  teuFactor: true,
+  sortOrder: true,
+  maxVolumeCbm: true,
+  maxWeightKg: true,
+  tareWeightKg: true,
+  isActive: true,
+} as const;
+
 const CONTAINER_FEATURE = 'SETTING.CONTAINER_SIZE';
 
 rateLookupRouter.get(
@@ -237,7 +257,7 @@ rateLookupRouter.get(
         page: query.page,
         limit: query.limit,
         orderBy: 'l.sort_order ASC, l.code ASC',
-        extraColumns: 'l.teu_factor, l.sort_order',
+        extraColumns: 'l.teu_factor, l.sort_order, l.max_volume_cbm, l.max_weight_kg, l.tare_weight_kg',
       }),
     );
 
@@ -249,6 +269,9 @@ rateLookupRouter.get(
         name: r.name,
         teuFactor: decimal(r['teu_factor']),
         sortOrder: Number(r['sort_order'] ?? 0),
+        maxVolumeCbm: capacityOut(r['max_volume_cbm']),
+        maxWeightKg: capacityOut(r['max_weight_kg']),
+        tareWeightKg: capacityOut(r['tare_weight_kg']),
         isActive: r.effective_is_active,
         isSystem: r.is_system,
       })),
@@ -274,10 +297,13 @@ rateLookupRouter.post(
           name: input.name,
           teuFactor: input.teuFactor,
           sortOrder: input.sortOrder === undefined || input.sortOrder === '' ? 0 : Number(input.sortOrder),
+          maxVolumeCbm: capacity(input.maxVolumeCbm),
+          maxWeightKg: capacity(input.maxWeightKg),
+          tareWeightKg: capacity(input.tareWeightKg),
           createdBy: auth.userId,
           updatedBy: auth.userId,
         },
-        select: { id: true, code: true, name: true, teuFactor: true, sortOrder: true, isActive: true },
+        select: CONTAINER_SELECT,
       });
     });
 
@@ -289,6 +315,9 @@ rateLookupRouter.post(
         name: created.name,
         teuFactor: created.teuFactor.toFixed(2),
         sortOrder: created.sortOrder,
+        maxVolumeCbm: capacityOut(created.maxVolumeCbm),
+        maxWeightKg: capacityOut(created.maxWeightKg),
+        tareWeightKg: capacityOut(created.tareWeightKg),
         isActive: created.isActive,
         isSystem: false,
       },
@@ -321,9 +350,12 @@ rateLookupRouter.patch(
           name: input.name,
           teuFactor: input.teuFactor,
           sortOrder: input.sortOrder === undefined || input.sortOrder === '' ? 0 : Number(input.sortOrder),
+          maxVolumeCbm: capacity(input.maxVolumeCbm),
+          maxWeightKg: capacity(input.maxWeightKg),
+          tareWeightKg: capacity(input.tareWeightKg),
           updatedBy: auth.userId,
         },
-        select: { id: true, code: true, name: true, teuFactor: true, sortOrder: true, isActive: true },
+        select: CONTAINER_SELECT,
       });
     });
 
@@ -335,6 +367,9 @@ rateLookupRouter.patch(
         name: updated.name,
         teuFactor: updated.teuFactor.toFixed(2),
         sortOrder: updated.sortOrder,
+        maxVolumeCbm: capacityOut(updated.maxVolumeCbm),
+        maxWeightKg: capacityOut(updated.maxWeightKg),
+        tareWeightKg: capacityOut(updated.tareWeightKg),
         isActive: updated.isActive,
         isSystem: false,
       },

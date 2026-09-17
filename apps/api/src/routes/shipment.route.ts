@@ -19,7 +19,7 @@ import {
 import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
 import { Prisma } from '../generated/prisma/client';
 import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
-import { renderVolumes } from '../lib/render-volumes';
+import { renderRequiredContainer } from '../lib/render-volumes';
 import { HttpError } from '../lib/http-error';
 import { nextBookingNo, seriesYearOf } from '../lib/inquiry-no';
 import { parseId, parseRefId } from '../lib/request';
@@ -416,6 +416,12 @@ shipmentRouter.get('/bookings', requirePermission(`${FEATURE}.VIEW`), async (req
           quotation: {
             select: {
               code: true,
+              /* The agreed containers — see renderRequiredContainer. */
+              lines: {
+                where: { deletedAt: null, isActive: true },
+                orderBy: { sortOrder: 'asc' },
+                select: { containerSizeName: true, quantity: true },
+              },
               inquiry: {
                 select: {
                   volumes: {
@@ -452,7 +458,7 @@ shipmentRouter.get('/bookings', requirePermission(`${FEATURE}.VIEW`), async (req
     polCode: row.pol.portCode,
     podName: row.pod.name,
     podCode: row.pod.portCode,
-    requiredContainer: renderVolumes(row.quotation.inquiry.volumes),
+    requiredContainer: renderRequiredContainer(row.quotation.lines, row.quotation.inquiry.volumes),
     transitType: row.transitType,
     goodsHandoverDate: dateOut(row.goodsHandoverDate),
     etd: dateOut(row.etd),

@@ -111,6 +111,21 @@ export const ACTIONS = [
   'DECLINE_LINE',
   'SHORT_CLOSE',
   'OVERRIDE_QTY',
+  /*
+   * MODULE_CLP.md §6. Splitting a PO across two containers is a different act
+   * from adding one whole, FINALISE is irreversible — there is no edit path
+   * back from a finalised load plan — and OVERRIDE_CAPACITY decides who may
+   * load a 29 CBM plan into a 28 CBM box. All three sit with a supervisor.
+   */
+  'SPLIT',
+  'FINALISE',
+  'OVERRIDE_CAPACITY',
+  /*
+   * CR-002 §9. Changing a container's cost split by hand moves money between
+   * customers' invoices, so it is its own right rather than something anyone
+   * who can edit a load plan may do.
+   */
+  'OVERRIDE_COST',
 ] as const;
 
 export type Action = (typeof ACTIONS)[number];
@@ -165,6 +180,26 @@ const MASTER: readonly Action[] = ['VIEW', 'CREATE', 'EDIT', 'TOGGLE_STATUS', 'E
 const MASTER_DELETABLE: readonly Action[] = [...MASTER, 'DELETE'];
 const MASTER_APPROVE: readonly Action[] = [...MASTER, 'APPROVE'];
 /** Statements and reports: nothing to create or toggle. */
+/**
+ * MODULE_CLP.md §6. EXPORT is the print document — the spec calls it PRINT,
+ * but every other printable record in this registry exports, and one name for
+ * one act is worth more than matching a heading.
+ *
+ * No DELETE: a load plan is retired by CANCELLED, which releases its cartons
+ * back to the pool and keeps the record. TOGGLE_STATUS comes with MASTER and
+ * is deliberately not wired to anything — a CLP's lifecycle is its status,
+ * and a second switch beside it would be a way to hide a finalised plan
+ * without cancelling it.
+ */
+const CLP: readonly Action[] = [
+  ...MASTER,
+  'SPLIT',
+  'FINALISE',
+  'CANCEL',
+  'OVERRIDE_CAPACITY',
+  'OVERRIDE_COST',
+];
+
 const READ_ONLY: readonly Action[] = ['VIEW', 'EXPORT'];
 /** The permission matrix itself — you look at it or you change it. */
 const MATRIX: readonly Action[] = ['VIEW', 'EDIT'];
@@ -382,7 +417,12 @@ export const FEATURES: readonly FeatureDefinition[] = [
     label: 'Cargo Receipt',
     actions: [...MASTER, 'CONFIRM', 'DECLINE_LINE', 'SHORT_CLOSE', 'OVERRIDE_QTY'],
   },
-  { module: 'OPERATION', feature: 'OPERATION.CONTAINER_LOAD_PLAN', label: 'Container Load Plan', actions: MASTER },
+  {
+    module: 'OPERATION',
+    feature: 'OPERATION.CONTAINER_LOAD_PLAN',
+    label: 'Container Load Plan',
+    actions: CLP,
+  },
   { module: 'OPERATION', feature: 'OPERATION.STUFFING', label: 'Stuffing', actions: MASTER },
   { module: 'OPERATION', feature: 'OPERATION.IGM_SUBMISSION', label: 'IGM Submission', actions: MASTER },
   { module: 'OPERATION', feature: 'OPERATION.DO_ISSUE', label: 'DO Issue', actions: MASTER },

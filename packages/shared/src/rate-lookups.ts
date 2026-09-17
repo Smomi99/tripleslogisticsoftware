@@ -87,11 +87,30 @@ export interface GoodsTypeDto extends LookupRowDto {
 
 // ------------------------------------------------------------ containerSize
 
+/** A capacity that may simply not be recorded yet — blank is a real answer. */
+const optionalDecimalField = (max: number, message: string) =>
+  z
+    .string()
+    .trim()
+    .refine(
+      (v) => v === '' || (new RegExp(`^\d{1,${max}}(\.\d{1,2})?$`).test(v) && Number(v) > 0),
+      message,
+    )
+    .optional();
+
 export const containerSizeInputSchema = z.object({
   code: codeField,
   name: nameField,
   /** 20STD = 1.00, 40ft = 2.00, 45ft = 2.25. Drives TEU reporting. */
   teuFactor: decimalField(2, 'Enter a TEU factor, e.g. 1 or 2.25.'),
+  /*
+    What the box holds (MODULE_CLP.md §3.1). Optional because a workspace may
+    have added a size before these existed; the load plan then says the
+    capacity is not set rather than treating the box as bottomless.
+  */
+  maxVolumeCbm: optionalDecimalField(8, 'Enter the volume in CBM, e.g. 28 or 67.5.'),
+  maxWeightKg: optionalDecimalField(10, 'Enter the payload in kg, e.g. 26000.'),
+  tareWeightKg: optionalDecimalField(10, 'Enter the empty weight in kg, e.g. 2300.'),
   sortOrder: z
     .string()
     .trim()
@@ -103,6 +122,10 @@ export type ContainerSizeInput = z.input<typeof containerSizeInputSchema>;
 export interface ContainerSizeDto extends LookupRowDto {
   teuFactor: string;
   sortOrder: number;
+  /** Null where nobody has recorded it — not "no limit". */
+  maxVolumeCbm: string | null;
+  maxWeightKg: string | null;
+  tareWeightKg: string | null;
 }
 
 // ----------------------------------------------------------------- rateTier

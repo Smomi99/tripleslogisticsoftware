@@ -1,0 +1,15 @@
+-- CR-002 — clp.shipment_id becomes nullable.
+--
+-- Missed in 20260915100000, which made clp_seq nullable but left this NOT
+-- NULL, so the Prisma model said optional while the column said required and
+-- creating a consolidated plan failed with a null constraint violation.
+-- Caught by the end-to-end route test.
+--
+-- Still NOT dropped, for the reason the first migration gives: new code stops
+-- writing it and reads clp_booking instead, so every historical row stays
+-- readable by the code that wrote it until a later release removes the column.
+--
+-- Nothing is rewritten here. Existing rows keep the shipment_id they have; a
+-- consolidated plan simply leaves it null, which is what the partial unique
+-- index added alongside clp_seq already anticipated.
+ALTER TABLE "clp" ALTER COLUMN "shipment_id" DROP NOT NULL;

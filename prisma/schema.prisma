@@ -224,6 +224,8 @@ model Tenant {
   industrySectors       IndustrySector[]
   commodityItems        CommodityItem[]
   commodityBusinessPorts CommodityBusinessPort[]
+  clps                   Clp[]
+  clpLines               ClpLine[]
   customers             Customer[]
   customerPics          CustomerPic[]
   expertAreas           ExpertArea[]
@@ -287,6 +289,7 @@ model Tenant {
   cargoReceiptLines    CargoReceiptLine[]
   mailSignatureLogos   MailSignatureLogo[]
 
+  clpBookings ClpBooking[]
   @@index([slug])
   @@index([status])
   @@index([currencyId])
@@ -470,6 +473,7 @@ model Currency {
   quotationsLocal  Quotation[]      @relation("QuotationLocalCurrency")
   quotationLines   QuotationLine[]  @relation("QuotationLineCurrency")
 
+  clpCosts Clp[] @relation("ClpCostCurrency")
   @@unique([tenantId, code])
   @@index([tenantId])
   @@index([currency])
@@ -640,6 +644,7 @@ model Carrier {
   quotations        Quotation[]        @relation("QuotationCarrier")
   shipments         Shipment[]         @relation("ShipmentCarrier")
   shipmentSchedules ShipmentSchedule[] @relation("ShipmentScheduleCarrier")
+  clps              Clp[]              @relation("ClpCarrier")
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -1431,6 +1436,7 @@ model Employee {
   updatedByUser       User?      @relation("EmployeeUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
   inquiriesAsSalesman Inquiry[]
   customersOwned      Customer[] @relation("CustomerSalesman")
+  supervisedClps      Clp[]      @relation("ClpSupervisor")
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -1697,6 +1703,13 @@ model User {
   createdIndustrySectors       IndustrySector[]       @relation("IndustrySectorCreatedBy")
   createdCommodityItems        CommodityItem[]        @relation("CommodityItemCreatedBy")
   createdCommodityBusinessPorts CommodityBusinessPort[] @relation("CommodityBusinessPortCreatedBy")
+  createdClps                  Clp[]                  @relation("ClpCreatedBy")
+  updatedClps                  Clp[]                  @relation("ClpUpdatedBy")
+  finalisedClps                Clp[]                  @relation("ClpFinalisedBy")
+  cancelledClps                Clp[]                  @relation("ClpCancelledBy")
+  capacityOverriddenClps       Clp[]                  @relation("ClpCapacityOverrideBy")
+  createdClpLines              ClpLine[]              @relation("ClpLineCreatedBy")
+  updatedClpLines              ClpLine[]              @relation("ClpLineUpdatedBy")
   createdCustomers             Customer[]             @relation("CustomerCreatedBy")
   createdCustomerPics          CustomerPic[]          @relation("CustomerPicCreatedBy")
   createdExpertAreas           ExpertArea[]           @relation("ExpertAreaCreatedBy")
@@ -1793,6 +1806,9 @@ model User {
   mailSignatureLogosCreated   MailSignatureLogo[]   @relation("MailSignatureLogoCreatedBy")
   mailSignatureLogosUpdated   MailSignatureLogo[]   @relation("MailSignatureLogoUpdatedBy")
 
+  clpBookingOverrides ClpBooking[] @relation("ClpBookingOverriddenBy")
+  clpBookingsCreated  ClpBooking[] @relation("ClpBookingCreatedBy")
+  clpBookingsUpdated  ClpBooking[] @relation("ClpBookingUpdatedBy")
   @@unique([tenantId, username])
   @@unique([tenantId, email])
   @@unique([tenantId, code])
@@ -2072,6 +2088,19 @@ model ContainerSize {
   /// 20STD = 1.00, 40STD/40HC = 2.00, 45FT = 2.25
   teuFactor Decimal   @default(1) @map("teu_factor") @db.Decimal(4, 2)
   sortOrder Int       @default(0) @map("sort_order")
+
+  /// What the box holds (MODULE_CLP.md §3.1). The CLP blocks a plan that goes
+  /// over either of these, so they are the numbers that decide whether cargo
+  /// physically fits.
+  ///
+  /// Nullable on purpose. The four seeded sizes are backfilled, but a
+  /// workspace may have added its own before this existed, and a NOT NULL
+  /// column would have failed the migration on a row nobody here can see.
+  /// §4.2 says "capacity not set" rather than silently allowing an overload.
+  maxVolumeCbm Decimal? @map("max_volume_cbm") @db.Decimal(10, 2)
+  maxWeightKg  Decimal? @map("max_weight_kg") @db.Decimal(12, 2)
+  /// The empty container's own weight. Not seeded — the client gave no values.
+  tareWeightKg Decimal? @map("tare_weight_kg") @db.Decimal(12, 2)
   isActive  Boolean   @default(true) @map("is_active")
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -2087,6 +2116,7 @@ model ContainerSize {
   inquiryVolumes InquiryVolume[]
 
   localCharges    RateLocalCharge[]
+  clps            Clp[]
   agentQuoteLines AgentQuoteLine[]  @relation("AgentQuoteLineContainerSize")
   quotationLines  QuotationLine[]   @relation("QuotationLineContainerSize")
 
@@ -3349,6 +3379,7 @@ model Quotation {
 
   /// The number plus its issue. A second revision of QTN-2026-000001 is a new
   /// row sharing the number, which is why code alone is not unique.
+  clps Clp[] @relation("ClpQuotation")
   @@unique([tenantId, code, revisionNo])
   @@unique([tenantId, id])
   @@index([tenantId])
@@ -3774,7 +3805,9 @@ model Shipment {
   schedules      ShipmentSchedule[]
   shippingOrders ShippingOrder[]
   cargoReceipts  CargoReceipt[]
+  clps           Clp[]
 
+  clpBookings ClpBooking[] @relation("ClpBookingShipment")
   @@unique([tenantId, code])
   /// §4 rule 10: a composite foreign key needs this to point at.
   @@unique([tenantId, id])
@@ -3845,6 +3878,7 @@ model ShipmentPo {
   updatedByUser  User? @relation("ShipmentPoUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   cargoLines ShipmentCargoLine[]
+  clpLines   ClpLine[]
 
   /// §4.1 asks for UNIQUE(tenant_id, shipment_id, po_no). It is declared in the
   /// migration as a PARTIAL index on deleted_at IS NULL instead — with soft
@@ -3898,6 +3932,23 @@ model ShipmentCargoLine {
   ///   volume_cbm = (L * W * H * ctn_qty) / 1000000        (cm³ → m³)
   volumeCbm Decimal? @default(dbgenerated()) @map("volume_cbm") @db.Decimal(18, 4)
 
+  /// What one carton is (MODULE_CLP.md §2.3).
+  ///
+  /// The CLP splits cargo by the carton and calculates everything else, so a
+  /// split is exact by construction rather than by ratio arithmetic done in
+  /// application code. Six decimals because the client's own PO-003 is 5,000
+  /// pieces over 300 cartons — 16.666667 — and the module's remainder rule
+  /// needs the parts to sum back to the whole.
+  ///
+  /// cbmPerCarton is the carton's OWN volume rather than volume_cbm / ctn_qty:
+  /// Postgres refuses to let one generated column read another, and the two
+  /// are the same number since volume_cbm is that volume times the carton
+  /// count. chargeableWtKg above works around the same restriction.
+  pcsPerCarton         Decimal? @default(dbgenerated()) @map("pcs_per_carton") @db.Decimal(18, 6)
+  netWeightPerCarton   Decimal? @default(dbgenerated()) @map("net_weight_per_carton") @db.Decimal(18, 6)
+  grossWeightPerCarton Decimal? @default(dbgenerated()) @map("gross_weight_per_carton") @db.Decimal(18, 6)
+  cbmPerCarton         Decimal? @default(dbgenerated()) @map("cbm_per_carton") @db.Decimal(18, 6)
+
   /// Read-only, computed by Postgres:
   ///   chargeable_wt_kg = GREATEST(gross_weight_kg, volume_cbm * 167)   (IATA)
   ///
@@ -3937,6 +3988,7 @@ model ShipmentCargoLine {
   createdByUser     User?              @relation("ShipmentCargoLineCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser     User?              @relation("ShipmentCargoLineUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
   cargoReceiptLines CargoReceiptLine[]
+  clpLines          ClpLine[]
 
   @@unique([tenantId, id])
   @@index([tenantId])
@@ -4125,6 +4177,7 @@ model ShippingOrder {
   tenant      Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   shipment    Shipment          @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict)
   schedule    ShipmentSchedule? @relation(fields: [tenantId, scheduleId], references: [tenantId, id], onDelete: Restrict)
+  clps Clp[]
   /// Vessel is system-capable (§7A rule 7): single column plus the guard.
   firstVessel Vessel?           @relation("ShippingOrderFirstVessel", fields: [firstVesselId], references: [id], onDelete: Restrict)
 
@@ -4133,6 +4186,7 @@ model ShippingOrder {
   updatedByUser User?          @relation("ShippingOrderUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
   cargoReceipts CargoReceipt[]
 
+  clpBookings ClpBooking[] @relation("ClpBookingShippingOrder")
   @@unique([tenantId, id])
   @@index([tenantId])
   @@index([shipmentId])
@@ -4234,6 +4288,12 @@ model CargoReceiptLine {
   /// §5.5 rule 6: more arrived than was booked, and somebody said why.
   overReceiptReason String?           @map("over_receipt_reason") @db.Text
 
+  /// CR-002 §4. ACTUAL where the CFS re-measured the cartons, BOOKED
+  /// otherwise. The measurements themselves are not duplicated here: booked
+  /// lives on shipment_cargo_line.volume_cbm and actual on this row's own
+  /// received_volume_cbm, both generated. What is stored is the decision.
+  billingBasis BillingBasis @default(BOOKED) @map("billing_basis")
+
   isActive  Boolean   @default(true) @map("is_active")
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -4253,4 +4313,285 @@ model CargoReceiptLine {
   @@index([cargoReceiptId])
   @@index([shipmentCargoLineId])
   @@map("cargo_receipt_line")
+}
+
+// ===========================================================================
+// CONTAINER LOAD PLAN — MODULE_CLP.md
+// ===========================================================================
+
+/// CR-002 §2. How this container came to hold what it holds.
+enum ClpConsolidation {
+  /// One booking. Every plan built before consolidation existed.
+  SINGLE
+  /// FCL (or CONSOL_BOX) bookings grouped under one quotation by default, and
+  /// splittable by the user where the physical rules still hold.
+  FCL_QUOTATION
+  /// LCL cargo from several customers sharing one box.
+  LCL_CONSOLIDATION
+
+  @@map("clp_consolidation")
+}
+
+/// Which measurement governs an LCL charge. Stored per row so a later rule
+/// change cannot silently rewrite what was billed.
+enum BillingBasis {
+  BOOKED
+  ACTUAL
+
+  @@map("billing_basis")
+}
+
+/// How a shared container's cost was split across its bookings.
+enum CostAllocationBasis {
+  CBM
+  WEIGHT
+  /// Somebody typed the numbers rather than accepting a computed split.
+  MANUAL
+
+  @@map("cost_allocation_basis")
+}
+
+enum ClpStatus {
+  DRAFT
+  FINAL
+  CANCELLED
+
+  @@map("clp_status")
+}
+
+/// client: Cargo Load Plan - SEA / List of CLP - SEA (MODULE_CLP.md §3.2).
+///
+/// One row per container. The plan made after goods are received at CFS and
+/// before they are physically stuffed — so this is the intention, and Stuffing
+/// later executes it against real cartons.
+///
+/// FINAL is immutable by §4.3: there is no edit path, only cancel and recreate.
+/// That is why clp_final_ck lives in the database rather than only in a route —
+/// a finalised plan with no container number is a page the warehouse cannot
+/// work to.
+model Clp {
+  tenantId   BigInt @map("tenant_id")
+  id         BigInt @id @default(autoincrement())
+  /// CLP-2026-000001. The document number §4.5 calls clp_no — one column, not
+  /// two, because `code` plus `series_year` is what every other document here
+  /// uses, and two names for one number is how they drift apart.
+  code       String @db.VarChar(32)
+  seriesYear Int    @map("series_year")
+  /// "CLP No : 1" on the client's cards — the container's number within this
+  /// shipment. Distinct from `code`, and §4.5 says both print.
+  /// Null on a consolidated CLP: a container shared by several bookings has no
+  /// position "within a booking". CR-002.
+  clpSeq     Int?   @map("clp_seq")
+
+  /// CR-002 — KEPT, not dropped. New code writes clp_booking and reads
+  /// participation from there; this stays so every historical row remains
+  /// readable by the code that wrote it, and goes in a later release.
+  shipmentId      BigInt? @map("shipment_id")
+  shippingOrderId BigInt? @map("shipping_order_id")
+
+  /// CR-002 §2. SINGLE is every plan built before consolidation existed.
+  consolidationType ClpConsolidation @default(SINGLE) @map("consolidation_type")
+  /// The commercial grouping an FCL consolidation defaulted to. A default, not
+  /// a constraint — §4 lets a user split a physically valid group.
+  quotationId       BigInt?          @map("quotation_id")
+  /// CR-002 §8: chosen by an operator, never derived from one receipt.
+  finalCfsLocation  String?          @map("final_cfs_location")
+
+  /// §9. What this box actually cost, typed by an operator — not buy_price and
+  /// not the sum of the quoted sells, which are different numbers.
+  actualContainerCost Decimal?             @map("actual_container_cost") @db.Decimal(18, 4)
+  costCurrencyId      BigInt?              @map("cost_currency_id")
+  costAllocationBasis CostAllocationBasis? @map("cost_allocation_basis")
+
+  /// Container size and carrier are system-capable (§7A rule 7), so a plain FK
+  /// plus the cross-tenant guard trigger rather than a composite one.
+  containerSizeId BigInt @map("container_size_id")
+  carrierId       BigInt @map("carrier_id")
+
+  /// ISO 6346, check digit validated (§5.2). Both required at FINAL.
+  containerNo  String?   @map("container_no") @db.Text
+  sealNo       String?   @map("seal_no") @db.Text
+  loadDatetime DateTime? @map("load_datetime") @db.Timestamptz(6)
+  loadedBy     String?   @map("loaded_by") @db.Text
+
+  /// §5.2: the supervisor signs for the load, so a named employee is worth
+  /// more in a dispute than typed text. The tally man is often casual or
+  /// third-party CFS staff, which is why that one is free text.
+  supervisorEmployeeId BigInt? @map("supervisor_employee_id")
+  tallyManName         String? @map("tally_man_name") @db.Text
+
+  status       ClpStatus @default(DRAFT)
+  finalisedBy  BigInt?   @map("finalised_by")
+  finalisedAt  DateTime? @map("finalised_at") @db.Timestamptz(6)
+  cancelledBy  BigInt?   @map("cancelled_by")
+  cancelledAt  DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  cancelReason String?   @map("cancel_reason") @db.Text
+
+  /// §4.2: volume over 100% is refused unless somebody holding
+  /// OVERRIDE_CAPACITY says otherwise, in writing.
+  capacityOverrideBy     BigInt? @map("capacity_override_by")
+  capacityOverrideReason String? @map("capacity_override_reason") @db.Text
+
+  /// §4.3 blocks cancelling a FINAL plan once stuffing has begun. Stuffing is
+  /// a later module; this column exists now so the check has something to read
+  /// rather than being retrofitted around a rule that was always meant to hold.
+  stuffingStartedAt DateTime? @map("stuffing_started_at") @db.Timestamptz(6)
+
+  /// Recomputed on every line change (§3.2). Stored so the list and the printed
+  /// document do not each re-add the lines and disagree.
+  totalCtnQty        Int      @default(0) @map("total_ctn_qty")
+  totalPcsQty        Int?     @map("total_pcs_qty")
+  totalNetWeightKg   Decimal? @map("total_net_weight_kg") @db.Decimal(18, 3)
+  totalGrossWeightKg Decimal? @map("total_gross_weight_kg") @db.Decimal(18, 3)
+  totalVolumeCbm     Decimal? @map("total_volume_cbm") @db.Decimal(18, 4)
+  /// 1.0000 is exactly full. §4.2 allows that and refuses only above it.
+  volumeUtilisation  Decimal? @map("volume_utilisation") @db.Decimal(5, 4)
+  weightUtilisation  Decimal? @map("weight_utilisation") @db.Decimal(5, 4)
+
+  /// §4 rule 2 convention. Deliberately NOT the CLP's lifecycle — `status` is
+  /// authoritative, and no screen offers a toggle for this.
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  /// Optional now that shipmentId is: a consolidated CLP has its bookings in
+  /// clp_booking, not here. CR-002.
+  shipment      Shipment?      @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict)
+  shippingOrder ShippingOrder? @relation(fields: [tenantId, shippingOrderId], references: [tenantId, id], onDelete: Restrict)
+  supervisor    Employee?      @relation("ClpSupervisor", fields: [tenantId, supervisorEmployeeId], references: [tenantId, id], onDelete: Restrict)
+  containerSize ContainerSize  @relation(fields: [containerSizeId], references: [id], onDelete: Restrict)
+  carrier       Carrier        @relation("ClpCarrier", fields: [carrierId], references: [id], onDelete: Restrict)
+
+  finalisedByUser      User? @relation("ClpFinalisedBy", fields: [finalisedBy], references: [id], onDelete: Restrict)
+  cancelledByUser      User? @relation("ClpCancelledBy", fields: [cancelledBy], references: [id], onDelete: Restrict)
+  capacityOverrideUser User? @relation("ClpCapacityOverrideBy", fields: [capacityOverrideBy], references: [id], onDelete: Restrict)
+  createdByUser        User? @relation("ClpCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser        User? @relation("ClpUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  quotation   Quotation? @relation("ClpQuotation", fields: [tenantId, quotationId], references: [tenantId, id], onDelete: Restrict)
+  costCurrency Currency?  @relation("ClpCostCurrency", fields: [costCurrencyId], references: [id], onDelete: Restrict)
+
+  lines    ClpLine[]
+  bookings ClpBooking[]
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([tenantId, shipmentId, status])
+  @@index([containerSizeId])
+  @@index([carrierId])
+  @@map("clp")
+}
+
+/// CR-002 §2 — which bookings are in this container.
+///
+/// The row that makes a CLP consolidatable. `clp_line` needed no change,
+/// because allocation and conservation are enforced per cargo line, and a
+/// cargo line already knows its own shipment.
+model ClpBooking {
+  tenantId        BigInt  @map("tenant_id")
+  id              BigInt  @id @default(autoincrement())
+  clpId           BigInt  @map("clp_id")
+  shipmentId      BigInt  @map("shipment_id")
+  shippingOrderId BigInt? @map("shipping_order_id")
+
+  /// §9. What the chosen basis produced, kept even when overridden, so "what
+  /// would it have been" survives the override.
+  defaultCostAmount   Decimal?  @map("default_cost_amount") @db.Decimal(18, 4)
+  allocatedCostAmount Decimal?  @map("allocated_cost_amount") @db.Decimal(18, 4)
+  costOverriddenBy    BigInt?   @map("cost_overridden_by")
+  costOverriddenAt    DateTime? @map("cost_overridden_at") @db.Timestamptz(6)
+  costOverrideReason  String?   @map("cost_override_reason")
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  clp           Clp            @relation(fields: [tenantId, clpId], references: [tenantId, id], onDelete: Restrict)
+  shipment      Shipment       @relation("ClpBookingShipment", fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict)
+  shippingOrder ShippingOrder? @relation("ClpBookingShippingOrder", fields: [tenantId, shippingOrderId], references: [tenantId, id], onDelete: Restrict)
+
+  overriddenByUser User? @relation("ClpBookingOverriddenBy", fields: [costOverriddenBy], references: [id], onDelete: Restrict)
+  createdByUser    User? @relation("ClpBookingCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser    User? @relation("ClpBookingUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, clpId, shipmentId])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([clpId])
+  @@index([shipmentId])
+  @@map("clp_booking")
+}
+
+/// One allocation: this many cartons of this cargo line, into this container.
+///
+/// §2.1 — never store "which container is this PO in" on the cargo line. One
+/// PO can go into two containers and one container holds several POs, so the
+/// relationship is this table.
+model ClpLine {
+  tenantId BigInt @map("tenant_id")
+  id       BigInt @id @default(autoincrement())
+  clpId    BigInt @map("clp_id")
+
+  shipmentCargoLineId BigInt @map("shipment_cargo_line_id")
+  shipmentPoId        BigInt @map("shipment_po_id")
+
+  /// Snapshotted for the printed document (§5.3). The cargo line can be edited
+  /// after a plan is finalised, and §4.3 says a finalised plan never changes.
+  poNo     String  @map("po_no") @db.Text
+  itemCode String  @map("item_code") @db.Text
+  sku      String? @db.Text
+  /// In CENTIMETRES, as on shipment_cargo_line. The unit is in the name on
+  /// purpose: it is the one number that, read in the wrong unit, is wrong by a
+  /// factor of a million.
+  cartonLengthCm Decimal? @map("carton_length_cm") @db.Decimal(10, 3)
+  cartonWidthCm  Decimal? @map("carton_width_cm") @db.Decimal(10, 3)
+  cartonHeightCm Decimal? @map("carton_height_cm") @db.Decimal(10, 3)
+
+  /// The only quantity a user types (§2.3). Everything below is calculated
+  /// from it and from the cargo line's per-carton values.
+  ctnQty        Int      @map("ctn_qty")
+  pcsQty        Int?     @map("pcs_qty")
+  netWeightKg   Decimal? @map("net_weight_kg") @db.Decimal(18, 3)
+  grossWeightKg Decimal? @map("gross_weight_kg") @db.Decimal(18, 3)
+  volumeCbm     Decimal? @map("volume_cbm") @db.Decimal(18, 4)
+
+  isSplit Boolean @default(false) @map("is_split")
+  /// Carries the rounding remainder (§2.3), so the parts of a fully allocated
+  /// line sum back to the whole exactly. Moves if allocations are recomputed.
+  isFinalAllocation Boolean @default(false) @map("is_final_allocation")
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  clp               Clp               @relation(fields: [tenantId, clpId], references: [tenantId, id], onDelete: Restrict)
+  shipmentCargoLine ShipmentCargoLine @relation(fields: [tenantId, shipmentCargoLineId], references: [tenantId, id], onDelete: Restrict)
+  shipmentPo        ShipmentPo        @relation(fields: [tenantId, shipmentPoId], references: [tenantId, id], onDelete: Restrict)
+
+  createdByUser User? @relation("ClpLineCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("ClpLineUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  /// Among live rows only — the migration scopes it WHERE deleted_at IS NULL.
+  /// A released allocation must not go on holding the slot, or a line taken
+  /// out of a container could never be put back into it.
+  @@unique([tenantId, clpId, shipmentCargoLineId])
+  @@index([tenantId])
+  @@index([clpId])
+  @@index([shipmentCargoLineId])
+  @@index([shipmentPoId])
+  @@map("clp_line")
 }
