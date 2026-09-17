@@ -1025,6 +1025,11 @@ export interface ReceiptGridRow {
   bookedCtnQty: number;
   bookedPcsQty: number | null;
   bookedGrossWeightKg: string | null;
+  /** The booked carton, which a new receipt starts from until the CFS says otherwise. */
+  bookedGrossWeightPerCartonKg: string | null;
+  bookedCartonLengthCm: string | null;
+  bookedCartonWidthCm: string | null;
+  bookedCartonHeightCm: string | null;
   bookedVolumeCbm: string | null;
 
   /** What the shipping order authorised. Null before one is issued. */

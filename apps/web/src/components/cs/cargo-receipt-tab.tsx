@@ -41,6 +41,8 @@ interface Draft {
   lineStatus: 'ACCEPTED' | 'DECLINED';
   declineReason: string;
   remarks: string;
+  /** G.WT still tracks the received cartons, because nobody has typed over it. */
+  grossFollowsQty: boolean;
 }
 
 const emptyDraft = (): Draft => ({
@@ -54,7 +56,39 @@ const emptyDraft = (): Draft => ({
   lineStatus: 'ACCEPTED',
   declineReason: '',
   remarks: '',
+  grossFollowsQty: false,
 });
+
+/** The booked gross weight for `ctn` cartons of this line; '' when the booking has none. */
+function bookedGrossFor(row: ReceiptGridRow, ctn: string): string {
+  const qty = Number(ctn);
+  if (ctn.trim() === '' || !Number.isInteger(qty) || qty < 0) return '';
+  // The whole booked quantity takes the booked total as typed, not a
+  // per-carton figure multiplied back up with its rounding.
+  if (qty === row.bookedCtnQty && row.bookedGrossWeightKg !== null) return row.bookedGrossWeightKg;
+  if (row.bookedGrossWeightPerCartonKg === null) return '';
+  return (Number(row.bookedGrossWeightPerCartonKg) * qty).toFixed(3);
+}
+
+/**
+ * A new receipt starts from the booking: the balance still owed, at the booked
+ * carton size and weight. The receiver corrects what arrived differently
+ * instead of retyping what the booking already knows. A line with nothing owed
+ * stays blank, so it is not recorded as a zero receipt.
+ */
+const fromBooking = (row: ReceiptGridRow): Draft => {
+  if (row.balanceCtnQty <= 0) return emptyDraft();
+  const qty = String(row.balanceCtnQty);
+  return {
+    ...emptyDraft(),
+    receivedCtnQty: qty,
+    receivedGrossWeightKg: bookedGrossFor(row, qty),
+    cartonLengthCm: row.bookedCartonLengthCm ?? '',
+    cartonWidthCm: row.bookedCartonWidthCm ?? '',
+    cartonHeightCm: row.bookedCartonHeightCm ?? '',
+    grossFollowsQty: true,
+  };
+};
 
 const fromRow = (row: ReceiptGridRow): Draft => ({
   receivedCtnQty: row.receivedCtnQty === null ? '' : String(row.receivedCtnQty),
@@ -67,6 +101,7 @@ const fromRow = (row: ReceiptGridRow): Draft => ({
   lineStatus: row.lineStatus ?? 'ACCEPTED',
   declineReason: row.declineReason ?? '',
   remarks: row.remarks ?? '',
+  grossFollowsQty: false,
 });
 
 const today = (): string => new Date().toISOString().slice(0, 10);
@@ -117,11 +152,18 @@ export function CargoReceiptTab({
         setUnloadLocation(open.unloadLocation ?? '');
         setEfrNo(open.efrNo ?? '');
       }
+      // A saved draft shows what was saved, blanks included: a line the
+      // receiver cleared means nothing arrived, and refilling it would put it
+      // back on the receipt at the next save.
       setDrafts(
         Object.fromEntries(
           data.grid.map((row) => [
             row.cargoLineId,
-            row.receiptLineId === null ? emptyDraft() : fromRow(row),
+            row.receiptLineId !== null
+              ? fromRow(row)
+              : open === null
+                ? fromBooking(row)
+                : emptyDraft(),
           ]),
         ),
       );
@@ -358,7 +400,14 @@ export function CargoReceiptTab({
                           aria-label={`Received cartons for ${row.poNo} ${row.itemCode}`}
                           numeric
                           value={d.receivedCtnQty}
-                          onChange={(e) => edit(row.cargoLineId, { receivedCtnQty: e.target.value })}
+                          onChange={(e) =>
+                            edit(row.cargoLineId, {
+                              receivedCtnQty: e.target.value,
+                              ...(d.grossFollowsQty
+                                ? { receivedGrossWeightKg: bookedGrossFor(row, e.target.value) }
+                                : {}),
+                            })
+                          }
                           className="w-20"
                         />
                       ) : (
@@ -372,7 +421,10 @@ export function CargoReceiptTab({
                           numeric
                           value={d.receivedGrossWeightKg}
                           onChange={(e) =>
-                            edit(row.cargoLineId, { receivedGrossWeightKg: e.target.value })
+                            edit(row.cargoLineId, {
+                              receivedGrossWeightKg: e.target.value,
+                              grossFollowsQty: false,
+                            })
                           }
                           className="w-24"
                         />
