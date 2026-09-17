@@ -473,6 +473,11 @@ export interface ClpCandidatePo {
   cbm: string;
   grossKg: string;
   efrNos: string[];
+  /**
+   * The live container plans already holding cartons of this PO, so a
+   * planned row can open the plan it is in rather than just saying so.
+   */
+  plans: { clpId: string; code: string; status: ClpStatus; ctnQty: number }[];
 }
 
 /** One booking offered for consolidation, with what the rules judge it on. */

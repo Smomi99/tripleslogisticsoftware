@@ -505,6 +505,8 @@ export interface CandidatePo {
   /** Lines with cartons still to load, in the order they are loaded. */
   openCargoLineIds: bigint[];
   efrNos: string[];
+  /** Live plans holding cartons of this PO, in the order they were made. */
+  plans: { clpId: bigint; code: string; status: 'DRAFT' | 'FINAL' | 'CANCELLED'; ctnQty: number }[];
 }
 
 const ZERO = new Prisma.Decimal(0);
@@ -568,15 +570,23 @@ export async function loadCandidatePos(
       ? []
       : db.clpLine.findMany({
           where: { ...LIVE_ALLOCATION, shipmentCargoLineId: { in: lineIds } },
-          select: { shipmentCargoLineId: true, ctnQty: true },
+          orderBy: { clpId: 'asc' },
+          select: {
+            shipmentCargoLineId: true,
+            ctnQty: true,
+            clpId: true,
+            clp: { select: { code: true, status: true } },
+          },
         }),
     efrNosOfCargoLines(db, lineIds),
   ]);
 
   const planned = new Map<string, number>();
+  const plansOfLine = new Map<string, typeof allocations>();
   for (const a of allocations) {
     const key = a.shipmentCargoLineId.toString();
     planned.set(key, (planned.get(key) ?? 0) + a.ctnQty);
+    plansOfLine.set(key, [...(plansOfLine.get(key) ?? []), a]);
   }
 
   return pos.map((po): CandidatePo => {
@@ -586,10 +596,16 @@ export async function loadCandidatePos(
     let kg = ZERO;
     const open: bigint[] = [];
     const lineEfrs: string[] = [];
+    const plans = new Map<string, CandidatePo['plans'][number]>();
 
     for (const line of po.cargoLines) {
       for (const efr of efrs.get(line.id.toString()) ?? []) {
         if (!lineEfrs.includes(efr)) lineEfrs.push(efr);
+      }
+      for (const a of plansOfLine.get(line.id.toString()) ?? []) {
+        const key = a.clpId.toString();
+        const found = plans.get(key) ?? { clpId: a.clpId, code: a.clp.code, status: a.clp.status, ctnQty: 0 };
+        plans.set(key, { ...found, ctnQty: found.ctnQty + a.ctnQty });
       }
 
       let got = 0;
@@ -625,6 +641,7 @@ export async function loadCandidatePos(
       grossKg: kg,
       openCargoLineIds: open,
       efrNos: lineEfrs,
+      plans: [...plans.values()],
     };
   });
 }

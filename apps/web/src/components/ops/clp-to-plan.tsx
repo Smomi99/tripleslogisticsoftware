@@ -53,6 +53,14 @@ const num = (v: string | number | null | undefined, dp = 2): string =>
 
 const day = (iso: string | null): string => (iso === null ? '—' : iso.slice(0, 10));
 
+/** Where a planned PO's container is: its booking's plan page, scrolled to that card. */
+const planHref = (shipmentId: string, clpId: string): Route =>
+  `/operation/container-load-plan/${shipmentId}#clp-${clpId}` as Route;
+
+/** A draft can still be changed; a final plan can only be looked at. */
+const viewLabel = (plans: { status: string }[]): string =>
+  plans.some((p) => p.status === 'DRAFT') ? 'View / edit' : 'View';
+
 /** The POs of a booking that ticking can still load. */
 const loadable = (c: ClpCandidateRow): string[] =>
   c.pos.filter((po) => po.ctnQty > 0).map((po) => po.poId);
@@ -614,14 +622,23 @@ function BookingRows({
           own — that column was the one a 1280px laptop pushed off screen.
         */}
         <span className="block whitespace-nowrap text-cell text-steel">
-          {loadingLabel(booking.loadingType)} ·{' '}
-          <Link
-            href={`/operation/container-load-plan/${booking.shipmentId}` as Route}
-            className="text-harbour hover:underline"
-            aria-label={`Open the plan for ${booking.code}`}
-          >
-            Open
-          </Link>
+          {loadingLabel(booking.loadingType)}
+          {/*
+            Only while nothing of it is planned: once cargo is in a container,
+            the planned PO rows carry the one button that opens it.
+          */}
+          {booking.plannedCtnQty === 0 && (
+            <>
+              {' · '}
+              <Link
+                href={`/operation/container-load-plan/${booking.shipmentId}` as Route}
+                className="text-harbour hover:underline"
+                aria-label={`Open the plan for ${booking.code}`}
+              >
+                Open
+              </Link>
+            </>
+          )}
         </span>
         {/* Only when it is not the quotation's customer, which the header already names. */}
         {booking.customerName !== groupCustomer && (
@@ -694,24 +711,58 @@ function BookingRows({
             <td className={`whitespace-nowrap px-3 py-2 font-mono tabular-nums text-hull ${tint}`}>
               {po.efrNos.length === 0 ? <span className="text-steel">—</span> : po.efrNos.join(', ')}
             </td>
-            <td className={`whitespace-nowrap px-3 py-2 text-right font-mono tabular-nums text-hull ${tint}`}>
-              {done ? (
-                <Status tone="active">Planned</Status>
-              ) : (
-                <>
+            {done ? (
+              /*
+                Every received carton is in a container: say which one, and
+                give the one button that opens it — a Draft to change, a
+                Final to look at.
+              */
+              <td colSpan={3} className={`px-3 py-2 ${tint}`}>
+                <span className="flex items-center justify-end gap-3 whitespace-nowrap">
+                  <Status tone="active">
+                    Planned in{' '}
+                    <span className="font-mono tabular-nums">
+                      {po.plans.map((plan) => plan.code).join(', ')}
+                    </span>
+                  </Status>
+                  {po.plans[0] !== undefined && (
+                    <Button variant="secondary" size="inline" asChild>
+                      <Link
+                        href={planHref(booking.shipmentId, po.plans[0].clpId)}
+                        aria-label={`${viewLabel(po.plans)} the plan holding ${po.poNo}`}
+                      >
+                        {viewLabel(po.plans)}
+                      </Link>
+                    </Button>
+                  )}
+                </span>
+              </td>
+            ) : (
+              <>
+                <td className={`whitespace-nowrap px-3 py-2 text-right font-mono tabular-nums text-hull ${tint}`}>
                   {po.ctnQty}
                   {po.ctnQty < po.receivedCtnQty && (
                     <span className="ml-1 text-steel">of {po.receivedCtnQty}</span>
                   )}
-                </>
-              )}
-            </td>
-            <td className={`whitespace-nowrap px-3 py-2 text-right font-mono tabular-nums text-hull ${tint}`}>
-              {done ? '—' : num(po.cbm)}
-            </td>
-            <td className={`whitespace-nowrap px-3 py-2 text-right font-mono tabular-nums text-steel ${tint}`}>
-              {done ? '—' : num(po.grossKg, 0)}
-            </td>
+                  {/* Part of it is already planned — the same button, smaller. */}
+                  {po.plans[0] !== undefined && (
+                    <Link
+                      href={planHref(booking.shipmentId, po.plans[0].clpId)}
+                      className="block font-sans text-cell text-harbour hover:underline"
+                      aria-label={`${viewLabel(po.plans)} the plan holding part of ${po.poNo}`}
+                    >
+                      {po.receivedCtnQty - po.ctnQty} planned · {viewLabel(po.plans)}
+                    </Link>
+                  )}
+                </td>
+                <td className={`whitespace-nowrap px-3 py-2 text-right font-mono tabular-nums text-hull ${tint}`}>
+                  {num(po.cbm)}
+                </td>
+                <td className={`whitespace-nowrap px-3 py-2 text-right font-mono tabular-nums text-steel ${tint}`}>
+                  {num(po.grossKg, 0)}
+                </td>
+              </>
+            )}
             {index === 0 && trailing}
           </tr>
         );

@@ -1556,6 +1556,7 @@ clpRouter.get('/clp-candidates', requirePermission(`${FEATURE}.VIEW`), async (re
         cbm: po.cbm.toFixed(4),
         grossKg: po.grossKg.toFixed(3),
         efrNos: po.efrNos,
+        plans: po.plans.map((plan) => ({ ...plan, clpId: plan.clpId.toString() })),
       });
       posOf.set(key, list);
     }

@@ -135,6 +135,26 @@ export default function ClpBuilderPage() {
     void load();
   }, [load]);
 
+  /*
+    Arriving from a planned PO's View / edit, or the register, with
+    #clp-<id>: bring that container into view, and aim add and Split at it
+    when it is still a draft. The cards render after the plan loads, which
+    is after the browser's own jump to the anchor would have happened.
+  */
+  const [arrived, setArrived] = useState(false);
+  useEffect(() => {
+    if (plan === null || arrived) return;
+    setArrived(true);
+    const wanted = window.location.hash.startsWith('#clp-') ? window.location.hash.slice(5) : null;
+    if (wanted === null) return;
+    const card = plan.clps.find((c) => c.id === wanted);
+    if (card === undefined) return;
+    if (card.status === 'DRAFT') setTarget(card.id);
+    requestAnimationFrame(() =>
+      document.getElementById(`clp-${wanted}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+    );
+  }, [arrived, plan]);
+
   /** Applies a server response that already carries the whole plan back. */
   function apply(next: ClpPlan): void {
     setPlan(next);
@@ -716,10 +736,11 @@ function ClpCardView({
 
   return (
     <section
+      id={`clp-${clp.id}`}
       className={
         isTarget
-          ? 'rounded-manifest border-2 border-harbour bg-surface p-4 shadow-manifest'
-          : 'rounded-manifest border border-line bg-surface p-4 shadow-manifest'
+          ? 'scroll-mt-4 rounded-manifest border-2 border-harbour bg-surface p-4 shadow-manifest'
+          : 'scroll-mt-4 rounded-manifest border border-line bg-surface p-4 shadow-manifest'
       }
     >
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">

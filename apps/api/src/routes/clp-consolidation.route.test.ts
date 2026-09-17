@@ -2286,3 +2286,54 @@ describe('To plan — "Same sailing" suggestions', () => {
     );
   });
 });
+
+describe('To plan — a planned PO knows the plan it is in', () => {
+  it('names every live plan holding the PO, with its status and cartons', async () => {
+    const b = await booking({ label: 'pvw', loadingType: 'LCL', ctn: 10 });
+    const line = await owner.shipmentCargoLine.findFirstOrThrow({
+      where: { shipmentId: b.id },
+      select: { id: true },
+    });
+
+    // Four cartons into one plan, the other six into a second.
+    const first = await as(tokenAll)
+      .post(`/api/tenant/ops/bookings/${b.id}/clps`)
+      .send({ containerSizeId: size20.toString() });
+    const firstId = track(first.body.data.id).toString();
+    const put = await as(tokenAll)
+      .post(`/api/tenant/ops/clps/${firstId}/lines`)
+      .send({ cargoLineId: line.id.toString(), ctnQty: 4 });
+    expect(put.status, JSON.stringify(put.body)).toBe(201);
+
+    const partly = await as(tokenAll).get(`/api/tenant/ops/clp-candidates?family=LCL&search=${b.code}`);
+    const partlyPo = partly.body.data.candidates[0].pos[0];
+    expect(partlyPo.ctnQty).toBe(6);
+    expect(partlyPo.plans).toEqual([
+      { clpId: firstId, code: expect.stringMatching(/^CLP-/), status: 'DRAFT', ctnQty: 4 },
+    ]);
+
+    const second = await as(tokenAll)
+      .post(`/api/tenant/ops/bookings/${b.id}/clps`)
+      .send({ containerSizeId: size20.toString() });
+    const secondId = track(second.body.data.id).toString();
+    await as(tokenAll)
+      .post(`/api/tenant/ops/clps/${secondId}/lines`)
+      .send({ cargoLineId: line.id.toString(), ctnQty: 6 });
+
+    const full = await as(tokenAll).get(`/api/tenant/ops/clp-candidates?family=LCL&search=${b.code}`);
+    const fullPo = full.body.data.candidates[0].pos[0];
+    expect(fullPo.ctnQty).toBe(0);
+    expect(fullPo.plans.map((p: { clpId: string; ctnQty: number }) => [p.clpId, p.ctnQty])).toEqual([
+      [firstId, 4],
+      [secondId, 6],
+    ]);
+
+    // A cancelled plan holds nothing, so it stops being named.
+    const cancelled = await as(tokenAll)
+      .post(`/api/tenant/ops/clps/${firstId}/cancel`)
+      .send({ reason: 'Re-planning this container.' });
+    expect(cancelled.status, JSON.stringify(cancelled.body)).toBe(200);
+    const after = await as(tokenAll).get(`/api/tenant/ops/clp-candidates?family=LCL&search=${b.code}`);
+    expect(after.body.data.candidates[0].pos[0].plans.map((p: { clpId: string }) => p.clpId)).toEqual([secondId]);
+  });
+});

@@ -147,8 +147,9 @@ export function ClpRegister({
       isPending={pending}
       actions={(r) => (
         <Button variant="text" size="inline" asChild>
-          <Link href={`/operation/container-load-plan/${r.shipmentId}` as Route}>
-            {r.status === 'DRAFT' ? 'Finalise' : 'Open'}
+          {/* The same words as the planned rows on To plan, landing on this card. */}
+          <Link href={`/operation/container-load-plan/${r.shipmentId}#clp-${r.id}` as Route}>
+            {r.status === 'DRAFT' ? 'View / edit' : 'View'}
           </Link>
         </Button>
       )}

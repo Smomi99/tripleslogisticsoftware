@@ -392,6 +392,7 @@ The list and the "New container plan" screen showed the same bookings twice, in 
 - `/operation/container-load-plan/new` redirects to the To plan tab, keeping `booking` and `family`; Cargo Receipt's `Make CLP` links straight to the new address.
 - The booking plan page is headed "Container Load Plan · Containers for this booking", and its container picker is titled "Add a container".
 - A consol box's Required Container reads "None — our consol box" instead of the inquiry's weight ("60 Kg").
+- A fully planned PO reads "Planned in CLP-…" with one **View / edit** button (**View** once final) that opens its booking's plan scrolled to that container, and aims add and Split at it. A partly planned PO carries the same link under its carton count. The register's action uses the same words and lands on the same card.
 
 Server changes that came with it:
 
