@@ -56,7 +56,9 @@ const SPEC: Record<ShipmentStatus, ShipmentStatus[]> = {
   SO_ISSUED: ['PART_RECEIVED', 'CARGO_RECEIVED', 'APPROVED_FOR_SHIPMENT'],
   SO_SKIPPED: ['PART_RECEIVED', 'CARGO_RECEIVED', 'APPROVED_FOR_SHIPMENT'],
   PART_RECEIVED: ['PART_RECEIVED', 'CARGO_RECEIVED', 'SHORT_CLOSED'],
-  CARGO_RECEIVED: [],
+  // Not in §5.1's table. Client decision 2026-09-17: editing a confirmed
+  // receipt down leaves cartons owed again.
+  CARGO_RECEIVED: ['PART_RECEIVED'],
   SHORT_CLOSED: [],
   CANCELLED: [],
 };

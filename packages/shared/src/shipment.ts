@@ -111,7 +111,12 @@ export const SHIPMENT_TRANSITIONS: Record<ShipmentStatus, readonly ShipmentStatu
   SO_SKIPPED: ['PART_RECEIVED', 'CARGO_RECEIVED', 'APPROVED_FOR_SHIPMENT', 'CANCELLED'],
   // §5.5 rule 4: a booking may have several receipts, so this one loops.
   PART_RECEIVED: ['PART_RECEIVED', 'CARGO_RECEIVED', 'SHORT_CLOSED', 'CANCELLED'],
-  CARGO_RECEIVED: ['CANCELLED'],
+  /*
+   * PART_RECEIVED is not in §5.1's table. Client decision 2026-09-17: a
+   * confirmed receipt may be edited, and an edit that lowers a count leaves
+   * cartons owed again, which §5.5 rule 3 calls PART_RECEIVED.
+   */
+  CARGO_RECEIVED: ['PART_RECEIVED', 'CANCELLED'],
   SHORT_CLOSED: ['CANCELLED'],
   CANCELLED: [],
 };
@@ -1067,7 +1072,22 @@ export interface CargoReceiptDto {
   shippingOrderCode: string | null;
   receivedByName: string | null;
   confirmedAt: string | null;
+  /** The last edit after confirming, when there has been one. */
+  correctionReason: string | null;
+  correctedAt: string | null;
+  correctedByName: string | null;
   rows: ReceiptGridRow[];
+}
+
+/** GET /bookings/:id/cargo-receipts. */
+export interface CargoReceiptBoard {
+  receipts: CargoReceiptDto[];
+  grid: ReceiptGridRow[];
+  /**
+   * Why this booking's confirmed receipts cannot be edited right now, or null
+   * when they can. The permission is checked separately.
+   */
+  editLock: string | null;
 }
 
 /** §6.7's balance strip: "Balance 40 CTN across 2 POs". */
@@ -1128,6 +1148,23 @@ export const cargoReceiptSaveSchema = z.object({
 });
 
 export type CargoReceiptSaveInput = z.infer<typeof cargoReceiptSaveSchema>;
+
+/**
+ * Editing a confirmed receipt (client decision 2026-09-17). The whole receipt
+ * again, plus why: the booking's balance and status are recomputed from it.
+ */
+export const cargoReceiptCorrectSchema = cargoReceiptSaveSchema.extend({
+  lines: z
+    .array(receiptLineInputSchema)
+    .min(1, 'A confirmed receipt needs at least one line. Record what arrived.'),
+  reason: z
+    .string()
+    .trim()
+    .min(1, 'Say what was wrong with this receipt.')
+    .max(2000, 'That reason is too long.'),
+});
+
+export type CargoReceiptCorrectInput = z.infer<typeof cargoReceiptCorrectSchema>;
 
 /**
  * §5.5 rule 5's short close.

@@ -1799,6 +1799,7 @@ model User {
   shippingOrdersCreated       ShippingOrder[]       @relation("ShippingOrderCreatedBy")
   shippingOrdersUpdated       ShippingOrder[]       @relation("ShippingOrderUpdatedBy")
   cargoReceiptsReceived       CargoReceipt[]        @relation("CargoReceiptReceivedBy")
+  cargoReceiptsCorrected      CargoReceipt[]        @relation("CargoReceiptCorrectedBy")
   cargoReceiptsCreated        CargoReceipt[]        @relation("CargoReceiptCreatedBy")
   cargoReceiptsUpdated        CargoReceipt[]        @relation("CargoReceiptUpdatedBy")
   cargoReceiptLinesCreated    CargoReceiptLine[]    @relation("CargoReceiptLineCreatedBy")
@@ -4236,6 +4237,13 @@ model CargoReceipt {
   receivedBy  BigInt?            @map("received_by")
   confirmedAt DateTime?          @map("confirmed_at") @db.Timestamptz(6)
 
+  /// The last edit to a CONFIRMED receipt (client decision 2026-09-17): why,
+  /// who and when, all three or none (CHECK). The figures it replaced, and any
+  /// earlier edit's reason, are in audit_log.
+  correctionReason String?   @map("correction_reason") @db.Text
+  correctedBy      BigInt?   @map("corrected_by")
+  correctedAt      DateTime? @map("corrected_at") @db.Timestamptz(6)
+
   isActive  Boolean   @default(true) @map("is_active")
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -4247,8 +4255,9 @@ model CargoReceipt {
   shipment      Shipment       @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict)
   shippingOrder ShippingOrder? @relation(fields: [tenantId, shippingOrderId], references: [tenantId, id], onDelete: Restrict)
 
-  receivedByUser User? @relation("CargoReceiptReceivedBy", fields: [receivedBy], references: [id], onDelete: Restrict)
-  createdByUser  User? @relation("CargoReceiptCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  receivedByUser  User? @relation("CargoReceiptReceivedBy", fields: [receivedBy], references: [id], onDelete: Restrict)
+  correctedByUser User? @relation("CargoReceiptCorrectedBy", fields: [correctedBy], references: [id], onDelete: Restrict)
+  createdByUser   User? @relation("CargoReceiptCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser  User? @relation("CargoReceiptUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   lines CargoReceiptLine[]

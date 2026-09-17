@@ -51,6 +51,8 @@ function as(t: string) {
       request(app).get(path).set('Authorization', `Bearer ${t}`).set('X-Tenant-Slug', SLUG),
     post: (path: string) =>
       request(app).post(path).set('Authorization', `Bearer ${t}`).set('X-Tenant-Slug', SLUG),
+    put: (path: string) =>
+      request(app).put(path).set('Authorization', `Bearer ${t}`).set('X-Tenant-Slug', SLUG),
   };
 }
 
@@ -143,6 +145,9 @@ function oneLeg(): Leg[] {
 async function cleanup(): Promise<void> {
   const scope = `(SELECT id FROM tenant WHERE slug = '${SLUG}')`;
   for (const table of [
+    'clp_line',
+    'clp_booking',
+    'clp',
     'cargo_receipt_line',
     'cargo_receipt',
     'shipping_order',
@@ -1999,6 +2004,279 @@ describe('short close (§5.5 rule 5)', () => {
     expect(change?.detail).toMatch(/Part received → Short closed/);
     // §5.5 rule 5: "the trail is the answer", so it carries the reason too.
     expect(change?.detail).toMatch(/Exporter short-shipped\./);
+  });
+});
+
+describe('editing a confirmed receipt (client decision, 2026-09-17)', () => {
+  let tokenEditor: string;
+
+  beforeAll(async () => {
+    // A clerk who may edit, but is not the supervisor OVERRIDE_QTY makes.
+    const editor = await owner.user.create({
+      data: {
+        tenantId,
+        code: 'USR-sched-ed',
+        username: 'editor-sched',
+        email: 'editor@sched.test',
+        passwordHash: 'x',
+        isSuperadmin: false,
+      },
+      select: { id: true },
+    });
+    tokenEditor = await signAccessToken({
+      sub: editor.id.toString(),
+      tenantId: tenantId.toString(),
+      isSuperadmin: false,
+      permissions: [
+        'OPERATION.CARGO_RECEIPT.VIEW',
+        'OPERATION.CARGO_RECEIPT.CREATE',
+        'OPERATION.CARGO_RECEIPT.CONFIRM',
+        'OPERATION.CARGO_RECEIPT.EDIT',
+      ],
+      tokenVersion: 0,
+    });
+  });
+
+  interface Receipt {
+    id: string;
+    code: string;
+    correctionReason: string | null;
+    correctedAt: string | null;
+    correctedByName: string | null;
+    rows: { cargoLineId: string; receivedCtnQty: number | null; receivedGrossWeightKg: string | null }[];
+  }
+
+  /** A booking with an issued S/O and one line of 100 cartons. */
+  async function ready() {
+    const { id } = await approved(1);
+    const res = await as(token).post(`/api/tenant/cs/bookings/${id}/shipping-order`).send({});
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const line = await owner.shipmentCargoLine.findFirstOrThrow({
+      where: { shipmentId: id, deletedAt: null },
+      select: { id: true },
+    });
+    return { id, lineId: line.id.toString() };
+  }
+
+  /** Records and confirms one receipt, and returns its id. */
+  async function receive(id: bigint, lineId: string, qty: number): Promise<string> {
+    const saved = await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/cargo-receipts`)
+      .send({ receiveDate: '2026-11-05', lines: [{ cargoLineId: lineId, receivedCtnQty: qty }] });
+    expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+    const receiptId = (saved.body as { data: { id: string } }).data.id;
+    const done = await as(token).post(
+      `/api/tenant/ops/bookings/${id}/cargo-receipts/${receiptId}/confirm`,
+    );
+    expect(done.status, JSON.stringify(done.body)).toBe(200);
+    return receiptId;
+  }
+
+  function correction(lineId: string, qty: number, extra: Record<string, unknown> = {}) {
+    return {
+      receiveDate: '2026-11-06',
+      unloadLocation: 'Pangaon ICT',
+      lines: [{ cargoLineId: lineId, receivedCtnQty: qty, receivedGrossWeightKg: '880' }],
+      reason: 'Gross weight was typed from the booking, not the scale.',
+      ...extra,
+    };
+  }
+
+  async function statusOf(id: bigint): Promise<string> {
+    return (
+      await owner.shipment.findFirstOrThrow({ where: { id }, select: { status: true } })
+    ).status;
+  }
+
+  async function board(id: bigint) {
+    const res = await as(token).get(`/api/tenant/ops/bookings/${id}/cargo-receipts`);
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    return (res.body as {
+      data: { editLock: string | null; grid: { balanceCtnQty: number }[] };
+    }).data;
+  }
+
+  it('edits the figures and records why, who and when — the phase gate', async () => {
+    const { id, lineId } = await ready();
+    const receiptId = await receive(id, lineId, 100);
+
+    const res = await as(token)
+      .put(`/api/tenant/ops/bookings/${id}/cargo-receipts/${receiptId}`)
+      .send(correction(lineId, 100));
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const saved = (res.body as { data: Receipt }).data;
+    expect(saved.correctionReason).toBe('Gross weight was typed from the booking, not the scale.');
+    expect(saved.correctedByName).toBe('admin-sched');
+    expect(saved.correctedAt).not.toBeNull();
+    const row = saved.rows.find((r) => r.cargoLineId === lineId);
+    expect(row?.receivedGrossWeightKg).toBe('880');
+    // Still all in, so still Cargo received.
+    expect(await statusOf(id)).toBe('CARGO_RECEIVED');
+  });
+
+  it('is measured against what the OTHER receipts left owed, not against itself', async () => {
+    /*
+     * The regression this guards: checked against every confirmed receipt
+     * including its own, an unchanged 60 on the first of two receipts would
+     * see nothing owed and be refused as an over-receipt.
+     */
+    const { id, lineId } = await ready();
+    const first = await receive(id, lineId, 60);
+    await receive(id, lineId, 40);
+
+    const same = await request(app)
+      .put(`/api/tenant/ops/bookings/${id}/cargo-receipts/${first}`)
+      .set('Authorization', `Bearer ${tokenEditor}`)
+      .set('X-Tenant-Slug', SLUG)
+      .send(correction(lineId, 60));
+    expect(same.status, JSON.stringify(same.body)).toBe(200);
+
+    // 70 is 10 more than the second receipt left room for.
+    const over = await request(app)
+      .put(`/api/tenant/ops/bookings/${id}/cargo-receipts/${first}`)
+      .set('Authorization', `Bearer ${tokenEditor}`)
+      .set('X-Tenant-Slug', SLUG)
+      .send(correction(lineId, 70));
+    expect(over.status).toBe(403);
+    expect((over.body as { error: { code: string } }).error.code).toBe('OVER_RECEIPT');
+  });
+
+  it('reopens the balance when an edit lowers the count (§5.5 rule 3)', async () => {
+    const { id, lineId } = await ready();
+    const receiptId = await receive(id, lineId, 100);
+    expect(await statusOf(id)).toBe('CARGO_RECEIVED');
+
+    const res = await as(token)
+      .put(`/api/tenant/ops/bookings/${id}/cargo-receipts/${receiptId}`)
+      .send(correction(lineId, 90));
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+
+    expect(await statusOf(id)).toBe('PART_RECEIVED');
+    expect((await board(id)).grid[0]?.balanceCtnQty).toBe(10);
+
+    // ...and the ordinary path closes it again.
+    await receive(id, lineId, 10);
+    expect(await statusOf(id)).toBe('CARGO_RECEIVED');
+  });
+
+  it('refuses without a reason', async () => {
+    const { id, lineId } = await ready();
+    const receiptId = await receive(id, lineId, 100);
+    const res = await as(token)
+      .put(`/api/tenant/ops/bookings/${id}/cargo-receipts/${receiptId}`)
+      .send(correction(lineId, 100, { reason: '   ' }));
+    expect(res.status).toBe(400);
+  });
+
+  it('refuses a receiver without EDIT', async () => {
+    const { id, lineId } = await ready();
+    const receiptId = await receive(id, lineId, 100);
+    const res = await request(app)
+      .put(`/api/tenant/ops/bookings/${id}/cargo-receipts/${receiptId}`)
+      .set('Authorization', `Bearer ${tokenReceiver}`)
+      .set('X-Tenant-Slug', SLUG)
+      .send(correction(lineId, 100));
+    expect(res.status).toBe(403);
+  });
+
+  it('refuses a draft — that is edited in the form and saved', async () => {
+    const { id, lineId } = await ready();
+    await receive(id, lineId, 60);
+    const draft = await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/cargo-receipts`)
+      .send({ receiveDate: '2026-11-07', lines: [{ cargoLineId: lineId, receivedCtnQty: 20 }] });
+    const res = await as(token)
+      .put(`/api/tenant/ops/bookings/${id}/cargo-receipts/${(draft.body as { data: { id: string } }).data.id}`)
+      .send(correction(lineId, 20));
+    expect(res.status).toBe(409);
+    expect((res.body as { error: { code: string } }).error.code).toBe('NOT_CONFIRMED');
+  });
+
+  it('locks once the booking is on a CLP, and unlocks when that plan is cancelled', async () => {
+    const { id, lineId } = await ready();
+    const receiptId = await receive(id, lineId, 100);
+    expect((await board(id)).editLock).toBeNull();
+
+    const admin = await owner.user.findFirstOrThrow({
+      where: { tenantId, username: 'admin-sched' },
+      select: { id: true },
+    });
+    const size = await owner.containerSize.findFirstOrThrow({
+      where: { code: '20STD', deletedAt: null },
+      select: { id: true },
+    });
+    // The pre-consolidation shape: the booking on clp.shipment_id, no clp_booking.
+    const plan = await owner.clp.create({
+      data: {
+        tenantId,
+        code: `SC-CLP-${id}`,
+        seriesYear: 2026,
+        clpSeq: 1,
+        shipmentId: id,
+        containerSizeId: size.id,
+        carrierId,
+      },
+      select: { id: true },
+    });
+
+    const locked = await board(id);
+    expect(locked.editLock).toMatch(new RegExp(`SC-CLP-${id}`));
+    const refused = await as(token)
+      .put(`/api/tenant/ops/bookings/${id}/cargo-receipts/${receiptId}`)
+      .send(correction(lineId, 100));
+    expect(refused.status).toBe(409);
+    expect((refused.body as { error: { code: string } }).error.code).toBe('RECEIPT_LOCKED');
+
+    // A cancelled plan holds nothing (MODULE_CLP.md §4.1).
+    await owner.clp.update({
+      where: { id: plan.id },
+      data: {
+        status: 'CANCELLED',
+        cancelledAt: new Date(),
+        cancelledBy: admin.id,
+        cancelReason: 'Wrong container size.',
+      },
+    });
+    expect((await board(id)).editLock).toBeNull();
+    const allowed = await as(token)
+      .put(`/api/tenant/ops/bookings/${id}/cargo-receipts/${receiptId}`)
+      .send(correction(lineId, 100));
+    expect(allowed.status, JSON.stringify(allowed.body)).toBe(200);
+  });
+
+  it('locks a short-closed booking — the shortfall was worked out from these', async () => {
+    const { id, lineId } = await ready();
+    const receiptId = await receive(id, lineId, 60);
+    const closed = await as(token)
+      .post(`/api/tenant/ops/bookings/${id}/short-close`)
+      .send({ reason: 'Exporter short-shipped.' });
+    expect(closed.status, JSON.stringify(closed.body)).toBe(200);
+
+    expect((await board(id)).editLock).toMatch(/short closed/);
+    const res = await as(token)
+      .put(`/api/tenant/ops/bookings/${id}/cargo-receipts/${receiptId}`)
+      .send(correction(lineId, 60));
+    expect(res.status).toBe(409);
+  });
+
+  it('keeps what the edit replaced on the audit trail', async () => {
+    const { id, lineId } = await ready();
+    const receiptId = await receive(id, lineId, 100);
+    await as(token)
+      .put(`/api/tenant/ops/bookings/${id}/cargo-receipts/${receiptId}`)
+      .send(correction(lineId, 90));
+
+    const rows = await owner.$queryRaw<{ old_qty: string; new_qty: string }[]>`
+      SELECT old_values ->> 'received_ctn_qty' AS old_qty,
+             new_values ->> 'received_ctn_qty' AS new_qty
+        FROM audit_log
+       WHERE table_name = 'cargo_receipt_line' AND action = 'UPDATE'
+         AND record_id IN (
+           SELECT id FROM cargo_receipt_line WHERE cargo_receipt_id = ${BigInt(receiptId)}
+         )
+       ORDER BY id DESC`;
+    expect(rows.some((r) => r.old_qty === '100' && r.new_qty === '90')).toBe(true);
   });
 });
 

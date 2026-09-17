@@ -2,14 +2,19 @@ import { Router } from 'express';
 
 import {
   type ApiSuccess,
+  type CargoReceiptBoard,
   type CargoReceiptDto,
+  cargoReceiptCorrectSchema,
   cargoReceiptSaveSchema,
   describeShortClose,
   type ReceiptGridRow,
+  SHIPMENT_STATUS_LABEL,
+  type ShipmentStatus,
   shortCloseSchema,
 } from '@ff/shared';
 
 import { billingBasisOf } from '../lib/clp-billing';
+import { plansOfBooking } from '../lib/clp-participants';
 import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
 import { Prisma } from '../generated/prisma/client';
 import { HttpError } from '../lib/http-error';
@@ -42,6 +47,7 @@ const receiptArgs = {
   include: {
     shippingOrder: { select: { code: true } },
     receivedByUser: { select: { username: true } },
+    correctedByUser: { select: { username: true } },
     lines: {
       where: { deletedAt: null },
       select: {
@@ -79,7 +85,9 @@ const dec = (v: Prisma.Decimal | null): string | null => (v === null ? null : v.
 async function buildRows(
   db: TenantDb,
   shipmentId: bigint,
-  receipt: ReceiptRow | null,
+  // The receipt being looked at: left out of "already in", and its lines drawn
+  // when given. Only the id is needed to check a save against the balance.
+  receipt: { id: bigint; lines?: ReceiptRow['lines'] } | null,
 ): Promise<ReceiptGridRow[]> {
   const booked = await db.shipmentCargoLine.findMany({
     where: { shipmentId, deletedAt: null },
@@ -174,8 +182,51 @@ async function toDto(db: TenantDb, receipt: ReceiptRow): Promise<CargoReceiptDto
     shippingOrderCode: receipt.shippingOrder?.code ?? null,
     receivedByName: receipt.receivedByUser?.username ?? null,
     confirmedAt: receipt.confirmedAt?.toISOString() ?? null,
+    correctionReason: receipt.correctionReason,
+    correctedAt: receipt.correctedAt?.toISOString() ?? null,
+    correctedByName: receipt.correctedByUser?.username ?? null,
     rows: await buildRows(db, receipt.shipmentId, receipt),
   };
+}
+
+/**
+ * Why this booking's confirmed receipts cannot be edited now, or null.
+ *
+ * Client decision 2026-09-17: editable until the booking is on a CLP. A plan
+ * takes its cartons, weight and CBM from confirmed receipts, and its cost split
+ * from those figures, so once one exists the receipt stops being the only
+ * record of them. A cancelled plan holds nothing (MODULE_CLP.md §4.1).
+ */
+async function editLockOf(
+  db: TenantDb,
+  shipment: { id: bigint; code: string; status: ShipmentStatus },
+): Promise<string | null> {
+  if (shipment.status === 'SHORT_CLOSED') {
+    return (
+      `${shipment.code} was short closed against these receipts, so they are locked. ` +
+      'The shortfall on record is worked out from them.'
+    );
+  }
+  if (shipment.status !== 'PART_RECEIVED' && shipment.status !== 'CARGO_RECEIVED') {
+    return (
+      `${shipment.code} is ${SHIPMENT_STATUS_LABEL[shipment.status].toLowerCase()}, ` +
+      'so its receipts cannot be edited.'
+    );
+  }
+
+  const plans = await db.clp.findMany({
+    where: { deletedAt: null, status: { not: 'CANCELLED' }, ...plansOfBooking(shipment.id) },
+    orderBy: { id: 'asc' },
+    select: { code: true },
+  });
+  if (plans.length > 0) {
+    const codes = plans.map((p) => p.code).join(', ');
+    return (
+      `${shipment.code} is on ${codes}, which is built from these receipts. ` +
+      `Remove it from ${plans.length === 1 ? 'that plan' : 'those plans'} before editing a receipt.`
+    );
+  }
+  return null;
 }
 
 async function assertBooking(db: TenantDb, shipmentId: bigint) {
@@ -200,8 +251,8 @@ cargoReceiptRouter.get(
     const auth = req.auth!;
     const shipmentId = parseId(req.params.id, 'booking');
 
-    const data = await withTenant(auth.tenantId, async (db) => {
-      await assertBooking(db, shipmentId);
+    const data = await withTenant(auth.tenantId, async (db): Promise<CargoReceiptBoard> => {
+      const shipment = await assertBooking(db, shipmentId);
       const rows = await db.cargoReceipt.findMany({
         where: { shipmentId, deletedAt: null },
         orderBy: { receiptSeq: 'asc' },
@@ -213,10 +264,13 @@ cargoReceiptRouter.get(
         // The grid as it stands: the open draft's figures, or the booked ones
         // with their balances when nothing is open.
         grid: await buildRows(db, shipmentId, rows.find((r) => r.status === 'DRAFT') ?? null),
+        editLock: rows.some((r) => r.status === 'CONFIRMED')
+          ? await editLockOf(db, shipment)
+          : null,
       };
     });
 
-    const payload: ApiSuccess<typeof data> = { success: true, data };
+    const payload: ApiSuccess<CargoReceiptBoard> = { success: true, data };
     res.json(payload);
   },
 );
@@ -336,7 +390,10 @@ async function writeLines(
    * means "nothing arrived after all" — and returning here would leave the last
    * line a receiver had just taken back sitting on the receipt.
    */
-  const rows = await buildRows(db, shipmentId, null);
+  // Without this receipt: an edit to a confirmed one is checked against what
+  // the OTHER receipts left owed, not against a balance its own old figures
+  // already reduced. For a draft it changes nothing, as drafts never count.
+  const rows = await buildRows(db, shipmentId, { id: receiptId });
   const byLine = new Map(rows.map((r) => [r.cargoLineId, r]));
   const mayOverride =
     auth.isSuperadmin || auth.permissions.has(`${FEATURE}.OVERRIDE_QTY`);
@@ -522,6 +579,80 @@ cargoReceiptRouter.post(
         to: outstanding > 0 ? 'PART_RECEIVED' : 'CARGO_RECEIVED',
         userId: auth.userId,
       });
+
+      const row = await db.cargoReceipt.findFirstOrThrow({
+        where: { id: receiptId },
+        ...receiptArgs,
+      });
+      return toDto(db, row);
+    });
+
+    const payload: ApiSuccess<CargoReceiptDto> = { success: true, data };
+    res.json(payload);
+  },
+);
+
+/**
+ * PUT /bookings/:id/cargo-receipts/:receiptId — edit a CONFIRMED receipt.
+ *
+ * Client decision 2026-09-17: a receipt confirmed with a mistake in it may be
+ * put right by a user holding EDIT, with a reason, until the booking is on a
+ * CLP (`editLockOf`). The lines go through the same `writeLines` a draft does,
+ * so §5.5 rule 6's over-receipt check and the decline permission still hold,
+ * now measured against what the other receipts left owed.
+ *
+ * Then §5.5 rule 3 again, over every confirmed receipt: an edit that leaves
+ * cartons owed moves a Cargo received booking back to Part received, and one
+ * that clears the balance moves it forward.
+ */
+cargoReceiptRouter.put(
+  '/bookings/:id/cargo-receipts/:receiptId',
+  requirePermission(`${FEATURE}.EDIT`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const shipmentId = parseId(req.params.id, 'booking');
+    const receiptId = parseId(req.params.receiptId, 'receipt');
+    const input = cargoReceiptCorrectSchema.parse(req.body);
+
+    const data = await withTenant(auth.tenantId, async (db) => {
+      const shipment = await assertBooking(db, shipmentId);
+      const receipt = await db.cargoReceipt.findFirst({
+        where: { id: receiptId, shipmentId, deletedAt: null },
+        select: { id: true, code: true, status: true },
+      });
+      if (receipt === null) throw HttpError.notFound('Receipt not found.');
+      if (receipt.status !== 'CONFIRMED') {
+        throw new HttpError(
+          409,
+          'NOT_CONFIRMED',
+          `${receipt.code} is still a draft. Change it in the form and save it there.`,
+        );
+      }
+
+      const lock = await editLockOf(db, shipment);
+      if (lock !== null) throw new HttpError(409, 'RECEIPT_LOCKED', lock);
+
+      await db.cargoReceipt.update({
+        where: { id: receiptId },
+        data: {
+          receiveDate: new Date(`${input.receiveDate}T00:00:00.000Z`),
+          unloadLocation: input.unloadLocation || null,
+          efrNo: input.efrNo || null,
+          correctionReason: input.reason,
+          correctedBy: auth.userId,
+          correctedAt: new Date(),
+          updatedBy: auth.userId,
+        },
+      });
+
+      await writeLines(db, auth, shipmentId, receiptId, input.lines);
+
+      const rows = await buildRows(db, shipmentId, null);
+      const outstanding = rows.reduce((n, r) => n + r.balanceCtnQty, 0);
+      const to = outstanding > 0 ? 'PART_RECEIVED' : 'CARGO_RECEIVED';
+      if (to !== shipment.status) {
+        await transitionShipment(db, { shipmentId, to, userId: auth.userId });
+      }
 
       const row = await db.cargoReceipt.findFirstOrThrow({
         where: { id: receiptId },
