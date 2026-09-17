@@ -5,8 +5,8 @@ import {
   CUSTOMER_TYPE_LABEL,
   type CustomerDto,
 } from '@ff/shared';
-import Link from 'next/link';
-
+import type { Route } from 'next';
+import { PicContacts } from '@/components/crm/pic-contacts';
 import { Modal } from '@/components/ui/modal';
 import { Status } from '@/components/ui/status';
 
@@ -19,8 +19,9 @@ import { Status } from '@/components/ui/status';
  * wrote in the notes. Opening the edit form to read any of it is how a record
  * gets changed by accident.
  *
- * Everything shown is already on the row, so this costs no request and cannot
- * be staler than the table behind it.
+ * Everything but the contacts is already on the row, so it costs no request
+ * and cannot be staler than the table behind it. The contacts are fetched when
+ * the drawer opens — the list only carries their count.
  */
 export function CustomerDetailDrawer({
   customer,
@@ -38,7 +39,6 @@ export function CustomerDetailDrawer({
     ['Commodity', customer.industrySectorName],
     ['Country', customer.country],
     ['Assigned salesman', customer.salesmanName],
-    ['Contacts', `${customer.picCount}`],
   ];
 
   /*
@@ -76,7 +76,7 @@ export function CustomerDetailDrawer({
               <dt className="label-manifest">{label}</dt>
               <dd
                 className={
-                  label === 'Code' || label === 'Contacts'
+                  label === 'Code'
                     ? 'font-mono text-body tabular-nums text-hull'
                     : 'text-body text-hull'
                 }
@@ -124,14 +124,11 @@ export function CustomerDetailDrawer({
           </div>
         )}
 
-        <div className="border-t border-line pt-4">
-          <Link
-            href={{ pathname: `/crm/customer/${customer.id}/pic` }}
-            className="text-body text-harbour hover:underline"
-          >
-            Contacts ({customer.picCount})
-          </Link>
-        </div>
+        <PicContacts
+          endpoint={`/api/tenant/crm/customers/${customer.id}/pics`}
+          manageHref={`/crm/customer/${customer.id}/pic` as Route}
+          emptyText="No contacts yet. Add the people you deal with at this customer, so inquiries and quotations can reach them."
+        />
       </div>
     </Modal>
   );

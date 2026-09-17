@@ -65,7 +65,8 @@ const SELECT = {
   expertAreas: { select: { expertArea: { select: { id: true, name: true } } } },
   portCoverages: { select: { port: { select: { id: true, name: true, portCode: true } } } },
   networkMembers: { select: { network: { select: { id: true, name: true } } } },
-  _count: { select: { pics: true } },
+  // Deleted contacts are soft-deleted rows; the count is of the ones still listed.
+  _count: { select: { pics: { where: { deletedAt: null } } } },
 } as const;
 
 type AgentRow = {

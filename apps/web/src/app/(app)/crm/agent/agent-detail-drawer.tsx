@@ -1,8 +1,9 @@
 'use client';
 
 import { AGENT_TYPE_LABEL, type AgentDto } from '@ff/shared';
-import Link from 'next/link';
+import type { Route } from 'next';
 
+import { PicContacts } from '@/components/crm/pic-contacts';
 import { Status } from '@/components/ui/status';
 import { Modal } from '@/components/ui/modal';
 
@@ -14,9 +15,10 @@ import { Modal } from '@/components/ui/modal';
  * in, which networks they belong to, and what is owed either way. Opening the
  * edit form to read any of that is how a record gets changed by accident.
  *
- * Everything here is already on the row — the list fetches whole agents — so
- * this costs no request and cannot show something staler than the table behind
- * it.
+ * Everything but the contacts is already on the row — the list fetches whole
+ * agents — so it costs no request and cannot show something staler than the
+ * table behind it. The contacts are fetched when the drawer opens; the list
+ * only carries their count.
  */
 export function AgentDetailDrawer({
   agent,
@@ -32,7 +34,6 @@ export function AgentDetailDrawer({
     ['Type', AGENT_TYPE_LABEL[agent.agentType]],
     ['Country', agent.country],
     ['Address', agent.address],
-    ['Contacts', `${agent.picCount}`],
     ['Agreement', agent.agreementFileName],
   ];
 
@@ -63,7 +64,7 @@ export function AgentDetailDrawer({
               <dt className="label-manifest">{label}</dt>
               <dd
                 className={
-                  label === 'Code' || label === 'Contacts'
+                  label === 'Code'
                     ? 'font-mono text-body tabular-nums text-hull'
                     : 'whitespace-pre-line text-body text-hull'
                 }
@@ -98,14 +99,11 @@ export function AgentDetailDrawer({
           <Chips label="Networks" items={agent.networks.map((n) => n.name)} />
         </div>
 
-        <div className="border-t border-line pt-4">
-          <Link
-            href={{ pathname: `/crm/agent/${agent.id}/pic` }}
-            className="text-body text-harbour hover:underline"
-          >
-            Contacts ({agent.picCount})
-          </Link>
-        </div>
+        <PicContacts
+          endpoint={`/api/tenant/crm/agents/${agent.id}/pics`}
+          manageHref={`/crm/agent/${agent.id}/pic` as Route}
+          emptyText="No contacts yet. Add the people you deal with at this agent, so RFQs and bookings can reach them."
+        />
       </div>
     </Modal>
   );

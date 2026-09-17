@@ -62,7 +62,8 @@ const SELECT = {
   salesman: { select: { name: true } },
   isActive: true,
   industrySector: { select: { name: true } },
-  _count: { select: { pics: true } },
+  // Deleted contacts are soft-deleted rows; the count is of the ones still listed.
+  _count: { select: { pics: { where: { deletedAt: null } } } },
 } as const;
 
 type CustomerRow = {
