@@ -478,11 +478,24 @@ docker volume ls | grep ff-erp
 ```bash
 cd /srv/ff-erp
 git pull
+$COMPOSE build tools                      # the release's own migrations and seed — see below
 $COMPOSE run --rm tools pnpm db:deploy    # migrations first, always
 $COMPOSE run --rm tools pnpm db:seed      # lookup values the release adds
 $COMPOSE up -d --build
 $COMPOSE run --rm tools pnpm exec tsx apps/api/src/scripts/doctor.mts
 ```
+
+**Rebuild `tools` first, every time.** Its image copies the repository in at
+build time, and nothing else in this list rebuilds it: `run` reuses whatever
+image exists, and `up -d --build` skips it because it sits behind a profile.
+Without that line, `db:deploy` and `db:seed` quietly run the migrations and
+lookup values of whichever release last built the image. Both report success,
+so the only sign is a missing dropdown value or a 500 on a missing column. The
+doctor is blind to it too, because it runs from the same image and checks the
+old schema.
+
+Found 2026-09-18, when the `Warehouse` vendor type existed locally and was
+missing on the VPS after a release that had run `db:seed`.
 
 Migrations before the new containers, because a new image may expect a column
 the old schema does not have. `prisma migrate deploy` never resets and never
