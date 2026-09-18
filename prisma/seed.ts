@@ -194,7 +194,16 @@ const RATE_TIERS = [
 const SYSTEM_LOOKUPS = {
   costUnit: ['Container', 'HBL', 'HAWB', 'MBL', 'MAWB', 'CBM', 'Trip', 'Contract', 'M.Ton', 'KG'],
   carrierType: ['MLO', 'NVOCC', 'Airline', 'SOC'],
-  vendorType: ['LCL', 'Air-Master Coloader'],
+  /*
+   * Appended only, never reordered — keyed by index-derived code (VET-001...),
+   * exactly as expertArea below.
+   */
+  vendorType: [
+    'LCL',
+    'Air-Master Coloader',
+    // Added 2026-09-18 at the client's request.
+    'Warehouse',
+  ],
   /*
    * Appended only, never reordered. The seeder keys these by a code derived
    * from the array index (EXA-001, EXA-002...) and renames whatever holds that
