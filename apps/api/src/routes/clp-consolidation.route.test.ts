@@ -2337,3 +2337,96 @@ describe('To plan — a planned PO knows the plan it is in', () => {
     expect(after.body.data.candidates[0].pos[0].plans.map((p: { clpId: string }) => p.clpId)).toEqual([secondId]);
   });
 });
+
+/*
+ * Available stock — the client's Cargo Receipt tab (spec, 2026-09-18).
+ *
+ * "This available stock list is ready for make CLP. After made CLP it will not
+ * show in available stock." That sentence is the whole contract, and it is one
+ * a planner can break by accident, so it is asserted directly: a booking is
+ * here while it has free cartons and gone the moment a plan takes the last one.
+ */
+describe('Available stock — cargo in hand that no plan has claimed', () => {
+  const STOCK = '/api/tenant/ops/cargo-stock';
+
+  it('lists received cargo, then drops it once a CLP takes every carton', async () => {
+    const b = await booking({ label: 'stk', loadingType: 'LCL', ctn: 10 });
+    const line = await owner.shipmentCargoLine.findFirstOrThrow({
+      where: { shipmentId: b.id },
+      select: { id: true },
+    });
+
+    const listed = await as(tokenAll).get(`${STOCK}?search=${b.code}`);
+    expect(listed.status, JSON.stringify(listed.body).slice(0, 300)).toBe(200);
+    const row = listed.body.data.find((r: { code: string }) => r.code === b.code);
+    expect(row, `${b.code} missing from available stock`).toBeDefined();
+    expect(row.availableCtnQty).toBe(10);
+    expect(row.receivedCtnQty).toBe(10);
+    expect(row.family).toBe('LCL');
+
+    // Four cartons planned: still stock, but only what is left of it.
+    const clp = await as(tokenAll)
+      .post(`/api/tenant/ops/bookings/${b.id}/clps`)
+      .send({ containerSizeId: size20.toString() });
+    const clpId = track(clp.body.data.id).toString();
+    await as(tokenAll)
+      .post(`/api/tenant/ops/clps/${clpId}/lines`)
+      .send({ cargoLineId: line.id.toString(), ctnQty: 4 });
+
+    const partly = await as(tokenAll).get(`${STOCK}?search=${b.code}`);
+    const left = partly.body.data.find((r: { code: string }) => r.code === b.code);
+    expect(left, 'a part-planned booking still has stock to load').toBeDefined();
+    expect(left.availableCtnQty).toBe(6);
+    // Received never moves — it is not the same number as available.
+    expect(left.receivedCtnQty).toBe(10);
+
+    // The last six: nothing free, so nothing to offer.
+    await as(tokenAll)
+      .post(`/api/tenant/ops/clps/${clpId}/lines`)
+      .send({ cargoLineId: line.id.toString(), ctnQty: 6 });
+
+    const gone = await as(tokenAll).get(`${STOCK}?search=${b.code}`);
+    expect(gone.body.data.find((r: { code: string }) => r.code === b.code)).toBeUndefined();
+  });
+
+  it('brings the stock back when the plan holding it is cancelled', async () => {
+    // The mirror of the rule above: a cancelled plan holds nothing, so the
+    // cartons are loadable again and the warehouse must be able to see them.
+    const b = await booking({ label: 'stkc', loadingType: 'LCL', ctn: 8 });
+    const line = await owner.shipmentCargoLine.findFirstOrThrow({
+      where: { shipmentId: b.id },
+      select: { id: true },
+    });
+    const clp = await as(tokenAll)
+      .post(`/api/tenant/ops/bookings/${b.id}/clps`)
+      .send({ containerSizeId: size20.toString() });
+    const clpId = track(clp.body.data.id).toString();
+    await as(tokenAll)
+      .post(`/api/tenant/ops/clps/${clpId}/lines`)
+      .send({ cargoLineId: line.id.toString(), ctnQty: 8 });
+
+    const hidden = await as(tokenAll).get(`${STOCK}?search=${b.code}`);
+    expect(hidden.body.data.find((r: { code: string }) => r.code === b.code)).toBeUndefined();
+
+    await as(tokenAll)
+      .post(`/api/tenant/ops/clps/${clpId}/cancel`)
+      .send({ reason: 'Container released to another sailing.' });
+
+    const back = await as(tokenAll).get(`${STOCK}?search=${b.code}`);
+    const row = back.body.data.find((r: { code: string }) => r.code === b.code);
+    expect(row, 'cancelling a plan frees its cartons').toBeDefined();
+    expect(row.availableCtnQty).toBe(8);
+  });
+
+  it('reads as one of the three categories the client names', async () => {
+    const b = await booking({ label: 'stkf', loadingType: 'FCL', ctn: 5 });
+
+    const fcl = await as(tokenAll).get(`${STOCK}?family=FCL&search=${b.code}`);
+    expect(fcl.body.data.map((r: { code: string }) => r.code)).toContain(b.code);
+
+    // The categories are separate workflows, so an FCL booking is not stock a
+    // consolidator can load.
+    const lcl = await as(tokenAll).get(`${STOCK}?family=LCL&search=${b.code}`);
+    expect(lcl.body.data.map((r: { code: string }) => r.code)).not.toContain(b.code);
+  });
+});

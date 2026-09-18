@@ -9,6 +9,14 @@ export interface ApiMeta {
   limit: number;
   total: number;
   totalPages: number;
+  /**
+   * How many rows sit behind each tab of a tabbed list, keyed by view id.
+   *
+   * Counted across the whole list rather than the page, because a tab bar that
+   * reported the current page would say "Declined (0)" on page two of a screen
+   * with declined work on it. Only tabbed lists send it.
+   */
+  counts?: Record<string, number>;
 }
 
 export interface ApiError {

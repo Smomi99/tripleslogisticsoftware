@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { listQuerySchema } from './api';
 
+import { CLP_LOADING_FAMILIES, type ClpLoadingFamily } from './clp';
 import { LOADING_TYPES, SHIPMENT_TYPES } from './inquiry';
 import { TRANSIT_TYPES } from './quotation';
 
@@ -468,6 +469,36 @@ export const SHIPMENT_WORKLISTS = {
      */
     settled: ['APPROVED_FOR_SHIPMENT', 'REJECTED'],
     waiting: "The customer's decision on the proposed schedule.",
+    /*
+     * The client's own three words (spec, 2026-09-18). They partition every
+     * status this screen covers, so there is no "All" tab to add — the three
+     * of them already are all of it.
+     *
+     * "Declined" is the label only. The stored status stays REJECTED, because
+     * DECLINED already means something narrower one level down
+     * (cargo_receipt_line.line_status), and renaming a shipped enum to win a
+     * synonym buys a migration and no behaviour.
+     */
+    views: [
+      {
+        id: 'PENDING',
+        label: 'Pending',
+        statuses: ['VESSEL_PROPOSED'],
+        hint: 'Every PO starts here. Chase the buyer for a decision on the proposed vessel.',
+      },
+      {
+        id: 'APPROVED',
+        label: 'Approved',
+        statuses: ['APPROVED_FOR_SHIPMENT'],
+        hint: 'Approved by the buyer and ready for a shipping order.',
+      },
+      {
+        id: 'DECLINED',
+        label: 'Declined',
+        statuses: ['REJECTED'],
+        hint: 'The buyer refused the proposed vessel. Propose a new schedule, or cancel the booking.',
+      },
+    ],
   },
   SHIPPING_ORDER: {
     label: 'Shipping Order',
@@ -477,6 +508,20 @@ export const SHIPMENT_WORKLISTS = {
     // §5.4 rule 3: an inbound shipment settles by skipping, with no document.
     settled: ['SO_ISSUED', 'SO_SKIPPED'],
     waiting: 'A shipping order to be issued, or skipped on an inbound.',
+    views: [
+      {
+        id: 'TO_ISSUE',
+        label: 'To issue',
+        statuses: ['APPROVED_FOR_SHIPMENT'],
+        hint: 'Approved by the buyer to ship. Issue the shipping order, or skip it on an inbound.',
+      },
+      {
+        id: 'ISSUED',
+        label: 'Issued',
+        statuses: ['SO_ISSUED', 'SO_SKIPPED'],
+        hint: 'Every shipping order issued so far, with its current status.',
+      },
+    ],
   },
   CARGO_RECEIPT: {
     label: 'Cargo Receipt',
@@ -486,6 +531,39 @@ export const SHIPMENT_WORKLISTS = {
     awaiting: ['SO_ISSUED', 'SO_SKIPPED', 'PART_RECEIVED'],
     settled: ['CARGO_RECEIVED', 'SHORT_CLOSED'],
     waiting: 'Cargo to arrive against the booked quantity.',
+    /*
+     * Two of these are the client's (spec, 2026-09-18): Awaiting receipt, then
+     * Available stock once operations have confirmed what physically arrived.
+     *
+     * Available stock is not a status view — it counts cartons in hand that no
+     * CLP has claimed yet, so it is served by the CLP candidate endpoint and
+     * carries no statuses here. A part-received booking is legitimately in both
+     * tabs at once: more is still coming, and what already landed can be loaded.
+     *
+     * "Received" is ours, not the client's. Without it a booking that is fully
+     * received and fully planned would fall off this screen altogether, and the
+     * completed receipts would have nowhere to be looked up.
+     */
+    views: [
+      {
+        id: 'AWAITING',
+        label: 'Awaiting receipt',
+        statuses: ['SO_ISSUED', 'SO_SKIPPED', 'PART_RECEIVED'],
+        hint: 'A booking arrives here once its shipping order is issued. Update the cargo receipt when the goods physically land.',
+      },
+      {
+        id: 'STOCK',
+        label: 'Available stock',
+        statuses: [],
+        hint: 'Cartons received and not yet on a load plan. This is what a CLP is built from.',
+      },
+      {
+        id: 'RECEIVED',
+        label: 'Received',
+        statuses: ['CARGO_RECEIVED', 'SHORT_CLOSED'],
+        hint: 'Bookings with nothing left to arrive, whether fully received or short closed.',
+      },
+    ],
   },
 } as const satisfies Record<
   string,
@@ -496,6 +574,13 @@ export const SHIPMENT_WORKLISTS = {
     awaiting: readonly ShipmentStatus[];
     settled: readonly ShipmentStatus[];
     waiting: string;
+    views: readonly {
+      id: string;
+      label: string;
+      /** Empty means this tab is not a slice of the status machine. */
+      statuses: readonly ShipmentStatus[];
+      hint: string;
+    }[];
   }
 >;
 
@@ -509,6 +594,33 @@ export function worklistStatuses(id: ShipmentWorklistId): ShipmentStatus[] {
   return [...w.awaiting, ...w.settled];
 }
 
+/** One tab of a worklist. */
+export type ShipmentWorklistView = (typeof SHIPMENT_WORKLISTS)[ShipmentWorklistId]['views'][number];
+
+/** The id of a tab on this particular worklist. */
+export type ShipmentWorklistViewId<W extends ShipmentWorklistId = ShipmentWorklistId> =
+  (typeof SHIPMENT_WORKLISTS)[W]['views'][number]['id'];
+
+/** The tab a screen opens on: the first one, which is always the queue. */
+export function defaultWorklistView<W extends ShipmentWorklistId>(id: W): ShipmentWorklistViewId<W> {
+  return SHIPMENT_WORKLISTS[id].views[0].id as ShipmentWorklistViewId<W>;
+}
+
+/**
+ * Resolve a tab id against its worklist.
+ *
+ * Returns undefined for a tab this screen does not have, so the caller decides
+ * whether that is a 400 or a fall back to the default — the API refuses it, and
+ * the screen, reading a tab id out of the URL, falls back.
+ */
+export function worklistView(
+  id: ShipmentWorklistId,
+  view: string | undefined,
+): ShipmentWorklistView | undefined {
+  const views: readonly ShipmentWorklistView[] = SHIPMENT_WORKLISTS[id].views;
+  return view === undefined ? views[0] : views.find((v) => v.id === view);
+}
+
 export const shipmentWorklistQuerySchema = listQuerySchema.extend({
   shipmentType: z.enum(SHIPMENT_TYPES).optional(),
   /**
@@ -517,8 +629,12 @@ export const shipmentWorklistQuerySchema = listQuerySchema.extend({
    * one that says no.
    */
   status: z.enum(SHIPMENT_STATUSES).optional(),
-  /** Default view: only what somebody still has to act on. */
-  show: z.enum(['AWAITING', 'ALL']).default('AWAITING'),
+  /**
+   * Which tab (§SHIPMENT_WORKLISTS.views). Left as a plain string here because
+   * the valid set depends on which worklist is being asked; the route checks it
+   * against that worklist's own tabs and refuses an unknown one.
+   */
+  view: z.string().trim().min(1).optional(),
 });
 
 export type ShipmentWorklistQuery = z.infer<typeof shipmentWorklistQuerySchema>;
@@ -1089,6 +1205,52 @@ export interface CargoReceiptBoard {
    */
   editLock: string | null;
 }
+
+/**
+ * One booking on Cargo Receipt's Available stock tab (client spec, 2026-09-18).
+ *
+ * "Available" means cartons that were received and accepted and that no live
+ * CLP has claimed — the same number the CLP screen ticks, read through the same
+ * loader, so the two screens can never offer different cargo. A booking with
+ * none left is off this tab entirely: once it is on a load plan, this screen is
+ * done with it.
+ */
+export interface CargoStockRow {
+  shipmentId: string;
+  code: string;
+  shippingOrderCode: string | null;
+  customerName: string;
+  exporterName: string | null;
+  /** FCL, LCL or CONSOL_BOX — the three ways this stock can be loaded. */
+  family: ClpLoadingFamily | null;
+  loadingType: string | null;
+  shipmentType: (typeof SHIPMENT_TYPES)[number];
+  polName: string;
+  podName: string;
+  carrierName: string | null;
+  vesselName: string | null;
+  cutOffDate: string | null;
+  /** Where the goods physically are, from the receipts. */
+  cfsLocations: string[];
+  receivedCtnQty: number;
+  /** Of those, the ones free to load. Always greater than zero on this tab. */
+  availableCtnQty: number;
+  availableCbm: string;
+  availableGrossKg: string;
+  pos: {
+    poId: string;
+    poNo: string;
+    receivedCtnQty: number;
+    availableCtnQty: number;
+    efrNos: string[];
+  }[];
+}
+
+export const cargoStockQuerySchema = listQuerySchema.extend({
+  shipmentType: z.enum(SHIPMENT_TYPES).optional(),
+  /** The client's three stock categories. Absent means all of them. */
+  family: z.enum(CLP_LOADING_FAMILIES).optional(),
+});
 
 /** §6.7's balance strip: "Balance 40 CTN across 2 POs". */
 export function describeBalance(rows: readonly ReceiptGridRow[]): string {

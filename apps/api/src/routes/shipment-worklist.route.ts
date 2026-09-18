@@ -9,6 +9,7 @@ import {
   type ShipmentWorklistRow,
   shipmentWorklistQuerySchema,
   worklistStatuses,
+  worklistView,
 } from '@ff/shared';
 
 import { Prisma } from '../generated/prisma/client';
@@ -186,14 +187,33 @@ function handler(worklist: ShipmentWorklistId) {
       );
     }
 
-    const wanted: ShipmentStatus[] =
-      query.status !== undefined
-        ? [query.status]
-        : query.show === 'AWAITING'
-          ? [...config.awaiting]
-          : covered;
+    // Same reasoning one level up: an unknown tab is a mistake, not an empty tab.
+    const view = worklistView(worklist, query.view);
+    if (view === undefined) {
+      throw new HttpError(
+        400,
+        'VIEW_OUT_OF_SCOPE',
+        `${config.label} has no ${query.view} tab. It has: ${config.views.map((v) => v.id).join(', ')}.`,
+      );
+    }
+    /*
+     * A tab with no statuses is served by another endpoint entirely — Cargo
+     * Receipt's Available stock counts cartons in hand, not bookings in a
+     * state. Refusing it here is better than returning this screen's rows
+     * under a tab name that promises different ones.
+     */
+    if (view.statuses.length === 0) {
+      throw new HttpError(
+        400,
+        'VIEW_NOT_A_QUEUE',
+        `${config.label}'s ${view.label} tab is not a booking queue and is served elsewhere.`,
+      );
+    }
 
-    const { rows, total, details } = await withTenant(auth.tenantId, async (db) => {
+    const wanted: ShipmentStatus[] =
+      query.status !== undefined ? [query.status] : [...view.statuses];
+
+    const { rows, total, details, byStatus } = await withTenant(auth.tenantId, async (db) => {
       /*
        * No ownership scope here, deliberately — the one place a worklist
        * departs from the Booking List.
@@ -207,9 +227,13 @@ function handler(worklist: ShipmentWorklistId) {
        * Holding this screen's own §7 permission is what entitles you to work
        * its queue, and the route checks exactly that.
        */
-      const where: Prisma.ShipmentWhereInput = {
+      /*
+       * Everything except the status, so the tab counts below can reuse it.
+       * A count that ignored the search box would contradict the table under
+       * it the moment anyone typed.
+       */
+      const filtered: Prisma.ShipmentWhereInput = {
         deletedAt: null,
-        status: { in: wanted },
         ...(query.shipmentType === undefined ? {} : { shipmentType: query.shipmentType }),
         ...(query.search === undefined
           ? {}
@@ -222,6 +246,7 @@ function handler(worklist: ShipmentWorklistId) {
               ],
             }),
       };
+      const where: Prisma.ShipmentWhereInput = { ...filtered, status: { in: wanted } };
 
       const sortable: Record<string, Prisma.ShipmentOrderByWithRelationInput> = {
         code: { code: query.sortOrder },
@@ -238,7 +263,7 @@ function handler(worklist: ShipmentWorklistId) {
        */
       const orderBy = sortable[query.sortBy ?? ''] ?? { id: 'asc' as const };
 
-      const [found, counted] = await Promise.all([
+      const [found, counted, byStatus] = await Promise.all([
         db.shipment.findMany({
           where,
           orderBy,
@@ -289,6 +314,16 @@ function handler(worklist: ShipmentWorklistId) {
           },
         }),
         db.shipment.count({ where }),
+        /*
+         * One grouped count for the whole tab bar, rather than one count per
+         * tab. The tabs are disjoint sets of statuses, so grouping by status
+         * once and adding them up on the way out answers all of them.
+         */
+        db.shipment.groupBy({
+          by: ['status'],
+          where: { ...filtered, status: { in: covered } },
+          _count: { _all: true },
+        }),
       ]);
 
       const detail = await detailsFor(
@@ -296,7 +331,7 @@ function handler(worklist: ShipmentWorklistId) {
         worklist,
         found.map((r) => r.id),
       );
-      return { rows: found, total: counted, details: detail };
+      return { rows: found, total: counted, details: detail, byStatus };
     });
 
     const awaiting = new Set<string>(config.awaiting);
@@ -322,10 +357,23 @@ function handler(worklist: ShipmentWorklistId) {
       detail: details.get(row.id.toString()) ?? '—',
     }));
 
+    /*
+     * What each tab would show, so the bar can carry its own numbers. A tab
+     * served by another endpoint (Available stock) is left out rather than
+     * reported as zero — this handler has not counted it and should not
+     * appear to have.
+     */
+    const perStatus = new Map(byStatus.map((r) => [r.status, r._count._all]));
+    const counts: Record<string, number> = {};
+    for (const v of config.views) {
+      if (v.statuses.length === 0) continue;
+      counts[v.id] = v.statuses.reduce((sum, s) => sum + (perStatus.get(s) ?? 0), 0);
+    }
+
     const payload: ApiSuccess<ShipmentWorklistRow[]> = {
       success: true,
       data,
-      meta: buildMeta(query.page, query.limit, total),
+      meta: { ...buildMeta(query.page, query.limit, total), counts },
     };
     res.json(payload);
   };

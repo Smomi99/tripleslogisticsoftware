@@ -1,16 +1,17 @@
 'use client';
 
 import {
+  defaultWorklistView,
   SHIPMENT_STATUS_LABEL,
   SHIPMENT_WORKLISTS,
   type ShipmentStatus,
   type ShipmentWorklistId,
   type ShipmentWorklistRow,
-  worklistStatuses,
 } from '@ff/shared';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 
+import { CargoStockTable } from '@/components/ops/cargo-stock-table';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Button } from '@/components/ui/button';
@@ -88,18 +89,19 @@ interface Meta {
   page: number;
   limit: number;
   total: number;
+  counts?: Record<string, number>;
 }
 
 export function WorklistScreen({ worklist }: { worklist: ShipmentWorklistId }) {
   const config = SHIPMENT_WORKLISTS[worklist];
-  const { authorizedList, can } = useSession();
+  const { authorizedList, authorizedObjectUrl, can } = useSession();
 
   const [rows, setRows] = useState<ShipmentWorklistRow[]>([]);
   const [meta, setMeta] = useState<Meta>({ page: 1, limit: 25, total: 0 });
   const [page, setPage] = useState(1);
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
-  const [show, setShow] = useState<'AWAITING' | 'ALL'>('AWAITING');
+  const [view, setView] = useState<string>(() => defaultWorklistView(worklist));
   const [mode, setMode] = useState('');
   const [sortBy, setSortBy] = useState('');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
@@ -115,11 +117,24 @@ export function WorklistScreen({ worklist }: { worklist: ShipmentWorklistId }) {
     return () => clearTimeout(id);
   }, [searchInput]);
 
+  const active = config.views.find((v) => v.id === view) ?? config.views[0];
+  /*
+   * Available stock is not a slice of the status machine — it counts cartons in
+   * hand that no load plan has claimed — so it has its own endpoint and its own
+   * table below. The booking query is skipped entirely while it is open.
+   */
+  const isStock = active.statuses.length === 0;
+
   useEffect(() => {
+    if (isStock) return;
     let cancelled = false;
     setPending(true);
 
-    const params = new URLSearchParams({ page: String(page), limit: '25', show });
+    const params = new URLSearchParams({
+      page: String(page),
+      limit: '25',
+      view,
+    });
     if (search !== '') params.set('search', search);
     if (mode !== '') params.set('shipmentType', mode);
     if (sortBy !== '') {
@@ -146,7 +161,7 @@ export function WorklistScreen({ worklist }: { worklist: ShipmentWorklistId }) {
     return () => {
       cancelled = true;
     };
-  }, [authorizedList, mode, page, search, show, sortBy, sortOrder, worklist]);
+  }, [authorizedList, isStock, mode, page, search, sortBy, sortOrder, view, worklist]);
 
   const columns: DataTableColumn<ShipmentWorklistRow>[] = useMemo(
     () => [
@@ -180,16 +195,74 @@ export function WorklistScreen({ worklist }: { worklist: ShipmentWorklistId }) {
   );
 
   /*
-   * "All" is the widest view, not a filter. Counting it as one meant an empty
-   * queue offered "Clear filters" — a dead end, because clearing them narrows
-   * the list rather than widening it. Only a search or a mode hides rows that
-   * are really there.
+   * The tab is the screen, not a filter on it, so it is not counted here.
+   * Counting it meant an empty tab offered "Clear filters" — a dead end,
+   * because switching tabs is not what is hiding the rows. Only a search or a
+   * mode hides rows that are really there.
    */
   const hasFilters = search !== '' || mode !== '';
+
+  /*
+   * The PDF is behind the same auth as everything else, so it cannot be a bare
+   * href — the token has to go with the request, and the blob it hands back is
+   * what the new tab opens.
+   */
+  async function printOrder(shipmentId: string): Promise<void> {
+    try {
+      const url = await authorizedObjectUrl(
+        `/api/tenant/cs/bookings/${shipmentId}/shipping-order/pdf`,
+      );
+      window.open(url, '_blank', 'noopener');
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not open the shipping order.');
+    }
+  }
 
   return (
     <div className="flex flex-col gap-4">
       <PageHeader title={config.label} description={DESCRIPTION[worklist]} />
+
+      {/*
+        The client names these screens by their tabs (spec, 2026-09-18) — the
+        statuses are the screen, not a filter on it, so they sit above the
+        search box rather than inside a dropdown with it.
+      */}
+      <div
+        role="tablist"
+        aria-label={`${config.label} views`}
+        className="flex border-b border-line"
+      >
+        {config.views.map((v) => {
+          const selected = v.id === active.id;
+          const n = meta.counts?.[v.id];
+          return (
+            <button
+              key={v.id}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              onClick={() => {
+                setView(v.id);
+                setPage(1);
+              }}
+              className={`-mb-px border-b-[3px] px-4 py-2 text-body transition-colors duration-120 ease-out ${
+                selected
+                  ? 'border-harbour font-semibold text-hull'
+                  : 'border-transparent text-steel hover:text-hull'
+              }`}
+            >
+              {v.label}
+              {/*
+                Counted across the whole list, not the page. Absent on a tab
+                this endpoint has not counted, where a 0 would be a claim.
+              */}
+              {n !== undefined && (
+                <span className="ml-2 font-mono text-cell tabular-nums">{n}</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
 
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex w-72 flex-col gap-1">
@@ -201,20 +274,6 @@ export function WorklistScreen({ worklist }: { worklist: ShipmentWorklistId }) {
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
           />
-        </div>
-        <div className="flex w-52 flex-col gap-1">
-          <span className="label-manifest">Show</span>
-          <Select
-            aria-label="Awaiting action or all"
-            value={show}
-            onChange={(e) => {
-              setShow(e.target.value === 'ALL' ? 'ALL' : 'AWAITING');
-              setPage(1);
-            }}
-          >
-            <option value="AWAITING">Awaiting action</option>
-            <option value="ALL">All</option>
-          </Select>
         </div>
         <div className="flex w-40 flex-col gap-1">
           <span className="label-manifest">Mode</span>
@@ -233,14 +292,8 @@ export function WorklistScreen({ worklist }: { worklist: ShipmentWorklistId }) {
         </div>
       </div>
 
-      {/* What "awaiting action" means here, said once rather than guessed at. */}
-      <p className="text-cell text-steel">
-        {show === 'AWAITING'
-          ? `Waiting on: ${config.waiting}`
-          : `Every booking this screen covers: ${worklistStatuses(worklist)
-              .map((s) => SHIPMENT_STATUS_LABEL[s])
-              .join(', ')}.`}
-      </p>
+      {/* What this tab holds, said once rather than guessed at. */}
+      <p className="text-cell text-steel">{active.hint}</p>
 
       {error !== null && (
         <p
@@ -251,44 +304,64 @@ export function WorklistScreen({ worklist }: { worklist: ShipmentWorklistId }) {
         </p>
       )}
 
-      <DataTable
-        columns={columns}
-        rows={rows}
-        getRowId={(r) => r.id}
-        getCode={(r) => r.code}
-        total={meta.total}
-        page={page}
-        limit={meta.limit}
-        sortBy={sortBy}
-        sortOrder={sortOrder}
-        onSortChange={(by, order) => {
-          setSortBy(by);
-          setSortOrder(order);
-          setPage(1);
-        }}
-        onPageChange={setPage}
-        isPending={isPending}
-        actions={(row) => (
-          <>
-            {/*
+      {isStock ? (
+        <CargoStockTable search={search} shipmentType={mode} />
+      ) : (
+        <DataTable
+          columns={columns}
+          rows={rows}
+          getRowId={(r) => r.id}
+          getCode={(r) => r.code}
+          total={meta.total}
+          page={page}
+          limit={meta.limit}
+          sortBy={sortBy}
+          sortOrder={sortOrder}
+          onSortChange={(by, order) => {
+            setSortBy(by);
+            setSortOrder(order);
+            setPage(1);
+          }}
+          onPageChange={setPage}
+          isPending={isPending}
+          actions={(row) => (
+            <>
+              {/*
               Straight to the tab that does the work — the whole point of the
               screen. The booking is still one click away underneath it.
             */}
-            {can(`${config.feature}.VIEW`) && (
+              {can(`${config.feature}.VIEW`) && (
+                <Link
+                  href={`/cs/shipment-booking/${row.id}?tab=${config.tab}`}
+                  className="text-body text-harbour hover:underline"
+                >
+                  {row.awaiting ? 'Open' : 'Review'}
+                </Link>
+              )}
+              {/*
+              The client's move out of Declined (spec, 2026-09-18): "Need to
+              modify the vessel schedule or cancel the booking." The schedule is
+              the ordinary one of the two, so it is the one offered here —
+              cancelling is a privileged action and stays on the booking, where
+              it asks for a reason.
+            */}
+              {worklist === 'APPROVAL' &&
+                row.status === 'REJECTED' &&
+                can('CUSTOMER_SERVICE.SCHEDULE.CREATE') && (
+                  <Link
+                    href={`/cs/shipment-booking/${row.id}?tab=schedule`}
+                    className="text-body text-harbour hover:underline"
+                  >
+                    New schedule
+                  </Link>
+                )}
               <Link
-                href={`/cs/shipment-booking/${row.id}?tab=${config.tab}`}
-                className="text-body text-harbour hover:underline"
+                href={`/cs/shipment-booking/${row.id}`}
+                className="text-body text-steel hover:underline"
               >
-                {row.awaiting ? 'Open' : 'Review'}
+                Booking
               </Link>
-            )}
-            <Link
-              href={`/cs/shipment-booking/${row.id}`}
-              className="text-body text-steel hover:underline"
-            >
-              Booking
-            </Link>
-            {/*
+              {/*
               CR-002 §12 — straight from the receipt to the load plan, with
               this booking already chosen.
 
@@ -298,51 +371,70 @@ export function WorklistScreen({ worklist }: { worklist: ShipmentWorklistId }) {
               exactly what §12 forbids, and the eligibility rules would be the
               first thing to drift.
             */}
-            {worklist === 'CARGO_RECEIPT' && can('OPERATION.CONTAINER_LOAD_PLAN.CREATE') && (
-              <Link
-                href={`/operation/container-load-plan?booking=${row.id}`}
-                className="text-body text-harbour hover:underline"
-              >
-                Make CLP
-              </Link>
-            )}
-          </>
-        )}
-        empty={
-          hasFilters ? (
-            <EmptyState
-              title="Nothing matches those filters"
-              description="Try a different term, or clear them to see the whole queue."
-              action={
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    setSearchInput('');
-                    setMode('');
-                    setShow('AWAITING');
-                    setPage(1);
-                  }}
-                >
-                  Clear filters
-                </Button>
-              }
-            />
-          ) : (
-            <EmptyState
-              title={EMPTY[worklist].title}
-              description={EMPTY[worklist].description}
-              action={
+              {worklist === 'CARGO_RECEIPT' && can('OPERATION.CONTAINER_LOAD_PLAN.CREATE') && (
                 <Link
-                  href="/cs/shipment-booking-sea"
+                  href={`/operation/container-load-plan?booking=${row.id}`}
                   className="text-body text-harbour hover:underline"
                 >
-                  Go to the booking list
+                  Make CLP
                 </Link>
-              }
-            />
-          )
-        }
-      />
+              )}
+              {/*
+              The client's "download/print option" on the Shipping Order list
+              (spec, 2026-09-18). Only where there is a document to print: a
+              booking that skipped its order on an inbound has none, and a
+              button that opened an error would be worse than no button.
+            */}
+              {worklist === 'SHIPPING_ORDER' &&
+                row.status === 'SO_ISSUED' &&
+                can(`${config.feature}.EXPORT_PDF`) && (
+                  <button
+                    type="button"
+                    className="text-body text-harbour hover:underline"
+                    onClick={() => {
+                      void printOrder(row.id);
+                    }}
+                  >
+                    Print
+                  </button>
+                )}
+            </>
+          )}
+          empty={
+            hasFilters ? (
+              <EmptyState
+                title="Nothing matches those filters"
+                description="Try a different term, or clear them to see the whole queue."
+                action={
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setSearchInput('');
+                      setMode('');
+                      setPage(1);
+                    }}
+                  >
+                    Clear filters
+                  </Button>
+                }
+              />
+            ) : (
+              <EmptyState
+                title={EMPTY[worklist].title}
+                description={EMPTY[worklist].description}
+                action={
+                  <Link
+                    href="/cs/shipment-booking-sea"
+                    className="text-body text-harbour hover:underline"
+                  >
+                    Go to the booking list
+                  </Link>
+                }
+              />
+            )
+          }
+        />
+      )}
     </div>
   );
 }

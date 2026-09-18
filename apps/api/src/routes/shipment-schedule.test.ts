@@ -167,6 +167,7 @@ async function cleanup(): Promise<void> {
     'carrier',
     'port',
     '"user"',
+    'employee',
   ]) {
     await owner.$executeRawUnsafe(`DELETE FROM ${table} WHERE tenant_id IN ${scope}`);
   }
@@ -2011,10 +2012,16 @@ describe('editing a confirmed receipt (client decision, 2026-09-17)', () => {
   let tokenEditor: string;
 
   beforeAll(async () => {
-    // A clerk who may edit, but is not the supervisor OVERRIDE_QTY makes.
+    // A clerk who may edit, but is not the supervisor OVERRIDE_QTY makes. Linked
+    // to an employee, so the receipt can name a person rather than a login.
+    const person = await owner.employee.create({
+      data: { tenantId, code: 'SC-EMP-ED', name: 'Rakib Hasan', country: 'Bangladesh' },
+      select: { id: true },
+    });
     const editor = await owner.user.create({
       data: {
         tenantId,
+        employeeId: person.id,
         code: 'USR-sched-ed',
         username: 'editor-sched',
         email: 'editor@sched.test',
@@ -2140,6 +2147,25 @@ describe('editing a confirmed receipt (client decision, 2026-09-17)', () => {
       .send(correction(lineId, 70));
     expect(over.status).toBe(403);
     expect((over.body as { error: { code: string } }).error.code).toBe('OVER_RECEIPT');
+  });
+
+  it('names the person who edited, and falls back to the login only without one', async () => {
+    const { id, lineId } = await ready();
+    const receiptId = await receive(id, lineId, 100);
+
+    const res = await request(app)
+      .put(`/api/tenant/ops/bookings/${id}/cargo-receipts/${receiptId}`)
+      .set('Authorization', `Bearer ${tokenEditor}`)
+      .set('X-Tenant-Slug', SLUG)
+      .send(correction(lineId, 100));
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect((res.body as { data: Receipt }).data.correctedByName).toBe('Rakib Hasan');
+
+    // The superadmin that received it has no employee record, so its login.
+    const board = await as(token).get(`/api/tenant/ops/bookings/${id}/cargo-receipts`);
+    const receipt = (board.body as { data: { receipts: { receivedByName: string | null }[] } })
+      .data.receipts[0];
+    expect(receipt?.receivedByName).toBe('admin-sched');
   });
 
   it('reopens the balance when an edit lowers the count (§5.5 rule 3)', async () => {
@@ -2435,7 +2461,7 @@ describe('the direct list screens (client decision, 2026-09-03)', () => {
     const code = (
       await owner.shipment.findFirstOrThrow({ where: { id }, select: { code: true } })
     ).code;
-    const all = await as(token).get(`${APPROVAL}&show=ALL&search=${code}`);
+    const all = await as(token).get(`${APPROVAL}&view=APPROVED&search=${code}`);
     const row = find(all, id);
     expect(row?.status).toBe('APPROVED_FOR_SHIPMENT');
     expect(row?.awaiting).toBe(false);
@@ -2477,7 +2503,7 @@ describe('the direct list screens (client decision, 2026-09-03)', () => {
     const code = (
       await owner.shipment.findFirstOrThrow({ where: { id }, select: { code: true } })
     ).code;
-    const all = await as(token).get(`${ORDERS}&show=ALL&search=${code}`);
+    const all = await as(token).get(`${ORDERS}&view=ISSUED&search=${code}`);
     const row = find(all, id);
     expect(row, `${code} not in ${JSON.stringify(rowsOf(all).map((r) => r.code))}`).toBeDefined();
     expect(row?.awaiting).toBe(false);
@@ -2510,6 +2536,66 @@ describe('the direct list screens (client decision, 2026-09-03)', () => {
 
     const ids = rowsOf(await as(token).get(APPROVAL)).map((r) => r.id);
     expect(ids.indexOf(first.toString())).toBeLessThan(ids.indexOf(second.toString()));
+  });
+
+  /*
+   * The client names these screens by their tabs (spec, 2026-09-18):
+   * Pending / Approved / Declined on approval, and the shipping order list
+   * split by whether the order has been issued. A tab is a named subset of the
+   * worklist's own statuses, so the three of them partition the screen and
+   * nothing can fall between them.
+   */
+  describe('tabs', () => {
+    it('opens on the tab with the work on it', async () => {
+      const id = await makeBooking();
+      await as(token).post(`/api/tenant/cs/bookings/${id}/schedules`).send(body('DIRECT', oneLeg()));
+
+      // No view asked for: the same rows as an explicit Pending.
+      const fallback = await as(token).get(APPROVAL);
+      const pending = await as(token).get(`${APPROVAL}&view=PENDING`);
+      expect(find(fallback, id)).toBeDefined();
+      expect(find(pending, id)).toBeDefined();
+    });
+
+    it('moves a booking from Pending to Approved when the buyer decides', async () => {
+      const { id } = await approved(2);
+      const code = (
+        await owner.shipment.findFirstOrThrow({ where: { id }, select: { code: true } })
+      ).code;
+
+      expect(find(await as(token).get(`${APPROVAL}&view=PENDING&search=${code}`), id)).toBeUndefined();
+      const row = find(await as(token).get(`${APPROVAL}&view=APPROVED&search=${code}`), id);
+      expect(row?.status).toBe('APPROVED_FOR_SHIPMENT');
+    });
+
+    it('counts every tab, not just the one being read', async () => {
+      const id = await makeBooking();
+      await as(token).post(`/api/tenant/cs/bookings/${id}/schedules`).send(body('DIRECT', oneLeg()));
+
+      const res = await as(token).get(`${APPROVAL}&view=DECLINED`);
+      const counts = (res.body as { meta: { counts: Record<string, number> } }).meta.counts;
+      // A tab bar that only knew its own tab could not label the others.
+      expect(Object.keys(counts).sort()).toEqual(['APPROVED', 'DECLINED', 'PENDING']);
+      expect(counts.PENDING).toBeGreaterThan(0);
+    });
+
+    it('refuses a tab the screen does not have', async () => {
+      const res = await as(token).get(`${APPROVAL}&view=SHIPPED`);
+      expect(res.status).toBe(400);
+      const error = (res.body as { error: { code: string } }).error;
+      expect(error.code).toBe('VIEW_OUT_OF_SCOPE');
+    });
+
+    it('refuses Available stock here — it is not a booking queue', async () => {
+      /*
+       * Cargo Receipt's second tab counts cartons in hand, not bookings in a
+       * state, and is served by /cargo-stock. Answering it with this endpoint's
+       * rows would hand the screen different cargo under the same tab name.
+       */
+      const res = await as(token).get(`${RECEIPTS}&view=STOCK`);
+      expect(res.status).toBe(400);
+      expect((res.body as { error: { code: string } }).error.code).toBe('VIEW_NOT_A_QUEUE');
+    });
   });
 
   it('refuses a status the screen does not cover', async () => {

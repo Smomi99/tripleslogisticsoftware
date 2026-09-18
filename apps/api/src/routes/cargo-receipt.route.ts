@@ -2,10 +2,13 @@ import { Router } from 'express';
 
 import {
   type ApiSuccess,
+  buildMeta,
   type CargoReceiptBoard,
   type CargoReceiptDto,
   cargoReceiptCorrectSchema,
   cargoReceiptSaveSchema,
+  cargoStockQuerySchema,
+  type CargoStockRow,
   describeShortClose,
   type ReceiptGridRow,
   SHIPMENT_STATUS_LABEL,
@@ -15,6 +18,7 @@ import {
 
 import { billingBasisOf } from '../lib/clp-billing';
 import { plansOfBooking } from '../lib/clp-participants';
+import { loadCandidatePos, loadCandidates, loadingTypesOf } from '../lib/clp-consolidation';
 import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
 import { Prisma } from '../generated/prisma/client';
 import { HttpError } from '../lib/http-error';
@@ -46,8 +50,10 @@ cargoReceiptRouter.use(authenticate);
 const receiptArgs = {
   include: {
     shippingOrder: { select: { code: true } },
-    receivedByUser: { select: { username: true } },
-    correctedByUser: { select: { username: true } },
+    // A person's name where the login is linked to an employee, as the CLP
+    // shows its signatures; the username only when it is not.
+    receivedByUser: { select: { username: true, employee: { select: { name: true } } } },
+    correctedByUser: { select: { username: true, employee: { select: { name: true } } } },
     lines: {
       where: { deletedAt: null },
       select: {
@@ -180,11 +186,17 @@ async function toDto(db: TenantDb, receipt: ReceiptRow): Promise<CargoReceiptDto
     unloadLocation: receipt.unloadLocation,
     efrNo: receipt.efrNo,
     shippingOrderCode: receipt.shippingOrder?.code ?? null,
-    receivedByName: receipt.receivedByUser?.username ?? null,
+    receivedByName:
+      receipt.receivedByUser === null
+        ? null
+        : (receipt.receivedByUser.employee?.name ?? receipt.receivedByUser.username),
     confirmedAt: receipt.confirmedAt?.toISOString() ?? null,
     correctionReason: receipt.correctionReason,
     correctedAt: receipt.correctedAt?.toISOString() ?? null,
-    correctedByName: receipt.correctedByUser?.username ?? null,
+    correctedByName:
+      receipt.correctedByUser === null
+        ? null
+        : (receipt.correctedByUser.employee?.name ?? receipt.correctedByUser.username),
     rows: await buildRows(db, receipt.shipmentId, receipt),
   };
 }
@@ -742,3 +754,156 @@ cargoReceiptRouter.post(
     res.json(payload);
   },
 );
+
+/**
+ * GET /cargo-stock — the Available stock tab (client spec, 2026-09-18).
+ *
+ * "After issue Shipping order all Booking will appear at Awaiting receipt list.
+ * If Operation staff physically received the goods then it will show in
+ * Available stock list. This available stock list is ready for make CLP. After
+ * made CLP it will not show in available stock."
+ *
+ * So a booking is on this tab exactly while it holds cartons that were received
+ * and accepted and that no live CLP has claimed. Both halves of that come from
+ * loadCandidatePos — the same loader the CLP screen ticks POs from — so the two
+ * screens cannot come to different views of what is loadable. The screens
+ * differ only in what they do with an exhausted booking: this one drops it,
+ * because it is now the load plan's business, while the CLP screen keeps it in
+ * sight with its plan links so a planner can see where the cartons went.
+ *
+ * Behind CARGO_RECEIPT.VIEW rather than the CLP permission, for §6.8 rule 4's
+ * reason: a warehouse clerk works this screen without being a planner.
+ */
+cargoReceiptRouter.get('/cargo-stock', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
+  const auth = req.auth!;
+  const query = cargoStockQuerySchema.parse(req.query);
+
+  const { data, total } = await withTenant(auth.tenantId, async (db) => {
+    const search = query.search ?? null;
+
+    /*
+     * Only bookings that have reached the point of having something in hand.
+     * A booking still awaiting its first carton belongs on the other tab, and
+     * a cancelled one holds no stock anybody may load.
+     */
+    const found = await db.shipment.findMany({
+      where: {
+        deletedAt: null,
+        status: { in: ['PART_RECEIVED', 'CARGO_RECEIVED', 'SHORT_CLOSED'] },
+        ...(query.shipmentType === undefined ? {} : { shipmentType: query.shipmentType }),
+        ...(query.family === undefined ? {} : { loadingType: { in: loadingTypesOf(query.family) } }),
+        ...(search === null
+          ? {}
+          : {
+              OR: [
+                { code: { contains: search, mode: 'insensitive' as const } },
+                { customer: { name: { contains: search, mode: 'insensitive' as const } } },
+                { exporterName: { contains: search, mode: 'insensitive' as const } },
+                // A planner looks for a PO number as readily as a booking.
+                {
+                  pos: {
+                    some: { deletedAt: null, poNo: { contains: search, mode: 'insensitive' as const } },
+                  },
+                },
+              ],
+            }),
+      },
+      orderBy: { id: 'asc' },
+      select: { id: true },
+    });
+    if (found.length === 0) return { data: [] as CargoStockRow[], total: 0 };
+
+    const ids = found.map((r) => r.id);
+    const [candidates, pos, orders] = await Promise.all([
+      loadCandidates(db, ids),
+      loadCandidatePos(db, { shipmentIds: ids }),
+      db.shippingOrder.findMany({
+        where: { shipmentId: { in: ids }, deletedAt: null, status: 'ISSUED' },
+        orderBy: { id: 'desc' },
+        select: { shipmentId: true, code: true },
+      }),
+    ]);
+
+    const soOf = new Map<string, string>();
+    for (const o of orders) {
+      // Newest first, so the first seen for a booking is the live one.
+      if (!soOf.has(o.shipmentId.toString())) soOf.set(o.shipmentId.toString(), o.code);
+    }
+
+    const posOf = new Map<string, CargoStockRow['pos']>();
+    const freeOf = new Map<string, { ctn: number; cbm: Prisma.Decimal; kg: Prisma.Decimal }>();
+    for (const po of pos) {
+      const key = po.shipmentId.toString();
+      /*
+       * A PO with nothing free is already fully planned. It is dropped rather
+       * than shown at zero: this tab answers "what can I load?", and a row that
+       * cannot be loaded is not an answer to it.
+       */
+      if (po.ctnQty <= 0) continue;
+      const running = freeOf.get(key) ?? {
+        ctn: 0,
+        cbm: new Prisma.Decimal(0),
+        kg: new Prisma.Decimal(0),
+      };
+      freeOf.set(key, {
+        ctn: running.ctn + po.ctnQty,
+        cbm: running.cbm.plus(po.cbm),
+        kg: running.kg.plus(po.grossKg),
+      });
+      posOf.set(key, [
+        ...(posOf.get(key) ?? []),
+        {
+          poId: po.poId.toString(),
+          poNo: po.poNo,
+          receivedCtnQty: po.receivedCtnQty,
+          availableCtnQty: po.ctnQty,
+          efrNos: po.efrNos,
+        },
+      ]);
+    }
+
+    const rows: CargoStockRow[] = [];
+    for (const c of candidates) {
+      const key = c.shipmentId.toString();
+      const free = freeOf.get(key);
+      // The client's rule, in one line: nothing free, not on this tab.
+      if (free === undefined || free.ctn <= 0) continue;
+      rows.push({
+        shipmentId: key,
+        code: c.code,
+        shippingOrderCode: soOf.get(key) ?? null,
+        customerName: c.customerName,
+        exporterName: c.exporterName,
+        family: c.family,
+        loadingType: c.loadingType,
+        shipmentType: c.shipmentType === 'AIR' ? 'AIR' : 'SEA',
+        polName: c.polName,
+        podName: c.podName,
+        carrierName: c.carrierName,
+        vesselName: c.vesselName,
+        cutOffDate: c.cutOffDate?.toISOString() ?? null,
+        cfsLocations: c.cfsLocations,
+        receivedCtnQty: c.receivedCtnQty,
+        availableCtnQty: free.ctn,
+        availableCbm: free.cbm.toFixed(4),
+        availableGrossKg: free.kg.toFixed(3),
+        pos: posOf.get(key) ?? [],
+      });
+    }
+
+    /*
+     * Oldest first, like every worklist — stock that has sat at the CFS longest
+     * is the stock costing storage.
+     */
+    rows.sort((a, b) => (BigInt(a.shipmentId) < BigInt(b.shipmentId) ? -1 : 1));
+    return { data: rows, total: rows.length };
+  });
+
+  const start = (query.page - 1) * query.limit;
+  const payload: ApiSuccess<CargoStockRow[]> = {
+    success: true,
+    data: data.slice(start, start + query.limit),
+    meta: buildMeta(query.page, query.limit, total),
+  };
+  res.json(payload);
+});
