@@ -145,7 +145,7 @@ export function ShipmentAdviseTab({
    */
   useEffect(() => {
     if (isAir) return;
-    void authorizedList<{ id: string; name: string }[]>('/api/tenant/setting/vessels?limit=300')
+    void authorizedList<{ id: string; name: string }[]>('/api/tenant/setting/vessels?limit=100')
       .then((r) => setVessels(r.data))
       .catch(() => setVessels([]));
   }, [authorizedList, isAir]);

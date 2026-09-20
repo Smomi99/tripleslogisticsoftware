@@ -23,7 +23,8 @@
     "db:demo": "tsx prisma/demo-data.ts",
     "db:demo:clear": "tsx prisma/demo-data.ts --clear",
     "db:demo:sheet": "tsx prisma/demo-data.ts --sheet",
-    "db:demo:sheet:clear": "tsx prisma/demo-data.ts --sheet --clear"
+    "db:demo:sheet:clear": "tsx prisma/demo-data.ts --sheet --clear",
+    "demo:docs": "node scripts/demo-documentation.mjs"
   },
   "devDependencies": {
     "concurrently": "10.0.5",

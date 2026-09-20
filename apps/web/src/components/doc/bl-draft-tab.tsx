@@ -96,7 +96,7 @@ export function BlDraftTab({
     void authorizedList<{ id: string; name: string }[]>('/api/tenant/setting/modes?limit=100')
       .then((r) => setModes(r.data))
       .catch(() => setModes([]));
-    void authorizedList<{ id: string; name: string }[]>('/api/tenant/crm/agents?limit=200')
+    void authorizedList<{ id: string; name: string }[]>('/api/tenant/crm/agents?limit=100')
       .then((r) => setAgents(r.data))
       .catch(() => setAgents([]));
     if (can('DOCUMENTATION.BL_TEMPLATE.VIEW')) {

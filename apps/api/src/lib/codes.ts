@@ -112,7 +112,20 @@ export function isUniqueViolation(error: unknown, column?: string): boolean {
   // name silently stopped retrying and surfaced a 500 instead. The constraint
   // name is still in the message, and it carries the column: a unique index on
   // `code` is named <table>_tenant_id_code_key.
-  const message = `${(error as { message?: string }).message ?? ''}`;
+  /*
+   * The adapter puts the real constraint name one level down, in
+   * meta.driverAdapterError.cause.originalMessage — "duplicate key value
+   * violates unique constraint "bl_draft_tenant_id_code_key"". The top-level
+   * message says only "(not available)", so reading that alone still found
+   * nothing and the retry still did not fire.
+   */
+  const adapterCause = (
+    meta as { driverAdapterError?: { cause?: { originalMessage?: unknown } } } | undefined
+  )?.driverAdapterError?.cause?.originalMessage;
+  const message = [
+    `${(error as { message?: string }).message ?? ''}`,
+    typeof adapterCause === 'string' ? adapterCause : '',
+  ].join(' ');
   return new RegExp(`_${column}_key|\b${column}\b`).test(message);
 }
 

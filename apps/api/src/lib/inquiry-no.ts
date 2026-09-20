@@ -218,20 +218,28 @@ export function formatBlDraftNo(year: number, sequence: number): string {
   return formatDocumentNo(BL_DRAFT_PREFIX, year, sequence);
 }
 
+/**
+ * The next BL draft number, counted over the whole workspace.
+ *
+ * Through a SECURITY DEFINER function rather than a MAX() here, because §2.4
+ * lets a CUSTOMER create one and RLS narrows what their session can see to
+ * their own drafts. Counting those gave the first customer to draft anything
+ * BLD-<year>-000001, which the forwarder had already issued — and the insert
+ * died on the unique constraint (found by demo:docs, fixed in
+ * 20260920140000).
+ *
+ * The rule, for whatever is added to the portal next: a per-tenant sequence
+ * computed with MAX() is wrong in any session that cannot see every row.
+ */
 export async function nextBlDraftNo(
   db: TenantDb,
   tenantId: bigint,
   year: number,
 ): Promise<string> {
-  const pattern = `${BL_DRAFT_PREFIX}-${year}-%`;
-  const rows = await db.$queryRaw<{ max_seq: number | null }[]>`
-    SELECT MAX((regexp_replace(code, '^.*-', ''))::int) AS max_seq
-      FROM bl_draft
-     WHERE tenant_id = ${tenantId}
-       AND series_year = ${year}
-       AND code LIKE ${pattern}
+  const rows = await db.$queryRaw<{ seq: number }[]>`
+    SELECT app_next_bl_draft_seq(${tenantId}, ${year}) AS seq
   `;
-  return formatBlDraftNo(year, (rows[0]?.max_seq ?? 0) + 1);
+  return formatBlDraftNo(year, rows[0]?.seq ?? 1);
 }
 
 /**
