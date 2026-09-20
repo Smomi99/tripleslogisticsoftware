@@ -92,7 +92,7 @@ export function ShipmentAdviseTab({
   booking: ShipmentDto;
   onChanged: () => void;
 }) {
-  const { authorizedRequest, authorizedObjectUrl, can } = useSession();
+  const { authorizedRequest, authorizedList, authorizedObjectUrl, can } = useSession();
   const isAir = booking.shipmentType === 'AIR';
 
   const [advise, setAdvise] = useState<ShipmentAdviseDto | null>(null);
@@ -106,6 +106,7 @@ export function ShipmentAdviseTab({
   const [note, setNote] = useState('');
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
+  const [vessels, setVessels] = useState<{ id: string; name: string }[]>([]);
 
   const load = useCallback(async () => {
     setLoaded(false);
@@ -136,6 +137,18 @@ export function ShipmentAdviseTab({
   useEffect(() => {
     void load();
   }, [load]);
+
+  /*
+   * M15: "If required then change the approved vsl schedule". The advise keeps
+   * its own copy of the leg, so correcting it here does not disturb the
+   * approval the customer gave.
+   */
+  useEffect(() => {
+    if (isAir) return;
+    void authorizedList<{ id: string; name: string }[]>('/api/tenant/setting/vessels?limit=300')
+      .then((r) => setVessels(r.data))
+      .catch(() => setVessels([]));
+  }, [authorizedList, isAir]);
 
   function headerBody(): Record<string, unknown> {
     return {
@@ -242,12 +255,30 @@ export function ShipmentAdviseTab({
           </Select>
         </Field>
         <Field id="adviseLeg" label={isAir ? '1st leg flight' : '1st leg vessel'}>
-          <Input
-            value={isAir ? header.firstFlightNo : (source?.firstVesselName ?? '')}
-            readOnly={!isAir || !editable}
-            disabled={!isAir && !editable}
-            onChange={(e) => setHeader({ ...header, firstFlightNo: e.target.value })}
-          />
+          {isAir ? (
+            <Input
+              id="adviseLeg"
+              value={header.firstFlightNo}
+              disabled={!editable}
+              onChange={(e) => setHeader({ ...header, firstFlightNo: e.target.value })}
+            />
+          ) : (
+            <Select
+              id="adviseLeg"
+              value={header.firstVesselId}
+              disabled={!editable}
+              onChange={(e) => setHeader({ ...header, firstVesselId: e.target.value })}
+            >
+              <option value="">
+                {source?.firstVesselName ?? 'No vessel on the approved schedule'}
+              </option>
+              {vessels.map((v) => (
+                <option key={v.id} value={v.id}>
+                  {v.name}
+                </option>
+              ))}
+            </Select>
+          )}
         </Field>
         {!isAir && (
           <Field id="adviseVoyageNo" label="Voyage no">
