@@ -23,8 +23,11 @@ export const MODULE_LABEL: Record<Module, string> = {
   // that hides Accounts from a warehouse clerk.
   AGENT: 'Agent',
   // A customer's own people. Like AGENT, a staff user holds no CUSTOMER
-  // permission, so the group never renders for them.
-  CUSTOMER: 'My Shipments',
+  // permission, so the group never renders for them — and like AGENT, the
+  // group is named for who it belongs to, which is also the client's own
+  // column header on the Menu sheet. Naming it after its first screen made
+  // the breadcrumb read "My Shipments / My Shipments".
+  CUSTOMER: 'Customer',
 };
 
 /**
