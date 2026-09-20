@@ -129,6 +129,40 @@ customerPortalRouter.get(
   },
 );
 
+/**
+ * GET /portal/lookups — the pickers the BL form cannot draw without.
+ *
+ * Just the modes, for B34's Pre-Carriage By, which the client's sheet stars as
+ * required. `customer_read` on `mode` exists for this and nothing else; the
+ * ports come back on the prefill already named, so there is no picker to fill.
+ *
+ * Found by opening the screen: without this the select rendered empty and a
+ * required field could not be answered, which no API test would have noticed.
+ */
+customerPortalRouter.get(
+  '/lookups',
+  requirePermission(`${FEATURE}.VIEW`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const customerId = auth.customerId!;
+
+    const data = await withCustomer(auth.tenantId, customerId, async (db) => {
+      const modes = await db.mode.findMany({
+        where: { deletedAt: null, isActive: true },
+        orderBy: { name: 'asc' },
+        select: { id: true, name: true },
+      });
+      return { modes: modes.map((m) => ({ id: m.id.toString(), name: m.name })) };
+    });
+
+    const payload: ApiSuccess<{ modes: { id: string; name: string }[] }> = {
+      success: true,
+      data,
+    };
+    res.json(payload);
+  },
+);
+
 /** GET /portal/shipments/:id/bl-draft — their draft on one of their bookings. */
 customerPortalRouter.get(
   '/shipments/:id/bl-draft',

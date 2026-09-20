@@ -63,9 +63,20 @@ export function PortalShipmentScreen() {
   const [values, setValues] = useState<BlDraftFormValues | null>(null);
   const [prefill, setPrefill] = useState<BlDraftPrefillDto | null>(null);
   const [templates] = useState<BlTemplateDto[]>([]);
+  const [modes, setModes] = useState<{ id: string; name: string }[]>([]);
   const [isPending, setPending] = useState(false);
   const [listPending, setListPending] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // B34 is starred on the client's sheet, so the form cannot be completed
+  // without this list.
+  useEffect(() => {
+    void authorizedRequest<{ modes: { id: string; name: string }[] }>(
+      '/api/tenant/portal/lookups',
+    )
+      .then((r) => setModes(r.modes))
+      .catch(() => setModes([]));
+  }, [authorizedRequest]);
 
   useEffect(() => {
     void authorizedRequest<PortalShipmentRow[]>('/api/tenant/portal/shipments')
@@ -192,7 +203,7 @@ export function PortalShipmentScreen() {
               setValues={setValues}
               disabled={!editable || isPending}
               isCustomerView
-              modes={[]}
+              modes={modes}
               agents={[]}
               containers={draft?.containers ?? prefill?.containers ?? []}
               templates={templates}
