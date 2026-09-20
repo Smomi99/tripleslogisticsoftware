@@ -70,6 +70,11 @@ export interface Mail {
    * a broken box to the one recipient it was meant to impress.
    */
   inlineImages?: { cid: string; content: Buffer; fileName: string }[];
+  /**
+   * Files the recipient is meant to open, as opposed to inlineImages,
+   * which the body references and nobody should see listed.
+   */
+  attachments?: { fileName: string; content: Buffer; contentType: string }[];
 }
 
 export interface MailResult {
@@ -117,18 +122,27 @@ export async function sendMail(mail: Mail): Promise<MailResult> {
       subject: mail.subject,
       text: mail.text,
       ...(mail.html === undefined || mail.html === '' ? {} : { html: mail.html }),
-      ...(mail.inlineImages === undefined || mail.inlineImages.length === 0
-        ? {}
-        : {
-            attachments: mail.inlineImages.map((image) => ({
-              filename: image.fileName,
-              content: image.content,
-              cid: image.cid,
-              // Referenced by the body, so it belongs in the message rather
-              // than in the recipient's list of attachments to open.
-              contentDisposition: 'inline' as const,
-            })),
-          }),
+      // One list to nodemailer: the signature images marked inline, the
+      // documents left to show up as attachments.
+      ...(() => {
+        const files = [
+          ...(mail.inlineImages ?? []).map((image) => ({
+            filename: image.fileName,
+            content: image.content,
+            cid: image.cid,
+            // Referenced by the body, so it belongs in the message rather
+            // than in the recipient's list of attachments to open.
+            contentDisposition: 'inline' as const,
+          })),
+          ...(mail.attachments ?? []).map((file) => ({
+            filename: file.fileName,
+            content: file.content,
+            contentType: file.contentType,
+            contentDisposition: 'attachment' as const,
+          })),
+        ];
+        return files.length === 0 ? {} : { attachments: files };
+      })(),
     });
     logger.info(
       { subject: mail.subject, to: recipients.length, cc: copies.length },

@@ -105,6 +105,12 @@ export const TENANT_OWNED_MODELS = [
   'ShippingOrder',
   'CargoReceipt',
   'CargoReceiptLine',
+  // Documentation (docs/MODULE_DOCUMENTATION.md)
+  'ShipmentAdvise',
+  'ShipmentAdviseLine',
+  'BlDraft',
+  'BlDraftContainer',
+  'BlTemplate',
   'TenantMasterOverride',
   'User',
   'UserPermission',

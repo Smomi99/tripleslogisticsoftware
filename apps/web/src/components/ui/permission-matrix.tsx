@@ -84,6 +84,7 @@ const ACTION_LABEL: Record<Action, string> = {
   MANUAL_PRICE: 'Type a price',
   CARRIER_POSITION: 'Carrier position',
   SET_BASE: 'Set base currency',
+  BUILD: 'Re-pull',
 };
 
 export function PermissionMatrix({

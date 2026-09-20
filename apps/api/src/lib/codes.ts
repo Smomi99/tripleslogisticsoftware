@@ -41,6 +41,7 @@ const CODE_TABLES = {
   commodityItem: 'commodity_item',
   commodityBusinessPort: 'commodity_business_port',
   clp: 'clp',
+  blTemplate: 'bl_template',
   customer: 'customer',
   customerPic: 'customer_pic',
   agent: 'agent',

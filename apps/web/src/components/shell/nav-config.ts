@@ -22,6 +22,9 @@ export const MODULE_LABEL: Record<Module, string> = {
   // permission, so the group never renders for them — the same §7 layer-3 rule
   // that hides Accounts from a warehouse clerk.
   AGENT: 'Agent',
+  // A customer's own people. Like AGENT, a staff user holds no CUSTOMER
+  // permission, so the group never renders for them.
+  CUSTOMER: 'My Shipments',
 };
 
 /**
@@ -95,6 +98,18 @@ const ROUTES: Record<string, RouteEntry> = {
   'CUSTOMER_SERVICE.SHIPPING_ORDER': '/cs/shipping-order',
   'OPERATION.CARGO_RECEIPT': '/operation/cargo-receipt',
   'OPERATION.CONTAINER_LOAD_PLAN': '/operation/container-load-plan',
+  /*
+   * Documentation (docs/MODULE_DOCUMENTATION.md §2). Two menu items on one
+   * screen and one permission, the way Shipment Booking does it: the sheets
+   * differ by shipment_type, not by anything the user may or may not do.
+   */
+  'DOCUMENTATION.SHIPMENT_ADVISE': [
+    { label: 'Shipment Advise - Sea', href: '/documentation/shipment-advise-sea' },
+    { label: 'Shipment Advise - Air', href: '/documentation/shipment-advise-air' },
+  ],
+  // The client's new `BL Draft List` menu item (Menu K6).
+  'DOCUMENTATION.BL_DRAFT': '/documentation/bl-draft',
+  'CUSTOMER.SHIPMENT': '/portal/shipment',
 };
 
 /**
@@ -108,6 +123,9 @@ const ROUTES: Record<string, RouteEntry> = {
  */
 const UNLISTED_ROUTES: Record<string, string> = {
   'CUSTOMER_SERVICE.CARGO_BOOKING': '/cs/shipment-booking',
+  // §3.5's templates. The client's menu has Make Templet and Use Templet on the
+  // BL Draft screen and no third item, so this is reached from there.
+  'DOCUMENTATION.BL_TEMPLATE': '/documentation/bl-template',
 };
 
 export interface NavItem {

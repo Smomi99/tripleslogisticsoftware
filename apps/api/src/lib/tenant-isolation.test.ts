@@ -206,8 +206,9 @@ describe('model tier registry', () => {
     // 64 + the five quotation tables + mail_signature_logo + the four
     // shipment tables + the two schedule tables + shipping_order + the two
     // cargo receipt tables + commodity_business_port + the two CLP tables
-    // + clp_booking (CR-002).
-    expect(known.length).toBe(83);
+    // + clp_booking (CR-002) + the five documentation tables
+    // (MODULE_DOCUMENTATION §4).
+    expect(known.length).toBe(88);
   });
 
   it('applies the caller row level security to every view', async () => {
@@ -227,6 +228,9 @@ describe('model tier registry', () => {
     expect(views.map((v) => v.viewname)).toEqual([
       'agent_inquiry_v',
       'agent_inquiry_volume_v',
+      // CR-004 §5.4: the customer's own bookings, without the salesman, the
+      // quotation or the forwarder's notes that sit on the same row.
+      'customer_shipment_v',
     ]);
     for (const view of views) {
       expect(view.invoker, view.viewname).toBe('true');

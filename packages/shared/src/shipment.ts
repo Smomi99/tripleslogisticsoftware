@@ -24,6 +24,11 @@ export const SHIPMENT_STATUSES = [
   'SO_SKIPPED',
   'PART_RECEIVED',
   'CARGO_RECEIVED',
+  // MODULE_DOCUMENTATION §3.8. Both new screens are worklists of bookings,
+  // and a worklist is this enum narrowed — the machine had nowhere to go
+  // after the cargo arrived, because finalising a CLP moves nothing.
+  'ADVISED',
+  'BL_DRAFTED',
   'SHORT_CLOSED',
   'CANCELLED',
 ] as const;
@@ -38,6 +43,8 @@ export const SHIPMENT_STATUS_LABEL: Record<ShipmentStatus, string> = {
   SO_SKIPPED: 'S/O skipped',
   PART_RECEIVED: 'Part received',
   CARGO_RECEIVED: 'Cargo received',
+  ADVISED: 'Shipment advised',
+  BL_DRAFTED: 'BL drafted',
   SHORT_CLOSED: 'Short closed',
   CANCELLED: 'Cancelled',
 };
@@ -117,7 +124,18 @@ export const SHIPMENT_TRANSITIONS: Record<ShipmentStatus, readonly ShipmentStatu
    * confirmed receipt may be edited, and an edit that lowers a count leaves
    * cartons owed again, which §5.5 rule 3 calls PART_RECEIVED.
    */
-  CARGO_RECEIVED: ['PART_RECEIVED', 'CANCELLED'],
+  CARGO_RECEIVED: ['PART_RECEIVED', 'ADVISED', 'CANCELLED'],
+  /*
+   * The advise has gone to the customer (MODULE_DOCUMENTATION §5). The way back
+   * to CARGO_RECEIVED is cancelling it, because a booking with no live advise
+   * is one waiting for one — and that is also how a re-issue works: cancel,
+   * then make another.
+   */
+  ADVISED: ['BL_DRAFTED', 'CARGO_RECEIVED', 'CANCELLED'],
+  // A cancelled BL draft returns the booking to the advise it still has, and a
+  // replacement draft moves it forward again from there. No self-loop: unlike a
+  // revised schedule, neither of these is re-decided in place.
+  BL_DRAFTED: ['ADVISED', 'CANCELLED'],
   SHORT_CLOSED: ['CANCELLED'],
   CANCELLED: [],
 };
@@ -171,7 +189,17 @@ export function shipmentAction(
     case 'SO_SKIPPED':
     case 'PART_RECEIVED':
       return { label: 'Cargo Receipt', permission: 'OPERATION.CARGO_RECEIPT.VIEW' };
+    /*
+     * The chain carries on into Documentation. The two labels are the client's
+     * own words from the Action column of the advise and BL Draft sheets, so
+     * the button on the Booking List reads the same as the button on the
+     * screen it opens.
+     */
     case 'CARGO_RECEIVED':
+      return { label: 'Make Shipment Advise', permission: 'DOCUMENTATION.SHIPMENT_ADVISE.VIEW' };
+    case 'ADVISED':
+      return { label: 'Make BL draft', permission: 'DOCUMENTATION.BL_DRAFT.VIEW' };
+    case 'BL_DRAFTED':
     case 'SHORT_CLOSED':
     case 'CANCELLED':
       return { label: 'View', permission: 'CUSTOMER_SERVICE.CARGO_BOOKING.VIEW' };
@@ -562,6 +590,66 @@ export const SHIPMENT_WORKLISTS = {
         label: 'Received',
         statuses: ['CARGO_RECEIVED', 'SHORT_CLOSED'],
         hint: 'Bookings with nothing left to arrive, whether fully received or short closed.',
+      },
+    ],
+  },
+  /*
+   * MODULE_DOCUMENTATION §2.1. The client's list is a list of BOOKINGS with one
+   * action — "Make Shipment Advise" — so it is a worklist like the three above,
+   * not a list of advises. The advise itself is reached through it.
+   *
+   * Sea additionally needs a finalised CLP before the PO grid has anything to
+   * pull from (§5 rule 1); that is a per-row check the endpoint makes, not a
+   * status, because a booking with no plan yet still belongs on this screen —
+   * it is exactly what the operator is chasing.
+   */
+  SHIPMENT_ADVISE: {
+    label: 'Shipment Advise',
+    feature: 'DOCUMENTATION.SHIPMENT_ADVISE',
+    tab: 'shipment-advise',
+    awaiting: ['CARGO_RECEIVED'],
+    settled: ['ADVISED', 'BL_DRAFTED'],
+    waiting: 'The shipment advise to go to the customer.',
+    views: [
+      {
+        id: 'TO_ADVISE',
+        label: 'To advise',
+        statuses: ['CARGO_RECEIVED'],
+        hint: 'Cargo is in and the container is planned. Build the advise and send it to the customer.',
+      },
+      {
+        id: 'ADVISED',
+        label: 'Advised',
+        statuses: ['ADVISED', 'BL_DRAFTED'],
+        hint: 'The customer has the advise, with its House BL number.',
+      },
+    ],
+  },
+  /*
+   * §2.3's BL Draft list, and the new `BL Draft List` menu item (Menu K6).
+   *
+   * A booking arrives here once its advise has gone, because the BL number is
+   * born on the advise (§3.3) and this screen shows it as a column.
+   */
+  BL_DRAFT: {
+    label: 'BL Draft',
+    feature: 'DOCUMENTATION.BL_DRAFT',
+    tab: 'bl',
+    awaiting: ['ADVISED'],
+    settled: ['BL_DRAFTED'],
+    waiting: 'A bill of lading to be drafted and agreed.',
+    views: [
+      {
+        id: 'TO_DRAFT',
+        label: 'To draft',
+        statuses: ['ADVISED'],
+        hint: 'Advised and waiting on a bill of lading. Draft it, or work the one the customer submitted.',
+      },
+      {
+        id: 'DRAFTED',
+        label: 'Drafted',
+        statuses: ['BL_DRAFTED'],
+        hint: 'Approved drafts, ready for BL print.',
       },
     ],
   },
@@ -985,8 +1073,8 @@ export const SHIPMENT_TABS = [
   { id: 'shipping-order', label: 'Shipping Order', live: true },
   { id: 'cargo-receipt', label: 'Cargo Receipt', live: true },
   { id: 'stuffing', label: 'Stuffing', live: false },
-  { id: 'shipment-advise', label: 'Shipment Advise', live: false },
-  { id: 'bl', label: 'BL', live: false },
+  { id: 'shipment-advise', label: 'Shipment Advise', live: true },
+  { id: 'bl', label: 'BL', live: true },
   { id: 'documents', label: 'Documents', live: false },
   { id: 'tracking', label: 'Tracking', live: false },
   { id: 'finance', label: 'Finance', live: false },

@@ -2,6 +2,7 @@ import { type RequestHandler, Router } from 'express';
 
 import {
   type ApiSuccess,
+  BL_DRAFT_STATUS_LABEL,
   buildMeta,
   SHIPMENT_WORKLISTS,
   type ShipmentStatus,
@@ -39,9 +40,11 @@ import { requirePermission } from '../middleware/require-permission';
 
 export const shipmentWorklistRouter: Router = Router();
 export const opsWorklistRouter: Router = Router();
+export const docWorklistRouter: Router = Router();
 
 shipmentWorklistRouter.use(authenticate);
 opsWorklistRouter.use(authenticate);
+docWorklistRouter.use(authenticate);
 
 function dateOut(value: Date | null): string | null {
   return value === null ? null : value.toISOString().slice(0, 10);
@@ -121,6 +124,96 @@ async function detailsFor(
       const key = po.shipmentId.toString();
       if (out.has(key)) continue;
       out.set(key, `${count(po._count._all, 'approved PO')} ready to instruct`);
+    }
+    return out;
+  }
+
+  if (worklist === 'SHIPMENT_ADVISE') {
+    /*
+     * MODULE_DOCUMENTATION §5 rule 1: a sea advise needs a finalised CLP,
+     * because that is where the PO grid, the stuffing date and the container
+     * come from. So the detail column answers the operator's real question —
+     * is this one ready to advise, or still waiting on the warehouse?
+     */
+    const [advises, plans] = await Promise.all([
+      db.shipmentAdvise.findMany({
+        where: { shipmentId: { in: ids }, deletedAt: null, status: { not: 'CANCELLED' } },
+        orderBy: { id: 'desc' },
+        select: { shipmentId: true, code: true, status: true, houseBlNo: true, sentAt: true },
+      }),
+      db.clp.findMany({
+        where: { shipmentId: { in: ids }, deletedAt: null, status: 'FINAL' },
+        orderBy: { id: 'asc' },
+        select: { shipmentId: true, code: true, loadDatetime: true },
+      }),
+    ]);
+
+    for (const advise of advises) {
+      const key = advise.shipmentId.toString();
+      if (out.has(key)) continue;
+      out.set(
+        key,
+        advise.status === 'SENT'
+          ? `${advise.code} sent ${dateOut(advise.sentAt) ?? ''} — HBL ${advise.houseBlNo}`.trim()
+          : `${advise.code} drafted — HBL ${advise.houseBlNo}, not sent`,
+      );
+    }
+
+    const planned = new Map<string, { codes: string[]; stuffed: Date | null }>();
+    for (const plan of plans) {
+      const key = plan.shipmentId?.toString();
+      if (key === undefined) continue;
+      const seen = planned.get(key) ?? { codes: [], stuffed: null };
+      seen.codes.push(plan.code);
+      if (plan.loadDatetime !== null && (seen.stuffed === null || plan.loadDatetime > seen.stuffed)) {
+        seen.stuffed = plan.loadDatetime;
+      }
+      planned.set(key, seen);
+    }
+    for (const [key, seen] of planned) {
+      if (out.has(key)) continue;
+      const stuffed = dateOut(seen.stuffed);
+      out.set(
+        key,
+        `${count(seen.codes.length, 'container')} planned${stuffed === null ? '' : `, stuffed ${stuffed}`}`,
+      );
+    }
+    for (const id of ids) {
+      const key = id.toString();
+      if (!out.has(key)) out.set(key, 'No finalised load plan yet — the advise pulls its PO grid from one.');
+    }
+    return out;
+  }
+
+  if (worklist === 'BL_DRAFT') {
+    const [drafts, advises] = await Promise.all([
+      db.blDraft.findMany({
+        where: { shipmentId: { in: ids }, deletedAt: null, status: { not: 'CANCELLED' } },
+        orderBy: { id: 'desc' },
+        select: { shipmentId: true, code: true, status: true, origin: true, blNo: true },
+      }),
+      db.shipmentAdvise.findMany({
+        where: { shipmentId: { in: ids }, deletedAt: null, status: 'SENT' },
+        orderBy: { id: 'desc' },
+        select: { shipmentId: true, houseBlNo: true, mblNo: true },
+      }),
+    ]);
+
+    for (const draft of drafts) {
+      const key = draft.shipmentId.toString();
+      if (out.has(key)) continue;
+      // §2.4: a draft the customer submitted is the one somebody has to act on,
+      // and saying who wrote it is the difference between the two sheets.
+      const who = draft.origin === 'CUSTOMER' ? 'from the customer' : 'drafted in house';
+      out.set(key, `${draft.code} ${who} — ${BL_DRAFT_STATUS_LABEL[draft.status].toLowerCase()}`);
+    }
+    for (const advise of advises) {
+      const key = advise.shipmentId.toString();
+      if (out.has(key)) continue;
+      out.set(
+        key,
+        `HBL ${advise.houseBlNo}${advise.mblNo === null ? '' : `, MBL ${advise.mblNo}`} — no draft yet`,
+      );
     }
     return out;
   }
@@ -396,4 +489,22 @@ opsWorklistRouter.get(
   '/cargo-receipts',
   requirePermission(`${SHIPMENT_WORKLISTS.CARGO_RECEIPT.feature}.VIEW`),
   handler('CARGO_RECEIPT'),
+);
+
+/*
+ * Documentation's two lists (docs/MODULE_DOCUMENTATION.md §2.1, §2.3). Both of
+ * the client's screens are lists of BOOKINGS with one action — "Make Shipment
+ * Advise", "Make BL draft" — so they are worklists like the three above rather
+ * than lists of documents.
+ */
+docWorklistRouter.get(
+  '/shipment-advise',
+  requirePermission(`${SHIPMENT_WORKLISTS.SHIPMENT_ADVISE.feature}.VIEW`),
+  handler('SHIPMENT_ADVISE'),
+);
+
+docWorklistRouter.get(
+  '/bl-drafts/worklist',
+  requirePermission(`${SHIPMENT_WORKLISTS.BL_DRAFT.feature}.VIEW`),
+  handler('BL_DRAFT'),
 );

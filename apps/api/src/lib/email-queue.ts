@@ -7,7 +7,9 @@ import {
   type SignatureLogo,
 } from './mail-signature';
 import { parseAddressList, sendMail } from './mailer';
+import { Prisma } from '../generated/prisma/client';
 import { prisma } from './prisma';
+import { openFile } from './storage';
 import { withTenant } from './tenant-client';
 
 /**
@@ -56,7 +58,21 @@ export interface QueueMailInput {
   relatedId?: bigint;
   /** Used when no template row exists — see resolveTemplate. */
   fallback: { subject: string; bodyText: string };
+  /**
+   * Documents to travel with the letter, by storage key rather than by bytes
+   * (MODULE_DOCUMENTATION §9). The worker reads them at send time; the outbox
+   * row records which files went, which is the evidence the feature exists for.
+   */
+  attachments?: MailAttachmentRef[];
   actorId?: bigint | null;
+}
+
+/** One file the outbox carries: where it is, and what to call it. */
+export interface MailAttachmentRef {
+  filename: string;
+  contentType: string;
+  /** A key in the tenant's file store, never a path. */
+  storageKey: string;
 }
 
 export interface QueueMailResult {
@@ -125,6 +141,7 @@ export async function queueMail(input: QueueMailInput): Promise<QueueMailResult>
         bodyHtml: rendered.bodyHtml,
         relatedType: input.relatedType ?? null,
         relatedId: input.relatedId ?? null,
+        attachments: (input.attachments ?? []) as unknown as Prisma.InputJsonValue,
         createdBy: input.actorId ?? null,
         updatedBy: input.actorId ?? null,
       },
@@ -158,6 +175,7 @@ interface ClaimedRow {
   subject: string;
   body_text: string;
   body_html: string | null;
+  attachments: MailAttachmentRef[] | null;
   attempts: number;
   max_attempts: number;
 }
@@ -212,6 +230,34 @@ async function deliver(row: ClaimedRow): Promise<'sent' | 'retry' | 'failed'> {
     }
   }
 
+  /*
+   * Read now rather than at queue time, for the same reason the signature is:
+   * the worker may run minutes later, and holding a megabyte in the outbox to
+   * avoid one read is the wrong trade. A file that has gone missing does not
+   * stop the letter — the customer is better served by the message arriving
+   * with a line saying the document follows than by silence.
+   */
+  const files: { fileName: string; content: Buffer; contentType: string }[] = [];
+  for (const ref of row.attachments ?? []) {
+    try {
+      const file = await openFile(row.tenant_id, ref.storageKey);
+      const parts: Buffer[] = [];
+      for await (const chunk of file.stream) {
+        parts.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      files.push({
+        fileName: ref.filename,
+        content: Buffer.concat(parts),
+        contentType: ref.contentType,
+      });
+    } catch (error) {
+      logger.error(
+        { err: error, key: ref.storageKey, id: row.id.toString() },
+        'mail attachment missing — sending without it',
+      );
+    }
+  }
+
   const result = await sendMail({
     to: row.to_addresses,
     subject: row.subject,
@@ -226,6 +272,7 @@ async function deliver(row: ClaimedRow): Promise<'sent' | 'retry' | 'failed'> {
           })),
         }
       : {}),
+    ...(files.length > 0 ? { attachments: files } : {}),
     ...(row.cc_addresses.length > 0 ? { cc: row.cc_addresses } : {}),
     ...(row.bcc_addresses.length > 0 ? { bcc: row.bcc_addresses } : {}),
   });

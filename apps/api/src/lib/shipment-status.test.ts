@@ -58,7 +58,13 @@ const SPEC: Record<ShipmentStatus, ShipmentStatus[]> = {
   PART_RECEIVED: ['PART_RECEIVED', 'CARGO_RECEIVED', 'SHORT_CLOSED'],
   // Not in §5.1's table. Client decision 2026-09-17: editing a confirmed
   // receipt down leaves cartons owed again.
-  CARGO_RECEIVED: ['PART_RECEIVED'],
+  CARGO_RECEIVED: ['PART_RECEIVED', 'ADVISED'],
+  // docs/MODULE_DOCUMENTATION.md §3.8. The chain carries on: the advise goes to
+  // the customer, then the BL is drafted. Cancelling either returns the booking
+  // to the stage before it, because a booking with no live document is one
+  // waiting for that document.
+  ADVISED: ['BL_DRAFTED', 'CARGO_RECEIVED'],
+  BL_DRAFTED: ['ADVISED'],
   SHORT_CLOSED: [],
   CANCELLED: [],
 };
