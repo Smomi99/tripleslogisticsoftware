@@ -202,10 +202,20 @@ async function detailsFor(
     for (const draft of drafts) {
       const key = draft.shipmentId.toString();
       if (out.has(key)) continue;
-      // §2.4: a draft the customer submitted is the one somebody has to act on,
-      // and saying who wrote it is the difference between the two sheets.
-      const who = draft.origin === 'CUSTOMER' ? 'from the customer' : 'drafted in house';
-      out.set(key, `${draft.code} ${who} — ${BL_DRAFT_STATUS_LABEL[draft.status].toLowerCase()}`);
+      /*
+       * §2.4: a draft the customer submitted is the one somebody has to act
+       * on, and saying who wrote it is the difference between the two sheets.
+       *
+       * The status label already names them on a submitted draft ("Submitted
+       * by customer"), so repeating the origin there reads as a stutter.
+       */
+      const state = BL_DRAFT_STATUS_LABEL[draft.status].toLowerCase();
+      out.set(
+        key,
+        draft.origin === 'CUSTOMER'
+          ? `${draft.code} ${state}`
+          : `${draft.code} drafted in house — ${state}`,
+      );
     }
     for (const advise of advises) {
       const key = advise.shipmentId.toString();
