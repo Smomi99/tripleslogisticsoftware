@@ -150,12 +150,14 @@ authRouter.post('/login', async (req, res) => {
     permissions,
     tokenVersion: access.tokenVersion,
     agentId: user.agentId?.toString() ?? null,
+    customerId: user.customerId?.toString() ?? null,
   });
   const refreshToken = await signRefreshToken({
     sub: user.id.toString(),
     tenantId: tenant.id.toString(),
     tokenVersion: access.tokenVersion,
     agentId: user.agentId?.toString() ?? null,
+    customerId: user.customerId?.toString() ?? null,
   });
 
   res.cookie(REFRESH_COOKIE, refreshToken, {
@@ -228,6 +230,7 @@ authRouter.post('/refresh', async (req, res) => {
     // Carried through, or the next request would see the claim disagree with
     // the row and be rejected as a tampered token.
     agentId: access.agentId?.toString() ?? null,
+    customerId: access.customerId?.toString() ?? null,
   });
 
   const payload: ApiSuccess<{ accessToken: string }> = {

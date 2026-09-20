@@ -74,12 +74,23 @@ async function cleanup(): Promise<void> {
 async function asAgent(tenantId: bigint, agentId: bigint): Promise<void> {
   await app.query(`SELECT set_config('app.tenant_id', $1, false)`, [tenantId.toString()]);
   await app.query(`SELECT set_config('app.agent_id', $1, false)`, [agentId.toString()]);
+  await app.query(`SELECT set_config('app.customer_id', '', false)`);
+  await app.query(`SELECT set_config('app.actor_kind', 'AGENT', false)`);
 }
 
-/** Becomes a staff session: same tenant, no agent. */
+/**
+ * Becomes a staff session: same tenant, no agent.
+ *
+ * CR-004: the kind is declared, because that is what withTenant() does. Before
+ * that change a staff session was "a session with no agent id", and these two
+ * lines were enough — which was exactly the hole, so the helper has to state
+ * what it is or it stops being a simulation of the real thing.
+ */
 async function asStaff(tenantId: bigint): Promise<void> {
   await app.query(`SELECT set_config('app.tenant_id', $1, false)`, [tenantId.toString()]);
   await app.query(`SELECT set_config('app.agent_id', '', false)`);
+  await app.query(`SELECT set_config('app.customer_id', '', false)`);
+  await app.query(`SELECT set_config('app.actor_kind', 'STAFF', false)`);
 }
 
 async function rows(sql: string, params: unknown[] = []): Promise<Record<string, unknown>[]> {

@@ -145,10 +145,28 @@ export const isProduction = env.NODE_ENV === 'production';
 export const isTest = env.NODE_ENV === 'test';
 
 /**
- * The connection the API runs queries through. Falls back to the owner URL
- * until the non-owner RLS role exists (CLAUDE.md §7A rule 2, Phase 2).
+ * The connection the API runs queries through — the non-owner `ff_app` role.
+ *
+ * CR-004 F6. This used to fall back to DATABASE_URL, which is the OWNER
+ * connection: a table owner bypasses row level security entirely, so a
+ * deployment that forgot DATABASE_URL_APP would have run every request with
+ * RLS switched off and nothing would have said so. The fallback dated from
+ * Phase 2, before the ff_app role existed; it has existed since.
+ *
+ * docker-compose.prod.yml already makes FF_APP_PASSWORD mandatory, so the
+ * supported deploy path could not reach the fallback. A hand-rolled one could,
+ * and silence is the wrong failure for this. In development the two URLs are
+ * both set by .env.example, so nothing changes there.
  */
-export const runtimeDatabaseUrl = env.DATABASE_URL_APP ?? env.DATABASE_URL;
+export const runtimeDatabaseUrl = ((): string => {
+  if (env.DATABASE_URL_APP !== undefined) return env.DATABASE_URL_APP;
+  if (!isProduction) return env.DATABASE_URL;
+  throw new Error(
+    'DATABASE_URL_APP is required in production. The API must connect as ff_app, ' +
+      'not as the database owner — an owner bypasses row level security, and every ' +
+      "workspace's data would be visible to every request. See docs/DEPLOY_VPS.md.",
+  );
+})();
 
 /**
  * Absolute directory the local driver writes uploads to, resolved once here.

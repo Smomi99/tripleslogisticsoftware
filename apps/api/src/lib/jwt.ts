@@ -38,6 +38,8 @@ export interface AccessTokenClaims {
    * a client that can name its own agent id can read another agent's inquiries.
    */
   agentId?: string | null;
+  /** Same claim, same rule, for a customer portal session (CR-004). */
+  customerId?: string | null;
 }
 
 export interface RefreshTokenClaims {
@@ -46,6 +48,7 @@ export interface RefreshTokenClaims {
   tokenVersion: number;
   /** Same claim, same rule: informative, never authoritative. */
   agentId?: string | null;
+  customerId?: string | null;
 }
 
 export async function signAccessToken(claims: AccessTokenClaims): Promise<string> {
@@ -55,6 +58,7 @@ export async function signAccessToken(claims: AccessTokenClaims): Promise<string
     permissions: claims.permissions,
     tokenVersion: claims.tokenVersion,
     agentId: claims.agentId ?? null,
+    customerId: claims.customerId ?? null,
   })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(claims.sub)
@@ -70,6 +74,7 @@ export async function signRefreshToken(claims: RefreshTokenClaims): Promise<stri
     tenantId: claims.tenantId,
     tokenVersion: claims.tokenVersion,
     agentId: claims.agentId ?? null,
+    customerId: claims.customerId ?? null,
   })
     .setProtectedHeader({ alg: 'HS256' })
     .setSubject(claims.sub)
@@ -102,6 +107,7 @@ export async function verifyAccessToken(token: string): Promise<AccessTokenClaim
         : [],
       tokenVersion: typeof payload['tokenVersion'] === 'number' ? payload['tokenVersion'] : 0,
       agentId: typeof payload['agentId'] === 'string' ? payload['agentId'] : null,
+      customerId: typeof payload['customerId'] === 'string' ? payload['customerId'] : null,
     };
   } catch (error) {
     if (error instanceof HttpError) throw error;
@@ -120,6 +126,7 @@ export async function verifyRefreshToken(token: string): Promise<RefreshTokenCla
       tenantId: asString(payload['tenantId'], 'tenantId'),
       tokenVersion: typeof payload['tokenVersion'] === 'number' ? payload['tokenVersion'] : 0,
       agentId: typeof payload['agentId'] === 'string' ? payload['agentId'] : null,
+      customerId: typeof payload['customerId'] === 'string' ? payload['customerId'] : null,
     };
   } catch (error) {
     if (error instanceof HttpError) throw error;
