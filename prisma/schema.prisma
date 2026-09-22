@@ -290,6 +290,13 @@ model Tenant {
   mailSignatureLogos   MailSignatureLogo[]
 
   clpBookings ClpBooking[]
+
+  shipmentAdvises     ShipmentAdvise[]
+  shipmentAdviseLines ShipmentAdviseLine[]
+  blDrafts            BlDraft[]
+  blDraftContainers   BlDraftContainer[]
+  blTemplates         BlTemplate[]
+
   @@index([slug])
   @@index([status])
   @@index([currencyId])
@@ -413,6 +420,10 @@ model Port {
   shipmentsPod            Shipment[]            @relation("ShipmentPod")
   scheduleLegOrigins      ShipmentScheduleLeg[] @relation("ShipmentScheduleLegOrigin")
   scheduleLegDestinations ShipmentScheduleLeg[] @relation("ShipmentScheduleLegDestination")
+  advisesPol              ShipmentAdvise[]      @relation("ShipmentAdvisePol")
+  advisesPod              ShipmentAdvise[]      @relation("ShipmentAdvisePod")
+  blDraftsPol             BlDraft[]             @relation("BlDraftPol")
+  blDraftsPod             BlDraft[]             @relation("BlDraftPod")
 
   @@unique([tenantId, code])
   /// The natural key (tenant_id, port_code) is UNIQUE only over live rows, and
@@ -645,6 +656,7 @@ model Carrier {
   shipments         Shipment[]         @relation("ShipmentCarrier")
   shipmentSchedules ShipmentSchedule[] @relation("ShipmentScheduleCarrier")
   clps              Clp[]              @relation("ClpCarrier")
+  advises           ShipmentAdvise[]   @relation("ShipmentAdviseCarrier")
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -822,6 +834,7 @@ model Vessel {
   quotations     Quotation[]
   scheduleLegs   ShipmentScheduleLeg[] @relation("ShipmentScheduleLegVessel")
   shippingOrders ShippingOrder[]       @relation("ShippingOrderFirstVessel")
+  advises        ShipmentAdvise[]      @relation("ShipmentAdviseFirstVessel")
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -1121,9 +1134,10 @@ model Customer {
   updatedByUser User?     @relation("CustomerUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
   inquiries     Inquiry[]
 
-  users      User[]      @relation("CustomerUsers")
-  quotations Quotation[]
-  shipments  Shipment[]
+  users       User[]       @relation("CustomerUsers")
+  quotations  Quotation[]
+  shipments   Shipment[]
+  blTemplates BlTemplate[] @relation("BlTemplateCustomer")
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -1272,6 +1286,8 @@ model Agent {
   users          User[]         @relation("AgentUsers")
   quotes         AgentQuote[]
   wonInquiries   Inquiry[]      @relation("InquiryWonAgent")
+  blDrafts       BlDraft[]      @relation("BlDraftDeliveryAgent")
+  blTemplates    BlTemplate[]   @relation("BlTemplateDeliveryAgent")
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -1810,6 +1826,24 @@ model User {
   clpBookingOverrides ClpBooking[] @relation("ClpBookingOverriddenBy")
   clpBookingsCreated  ClpBooking[] @relation("ClpBookingCreatedBy")
   clpBookingsUpdated  ClpBooking[] @relation("ClpBookingUpdatedBy")
+
+  // Documentation (MODULE_DOCUMENTATION.md)
+  shipmentAdvisesSent      ShipmentAdvise[]     @relation("ShipmentAdviseSentBy")
+  shipmentAdvisesCancelled ShipmentAdvise[]     @relation("ShipmentAdviseCancelledBy")
+  shipmentAdvisesCreated   ShipmentAdvise[]     @relation("ShipmentAdviseCreatedBy")
+  shipmentAdvisesUpdated   ShipmentAdvise[]     @relation("ShipmentAdviseUpdatedBy")
+  adviseLinesCreated       ShipmentAdviseLine[] @relation("ShipmentAdviseLineCreatedBy")
+  adviseLinesUpdated       ShipmentAdviseLine[] @relation("ShipmentAdviseLineUpdatedBy")
+  blDraftsSubmitted        BlDraft[]            @relation("BlDraftSubmittedBy")
+  blDraftsApproved         BlDraft[]            @relation("BlDraftApprovedBy")
+  blDraftsSent             BlDraft[]            @relation("BlDraftSentBy")
+  blDraftsCancelled        BlDraft[]            @relation("BlDraftCancelledBy")
+  blDraftsCreated          BlDraft[]            @relation("BlDraftCreatedBy")
+  blDraftsUpdated          BlDraft[]            @relation("BlDraftUpdatedBy")
+  blDraftContainersCreated BlDraftContainer[]   @relation("BlDraftContainerCreatedBy")
+  blDraftContainersUpdated BlDraftContainer[]   @relation("BlDraftContainerUpdatedBy")
+  blTemplatesCreated       BlTemplate[]         @relation("BlTemplateCreatedBy")
+  blTemplatesUpdated       BlTemplate[]         @relation("BlTemplateUpdatedBy")
   @@unique([tenantId, username])
   @@unique([tenantId, email])
   @@unique([tenantId, code])
@@ -2017,6 +2051,15 @@ model EmailLog {
   /// deleted draft should not block the delete.
   relatedType   String?     @map("related_type") @db.VarChar(64)
   relatedId     BigInt?     @map("related_id")
+  /// What travelled with the letter, as [{ filename, contentType, storageKey }]
+  /// (MODULE_DOCUMENTATION §9, open question 4 answered with its default).
+  ///
+  /// Keys rather than bytes: the documents already live in the file store,
+  /// `shipment_advise.pdf_file` and `bl_draft.pdf_file` point at the same
+  /// objects, and an outbox row is not the place to keep a megabyte. Both
+  /// documents are immutable once sent, so the key cannot come to mean
+  /// something else between queueing and delivery.
+  attachments   Json        @default("[]")
   status        EmailStatus @default(QUEUED)
   error         String?     @db.Text
   attempts      Int         @default(0)
@@ -2232,6 +2275,7 @@ model Mode {
   inquiries     Inquiry[]
   quotations    Quotation[]
   shipments     Shipment[]
+  blDrafts      BlDraft[]   @relation("BlDraftPreCarriageMode")
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -3674,6 +3718,12 @@ enum ShipmentStatus {
   SO_SKIPPED
   PART_RECEIVED
   CARGO_RECEIVED
+  /// MODULE_DOCUMENTATION §3.8. The advise has gone to the customer. Set when
+  /// it is SENT, never when it is merely saved — a draft is not an event the
+  /// customer has seen.
+  ADVISED
+  /// The BL draft has been approved. BL_ISSUED belongs to BL Print, later.
+  BL_DRAFTED
   SHORT_CLOSED
   CANCELLED
 
@@ -3807,6 +3857,8 @@ model Shipment {
   shippingOrders ShippingOrder[]
   cargoReceipts  CargoReceipt[]
   clps           Clp[]
+  advises        ShipmentAdvise[]
+  blDrafts       BlDraft[]
 
   clpBookings ClpBooking[] @relation("ClpBookingShipment")
   @@unique([tenantId, code])
@@ -3878,8 +3930,9 @@ model ShipmentPo {
   createdByUser  User? @relation("ShipmentPoCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser  User? @relation("ShipmentPoUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
-  cargoLines ShipmentCargoLine[]
-  clpLines   ClpLine[]
+  cargoLines  ShipmentCargoLine[]
+  clpLines    ClpLine[]
+  adviseLines ShipmentAdviseLine[]
 
   /// §4.1 asks for UNIQUE(tenant_id, shipment_id, po_no). It is declared in the
   /// migration as a PARTIAL index on deleted_at IS NULL instead — with soft
@@ -3990,6 +4043,7 @@ model ShipmentCargoLine {
   updatedByUser     User?              @relation("ShipmentCargoLineUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
   cargoReceiptLines CargoReceiptLine[]
   clpLines          ClpLine[]
+  adviseLines       ShipmentAdviseLine[]
 
   @@unique([tenantId, id])
   @@index([tenantId])
@@ -4064,6 +4118,7 @@ model ShipmentSchedule {
 
   legs           ShipmentScheduleLeg[]
   shippingOrders ShippingOrder[]
+  advises        ShipmentAdvise[]
 
   /// §4 rule 10: a composite foreign key needs this to point at.
   @@unique([tenantId, id])
@@ -4484,8 +4539,10 @@ model Clp {
   quotation   Quotation? @relation("ClpQuotation", fields: [tenantId, quotationId], references: [tenantId, id], onDelete: Restrict)
   costCurrency Currency?  @relation("ClpCostCurrency", fields: [costCurrencyId], references: [id], onDelete: Restrict)
 
-  lines    ClpLine[]
-  bookings ClpBooking[]
+  lines             ClpLine[]
+  bookings          ClpBooking[]
+  adviseLines       ShipmentAdviseLine[]
+  blDraftContainers BlDraftContainer[]
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -4603,4 +4660,414 @@ model ClpLine {
   @@index([shipmentCargoLineId])
   @@index([shipmentPoId])
   @@map("clp_line")
+}
+
+// ===========================================================================
+// DOCUMENTATION — MODULE_DOCUMENTATION.md
+// ===========================================================================
+
+/// §5: a sent advise is terminal except for a cancellation, which keeps its
+/// House BL number forever — the customer has already seen it.
+enum AdviseStatus {
+  DRAFT
+  SENT
+  CANCELLED
+
+  @@map("advise_status")
+}
+
+/// §5. SUBMITTED is the customer's hand-off; APPROVED is the forwarder
+/// accepting it, and what moves the booking to BL_DRAFTED.
+enum BlDraftStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  SENT
+  CANCELLED
+
+  @@map("bl_draft_status")
+}
+
+/// §3.6: who started the draft. One table, two sheets — the customer's copy of
+/// the screen is the same document in a different state, not a second record.
+enum BlDraftOrigin {
+  STAFF
+  CUSTOMER
+
+  @@map("bl_draft_origin")
+}
+
+/// client: sheet Shipment Advise.-Sea / Shipment Advise-Air
+///
+/// One advise per booking (§3.1). The client's sheet merges the Cargo Rvt dt,
+/// Stuffing dt, EFR No, House BL No and MBL No cells across every PO row, and
+/// CR-002 Addendum H already fixed "1 HBL" per booking — so the House BL number
+/// lives here, on the booking's document, never on a container.
+///
+/// The header is a copy of the approved schedule, not a join to it: M15 says
+/// "If required then change the approved vsl schedule", so C/S can depart from
+/// what was approved without rewriting the approval.
+model ShipmentAdvise {
+  tenantId   BigInt @map("tenant_id")
+  id         BigInt @id @default(autoincrement())
+  code       String @db.VarChar(32)
+  seriesYear Int    @map("series_year")
+
+  shipmentId BigInt  @map("shipment_id")
+  /// The APPROVED schedule this was built from. Nullable because the advise
+  /// outlives it: superseding a schedule must not orphan a sent document.
+  scheduleId BigInt? @map("schedule_id")
+
+  /// Sea: Carrier. Air: Airline. One column — the sheets differ in wording,
+  /// not in meaning, and both point at carrier.
+  carrierId   BigInt      @map("carrier_id")
+  transitType TransitType @map("transit_type")
+
+  /// Sea leg (B14). The air sheet's leg uses firstFlightNo instead.
+  firstVesselId BigInt? @map("first_vessel_id")
+  voyageNo      String? @map("voyage_no") @db.Text
+  firstFlightNo String? @map("first_flight_no") @db.Text
+
+  /// POL/AOL and POD/AOD. Overridable copies of the schedule's ports.
+  polId BigInt @map("pol_id")
+  podId BigInt @map("pod_id")
+
+  /// The sea sheet shows dates; the air sheet shows "Departure dt and time"
+  /// and "Arrival Date and Time". Stored as timestamptz either way and
+  /// rendered to the precision the mode calls for.
+  etd DateTime? @db.Timestamptz(6)
+  eta DateTime? @db.Timestamptz(6)
+
+  /// Air only (§3.7). Sea reads its stuffing date from the CLP, which is where
+  /// the container was actually loaded; air has no CLP to read it from.
+  stuffingDate DateTime? @map("stuffing_date") @db.Date
+
+  /// P18, "Auto generate". Allocated when the advise is created, because the
+  /// BL Draft list carries it as a column (§3.3). HBL on sea, HAWB on air.
+  houseBlNo String  @map("house_bl_no") @db.VarChar(64)
+  /// Q18, "entry". Typed, and often only after the advise has gone out.
+  mblNo     String? @map("mbl_no") @db.VarChar(64)
+
+  status AdviseStatus @default(DRAFT)
+
+  sentAt       DateTime? @map("sent_at") @db.Timestamptz(6)
+  sentBy       BigInt?   @map("sent_by")
+  /// The outbox row this was sent as. Not a foreign key, for the same reason
+  /// email_log.related_id is not one — see that model.
+  emailLogId   BigInt?   @map("email_log_id")
+  cancelledAt  DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  cancelledBy  BigInt?   @map("cancelled_by")
+  cancelReason String?   @map("cancel_reason") @db.Text
+
+  pdfFile String? @map("pdf_file") @db.Text
+
+  /// Row 21 of the sheet — the totals line, frozen with the lines it sums
+  /// (§3.2). Recomputed on every build, never edited by hand.
+  totalPoCount        Int      @default(0) @map("total_po_count")
+  totalCtnQty         Int      @default(0) @map("total_ctn_qty")
+  totalPcsQty         Int?     @map("total_pcs_qty")
+  totalNetWeightKg    Decimal? @map("total_net_weight_kg") @db.Decimal(18, 3)
+  totalGrossWeightKg  Decimal? @map("total_gross_weight_kg") @db.Decimal(18, 3)
+  totalVolumeCbm      Decimal? @map("total_volume_cbm") @db.Decimal(18, 4)
+  totalChargeableWtKg Decimal? @map("total_chargeable_wt_kg") @db.Decimal(18, 3)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant      Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  shipment    Shipment          @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict)
+  schedule    ShipmentSchedule? @relation(fields: [tenantId, scheduleId], references: [tenantId, id], onDelete: Restrict)
+  carrier     Carrier           @relation("ShipmentAdviseCarrier", fields: [carrierId], references: [id], onDelete: Restrict)
+  firstVessel Vessel?           @relation("ShipmentAdviseFirstVessel", fields: [firstVesselId], references: [id], onDelete: Restrict)
+  pol         Port              @relation("ShipmentAdvisePol", fields: [polId], references: [id], onDelete: Restrict)
+  pod         Port              @relation("ShipmentAdvisePod", fields: [podId], references: [id], onDelete: Restrict)
+
+  sentByUser      User? @relation("ShipmentAdviseSentBy", fields: [sentBy], references: [id], onDelete: Restrict)
+  cancelledByUser User? @relation("ShipmentAdviseCancelledBy", fields: [cancelledBy], references: [id], onDelete: Restrict)
+  createdByUser   User? @relation("ShipmentAdviseCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser   User? @relation("ShipmentAdviseUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  lines    ShipmentAdviseLine[]
+  blDrafts BlDraft[]
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@unique([tenantId, houseBlNo])
+  @@index([tenantId])
+  @@index([tenantId, shipmentId])
+  @@index([tenantId, status])
+  @@index([scheduleId])
+  @@index([carrierId])
+  @@index([firstVesselId])
+  @@index([polId])
+  @@index([podId])
+  @@index([sentBy])
+  @@index([cancelledBy])
+  @@map("shipment_advise")
+}
+
+/// client: the PO grid, row 17 of both advise sheets.
+///
+/// A snapshot, not a view (§3.2). The values are copied from the CLP and the
+/// cargo receipts when the advise is built and frozen when it is sent, so a
+/// plan cancelled next week cannot rewrite the letter a customer is holding.
+model ShipmentAdviseLine {
+  tenantId BigInt @map("tenant_id")
+  id       BigInt @id @default(autoincrement())
+  adviseId BigInt @map("advise_id")
+
+  shipmentPoId        BigInt  @map("shipment_po_id")
+  shipmentCargoLineId BigInt  @map("shipment_cargo_line_id")
+  /// Which container these cartons went into. Null on air, which has no CLP.
+  clpId               BigInt? @map("clp_id")
+
+  poNo     String  @map("po_no") @db.Text
+  itemCode String  @map("item_code") @db.Text
+  sku      String? @db.Text
+
+  ctnQty        Int      @map("ctn_qty")
+  pcsQty        Int?     @map("pcs_qty")
+  netWeightKg   Decimal? @map("net_weight_kg") @db.Decimal(18, 3)
+  grossWeightKg Decimal? @map("gross_weight_kg") @db.Decimal(18, 3)
+
+  cartonLengthCm Decimal? @map("carton_length_cm") @db.Decimal(10, 3)
+  cartonWidthCm  Decimal? @map("carton_width_cm") @db.Decimal(10, 3)
+  cartonHeightCm Decimal? @map("carton_height_cm") @db.Decimal(10, 3)
+  volumeCbm      Decimal? @map("volume_cbm") @db.Decimal(18, 4)
+  chargeableWtKg Decimal? @map("chargeable_wt_kg") @db.Decimal(18, 3)
+
+  /// The sheet merges these three down the grid, so they usually hold one
+  /// value for the whole advise. They live on the line anyway, because a
+  /// booking split across two containers genuinely has two stuffing dates and
+  /// rendering one of them would be a lie (§3.1).
+  cargoReceiptDate DateTime? @map("cargo_receipt_date") @db.Date
+  stuffingDate     DateTime? @map("stuffing_date") @db.Date
+  efrNo            String?   @map("efr_no") @db.Text
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  advise            ShipmentAdvise    @relation(fields: [tenantId, adviseId], references: [tenantId, id], onDelete: Restrict)
+  shipmentPo        ShipmentPo        @relation(fields: [tenantId, shipmentPoId], references: [tenantId, id], onDelete: Restrict)
+  shipmentCargoLine ShipmentCargoLine @relation(fields: [tenantId, shipmentCargoLineId], references: [tenantId, id], onDelete: Restrict)
+  clp               Clp?              @relation(fields: [tenantId, clpId], references: [tenantId, id], onDelete: Restrict)
+
+  createdByUser User? @relation("ShipmentAdviseLineCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("ShipmentAdviseLineUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([adviseId])
+  @@index([shipmentPoId])
+  @@index([shipmentCargoLineId])
+  @@index([clpId])
+  @@map("shipment_advise_line")
+}
+
+/// client: sheets BL Draft-outbound and BL Draft-outbound-Customer
+///
+/// One table for both (§3.6). The party blocks are free text and belong to the
+/// document (§3.4): a bill of lading carries an address as it must appear on
+/// the paper, and correcting a customer master must never rewrite a BL that a
+/// carrier already holds.
+model BlDraft {
+  tenantId   BigInt @map("tenant_id")
+  id         BigInt @id @default(autoincrement())
+  code       String @db.VarChar(32)
+  seriesYear Int    @map("series_year")
+
+  shipmentId BigInt @map("shipment_id")
+  /// Where the BL number came from (§3.3). Required: the client's list shows
+  /// House BL No as a column of the BL Draft screen, so a draft cannot exist
+  /// before the advise that numbers it.
+  adviseId   BigInt @map("advise_id")
+
+  origin BlDraftOrigin @default(STAFF)
+
+  /// L13 "Bill of Lading Number", copied from the advise at create.
+  blNo       String  @map("bl_no") @db.VarChar(64)
+  /// G13.
+  manifestNo String? @map("manifest_no") @db.VarChar(64)
+
+  shipperText    String  @map("shipper_text") @db.Text
+  consigneeText  String  @map("consignee_text") @db.Text
+  notifyText     String  @map("notify_text") @db.Text
+  alsoNotifyText String? @map("also_notify_text") @db.Text
+
+  exportReferences          String? @map("export_references") @db.Text
+  forwardingAgentReferences String? @map("forwarding_agent_references") @db.Text
+  pointCountryOfOrigin      String? @map("point_country_of_origin") @db.Text
+
+  /// B34 and F34 are starred on the sheet — required.
+  preCarriageByModeId BigInt @map("pre_carriage_by_mode_id")
+  placeOfReceipt      String @map("place_of_receipt") @db.Text
+
+  /// G34 "For Delivery of Goods Please Apply to:" with H37's "There will be an
+  /// option to select the agent." The text is kept beside the id for the same
+  /// reason the party blocks are text — it prints as written.
+  deliveryAgentId   BigInt? @map("delivery_agent_id")
+  deliveryAgentText String? @map("delivery_agent_text") @db.Text
+
+  oceanVesselVoyage String? @map("ocean_vessel_voyage") @db.Text
+  polId             BigInt  @map("pol_id")
+  podId             BigInt  @map("pod_id")
+  placeOfDelivery   String? @map("place_of_delivery") @db.Text
+
+  /// F40 and G43 — the two free-text blocks beside the container list.
+  packagesDescription String? @map("packages_description") @db.Text
+  marksAndNumbers     String? @map("marks_and_numbers") @db.Text
+
+  grossWeightKg  Decimal? @map("gross_weight_kg") @db.Decimal(18, 3)
+  measurementCbm Decimal? @map("measurement_cbm") @db.Decimal(18, 4)
+
+  freightPayableAt String?   @map("freight_payable_at") @db.Text
+  originalBlCount  Int?      @map("original_bl_count")
+  ladenOnBoardDate DateTime? @map("laden_on_board_date") @db.Date
+
+  status BlDraftStatus @default(DRAFT)
+
+  /// The customer's "Save and Submit".
+  submittedAt  DateTime? @map("submitted_at") @db.Timestamptz(6)
+  submittedBy  BigInt?   @map("submitted_by")
+  approvedAt   DateTime? @map("approved_at") @db.Timestamptz(6)
+  approvedBy   BigInt?   @map("approved_by")
+  sentAt       DateTime? @map("sent_at") @db.Timestamptz(6)
+  sentBy       BigInt?   @map("sent_by")
+  emailLogId   BigInt?   @map("email_log_id")
+  cancelledAt  DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  cancelledBy  BigInt?   @map("cancelled_by")
+  cancelReason String?   @map("cancel_reason") @db.Text
+
+  pdfFile String? @map("pdf_file") @db.Text
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  shipment      Shipment       @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict)
+  advise        ShipmentAdvise @relation(fields: [tenantId, adviseId], references: [tenantId, id], onDelete: Restrict)
+  preCarriage   Mode           @relation("BlDraftPreCarriageMode", fields: [preCarriageByModeId], references: [id], onDelete: Restrict)
+  deliveryAgent Agent?         @relation("BlDraftDeliveryAgent", fields: [tenantId, deliveryAgentId], references: [tenantId, id], onDelete: Restrict)
+  pol           Port           @relation("BlDraftPol", fields: [polId], references: [id], onDelete: Restrict)
+  pod           Port           @relation("BlDraftPod", fields: [podId], references: [id], onDelete: Restrict)
+
+  submittedByUser User? @relation("BlDraftSubmittedBy", fields: [submittedBy], references: [id], onDelete: Restrict)
+  approvedByUser  User? @relation("BlDraftApprovedBy", fields: [approvedBy], references: [id], onDelete: Restrict)
+  sentByUser      User? @relation("BlDraftSentBy", fields: [sentBy], references: [id], onDelete: Restrict)
+  cancelledByUser User? @relation("BlDraftCancelledBy", fields: [cancelledBy], references: [id], onDelete: Restrict)
+  createdByUser   User? @relation("BlDraftCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser   User? @relation("BlDraftUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  containers BlDraftContainer[]
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([tenantId, shipmentId])
+  @@index([tenantId, status])
+  @@index([adviseId])
+  @@index([preCarriageByModeId])
+  @@index([deliveryAgentId])
+  @@index([polId])
+  @@index([podId])
+  @@index([submittedBy])
+  @@index([approvedBy])
+  @@index([sentBy])
+  @@map("bl_draft")
+}
+
+/// client: B40 "Marks and Numbers Container and Seal Numbers", D42 and D43.
+///
+/// Pulled from the booking's finalised CLPs. A snapshot for the same reason the
+/// advise lines are one — this prints on a document that leaves the building.
+model BlDraftContainer {
+  tenantId  BigInt  @map("tenant_id")
+  id        BigInt  @id @default(autoincrement())
+  blDraftId BigInt  @map("bl_draft_id")
+  clpId     BigInt? @map("clp_id")
+
+  containerNo   String? @map("container_no") @db.Text
+  containerSize String? @map("container_size") @db.Text
+  sealNo        String? @map("seal_no") @db.Text
+
+  ctnQty         Int?     @map("ctn_qty")
+  grossWeightKg  Decimal? @map("gross_weight_kg") @db.Decimal(18, 3)
+  measurementCbm Decimal? @map("measurement_cbm") @db.Decimal(18, 4)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  blDraft BlDraft @relation(fields: [tenantId, blDraftId], references: [tenantId, id], onDelete: Restrict)
+  clp     Clp?    @relation(fields: [tenantId, clpId], references: [tenantId, id], onDelete: Restrict)
+
+  createdByUser User? @relation("BlDraftContainerCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("BlDraftContainerUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([blDraftId])
+  @@index([clpId])
+  @@map("bl_draft_container")
+}
+
+/// client: "Make Templet" (B61) and "Use Templet" (N13).
+///
+/// The blocks a forwarder retypes on every shipment for the same customer
+/// (§3.5). Scoped to a customer when saved from that customer's draft, and
+/// workspace-wide when not.
+model BlTemplate {
+  tenantId   BigInt  @map("tenant_id")
+  id         BigInt  @id @default(autoincrement())
+  code       String  @db.VarChar(32)
+  /// NULL means the template is available on every customer's draft.
+  customerId BigInt? @map("customer_id")
+  name       String  @db.VarChar(200)
+
+  shipperText    String? @map("shipper_text") @db.Text
+  consigneeText  String? @map("consignee_text") @db.Text
+  notifyText     String? @map("notify_text") @db.Text
+  alsoNotifyText String? @map("also_notify_text") @db.Text
+
+  freightPayableAt String? @map("freight_payable_at") @db.Text
+  originalBlCount  Int?    @map("original_bl_count")
+  deliveryAgentId  BigInt? @map("delivery_agent_id")
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  customer      Customer? @relation("BlTemplateCustomer", fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict)
+  deliveryAgent Agent?    @relation("BlTemplateDeliveryAgent", fields: [tenantId, deliveryAgentId], references: [tenantId, id], onDelete: Restrict)
+
+  createdByUser User? @relation("BlTemplateCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("BlTemplateUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([customerId])
+  @@index([deliveryAgentId])
+  @@map("bl_template")
 }

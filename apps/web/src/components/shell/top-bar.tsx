@@ -36,7 +36,9 @@ export function TopBar() {
       <nav aria-label="Breadcrumb" className="min-w-0">
         <ol className="flex items-center gap-1.5 text-cell text-steel">
           {crumbs.map((crumb, index) => (
-            <li key={crumb} className="flex items-center gap-1.5">
+            // Keyed by position: a module and a screen may legitimately share
+            // a name, and two crumbs with one key is a React warning at best.
+            <li key={`${index}-${crumb}`} className="flex items-center gap-1.5">
               {index > 0 && <span aria-hidden="true">/</span>}
               <span className={cn(index === crumbs.length - 1 && 'text-hull')}>
                 {crumb}

@@ -195,6 +195,13 @@ export async function withTenant<T>(
     // argument rests on. Setting it explicitly makes that a fact about this
     // function rather than a property of connection pooling.
     await tx.$executeRaw`SELECT set_config('app.agent_id', '', true)`;
+    await tx.$executeRaw`SELECT set_config('app.customer_id', '', true)`;
+    // CR-004: the session says what it is, rather than being inferred from what
+    // it has not set. `app_staff_tenant()` used to mean "not an agent", so a
+    // customer session — which sets no agent id — would have been admitted by
+    // all 81 staff policies. Declaring the kind makes staff a positive claim
+    // and an undeclared session a denial.
+    await tx.$executeRaw`SELECT set_config('app.actor_kind', 'STAFF', true)`;
     // The await must happen INSIDE the context. A Prisma query is a lazy
     // PrismaPromise: the extension does not run when the call is made, it runs
     // when the promise is first awaited. Returning `fn(tx)` unawaited would let
@@ -227,6 +234,40 @@ export async function withAgent<T>(
     // The agent id comes from the session, which read it from the user row —
     // never from a request body or a token claim. §7A rule 1, second boundary.
     await tx.$executeRaw`SELECT set_config('app.agent_id', ${agentId.toString()}, true)`;
+    await tx.$executeRaw`SELECT set_config('app.customer_id', '', true)`;
+    await tx.$executeRaw`SELECT set_config('app.actor_kind', 'AGENT', true)`;
+    return runWithTenantContext({ tenantId }, async () => await fn(tx as TenantDb));
+  });
+}
+
+/**
+ * Opens a transaction scoped to one tenant AND one customer (CR-004 step 3).
+ *
+ * The customer equivalent of `withAgent`, and deliberately the same shape: the
+ * session starts from deny-everything and reaches only what the `customer_read`
+ * and `customer_rw` policies explicitly opened — their own record and contacts,
+ * their own bookings, their own BL drafts, and a short list of lookups.
+ *
+ * The customer id comes from the user row, read on every request by
+ * `authenticate`, and never from a token claim or a request body.
+ *
+ * Used ONLY for portal business queries. Authentication still runs through
+ * `withTenant`, because `loadAccount` reads the user table — which no external
+ * session may see. That read is a single findFirst by primary key inside the
+ * middleware, and its `db` handle never reaches a handler.
+ */
+export async function withCustomer<T>(
+  tenantId: bigint,
+  customerId: bigint,
+  fn: (db: TenantDb) => Promise<T>,
+): Promise<T> {
+  return client.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.tenant_id', ${tenantId.toString()}, true)`;
+    const actorId = currentActorId();
+    await tx.$executeRaw`SELECT set_config('app.user_id', ${actorId?.toString() ?? ''}, true)`;
+    await tx.$executeRaw`SELECT set_config('app.agent_id', '', true)`;
+    await tx.$executeRaw`SELECT set_config('app.customer_id', ${customerId.toString()}, true)`;
+    await tx.$executeRaw`SELECT set_config('app.actor_kind', 'CUSTOMER', true)`;
     return runWithTenantContext({ tenantId }, async () => await fn(tx as TenantDb));
   });
 }

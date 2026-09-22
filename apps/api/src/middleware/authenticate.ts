@@ -17,6 +17,11 @@ export interface AuthContext {
    */
   agentId: bigint | null;
   /**
+   * Set on a customer session, null otherwise. Read from the user row on
+   * every request, never from the token — the same rule as agentId (CR-004).
+   */
+  customerId: bigint | null;
+  /**
    * True for any login belonging to an outside company: an agent, a customer
    * or a vendor. STAFF routers refuse all of them.
    */
@@ -73,7 +78,7 @@ function bearerToken(req: Request): string {
  * your customers. The kind check is structural and sits above the permission
  * check, so a misconfigured role widens nothing.
  */
-function authenticateAs(kind: 'STAFF' | 'AGENT' | 'ANY'): RequestHandler {
+function authenticateAs(kind: 'STAFF' | 'AGENT' | 'CUSTOMER' | 'ANY'): RequestHandler {
   return async function guard(
     req: Request,
     _res: Response,
@@ -111,6 +116,12 @@ function authenticateAs(kind: 'STAFF' | 'AGENT' | 'ANY'): RequestHandler {
       throw HttpError.unauthorized('Your access has changed. Sign in again.');
     }
 
+    const claimedCustomerId = claims.customerId ?? null;
+    const actualCustomerId = account.customerId === null ? null : account.customerId.toString();
+    if (claimedCustomerId !== actualCustomerId) {
+      throw HttpError.unauthorized('Your access has changed. Sign in again.');
+    }
+
     // Any external link, not just an agent. Until this existed, "no agent id"
     // meant "is staff" — so a customer login would have been a staff login the
     // day the column was added.
@@ -120,6 +131,14 @@ function authenticateAs(kind: 'STAFF' | 'AGENT' | 'ANY'): RequestHandler {
     if (kind === 'AGENT' && account.agentId === null) {
       throw HttpError.forbidden('This area is for agent accounts.');
     }
+    /*
+     * CR-004. Each external kind refuses the other as firmly as both refuse
+     * staff: an agent credential must not reach a customer's BL draft because
+     * somebody ticked a permission onto its role.
+     */
+    if (kind === 'CUSTOMER' && account.customerId === null) {
+      throw HttpError.forbidden('This area is for customer accounts.');
+    }
 
     req.auth = {
       userId,
@@ -127,6 +146,7 @@ function authenticateAs(kind: 'STAFF' | 'AGENT' | 'ANY'): RequestHandler {
       isSuperadmin: account.isSuperadmin,
       permissions: new Set(claims.permissions),
       agentId: account.agentId,
+      customerId: account.customerId,
       isExternal: account.isExternal,
     };
 
@@ -153,6 +173,16 @@ export const authenticate: RequestHandler = authenticateAs('STAFF');
  * not the one they think they are in.
  */
 export const authenticateAgent: RequestHandler = authenticateAs('AGENT');
+
+/**
+ * Customer sessions only — the portal routers, and nothing else.
+ *
+ * The mirror of authenticateAgent, and added at the same time as the database
+ * learned to tell the two apart (CR-004). Before that a customer session was
+ * indistinguishable from staff at the RLS layer, so this guard would have been
+ * the only thing standing between an outside company and the workspace.
+ */
+export const authenticateCustomer: RequestHandler = authenticateAs('CUSTOMER');
 
 /**
  * Either kind — the deliberate exception, and the list is one endpoint long.

@@ -289,10 +289,21 @@ export function SessionProvider({
        * an agent superadmin unstorable; this makes it harmless even if it were.
        */
       if (user.isExternal) {
-        // An agent reaches its own module. A customer or a vendor has no module
-        // yet, so it reaches nothing — the account exists, and there is simply
-        // no screen for it until one is built.
-        return user.agentId !== null && permissionKey.startsWith('AGENT.');
+        /*
+         * Each external kind reaches its own module and nothing else. A vendor
+         * still reaches nothing: the account exists and there is no screen for
+         * it yet.
+         *
+         * The module gate narrows WHICH permissions can apply; the list still
+         * decides. Returning true for the whole module — which this did while
+         * an agent was the only external kind — draws buttons the API then
+         * refuses, and an agent who may read an inquiry would have been shown
+         * the Quote action whether or not their role carried it.
+         */
+        const own =
+          user.agentId !== null ? 'AGENT.' : user.customerId !== null ? 'CUSTOMER.' : null;
+        if (own === null || !permissionKey.startsWith(own)) return false;
+        return user.permissions.includes(permissionKey);
       }
 
       // §7 rule 1: a superadmin holds everything, always.

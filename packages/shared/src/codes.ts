@@ -76,6 +76,12 @@ export const CODE_PREFIX = {
   // BKG-2026-000001; a schedule is internal, so the plain padder does.
   shipmentSchedule: 'SCH',
 
+  // Documentation (docs/MODULE_DOCUMENTATION.md). The advise and the BL
+  // draft use the yearly series SA-2026-000001 / BLD-2026-000001, like
+  // every other document a customer sees; a template is internal, so it
+  // takes the plain padder.
+  blTemplate: 'BLT',
+
   // §7 RBAC
   role: 'ROL',
   user: 'USR',

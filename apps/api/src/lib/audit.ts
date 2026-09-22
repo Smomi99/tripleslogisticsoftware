@@ -79,6 +79,17 @@ export async function recordAudit(event: AuditEvent): Promise<void> {
   try {
     await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT set_config('app.tenant_id', ${event.tenantId.toString()}, true)`;
+      /*
+       * CR-004 F3. This transaction is opened here rather than through
+       * withTenant, and used to rely on an unset app.agent_id meaning "staff".
+       * Once an undeclared session denies, that would have stopped the trail
+       * being written — and because this function swallows every error, it
+       * would have stopped silently.
+       *
+       * STAFF is right regardless of who acted: the row records an event on
+       * the workspace's own trail, which no external session may read.
+       */
+      await tx.$executeRaw`SELECT set_config('app.actor_kind', 'STAFF', true)`;
       await tx.auditLog.create({
         data: {
           tenantId: event.tenantId,

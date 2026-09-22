@@ -25,8 +25,15 @@ import { shipmentRouter } from './shipment.route';
 import { shipmentScheduleRouter } from './shipment-schedule.route';
 import { shippingOrderRouter } from './shipping-order.route';
 import { cargoReceiptRouter } from './cargo-receipt.route';
+import { shipmentAdviseRouter } from './shipment-advise.route';
+import { blDraftRouter } from './bl-draft.route';
+import { customerPortalRouter } from './customer-portal.route';
 import { clpRouter } from './clp.route';
-import { opsWorklistRouter, shipmentWorklistRouter } from './shipment-worklist.route';
+import {
+  docWorklistRouter,
+  opsWorklistRouter,
+  shipmentWorklistRouter,
+} from './shipment-worklist.route';
 import { salesLeadRouter } from './sales-lead.route';
 import { portRouter } from './port.route';
 import { notificationSettingRouter } from './notification-setting.route';
@@ -78,6 +85,14 @@ tenantRouter.use('/cs', shipmentWorklistRouter);
 tenantRouter.use('/ops', cargoReceiptRouter);
 tenantRouter.use('/ops', clpRouter);
 tenantRouter.use('/ops', opsWorklistRouter);
+
+// Documentation (docs/MODULE_DOCUMENTATION.md).
+tenantRouter.use('/documentation', shipmentAdviseRouter);
+tenantRouter.use('/documentation', blDraftRouter);
+tenantRouter.use('/documentation', docWorklistRouter);
+
+// The customer portal. Its own router, its own session kind (CR-004).
+tenantRouter.use('/portal', customerPortalRouter);
 tenantRouter.use('/sales', salesLeadRouter);
 
 // CRM.

@@ -150,12 +150,14 @@ authRouter.post('/login', async (req, res) => {
     permissions,
     tokenVersion: access.tokenVersion,
     agentId: user.agentId?.toString() ?? null,
+    customerId: user.customerId?.toString() ?? null,
   });
   const refreshToken = await signRefreshToken({
     sub: user.id.toString(),
     tenantId: tenant.id.toString(),
     tokenVersion: access.tokenVersion,
     agentId: user.agentId?.toString() ?? null,
+    customerId: user.customerId?.toString() ?? null,
   });
 
   res.cookie(REFRESH_COOKIE, refreshToken, {
@@ -180,6 +182,8 @@ authRouter.post('/login', async (req, res) => {
         isSuperadmin: access.isSuperadmin,
         agentId: user.agentId?.toString() ?? null,
         agentName: user.agent?.name ?? null,
+        customerId: user.customerId?.toString() ?? null,
+        customerName: user.customer?.name ?? null,
         isExternal: access.isExternal,
         roleName: user.role?.name ?? null,
         permissions,
@@ -228,6 +232,7 @@ authRouter.post('/refresh', async (req, res) => {
     // Carried through, or the next request would see the claim disagree with
     // the row and be rejected as a tampered token.
     agentId: access.agentId?.toString() ?? null,
+    customerId: access.customerId?.toString() ?? null,
   });
 
   const payload: ApiSuccess<{ accessToken: string }> = {
@@ -277,6 +282,7 @@ authRouter.get('/me', authenticateAny, async (req, res) => {
         username: true,
         email: true,
         agentId: true,
+        customerId: true,
         employee: { select: { name: true } },
         agent: { select: { name: true } },
         customer: { select: { name: true } },
@@ -299,6 +305,8 @@ authRouter.get('/me', authenticateAny, async (req, res) => {
       isSuperadmin: auth.isSuperadmin,
       agentId: user.agentId?.toString() ?? null,
       agentName: user.agent?.name ?? null,
+      customerId: user.customerId?.toString() ?? null,
+      customerName: user.customer?.name ?? null,
       isExternal: auth.isExternal,
       roleName: user.role?.name ?? null,
       permissions: [...auth.permissions],

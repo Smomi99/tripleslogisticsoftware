@@ -121,6 +121,13 @@ export const ACTIONS = [
   'FINALISE',
   'OVERRIDE_CAPACITY',
   /*
+   * MODULE_DOCUMENTATION §6. Re-pulling the advise's PO grid from the CLP is
+   * not EDIT: it discards whatever was typed over the pulled figures and
+   * replaces the whole grid. Someone may be trusted to correct a line
+   * without being trusted to throw the corrections away.
+   */
+  'BUILD',
+  /*
    * CR-002 §9. Changing a container's cost split by hand moves money between
    * customers' invoices, so it is its own right rather than something anyone
    * who can edit a load plan may do.
@@ -150,6 +157,17 @@ export const MODULES = [
    * than an audit of forty routers.
    */
   'AGENT',
+  /**
+   * Screens for a customer's own people, on the same reasoning as AGENT: an
+   * outside company's whole reach is one block of this file rather than an
+   * audit of forty routers.
+   *
+   * CR-004 is what makes this safe to grant. Until the session declared its
+   * kind, a customer login was indistinguishable from staff at the database,
+   * and a role with CRM.CUSTOMER.VIEW ticked onto it would have opened the
+   * whole workspace.
+   */
+  'CUSTOMER',
 ] as const;
 
 export type Module = (typeof MODULES)[number];
@@ -303,6 +321,29 @@ export const FEATURES: readonly FeatureDefinition[] = [
   // inquiries they were selected for; QUOTE lets them answer one, so a
   // forwarder can give read-only access to a junior at the agent.
   { module: 'AGENT', feature: 'AGENT.INQUIRY', label: 'Agent Inquiry', actions: ['VIEW', 'QUOTE'] },
+  /*
+   * docs/MODULE_DOCUMENTATION.md §2.4 — the customer's copy of the BL draft.
+   *
+   * A child screen: the Menu sheet's Customer column does not list BL Draft
+   * (§12 Q6), so it opens from the customer's own shipment row and has
+   * nothing for a sidebar to point at.
+   *
+   * SUBMIT rather than SEND, because the customer hands the draft to the
+   * forwarder and never sends anything outward themselves — that is the
+   * whole difference between the two sheets.
+   */
+  {
+    module: 'CUSTOMER',
+    feature: 'CUSTOMER.BL_DRAFT',
+    label: 'My BL Drafts',
+    actions: ['VIEW', 'CREATE', 'EDIT', 'SUBMIT', 'EXPORT_PDF'],
+    childScreen: true,
+  },
+  /*
+   * The customer's own shipment list — what the BL draft is reached from,
+   * and the first of the Menu sheet's Customer column (§2.5) to be built.
+   */
+  { module: 'CUSTOMER', feature: 'CUSTOMER.SHIPMENT', label: 'My Shipments', actions: ['VIEW', 'EXPORT'] },
   // Still no wireframe for either lead screen (CLAUDE.md §3, §11). The
   // permissions exist so the sales_lead skeleton can be gated the day a field
   // list arrives; the screens themselves are unbuilt.
@@ -428,8 +469,49 @@ export const FEATURES: readonly FeatureDefinition[] = [
   { module: 'OPERATION', feature: 'OPERATION.DO_ISSUE', label: 'DO Issue', actions: MASTER },
 
   // -- 5. Documentation ------------------------------------------------------
-  { module: 'DOCUMENTATION', feature: 'DOCUMENTATION.SHIPMENT_ADVISE', label: 'Shipment Advise', actions: MASTER },
-  { module: 'DOCUMENTATION', feature: 'DOCUMENTATION.BL_DRAFT', label: 'BL Draft', actions: MASTER_APPROVE },
+  /*
+   * docs/MODULE_DOCUMENTATION.md §6. The MASTER actions stay because
+   * production's permission rows already point at them and the seed prunes
+   * nothing; what is added is the four acts this screen actually performs.
+   *
+   * SEND is separate from EDIT for the reason the quotation's is, with more
+   * force: the advise is what the customer plans their receiving week
+   * around. CANCEL is the retirement path — a sent advise is immutable
+   * (§5 rule 3), so a mistake is cancelled and re-issued.
+   */
+  {
+    module: 'DOCUMENTATION',
+    feature: 'DOCUMENTATION.SHIPMENT_ADVISE',
+    label: 'Shipment Advise',
+    actions: [...MASTER, 'BUILD', 'SEND', 'EXPORT_PDF', 'CANCEL'],
+  },
+  /*
+   * APPROVE is the act §5 gives the forwarder over a draft the customer
+   * submitted, and it is what moves the booking to BL_DRAFTED.
+   */
+  {
+    module: 'DOCUMENTATION',
+    feature: 'DOCUMENTATION.BL_DRAFT',
+    label: 'BL Draft',
+    actions: [...MASTER_APPROVE, 'SEND', 'EXPORT_PDF', 'CANCEL'],
+  },
+  /*
+   * The client's Make Templet / Use Templet (§3.5). Its own feature rather
+   * than an action on BL_DRAFT: a template outlives the draft it was saved
+   * from, and is maintained and retired on its own.
+   *
+   * TOGGLE_STATUS rather than DELETE, and the distinction is CR-002's: DELETE
+   * belongs to Settings and CRM, where a row can be something that was never
+   * real. A template lives under a transactional module, so it retires by
+   * going inactive — which is also all §8's Action column ever offers.
+   */
+  {
+    module: 'DOCUMENTATION',
+    feature: 'DOCUMENTATION.BL_TEMPLATE',
+    label: 'BL Template',
+    actions: ['VIEW', 'CREATE', 'EDIT', 'TOGGLE_STATUS'],
+    childScreen: true,
+  },
   { module: 'DOCUMENTATION', feature: 'DOCUMENTATION.BL_PRINT', label: 'BL Print', actions: READ_ONLY },
   { module: 'DOCUMENTATION', feature: 'DOCUMENTATION.COPY_DOC_UPLOAD', label: 'Copy Doc Upload', actions: MASTER },
 

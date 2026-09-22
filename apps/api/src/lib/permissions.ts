@@ -19,6 +19,8 @@ export interface ResolvedAccess {
   tokenVersion: number;
   /** Set on an agent account, so a refreshed token keeps the claim. */
   agentId: bigint | null;
+  /** Set on a customer account. Same rule as agentId (CR-004). */
+  customerId: bigint | null;
   /**
    * True when this login belongs to an outside company — an agent, a customer
    * or a vendor. The session gate reads this rather than checking three
@@ -42,6 +44,12 @@ export interface AccountRow {
    * app can route, but authenticate compares the two and rejects a mismatch.
    */
   agentId: bigint | null;
+  /**
+   * Set on a customer's own login, and read the same way — from the row, on
+   * every request. Until CR-004 nothing carried this, so no handler could
+   * answer "which customer is this?" and no policy could be written about it.
+   */
+  customerId: bigint | null;
 }
 
 /**
@@ -73,6 +81,7 @@ export async function loadAccount(db: TenantDb, userId: bigint): Promise<Account
     tokenVersion: user.tokenVersion,
     roleId: user.roleId,
     agentId: user.agentId,
+    customerId: user.customerId,
     isExternal:
       user.agentId !== null || user.customerId !== null || user.vendorId !== null,
     roleIsActive:
@@ -95,6 +104,7 @@ export async function resolvePermissions(
     // Carried so a refreshed token keeps the claim; authenticate compares it
     // against the row and rejects a mismatch.
     agentId: account.agentId,
+    customerId: account.customerId,
     isExternal: account.isExternal,
   };
 

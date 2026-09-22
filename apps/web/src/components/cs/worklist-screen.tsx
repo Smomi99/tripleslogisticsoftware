@@ -43,6 +43,8 @@ const TONE: Record<ShipmentStatus, 'active' | 'pending' | 'inactive' | 'overdue'
   SO_SKIPPED: 'active',
   PART_RECEIVED: 'pending',
   CARGO_RECEIVED: 'active',
+  ADVISED: 'active',
+  BL_DRAFTED: 'active',
   SHORT_CLOSED: 'inactive',
   CANCELLED: 'overdue',
 };
@@ -52,6 +54,8 @@ const DETAIL_HEADER: Record<ShipmentWorklistId, string> = {
   APPROVAL: 'POs',
   SHIPPING_ORDER: 'Order',
   CARGO_RECEIPT: 'Received',
+  SHIPMENT_ADVISE: 'Advise',
+  BL_DRAFT: 'Draft',
 };
 
 /** The endpoint behind each, each with its own permission on the server. */
@@ -59,12 +63,17 @@ const ENDPOINT: Record<ShipmentWorklistId, string> = {
   APPROVAL: '/api/tenant/cs/shipment-approvals',
   SHIPPING_ORDER: '/api/tenant/cs/shipping-orders',
   CARGO_RECEIPT: '/api/tenant/ops/cargo-receipts',
+  SHIPMENT_ADVISE: '/api/tenant/documentation/shipment-advise',
+  BL_DRAFT: '/api/tenant/documentation/bl-drafts/worklist',
 };
 
 const DESCRIPTION: Record<ShipmentWorklistId, string> = {
   APPROVAL: 'Bookings with a schedule in front of the customer, and the ones already decided.',
   SHIPPING_ORDER: 'Bookings cleared to ship, and the orders already issued against them.',
   CARGO_RECEIPT: 'Bookings with cargo still to arrive, and what has come in so far.',
+  SHIPMENT_ADVISE:
+    'Bookings with the cargo in and the container planned, and the advises already sent.',
+  BL_DRAFT: 'Bookings that have been advised, and the bills of lading drafted against them.',
 };
 
 const EMPTY: Record<ShipmentWorklistId, { title: string; description: string }> = {
@@ -83,6 +92,16 @@ const EMPTY: Record<ShipmentWorklistId, { title: string; description: string }> 
     description:
       'A booking arrives here once its shipping order is issued, or skipped on an inbound.',
   },
+  SHIPMENT_ADVISE: {
+    title: 'Nothing to advise',
+    description:
+      'A booking arrives here once its cargo has been received. Finalise the load plan, then build the advise.',
+  },
+  BL_DRAFT: {
+    title: 'No bills of lading waiting',
+    description:
+      'A booking arrives here once its shipment advise has gone to the customer — that is where the BL number comes from.',
+  },
 };
 
 interface Meta {
@@ -92,7 +111,21 @@ interface Meta {
   counts?: Record<string, number>;
 }
 
-export function WorklistScreen({ worklist }: { worklist: ShipmentWorklistId }) {
+export function WorklistScreen({
+  worklist,
+  fixedMode,
+}: {
+  worklist: ShipmentWorklistId;
+  /**
+   * Pins the Sea/Air filter and hides the dropdown.
+   *
+   * The client's menu splits Shipment Advise into two items the way it splits
+   * Shipment Booking, and the two sheets differ by shipment_type and nothing
+   * else — so this is one screen with the filter already answered, not a
+   * second screen.
+   */
+  fixedMode?: 'SEA' | 'AIR';
+}) {
   const config = SHIPMENT_WORKLISTS[worklist];
   const { authorizedList, authorizedObjectUrl, can } = useSession();
 
@@ -102,7 +135,7 @@ export function WorklistScreen({ worklist }: { worklist: ShipmentWorklistId }) {
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [view, setView] = useState<string>(() => defaultWorklistView(worklist));
-  const [mode, setMode] = useState('');
+  const [mode, setMode] = useState<string>(fixedMode ?? '');
   const [sortBy, setSortBy] = useState('');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [isPending, setPending] = useState(true);
@@ -275,6 +308,7 @@ export function WorklistScreen({ worklist }: { worklist: ShipmentWorklistId }) {
             onChange={(e) => setSearchInput(e.target.value)}
           />
         </div>
+        {fixedMode === undefined && (
         <div className="flex w-40 flex-col gap-1">
           <span className="label-manifest">Mode</span>
           <Select
@@ -290,6 +324,7 @@ export function WorklistScreen({ worklist }: { worklist: ShipmentWorklistId }) {
             <option value="AIR">Air</option>
           </Select>
         </div>
+        )}
       </div>
 
       {/* What this tab holds, said once rather than guessed at. */}

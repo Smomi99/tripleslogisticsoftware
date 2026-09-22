@@ -184,3 +184,112 @@ export async function nextCargoReceiptNo(
 export function seriesYearOf(documentDate: Date): number {
   return documentDate.getUTCFullYear();
 }
+
+// ---------------------------------------------------------------------------
+// Documentation module (docs/MODULE_DOCUMENTATION.md)
+// ---------------------------------------------------------------------------
+
+/** The shipment advise, SA-2026-000001. */
+export const SHIPMENT_ADVISE_PREFIX = 'SA';
+/** The BL draft, BLD-2026-000001. */
+export const BL_DRAFT_PREFIX = 'BLD';
+
+export function formatShipmentAdviseNo(year: number, sequence: number): string {
+  return formatDocumentNo(SHIPMENT_ADVISE_PREFIX, year, sequence);
+}
+
+export async function nextShipmentAdviseNo(
+  db: TenantDb,
+  tenantId: bigint,
+  year: number,
+): Promise<string> {
+  const pattern = `${SHIPMENT_ADVISE_PREFIX}-${year}-%`;
+  const rows = await db.$queryRaw<{ max_seq: number | null }[]>`
+    SELECT MAX((regexp_replace(code, '^.*-', ''))::int) AS max_seq
+      FROM shipment_advise
+     WHERE tenant_id = ${tenantId}
+       AND series_year = ${year}
+       AND code LIKE ${pattern}
+  `;
+  return formatShipmentAdviseNo(year, (rows[0]?.max_seq ?? 0) + 1);
+}
+
+export function formatBlDraftNo(year: number, sequence: number): string {
+  return formatDocumentNo(BL_DRAFT_PREFIX, year, sequence);
+}
+
+/**
+ * The next BL draft number, counted over the whole workspace.
+ *
+ * Through a SECURITY DEFINER function rather than a MAX() here, because §2.4
+ * lets a CUSTOMER create one and RLS narrows what their session can see to
+ * their own drafts. Counting those gave the first customer to draft anything
+ * BLD-<year>-000001, which the forwarder had already issued — and the insert
+ * died on the unique constraint (found by demo:docs, fixed in
+ * 20260920140000).
+ *
+ * The rule, for whatever is added to the portal next: a per-tenant sequence
+ * computed with MAX() is wrong in any session that cannot see every row.
+ */
+export async function nextBlDraftNo(
+  db: TenantDb,
+  tenantId: bigint,
+  year: number,
+): Promise<string> {
+  const rows = await db.$queryRaw<{ seq: number }[]>`
+    SELECT app_next_bl_draft_seq(${tenantId}, ${year}) AS seq
+  `;
+  return formatBlDraftNo(year, rows[0]?.seq ?? 1);
+}
+
+/**
+ * The House BL number — the one number on these screens the customer quotes
+ * back at you, and the only one the client gave a format for.
+ *
+ * Cell Q14 of the sea advise sheet reads `TSL+26+09+001`: a company prefix, a
+ * two-digit year, a two-digit month, and a serial that restarts each month.
+ * This reproduces it as `TSL2609001`.
+ *
+ * **The prefix is open question 3** (MODULE_DOCUMENTATION §12). `TSL` is this
+ * client's own initials, and nothing in the spec says where a second workspace
+ * would get its own — so it is derived from the tenant slug until they answer,
+ * and changing it later means changing this function and nothing else.
+ *
+ * Numbers already issued are never recomputed: the serial is MAX+1 over every
+ * row of that month INCLUDING cancelled ones, for the same reason a cancelled
+ * shipping order keeps its number forever. Handing a number a customer has
+ * already seen to a different shipment is the one thing this must not do.
+ */
+export function houseBlPrefixFor(tenantSlug: string): string {
+  const letters = tenantSlug.replace(/[^a-zA-Z]/g, '').toUpperCase();
+  return (letters.slice(0, 3) || 'HBL').padEnd(3, 'X');
+}
+
+export function formatHouseBlNo(prefix: string, date: Date, sequence: number): string {
+  const yy = String(date.getUTCFullYear() % 100).padStart(2, '0');
+  const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
+  return `${prefix}${yy}${mm}${String(sequence).padStart(3, '0')}`;
+}
+
+export async function nextHouseBlNo(
+  db: TenantDb,
+  tenantId: bigint,
+  tenantSlug: string,
+  date: Date,
+): Promise<string> {
+  const prefix = houseBlPrefixFor(tenantSlug);
+  const yy = String(date.getUTCFullYear() % 100).padStart(2, '0');
+  const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const stem = `${prefix}${yy}${mm}`;
+
+  // The serial is whatever follows the fixed 7-character stem, so it grows
+  // past 999 rather than wrapping. The regex keeps a hand-typed or imported
+  // number that does not fit the format out of the MAX entirely.
+  const rows = await db.$queryRaw<{ max_seq: number | null }[]>`
+    SELECT MAX(right(house_bl_no, length(house_bl_no) - ${stem.length})::int) AS max_seq
+      FROM shipment_advise
+     WHERE tenant_id = ${tenantId}
+       AND house_bl_no ~ ${`^${stem}[0-9]+$`}
+  `;
+  return formatHouseBlNo(prefix, date, (rows[0]?.max_seq ?? 0) + 1);
+}

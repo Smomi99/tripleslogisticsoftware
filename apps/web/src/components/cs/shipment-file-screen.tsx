@@ -20,6 +20,8 @@ import { ApprovalTab } from '@/components/cs/approval-tab';
 import { CargoReceiptTab } from '@/components/cs/cargo-receipt-tab';
 import { ScheduleScreen } from '@/components/cs/schedule-screen';
 import { ShippingOrderTab } from '@/components/cs/shipping-order-tab';
+import { BlDraftTab } from '@/components/doc/bl-draft-tab';
+import { ShipmentAdviseTab } from '@/components/doc/shipment-advise-tab';
 import { ShipmentBookingScreen } from '@/components/cs/shipment-booking-screen';
 import { PageHeader } from '@/components/ui/form-layout';
 import { Status } from '@/components/ui/status';
@@ -48,6 +50,8 @@ const TONE: Record<ShipmentStatus, 'active' | 'pending' | 'inactive' | 'overdue'
   SO_SKIPPED: 'active',
   PART_RECEIVED: 'pending',
   CARGO_RECEIVED: 'active',
+  ADVISED: 'active',
+  BL_DRAFTED: 'active',
   SHORT_CLOSED: 'inactive',
   CANCELLED: 'overdue',
 };
@@ -266,6 +270,11 @@ export function ShipmentFileScreen({ shipmentId }: { shipmentId: string }) {
       )}
 
       {/* -------------------------------------------------------- activities */}
+      {/* Documentation (docs/MODULE_DOCUMENTATION.md §2). */}
+      {tab === 'shipment-advise' && (
+        <ShipmentAdviseTab booking={booking} onChanged={() => void load()} />
+      )}
+      {tab === 'bl' && <BlDraftTab booking={booking} onChanged={() => void load()} />}
       {tab === 'activities' && (
         <section className="rounded-manifest border border-line bg-surface shadow-manifest">
           <h2 className="border-b border-line px-4 py-3 text-section text-hull">
