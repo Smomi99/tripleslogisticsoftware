@@ -154,10 +154,13 @@ describe('container capacity — MODULE_CLP.md §3.1', () => {
     });
     const byCode = new Map(sizes.map((s) => [s.code, s]));
 
+    // 20STD, 40STD and 40HC took 26,000 kg until 20260924090000.
     expect(byCode.get('20STD')?.maxVolumeCbm?.toString()).toBe('28');
-    expect(byCode.get('20STD')?.maxWeightKg?.toString()).toBe('26000');
+    expect(byCode.get('20STD')?.maxWeightKg?.toString()).toBe('30000');
     expect(byCode.get('40STD')?.maxVolumeCbm?.toString()).toBe('65');
+    expect(byCode.get('40STD')?.maxWeightKg?.toString()).toBe('30000');
     expect(byCode.get('40HC')?.maxVolumeCbm?.toString()).toBe('72');
+    expect(byCode.get('40HC')?.maxWeightKg?.toString()).toBe('30000');
     expect(byCode.get('45FT')?.maxVolumeCbm?.toString()).toBe('80');
     expect(byCode.get('45FT')?.maxWeightKg?.toString()).toBe('30000');
   });
