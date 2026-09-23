@@ -209,8 +209,10 @@ export async function buildRateWorkbook(context: ExportContext): Promise<Buffer>
       export. The cell still holds the exact value — this is the display, so a
       per-CBM rate that really is 1450.5 is not quietly rounded in a
       spreadsheet somebody is about to compute with.
+
+      Air always shows the cents (2026-09-24), as it does on screen.
     */
-    sheet.getColumn(firstPriceColumn + i).numFmt = '#,##0.####';
+    sheet.getColumn(firstPriceColumn + i).numFmt = mode === 'AIR' ? '#,##0.00##' : '#,##0.####';
     sheet.getColumn(firstPriceColumn + i).alignment = { horizontal: 'right' };
   }
 
@@ -329,8 +331,8 @@ export function buildRatePdf(context: ExportContext): Promise<Buffer> {
           same currency and its column says "buy", so it stays bare.
         */
         return which === 'sell'
-          ? `${purchasePrice(raw)} ${rate.currencyCode}`
-          : purchasePrice(raw);
+          ? `${purchasePrice(raw, mode)} ${rate.currencyCode}`
+          : purchasePrice(raw, mode);
       };
 
       drawRow(

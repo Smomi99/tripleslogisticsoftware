@@ -2455,8 +2455,9 @@ model FreightRateLine {
   profitValue Decimal    @default(0) @map("profit_value") @db.Decimal(18, 4)
 
   /// §4 rule 4: read-only, computed by Postgres. Never written by hand, never
-  /// computed in the API or the browser. The migration installs it as
-  /// GENERATED ALWAYS ... STORED.
+  /// computed in the API or the browser. A BEFORE trigger computes it from the
+  /// rate's mode — to the cent for air, a whole number for sea — and refuses a
+  /// written value as a generated column would (20260924100000).
   sellPrice Decimal? @default(dbgenerated()) @map("sell_price") @db.Decimal(18, 4)
 
   /// §9 Q6, answered yes: the floor this line bills at — LCL's minimum CBM,

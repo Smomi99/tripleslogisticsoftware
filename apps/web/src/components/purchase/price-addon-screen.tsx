@@ -319,7 +319,9 @@ export function PriceAddonScreen({
                           key={line.id}
                           className="px-3 py-2 text-right font-mono text-cell tabular-nums text-steel"
                         >
-                          {line.buyPrice ?? '—'}
+                          {/* Air reads to the cent (2026-09-24); sea shows the
+                              figure as it always has. */}
+                          {mode === 'AIR' ? purchasePrice(line.buyPrice, mode) : (line.buyPrice ?? '—')}
                         </td>
                       ))}
                     </tr>
@@ -334,6 +336,7 @@ export function PriceAddonScreen({
                         line.buyPrice ?? line.sellPrice,
                         draft.profitType,
                         draft.profitValue || '0',
+                        mode,
                       );
                       return (
                         <td key={line.id} className="px-3 py-2 align-top">
@@ -371,7 +374,7 @@ export function PriceAddonScreen({
                           <p className="mt-1 text-right font-mono text-cell tabular-nums text-steel">
                             {options.canSeeBuyPrice
                               ? `sell ${preview} ${rate.currencyCode}`
-                              : `now ${purchasePrice(line.sellPrice)} ${rate.currencyCode}`}
+                              : `now ${purchasePrice(line.sellPrice, mode)} ${rate.currencyCode}`}
                           </p>
                         </td>
                       );

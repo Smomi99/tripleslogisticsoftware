@@ -865,12 +865,12 @@ export function RateEntryScreen({
                       ) : (
                         <>
                           <div>
-                            {purchasePrice(line.sellPrice)}{' '}
+                            {purchasePrice(line.sellPrice, mode)}{' '}
                             <span className="text-steel">{rate.currencyCode}</span>
                           </div>
                           {/* Absent when the server withheld it (§4 rule 5). */}
                           {line.buyPrice !== undefined && (
-                            <div className="text-steel">buy {purchasePrice(line.buyPrice)}</div>
+                            <div className="text-steel">buy {purchasePrice(line.buyPrice, mode)}</div>
                           )}
                         </>
                       )}

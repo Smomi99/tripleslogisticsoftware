@@ -274,6 +274,35 @@ describe('the route column (client request, 2026-09-06)', () => {
     expect(sheet.getColumn(statusAt).numFmt).toBeUndefined();
   });
 
+  it('always shows the cents on an air price list (2026-09-24)', async () => {
+    // Priced per KG: 3.00 and 2.65 are both prices, and a bare 3 reads like a
+    // rounding. Still a real number underneath, so the sheet sums.
+    const air = rate({
+      mode: 'AIR',
+      lines: [
+        {
+          id: '1',
+          tierId: '1',
+          tierCode: '+100',
+          tierLabel: '+100 KG',
+          buyPrice: '2.3500',
+          sellPrice: '2.6500',
+          profitType: 'FLAT',
+          profitValue: '0.3000',
+          minCharge: null,
+        },
+      ],
+    });
+    const workbook = await readWorkbook(
+      await buildRateWorkbook({ ...context([air]), mode: 'AIR' }),
+    );
+    const sheet = workbook.worksheets[0]!;
+    const sellAt = (sheet.getRow(4).values as unknown[]).indexOf('+100 sell');
+
+    expect(sheet.getColumn(sellAt).numFmt).toBe('#,##0.00##');
+    expect(sheet.getRow(5).getCell(sellAt).value).toBe(2.65);
+  });
+
   it('prints in the PDF too', async () => {
     /*
      * Asserted on the column list rather than on the file's bytes. Once pdfkit
