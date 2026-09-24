@@ -34,6 +34,16 @@ export const agentInputSchema = z.object({
   name: z.string().trim().min(1, 'Enter the agent name.').max(200, 'Name is too long.'),
   country: countrySchema,
   address: z.string().trim().max(2000, 'Address is too long.').optional(),
+  /**
+   * Two fields the client asked for on 2026-09-24. Neither is in §6, so both
+   * are noted as such in the schema rather than quietly assumed into the spec.
+   */
+  deliveryAgentDetails: z
+    .string()
+    .trim()
+    .max(2000, 'Delivery agent details are too long.')
+    .optional(),
+  note: z.string().trim().max(4000, 'Note is too long.').optional(),
   agentType: z.enum(AGENT_TYPES, { message: 'Choose general or exclusive.' }),
   expertAreaIds: idListSchema,
   portCoverageIds: idListSchema,
@@ -72,6 +82,8 @@ export interface AgentDto {
   name: string;
   country: string;
   address: string | null;
+  deliveryAgentDetails: string | null;
+  note: string | null;
   agentType: AgentType;
   /** Storage key only, never the file itself (§2). */
   weOwe: string | null;

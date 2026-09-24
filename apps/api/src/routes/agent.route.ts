@@ -55,6 +55,8 @@ const SELECT = {
   name: true,
   country: true,
   address: true,
+  deliveryAgentDetails: true,
+  note: true,
   agentType: true,
   agreementFile: true,
   weOwe: true,
@@ -75,6 +77,8 @@ type AgentRow = {
   name: string;
   country: string;
   address: string | null;
+  deliveryAgentDetails: string | null;
+  note: string | null;
   agentType: 'GENERAL' | 'EXCLUSIVE';
   agreementFile: string | null;
   weOwe: Prisma.Decimal | null;
@@ -99,6 +103,8 @@ function toDto(row: AgentRow): AgentDto {
     name: row.name,
     country: row.country,
     address: row.address,
+    deliveryAgentDetails: row.deliveryAgentDetails,
+    note: row.note,
     agentType: row.agentType,
     weOwe: money(row.weOwe),
     agentOwe: money(row.agentOwe),
@@ -377,10 +383,12 @@ agentRouter.post('/', requirePermission(`${FEATURE}.CREATE`), async (req, res) =
             name: input.name,
             country: input.country,
             address: input.address || null,
+            deliveryAgentDetails: input.deliveryAgentDetails || null,
             agentType: input.agentType,
             weOwe: moneyIn(input.weOwe),
             agentOwe: moneyIn(input.agentOwe),
             openingCurrencyId: refIn(input.openingCurrencyId),
+            note: input.note || null,
             createdBy: auth.userId,
             updatedBy: auth.userId,
           },
@@ -470,10 +478,12 @@ agentRouter.patch('/:id', requirePermission(`${FEATURE}.EDIT`), async (req, res)
         name: input.name,
         country: input.country,
         address: input.address || null,
+        deliveryAgentDetails: input.deliveryAgentDetails || null,
         agentType: input.agentType,
         weOwe: moneyIn(input.weOwe),
         agentOwe: moneyIn(input.agentOwe),
         openingCurrencyId: refIn(input.openingCurrencyId),
+        note: input.note || null,
         updatedBy: auth.userId,
       },
     });

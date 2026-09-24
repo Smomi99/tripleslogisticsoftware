@@ -23,6 +23,9 @@ import { useSession } from '@/lib/session';
 
 const ENDPOINT = '/api/tenant/crm/agents';
 
+const TEXTAREA_CLASS =
+  'w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-body text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour';
+
 interface AgentOptions {
   expertAreas: LookupOption[];
   ports: LookupOption[];
@@ -58,6 +61,7 @@ export function AgentForm({ agent }: { agent: AgentDto | null }) {
       name: '',
       country: '',
       address: '',
+      deliveryAgentDetails: '',
       agentType: 'GENERAL',
       expertAreaIds: [],
       portCoverageIds: [],
@@ -65,6 +69,7 @@ export function AgentForm({ agent }: { agent: AgentDto | null }) {
       weOwe: '',
       agentOwe: '',
       openingCurrencyId: '',
+      note: '',
     },
   });
 
@@ -83,6 +88,7 @@ export function AgentForm({ agent }: { agent: AgentDto | null }) {
       name: agent.name,
       country: agent.country,
       address: agent.address ?? '',
+      deliveryAgentDetails: agent.deliveryAgentDetails ?? '',
       agentType: agent.agentType,
       expertAreaIds: agent.expertAreas.map((o) => o.id),
       portCoverageIds: agent.portCoverage.map((o) => o.id),
@@ -90,6 +96,7 @@ export function AgentForm({ agent }: { agent: AgentDto | null }) {
       weOwe: agent.weOwe ?? '',
       agentOwe: agent.agentOwe ?? '',
       openingCurrencyId: agent.openingCurrencyId ?? '',
+      note: agent.note ?? '',
     });
   }, [agent, reset]);
 
@@ -140,6 +147,22 @@ export function AgentForm({ agent }: { agent: AgentDto | null }) {
 
       <Field id="address" label="Address" error={errors.address?.message} wide>
         <Input id="address" {...register('address')} />
+      </Field>
+
+      {/* Asked for by the client on 2026-09-24. */}
+      <Field
+        id="deliveryAgentDetails"
+        label="Delivery agent details"
+        error={errors.deliveryAgentDetails?.message}
+        wide
+      >
+        <textarea
+          id="deliveryAgentDetails"
+          rows={3}
+          aria-invalid={errors.deliveryAgentDetails !== undefined}
+          {...register('deliveryAgentDetails')}
+          className={TEXTAREA_CLASS}
+        />
       </Field>
 
       <Field
@@ -231,6 +254,23 @@ export function AgentForm({ agent }: { agent: AgentDto | null }) {
             </option>
           ))}
         </Select>
+      </Field>
+
+      {/* Asked for by the client on 2026-09-24. */}
+      <Field
+        id="note"
+        label="Note"
+        hint="Anything about the agent the rest of the form has no room for."
+        error={errors.note?.message}
+        wide
+      >
+        <textarea
+          id="note"
+          rows={4}
+          aria-invalid={errors.note !== undefined}
+          {...register('note')}
+          className={TEXTAREA_CLASS}
+        />
       </Field>
     </FormLayout>
   );

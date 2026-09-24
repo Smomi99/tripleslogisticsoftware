@@ -34,6 +34,7 @@ export function AgentDetailDrawer({
     ['Type', AGENT_TYPE_LABEL[agent.agentType]],
     ['Country', agent.country],
     ['Address', agent.address],
+    ['Delivery agent details', agent.deliveryAgentDetails],
     ['Agreement', agent.agreementFileName],
   ];
 
@@ -98,6 +99,13 @@ export function AgentDetailDrawer({
           <Chips label="Port coverage" items={agent.portCoverage.map((p) => p.name)} />
           <Chips label="Networks" items={agent.networks.map((n) => n.name)} />
         </div>
+
+        {agent.note !== null && agent.note !== '' && (
+          <div className="border-t border-line pt-4">
+            <span className="label-manifest">Note</span>
+            <p className="whitespace-pre-line text-body text-hull">{agent.note}</p>
+          </div>
+        )}
 
         <PicContacts
           endpoint={`/api/tenant/crm/agents/${agent.id}/pics`}

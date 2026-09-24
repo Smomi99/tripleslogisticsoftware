@@ -227,6 +227,8 @@ const SYSTEM_LOOKUPS = {
     'Customs Clearance',
     'Trucking',
     'Courier - Parcel',
+    // Added 2026-09-24 at the client's request.
+    'Cross Border',
   ],
   network: ['WCA', 'JCtrans', 'GLA', 'OLO'],
 } as const;
