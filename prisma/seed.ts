@@ -111,12 +111,15 @@ const RATE_LOOKUPS = {
     { code: 'NONTEXTILE', name: 'Non-Textile' },
     { code: 'DG', name: 'DG' },
   ],
-  /** How big the box is. */
+  /**
+   * How big the box is, and what it holds (MODULE_CLP.md §3.1). The CLP refuses
+   * a plan over either limit. Every size takes 30,000 kg since 2026-09-24.
+   */
   containerSize: [
-    { code: '20STD', name: "20' Standard", teuFactor: '1.00', sortOrder: 1 },
-    { code: '40STD', name: "40' Standard", teuFactor: '2.00', sortOrder: 2 },
-    { code: '40HC', name: "40' High Cube", teuFactor: '2.00', sortOrder: 3 },
-    { code: '45FT', name: "45' High Cube", teuFactor: '2.25', sortOrder: 4 },
+    { code: '20STD', name: "20' Standard", teuFactor: '1.00', sortOrder: 1, maxVolumeCbm: '28', maxWeightKg: '30000' },
+    { code: '40STD', name: "40' Standard", teuFactor: '2.00', sortOrder: 2, maxVolumeCbm: '65', maxWeightKg: '30000' },
+    { code: '40HC', name: "40' High Cube", teuFactor: '2.00', sortOrder: 3, maxVolumeCbm: '72', maxWeightKg: '30000' },
+    { code: '45FT', name: "45' High Cube", teuFactor: '2.25', sortOrder: 4, maxVolumeCbm: '80', maxWeightKg: '30000' },
   ],
   /**
    * What kind of box it is — a different axis entirely. A 40HC can be Dry or
@@ -380,13 +383,23 @@ async function seedRateLookups(): Promise<number> {
   for (const row of RATE_LOOKUPS.containerSize) {
     const existing = await prisma.containerSize.findFirst({
       where: { code: row.code, tenantId: null },
-      select: { id: true },
+      select: { id: true, maxVolumeCbm: true, maxWeightKg: true },
     });
+    const capacity = { maxVolumeCbm: row.maxVolumeCbm, maxWeightKg: row.maxWeightKg };
     if (existing === null) {
       await prisma.containerSize.create({
-        data: { code: row.code, name: row.name, teuFactor: row.teuFactor, sortOrder: row.sortOrder },
+        data: { code: row.code, name: row.name, teuFactor: row.teuFactor, sortOrder: row.sortOrder, ...capacity },
       });
       created += 1;
+    } else if (existing.maxVolumeCbm === null && existing.maxWeightKg === null) {
+      /*
+        A shared size with nothing recorded. 20260913090000 filled capacities
+        in on rows that already existed — but on a database built from scratch
+        the migrations run before this seed, that backfill found an empty
+        table, and every size came out "capacity not set". Only where both are
+        empty: a figure already there was put there on purpose.
+      */
+      await prisma.containerSize.update({ where: { id: existing.id }, data: capacity });
     }
   }
 

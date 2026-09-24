@@ -98,10 +98,11 @@ freight_rate_line
   buy_price     NUMERIC(18,4) NOT NULL
   profit_type   ENUM('FLAT','PERCENT') NOT NULL DEFAULT 'FLAT'
   profit_value  NUMERIC(18,4) NOT NULL DEFAULT 0
-  sell_price    NUMERIC(18,4) GENERATED ALWAYS AS (
-                  CASE WHEN profit_type = 'FLAT'
-                       THEN buy_price + profit_value
-                       ELSE buy_price * (1 + profit_value / 100) END) STORED
+  sell_price    NUMERIC(18,4)   -- computed by the database, never written:
+                  ROUND(CASE WHEN profit_type = 'FLAT'
+                             THEN buy_price + profit_value
+                             ELSE buy_price * (1 + profit_value / 100) END,
+                        2 when the rate is AIR, else 0)
   UNIQUE (tenant_id, rate_id, tier_id)
 
 rate_local_charge          -- "POL Local Charges", broken down, not a lump sum
@@ -114,7 +115,15 @@ rate_profit_log            -- who changed a margin, when, from what
   new_profit_type, new_profit_value, changed_by, changed_at, reason
 ```
 
-Both profit methods are supported because the client asked for both — flat amount per unit and percentage of buy price, chosen per rate line. `sell_price` is a generated column: never write it by hand, never let the frontend compute and post it.
+Both profit methods are supported because the client asked for both — flat amount per unit and percentage of buy price, chosen per rate line. `sell_price` is computed by the database: never write it by hand, never let the frontend compute and post it.
+
+> **Changed 2026-09-24.** Sea sell prices have been whole numbers since 2026-09-12 (client: "round
+> figure, no decimal needed"). Air is priced per KG, where that rounding moved 2.65 to 3, so an air
+> sell price now keeps two places. The rounding needs the rate's mode, which a generated column
+> cannot read from `freight_rate`, so `sell_price` is filled by a BEFORE trigger
+> (`20260924100000_air_sell_price_keeps_its_cents`). The trigger refuses a written value with the
+> same error a generated column raises. Air prices also display with two places on the three Air
+> screens and in the Air price-list download.
 
 ### 3.3 Inquiry tables
 
@@ -165,7 +174,7 @@ The client's Quotation sheet stops after six fields (Inquiry No, Quotation Date,
 
     **Client decision, 2026-09-16: expired rates are never hidden from the buyer, and stay editable.** The client read rates dropping off the purchase list after they lapsed as data being deleted. Nothing was ever deleted — the nightly job only sets `EXPIRED` — but the result is: the Sea FCL, Sea LCL and Air purchase screens now open with "Include expired" ticked, and Edit is offered on an expired rate (and the Add-on screen will re-price one). A save stores a Published rate whose `valid_to` has passed as `EXPIRED`; moving `valid_to` to today or later publishes it again, subject to rule 8. Rates superseded under the old rule 1 remain uneditable. The Price List keeps this rule's valid-only default, but its toggle now includes `EXPIRED` rows — it used to filter on `PUBLISHED`, so a lapsed rate vanished from it for good once the job ran. Quoting is unaffected: every lookup that attaches a rate to an inquiry or quotation filters on `valid_to >= today` as well as status.
 3. A **nightly job** flips status to EXPIRED where `valid_to < today`. Rates expiring within 7 days show a `--signal` dot on the list, so the pricing team re-buys before the gap.
-4. **Sell price = buy + profit, computed by the database.** Never in the frontend, never in the API.
+4. **Sell price = buy + profit, computed by the database.** Never in the frontend, never in the API. Rounded to a whole number for sea, to the cent for air (§3.2).
 5. **Buy price is restricted data.** Sales staff quoting a customer see `sell_price` only. Gate the buy price and the profit columns behind `PURCHASE.RATE.VIEW_BUY_PRICE` — and **strip them from the API response** when the permission is absent. Hiding a column in React while the JSON still carries the margin is not access control; the whole company's margin is one devtools tab away.
 6. Only admin or the price team may set profit (the client stated this). Enforced by `PURCHASE.RATE.MANAGE_PROFIT`, and every change writes to `rate_profit_log`.
 7. **Multi-POD search.** Add-on and Price List screens filter by many PODs at once (`pod_id IN (...)`) — the wireframe notes this twice.

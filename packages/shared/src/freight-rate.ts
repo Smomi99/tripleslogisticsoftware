@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { listQuerySchema } from './api';
-import { RATE_MODES } from './rate-lookups';
+import { RATE_MODES, type RateMode } from './rate-lookups';
 
 /**
  * Freight rates — docs/MODULE_PURCHASE_SALES.md §3.2, §4.
@@ -69,12 +69,15 @@ const optionalMoneyField = (message: string) =>
  * of noise on every price. A whole number renders whole. One that genuinely
  * carries paisa keeps it — a per-CBM LCL rate of 1450.50 is a real price, and
  * rounding it on screen would show a figure the database does not hold.
+ *
+ * Air always shows two places (2026-09-24). It is priced per KG, where 3.00 and
+ * 2.65 are both prices and a bare "3" reads like a rounding.
  */
-export function purchasePrice(value: string | null | undefined): string {
+export function purchasePrice(value: string | null | undefined, mode?: RateMode): string {
   if (value === null || value === undefined || value === '') return '—';
   const n = Number(value);
   if (!Number.isFinite(n)) return value;
-  return Number.isInteger(n)
+  return Number.isInteger(n) && mode !== 'AIR'
     ? n.toLocaleString('en-US')
     : n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
 }
@@ -387,18 +390,45 @@ export function previewSellPrice(
   buyPrice: string,
   profitType: ProfitType,
   profitValue: string,
+  mode: RateMode,
 ): string {
-  const buy = Number(buyPrice);
-  const profit = Number(profitValue);
-  if (!Number.isFinite(buy) || !Number.isFinite(profit)) return '—';
-  const sell = profitType === 'FLAT' ? buy + profit : buy * (1 + profit / 100);
+  const buy = tenThousandths(buyPrice);
+  const profit = tenThousandths(profitValue);
+  if (buy === null || profit === null) return '—';
   /*
-    Rounded, because the generated column is (client, 2026-09-12) and a preview
-    that promises 112.1100 where the database will store 112 is worse than no
-    preview at all. Postgres ROUND() and Math.round agree on positives, and a
-    price is never negative.
+    In integers, not floats. The database rounds exact decimals, and a float
+    lands on the wrong side of a half-cent: 2.30 plus 15% is 2.645, which
+    Postgres rounds to 2.65 and Math.round(264.49999999999997) to 2.64. A
+    preview that promises one figure while the database stores another is
+    worse than no preview at all.
+
+    FLAT is buy + profit, in ten-thousandths. PERCENT is buy × (1 + profit/100),
+    which is buy × (1,000,000 + profit) in units of 10^-10.
   */
-  return purchasePrice(String(Math.round(sell)));
+  const flat = profitType === 'FLAT';
+  const exact = flat ? buy + profit : buy * (BigInt(1_000_000) + profit);
+  const scale = flat ? 4 : 10;
+  // Rounded as the trigger rounds (20260924100000): to the cent for air, whole
+  // for sea (client, 2026-09-12). Half away from zero, as ROUND() does — a
+  // price is never negative.
+  const places = mode === 'AIR' ? 2 : 0;
+  const unit = BigInt(10) ** BigInt(scale - places);
+  const digits = ((exact + unit / BigInt(2)) / unit).toString().padStart(places + 1, '0');
+  return purchasePrice(
+    places === 0 ? digits : `${digits.slice(0, -places)}.${digits.slice(-places)}`,
+    mode,
+  );
+}
+
+/**
+ * A typed price as a whole number of ten-thousandths — NUMERIC(18,4)'s grain.
+ * Null when it is not a price. A trailing point is allowed, so the preview
+ * holds steady while "12." is on its way to "12.5".
+ */
+function tenThousandths(value: string): bigint | null {
+  const match = /^(\d{1,14})(?:\.(\d{0,4}))?$/.exec(value.trim());
+  if (match === null) return null;
+  return BigInt(match[1]!) * BigInt(10_000) + BigInt((match[2] ?? '').padEnd(4, '0'));
 }
 
 /** How near expiry a rate has to be before the list flags it (§4 rule 3). */

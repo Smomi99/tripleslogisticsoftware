@@ -1,3 +1,4 @@
+import { previewSellPrice, purchasePrice } from '@ff/shared';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -29,6 +30,7 @@ let goodsTypeId: bigint;
 let currencyId: bigint;
 let vendorId: bigint;
 let tierId: bigint;
+let airTierId: bigint;
 
 /** A valid rate, with only the named fields overridden. */
 function rateData(
@@ -122,6 +124,17 @@ beforeAll(async () => {
   });
   tierId = tier.id;
 
+  const airTier = await owner.rateTier.create({
+    data: {
+      code: `${PREFIX}AIRTIER`,
+      mode: 'AIR',
+      label: 'Constraint Air Tier',
+      unit: 'KG',
+    },
+    select: { id: true },
+  });
+  airTierId = airTier.id;
+
   const vendorType = await owner.vendorType.findFirstOrThrow({ select: { id: true } });
   const vendor = await owner.vendor.create({
     data: {
@@ -211,6 +224,108 @@ describe('§4 rule 4 — sell_price is computed by the database', () => {
         tierId,
       ),
     ).rejects.toThrow();
+  });
+
+  it('refuses a hand-written sell price on an update too', async () => {
+    const rate = await owner.freightRate.create({
+      data: rateData({ code: `${PREFIX}FORCEDUPD`, status: 'DRAFT' }),
+      select: { id: true },
+    });
+    const line = await owner.freightRateLine.create({
+      data: { tenantId, rateId: rate.id, tierId, buyPrice: '100.0000' },
+      select: { id: true },
+    });
+    await expect(
+      owner.$executeRawUnsafe(`UPDATE freight_rate_line SET sell_price = 999999 WHERE id = $1`, line.id),
+    ).rejects.toThrow();
+  });
+});
+
+describe('§4 rule 4 — air keeps its cents, sea rounds whole (2026-09-24)', () => {
+  type Mode = 'SEA_FCL' | 'AIR';
+  type Margin = 'FLAT' | 'PERCENT';
+
+  /** What the database stores for one line on a fresh draft rate. */
+  async function storedSell(
+    mode: Mode,
+    code: string,
+    buyPrice: string,
+    profitType: Margin,
+    profitValue: string,
+  ): Promise<string | undefined> {
+    const rate = await owner.freightRate.create({
+      data: rateData({ code: `${PREFIX}${code}`, mode, status: 'DRAFT' }),
+      select: { id: true },
+    });
+    const line = await owner.freightRateLine.create({
+      data: {
+        tenantId,
+        rateId: rate.id,
+        tierId: mode === 'AIR' ? airTierId : tierId,
+        buyPrice,
+        profitType,
+        profitValue,
+      },
+      select: { sellPrice: true },
+    });
+    return line.sellPrice?.toFixed(4);
+  }
+
+  it('keeps the cents on an air price', async () => {
+    // Priced per KG: this was stored as 3 while every sell price rounded whole.
+    expect(await storedSell('AIR', 'AIRFLAT', '2.3500', 'FLAT', '0.3000')).toBe('2.6500');
+  });
+
+  it('rounds an air half-cent up, as ROUND() does', async () => {
+    // 2.30 plus 15% is exactly 2.645.
+    expect(await storedSell('AIR', 'AIRHALF', '2.3000', 'PERCENT', '15.0000')).toBe('2.6500');
+  });
+
+  it('still rounds a sea price to a whole number', async () => {
+    expect(await storedSell('SEA_FCL', 'SEAWHOLE', '1000.0000', 'PERCENT', '12.3456')).toBe(
+      '1123.0000',
+    );
+  });
+
+  it('reprices an air line to the cent when its margin moves', async () => {
+    const rate = await owner.freightRate.create({
+      data: rateData({ code: `${PREFIX}AIRMOVE`, mode: 'AIR', status: 'DRAFT' }),
+      select: { id: true },
+    });
+    const line = await owner.freightRateLine.create({
+      data: { tenantId, rateId: rate.id, tierId: airTierId, buyPrice: '1.9900' },
+      select: { id: true },
+    });
+    const updated = await owner.freightRateLine.update({
+      where: { id: line.id },
+      data: { profitType: 'PERCENT', profitValue: '12.5000' },
+      select: { sellPrice: true },
+    });
+    // 1.99 plus 12.5% is 2.23875.
+    expect(updated.sellPrice?.toFixed(4)).toBe('2.2400');
+  });
+
+  it('shows the same figure in the add-on preview as it stores', async () => {
+    // The preview is what the pricing team reads before saving. It is only
+    // worth having if the database then stores exactly that — which is what a
+    // float got wrong on a half-cent, and why the preview counts in integers.
+    const cases: { mode: Mode; buy: string; type: Margin; profit: string }[] = [
+      { mode: 'AIR', buy: '2.3500', type: 'FLAT', profit: '0.3000' },
+      { mode: 'AIR', buy: '2.3000', type: 'PERCENT', profit: '15.0000' },
+      { mode: 'AIR', buy: '1.9900', type: 'PERCENT', profit: '12.5000' },
+      { mode: 'AIR', buy: '0.1000', type: 'PERCENT', profit: '5.0000' },
+      { mode: 'AIR', buy: '2.3456', type: 'FLAT', profit: '0.0000' },
+      { mode: 'AIR', buy: '3.0000', type: 'FLAT', profit: '0.0000' },
+      { mode: 'SEA_FCL', buy: '1000.0000', type: 'PERCENT', profit: '12.3456' },
+      { mode: 'SEA_FCL', buy: '1150.5000', type: 'FLAT', profit: '0.0000' },
+      { mode: 'SEA_FCL', buy: '1234.5000', type: 'PERCENT', profit: '10.0000' },
+    ];
+    for (const [index, c] of cases.entries()) {
+      const stored = await storedSell(c.mode, `PREVIEW${index}`, c.buy, c.type, c.profit);
+      expect(previewSellPrice(c.buy, c.type, c.profit, c.mode), JSON.stringify(c)).toBe(
+        purchasePrice(stored, c.mode),
+      );
+    }
   });
 });
 

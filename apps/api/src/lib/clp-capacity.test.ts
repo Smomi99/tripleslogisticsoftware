@@ -34,13 +34,13 @@ let size20: bigint;
 /*
   0.5 CBM a carton throughout, so 56 cartons is exactly a 20STD's 28 CBM.
 
-  Weight per carton varies by what is being tested, and it has to: at 500 kg a
-  carton the box is overweight at 52 cartons — 26 CBM — so every "volume"
+  Weight per carton varies by what is being tested, and it has to: at 600 kg a
+  carton the box is overweight at 51 cartons — 25.5 CBM — so every "volume"
   case would really have been the weight rule firing in disguise. Light
   cartons isolate volume; heavy ones isolate weight.
 */
 const LIGHT_KG = 100;
-const HEAVY_KG = 500;
+const HEAVY_KG = 600;
 
 let seq = 8000;
 const madeLines: bigint[] = [];
@@ -238,9 +238,9 @@ describe('volume — blocked, but a supervisor may say otherwise', () => {
   });
 
   it('does not use that code for weight, which has no way through', async () => {
-    const line = await cargo(53, HEAVY_KG);
+    const line = await cargo(51, HEAVY_KG);
     const clp = await makeClp();
-    await expect(put(clp, line, 53)).rejects.toMatchObject({ code: 'CONFLICT' });
+    await expect(put(clp, line, 51)).rejects.toMatchObject({ code: 'CONFLICT' });
   });
 
   it('leaves nothing behind when it refuses', async () => {
@@ -336,28 +336,28 @@ describe('volume — blocked, but a supervisor may say otherwise', () => {
 
 describe('weight — blocked, and not negotiable', () => {
   it('refuses an overweight container even with a reason', async () => {
-    // 53 heavy cartons is 26,500 kg in a 26,000 kg box, and only 26.5 CBM —
+    // 51 heavy cartons is 30,600 kg in a 30,000 kg box, and only 25.5 CBM —
     // so this is the weight rule firing on its own, not volume in disguise.
-    const line = await cargo(53, HEAVY_KG);
+    const line = await cargo(51, HEAVY_KG);
     const clp = await makeClp();
 
     await expect(
-      put(clp, line, 53, 'Supervisor says it is fine.'),
+      put(clp, line, 51, 'Supervisor says it is fine.'),
     ).rejects.toThrow(/cannot be overridden/);
   });
 
   it('names the figures rather than saying "too heavy"', async () => {
-    const line = await cargo(53, HEAVY_KG);
+    const line = await cargo(51, HEAVY_KG);
     const clp = await makeClp();
-    await expect(put(clp, line, 53)).rejects.toThrow(
-      /26,500 kg in a 26,000 kg 20STD — 500 kg over/,
+    await expect(put(clp, line, 51)).rejects.toThrow(
+      /30,600 kg in a 30,000 kg 20STD — 600 kg over/,
     );
   });
 
   it('takes a container loaded to exactly its payload', async () => {
-    const line = await cargo(52, HEAVY_KG); // 26,000 kg exactly, 26 CBM
+    const line = await cargo(50, HEAVY_KG); // 30,000 kg exactly, 25 CBM
     const clp = await makeClp();
-    await put(clp, line, 52);
+    await put(clp, line, 50);
 
     const plan = await owner.clp.findFirstOrThrow({
       where: { id: clp },

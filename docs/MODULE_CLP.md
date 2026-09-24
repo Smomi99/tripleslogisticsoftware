@@ -167,9 +167,9 @@ container_size
   teu_factor      NUMERIC(4,2)
 
   seed from the client's table:
-    20STD   28 CBM    26,000 kg
-    40STD   65 CBM    26,000 kg
-    40HC    72 CBM    26,000 kg
+    20STD   28 CBM    30,000 kg   (26,000 until 2026-09-24 — see below)
+    40STD   65 CBM    30,000 kg   (26,000 until 2026-09-24)
+    40HC    72 CBM    30,000 kg   (26,000 until 2026-09-24)
     45FT    80 CBM    30,000 kg
 ```
 
@@ -184,6 +184,16 @@ Editable in Settings — these limits vary by carrier and lane, and the client w
 > Capacities are **nullable**. The four seeded sizes are backfilled, but a workspace may have added
 > a size before the column existed, and §4.2 must read a missing limit as *"capacity not set"* —
 > never as unlimited.
+
+> **Changed 2026-09-24.** The 20STD, 40STD and 40HC payload went from 26,000 kg to **30,000 kg**,
+> after ticked POs weighing 26,422 kg were refused a 20STD; every shared size now takes 30,000 kg.
+> Migration `20260924090000_container_payload_is_30000_kg` changes the shared rows only, and only
+> where they still held 26,000 — a workspace's own customised size keeps its figure. Draft plans on
+> those sizes have `weight_utilisation` recomputed; final and cancelled plans keep what they were
+> closed with.
+>
+> The seed carries these capacities from the same date. Before, a database built from scratch ran
+> the backfill against an empty table and came out with every size at *"capacity not set"*.
 
 ### 3.2 CLP
 

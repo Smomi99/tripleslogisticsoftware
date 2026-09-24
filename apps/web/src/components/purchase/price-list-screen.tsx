@@ -78,8 +78,11 @@ function boughtFrom(
     const margin =
       line.profitType === 'PERCENT'
         ? `${Number(line.profitValue ?? '0')}% margin`
-        : `${purchasePrice(line.profitValue)} margin`;
-    parts.push(`Buy ${purchasePrice(line.buyPrice)} · ${margin} · sell ${purchasePrice(line.sellPrice)}`);
+        : `${purchasePrice(line.profitValue, rate.mode)} margin`;
+    parts.push(
+      `Buy ${purchasePrice(line.buyPrice, rate.mode)} · ${margin} · ` +
+        `sell ${purchasePrice(line.sellPrice, rate.mode)}`,
+    );
   }
   return parts.join(String.fromCharCode(10));
 }
@@ -489,12 +492,12 @@ export function PriceListScreen({
                             {/* Dimmed when expired (§4 rule 2), so a lapsed
                                 price never reads as one sales can quote. */}
                             <div className={rate.isExpired ? 'cursor-help text-steel' : 'cursor-help'}>
-                              {purchasePrice(line.sellPrice)}{' '}
+                              {purchasePrice(line.sellPrice, mode)}{' '}
                               <span className="text-steel">{rate.currencyCode}</span>
                             </div>
                             {/* Absent unless the server sent it (§4 rule 5). */}
                             {line.buyPrice !== undefined && !hideBuyPrice && (
-                              <div className="text-steel">buy {purchasePrice(line.buyPrice)}</div>
+                              <div className="text-steel">buy {purchasePrice(line.buyPrice, mode)}</div>
                             )}
                           </>
                         )}
