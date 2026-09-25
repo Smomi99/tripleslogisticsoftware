@@ -29,6 +29,7 @@ function quoteIdent(name: string): string {
 interface ForeignKeyEdge {
   child_table: string;
   child_column: string;
+  has_tenant_id: boolean;
 }
 
 /**
@@ -40,6 +41,17 @@ interface ForeignKeyEdge {
  *
  * RLS scopes every UPDATE to the current workspace, so other companies keep
  * pointing at the shared row — which is the whole point.
+ *
+ * Except that RLS also lets a workspace SEE shared rows, and a shared row can
+ * point at another shared row: the seeded FCL rate tiers name the seeded
+ * container sizes. Updating one of those would repoint a tier every workspace
+ * reads onto one workspace's private copy — and RLS refuses the write anyway,
+ * so customising 20STD died on the first seeded tier. Only the workspace's own
+ * rows move; the shared ones are the caller's to deal with.
+ *
+ * Only the leg of each foreign key that points at `id` is followed, the same
+ * pairing references.ts uses. A composite key's tenant_id leg would otherwise
+ * become `SET tenant_id = <copy id>`.
  */
 export async function repointReferences(
   db: TenantDb,
@@ -48,16 +60,25 @@ export async function repointReferences(
   toId: bigint,
 ): Promise<number> {
   const edges = await db.$queryRaw<ForeignKeyEdge[]>`
-    SELECT con.conrelid::regclass::text AS child_table,
-           att.attname                  AS child_column
+    SELECT child.relname                AS child_table,
+           att.attname                  AS child_column,
+           EXISTS (
+             SELECT 1 FROM pg_attribute t
+             WHERE t.attrelid = con.conrelid
+               AND t.attname = 'tenant_id'
+               AND NOT t.attisdropped
+           ) AS has_tenant_id
     FROM pg_constraint con
+    JOIN pg_class child    ON child.oid = con.conrelid
     JOIN pg_class ref      ON ref.oid = con.confrelid
     JOIN pg_namespace rn   ON rn.oid = ref.relnamespace
-    JOIN unnest(con.conkey) WITH ORDINALITY k(attnum, ord) ON TRUE
+    JOIN unnest(con.conkey, con.confkey) WITH ORDINALITY k(attnum, refattnum, ord) ON TRUE
     JOIN pg_attribute att  ON att.attrelid = con.conrelid AND att.attnum = k.attnum
+    JOIN pg_attribute refatt ON refatt.attrelid = con.confrelid AND refatt.attnum = k.refattnum
     WHERE con.contype = 'f'
       AND rn.nspname = 'public'
       AND ref.relname = ${table}
+      AND refatt.attname = 'id'
     ORDER BY child_table, child_column
   `;
 
@@ -65,7 +86,8 @@ export async function repointReferences(
   for (const edge of edges) {
     moved += await db.$executeRawUnsafe(
       `UPDATE ${quoteIdent(edge.child_table)} SET ${quoteIdent(edge.child_column)} = $2 ` +
-        `WHERE ${quoteIdent(edge.child_column)} = $1`,
+        `WHERE ${quoteIdent(edge.child_column)} = $1` +
+        (edge.has_tenant_id ? ' AND tenant_id IS NOT NULL' : ''),
       fromId,
       toId,
     );

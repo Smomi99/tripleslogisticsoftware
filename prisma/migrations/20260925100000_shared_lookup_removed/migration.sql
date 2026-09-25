@@ -1,0 +1,15 @@
+-- A workspace may now delete a shared lookup row for itself.
+--
+-- Asked for by the client on 2026-09-25 for TOS, Modes, Inquiry Source, Rate
+-- Tier and Container Size. §7A rule 7 still holds: the shared row itself is
+-- never edited or deleted. What a workspace gets is its own view of it.
+--
+--   removed_at  set when the workspace deleted the shared row for itself.
+--               Always written together with is_active = false, so every
+--               picker already leaves it out; this column is what also takes
+--               it off the Settings list, where a merely deactivated row has
+--               to stay so it can be switched back on.
+--
+-- Nullable, so every override already in production satisfies it the moment
+-- this runs. Nothing is rewritten and nothing is dropped.
+ALTER TABLE "tenant_master_override" ADD COLUMN "removed_at" TIMESTAMPTZ(6);

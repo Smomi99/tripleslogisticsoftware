@@ -1,5 +1,7 @@
 import { Prisma } from '../generated/prisma/client';
+import { assertCustomisable, recordReplacement, repointReferences } from './customise';
 import { HttpError } from './http-error';
+import { assertDeletable, assertRowDeletable } from './references';
 import type { TenantDb } from './tenant-client';
 
 /**
@@ -28,6 +30,11 @@ const LOOKUP_TABLES = {
 } as const;
 
 export type LookupTable = keyof typeof LOOKUP_TABLES;
+
+/** The database table name, which is what tenant_master_override records. */
+export function lookupTableName(table: LookupTable): string {
+  return LOOKUP_TABLES[table];
+}
 
 export interface LookupListOptions {
   search?: string | undefined;
@@ -72,6 +79,11 @@ export async function listSystemLookup(
   const conditions: Prisma.Sql[] = [
     Prisma.sql`l.deleted_at IS NULL`,
     Prisma.sql`(l.tenant_id IS NULL OR l.tenant_id = ${tenantId})`,
+    // A shared row this workspace has replaced with its own copy, or deleted
+    // for itself, is gone from its list. Merely deactivated stays, so it can
+    // be switched back on.
+    Prisma.sql`o.replaced_by IS NULL`,
+    Prisma.sql`o.removed_at IS NULL`,
     ...(options.extraConditions ?? []),
   ];
 
@@ -204,13 +216,16 @@ export async function toggleSystemLookup(
 export interface SimpleLookupModel {
   findFirst: (args: {
     where: { id?: bigint; code?: string; deletedAt: null; NOT?: { id: bigint } };
-    select: { id: true; tenantId?: true };
-  }) => Promise<{ id: bigint; tenantId: bigint | null } | null>;
+    select: { id: true; tenantId?: true; code?: true; isActive?: true };
+  }) => Promise<{ id: bigint; tenantId: bigint | null; code: string; isActive: boolean } | null>;
   create: (args: {
     data: {
       tenantId: bigint;
       code: string;
       name: string;
+      /** Only TOS has one; a customised copy keeps the shared row's place. */
+      sortOrder?: number;
+      isActive?: boolean;
       createdBy: bigint;
       updatedBy: bigint;
     };
@@ -223,11 +238,222 @@ export interface SimpleLookupModel {
   }) => Promise<{ id: bigint; code: string; name: string; isActive: boolean }>;
 }
 
-/** Shared rows are never editable — the same refusal on all five screens. */
+/**
+ * PATCH never touches a shared row — the same refusal on every screen.
+ *
+ * The screens send a shared row's edit to `/customise` instead, which leaves
+ * the shared row alone and gives the workspace its own copy. This stays as the
+ * guard for anything that calls PATCH directly.
+ */
 export function assertEditable(tenantId: bigint | null, noun: string): void {
   if (tenantId === null) {
     throw HttpError.forbidden(
-      `This is a shared ${noun}. You can deactivate it for your workspace, but not edit it.`,
+      `This is a shared ${noun}. Saving changes to it makes your workspace's own copy — ` +
+        'use Edit on the list rather than changing the shared row.',
     );
   }
+}
+
+// ===========================================================================
+// Edit and Delete on a shared row — asked for by the client on 2026-09-25
+// ===========================================================================
+
+interface OverrideState {
+  id: bigint;
+  isActive: boolean;
+  replacedBy: bigint | null;
+  removedAt: Date | null;
+}
+
+async function overrideFor(db: TenantDb, tableName: string, id: bigint): Promise<OverrideState | null> {
+  return db.tenantMasterOverride.findFirst({
+    where: { tableName, recordId: id },
+    select: { id: true, isActive: true, replacedBy: true, removedAt: true },
+  });
+}
+
+/**
+ * A shared row this workspace has already deleted is gone from its list, so
+ * reaching it again is a stale screen or a hand-made request. Either way it
+ * reads as not found rather than as a second copy or a second removal.
+ */
+function assertNotRemoved(override: OverrideState | null, notFoundMessage: string): void {
+  if (override?.removedAt != null) throw HttpError.notFound(notFoundMessage);
+}
+
+/**
+ * Edit on a shared row: the workspace's own copy, with the changes.
+ *
+ * §7A rule 7 stands — the shared row is never written. This is CR-003's
+ * customise in one step rather than two: the copy is created with the values
+ * the operator just typed, this workspace's records move onto it, and the
+ * shared row is hidden here alone. Every other workspace sees the original.
+ *
+ * The copy keeps the row's status for this workspace. Editing a row somebody
+ * had deactivated is not a request to switch it back on.
+ *
+ * `createCopy` does the table-specific insert and returns the new id;
+ * `afterRepoint` is for the one table whose shared children must follow it
+ * (container size → rate tier).
+ */
+export async function replaceSharedLookup(args: {
+  db: TenantDb;
+  tenantId: bigint;
+  userId: bigint;
+  table: LookupTable;
+  id: bigint;
+  shared: { tenantId: bigint | null; code: string; isActive: boolean } | null;
+  notFoundMessage: string;
+  createCopy: (isActive: boolean) => Promise<bigint>;
+  afterRepoint?: (copyId: bigint) => Promise<void>;
+}): Promise<bigint> {
+  const { db, tenantId, userId, table, id, shared, notFoundMessage } = args;
+  const tableName = LOOKUP_TABLES[table];
+
+  await assertCustomisable(
+    db,
+    tableName,
+    id,
+    shared === null ? null : { tenantId: shared.tenantId, name: shared.code },
+    notFoundMessage,
+  );
+  if (shared === null) throw HttpError.notFound(notFoundMessage);
+
+  const override = await overrideFor(db, tableName, id);
+  assertNotRemoved(override, notFoundMessage);
+
+  const copyId = await args.createCopy(shared.isActive && (override?.isActive ?? true));
+  await repointReferences(db, tableName, id, copyId);
+  await args.afterRepoint?.(copyId);
+  await recordReplacement(db, tenantId, tableName, id, copyId, userId);
+  return copyId;
+}
+
+/** The subset of a Prisma delegate a delete needs. */
+export interface DeletableLookupModel {
+  findFirst: (args: {
+    where: { id: bigint; deletedAt: null };
+    select: { id: true; tenantId: true; code: true };
+  }) => Promise<{ id: bigint; tenantId: bigint | null; code: string } | null>;
+  update: (args: {
+    where: { id: bigint };
+    data: { deletedAt: Date; isActive: boolean; code: string; updatedBy: bigint };
+    select: { id: true };
+  }) => Promise<{ id: bigint }>;
+}
+
+/**
+ * The code a deleted row gives up.
+ *
+ * These codes are typed by people — FOB, CY/CY, 20STD — and the unique key on
+ * (tenant_id, code) counts soft-deleted rows too. Left alone, deleting a typo'd
+ * "FOB" would make FOB impossible to add again, ever. The delete is refused
+ * while anything references the row, so nothing can be reading the old code;
+ * and `~` is outside what the code field accepts, so no typed code can collide.
+ * The audit log keeps what it was.
+ */
+function retiredCode(code: string, id: bigint): string {
+  const suffix = `~${id.toString()}`;
+  return `${code.slice(0, 32 - suffix.length)}${suffix}`;
+}
+
+/**
+ * Delete, for either kind of row.
+ *
+ * The workspace's own row: CR-002's soft delete, refused while anything uses it.
+ *
+ * A shared row: removed from THIS workspace only (§7A rule 7 — it is never
+ * deleted for anyone else). Refused while this workspace's own records use it,
+ * for the same reason an own row's delete is: they would be left naming a row
+ * the workspace can no longer see. Shared rows that point at it do not count —
+ * every workspace has those, and they say nothing about this one.
+ *
+ * `onSharedRemoval` runs after the checks and before the removal is written,
+ * inside the same transaction, for the container size → rate tier cascade.
+ */
+export async function deleteLookupRow(args: {
+  db: TenantDb;
+  tenantId: bigint;
+  userId: bigint;
+  table: LookupTable;
+  model: DeletableLookupModel;
+  id: bigint;
+  notFoundMessage: string;
+  onSharedRemoval?: () => Promise<void>;
+}): Promise<void> {
+  const { db, tenantId, userId, table, model, id, notFoundMessage } = args;
+  const tableName = LOOKUP_TABLES[table];
+
+  const row = await model.findFirst({
+    where: { id, deletedAt: null },
+    select: { id: true, tenantId: true, code: true },
+  });
+  if (row === null) throw HttpError.notFound(notFoundMessage);
+
+  if (row.tenantId !== null) {
+    await assertRowDeletable(db, tableName, id, { tenantId: row.tenantId, name: row.code }, notFoundMessage);
+    await model.update({
+      where: { id },
+      data: {
+        deletedAt: new Date(),
+        isActive: false,
+        code: retiredCode(row.code, id),
+        updatedBy: userId,
+      },
+      select: { id: true },
+    });
+    return;
+  }
+
+  const override = await overrideFor(db, tableName, id);
+  assertNotRemoved(override, notFoundMessage);
+  if (override?.replacedBy != null) throw HttpError.notFound(notFoundMessage);
+
+  await assertDeletable(db, tableName, id, row.code, { ownRowsOnly: true });
+  await args.onSharedRemoval?.();
+  await removeSharedRow(db, tenantId, tableName, id, userId, override);
+}
+
+/**
+ * Takes a shared row off this workspace's list for good.
+ *
+ * Upserts, because the workspace may have deactivated it earlier — that
+ * override already exists and now gains a removal date.
+ */
+export async function removeSharedRow(
+  db: TenantDb,
+  tenantId: bigint,
+  tableName: string,
+  id: bigint,
+  userId: bigint,
+  override?: OverrideState | null,
+): Promise<void> {
+  const existing = override === undefined ? await overrideFor(db, tableName, id) : override;
+  if (existing === null) {
+    await db.tenantMasterOverride.create({
+      data: {
+        tenantId,
+        tableName,
+        recordId: id,
+        isActive: false,
+        removedAt: new Date(),
+        createdBy: userId,
+        updatedBy: userId,
+      },
+    });
+    return;
+  }
+  await db.tenantMasterOverride.update({
+    where: { id: existing.id },
+    data: { isActive: false, removedAt: new Date(), updatedBy: userId },
+  });
+}
+
+/** For the container size cascade: the override state of one shared row. */
+export async function sharedRowOverride(
+  db: TenantDb,
+  table: LookupTable,
+  id: bigint,
+): Promise<OverrideState | null> {
+  return overrideFor(db, LOOKUP_TABLES[table], id);
 }

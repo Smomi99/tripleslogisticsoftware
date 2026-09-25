@@ -69,6 +69,19 @@ interface ForeignKeyEdge {
   child_table: string;
   child_column: string;
   has_deleted_at: boolean;
+  has_tenant_id: boolean;
+}
+
+export interface BlockingReferenceOptions {
+  /**
+   * Count only rows the workspace owns, not shared rows it can merely see.
+   *
+   * For a workspace deleting a SHARED row for itself. A seeded rate tier naming
+   * a seeded container size is a reference every workspace has; it says
+   * nothing about whether this one uses the size, and would otherwise block
+   * the delete forever.
+   */
+  ownRowsOnly?: boolean;
 }
 
 /*
@@ -95,15 +108,19 @@ const TABLE_LABEL: Record<string, string> = {
   agent_network_member: 'agent network memberships',
   agent_pic: 'agent contacts',
   agent_port_coverage: 'agent port coverages',
+  agent_quote_line: 'agent quote lines',
+  bl_draft: 'BL drafts',
   carrier_pic: 'carrier contacts',
   carrier_port_pair: 'carrier port pairs',
   carrier_service_port: 'carrier service ports',
+  clp: 'container load plans',
   commodity_item: 'commodity items',
   customer_pic: 'customer contacts',
   employee_cv: 'employee CVs',
   employee_salary: 'salary records',
   freight_rate: 'purchase rates',
   freight_rate_charge: 'rate charges',
+  freight_rate_line: 'purchase rate lines',
   freight_rate_tier: 'rate tiers',
   inquiry: 'inquiries',
   inquiry_followup: 'inquiry follow-ups',
@@ -111,7 +128,11 @@ const TABLE_LABEL: Record<string, string> = {
   inquiry_rate: 'inquiry rates',
   inquiry_volume: 'inquiry volumes',
   quotation: 'quotations',
+  quotation_line: 'quotation lines',
+  rate_local_charge: 'local charges',
+  rate_tier: 'rate tiers',
   sales_lead: 'sales leads',
+  shipment: 'shipments',
   user: 'users',
   vendor_pic: 'vendor contacts',
   vessel: 'vessels',
@@ -154,6 +175,7 @@ export async function findBlockingReferences(
   db: TenantDb,
   table: string,
   id: bigint,
+  options: BlockingReferenceOptions = {},
 ): Promise<BlockingReference[]> {
   const edges = await db.$queryRaw<ForeignKeyEdge[]>`
     SELECT child.relname                 AS child_table,
@@ -163,7 +185,13 @@ export async function findBlockingReferences(
              WHERE d.attrelid = con.conrelid
                AND d.attname = 'deleted_at'
                AND NOT d.attisdropped
-           ) AS has_deleted_at
+           ) AS has_deleted_at,
+           EXISTS (
+             SELECT 1 FROM pg_attribute t
+             WHERE t.attrelid = con.conrelid
+               AND t.attname = 'tenant_id'
+               AND NOT t.attisdropped
+           ) AS has_tenant_id
     FROM pg_constraint con
     JOIN pg_class child    ON child.oid = con.conrelid
     JOIN pg_class ref      ON ref.oid = con.confrelid
@@ -191,7 +219,8 @@ export async function findBlockingReferences(
       `${escapeLiteral(edge.child_column)} AS column_name, ` +
       `count(*)::int AS count FROM ${quoteIdent(edge.child_table)} ` +
       `WHERE ${quoteIdent(edge.child_column)} = $1` +
-      (edge.has_deleted_at ? ' AND deleted_at IS NULL' : ''),
+      (edge.has_deleted_at ? ' AND deleted_at IS NULL' : '') +
+      (options.ownRowsOnly === true && edge.has_tenant_id ? ' AND tenant_id IS NOT NULL' : ''),
   );
 
   const rows = await db.$queryRawUnsafe<
@@ -220,8 +249,9 @@ export async function assertDeletable(
   table: string,
   id: bigint,
   subject: string,
+  options: BlockingReferenceOptions = {},
 ): Promise<void> {
-  const blockers = await findBlockingReferences(db, table, id);
+  const blockers = await findBlockingReferences(db, table, id, options);
   if (blockers.length === 0) return;
 
   // Largest first: the most convincing reason leads.

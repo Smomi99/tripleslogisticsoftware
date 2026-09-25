@@ -17,10 +17,14 @@ import { type MasterListState, useMasterList } from '@/lib/use-master-list';
 /**
  * A Settings screen for a system-capable lookup.
  *
- * The Sea-Air Port anatomy — shared rows alongside the workspace's own, Edit
- * hidden on a shared row, deactivate writing an override — reduced to one
- * component. The five §3.1 lookups differ only in their columns and their form,
- * so those are all a caller supplies.
+ * The Sea-Air Port anatomy — shared rows alongside the workspace's own,
+ * deactivate writing an override — reduced to one component. The §3.1 lookups
+ * differ only in their columns and their form, so those are all a caller
+ * supplies.
+ *
+ * Edit and Delete work on shared rows too (asked for by the client on
+ * 2026-09-25). Neither touches the shared row: Edit saves the workspace's own
+ * copy through `/customise`, Delete takes the row off this workspace's list.
  */
 
 interface LookupRow {
@@ -71,6 +75,9 @@ export function LookupScreen<TRow extends LookupRow>({
   const [isFormOpen, setFormOpen] = useState(false);
   const [toToggle, setToToggle] = useState<TRow | null>(null);
   const [isToggling, setToggling] = useState(false);
+  const [toDelete, setToDelete] = useState<TRow | null>(null);
+  const [isDeleting, setDeleting] = useState(false);
+  const Noun = `${noun.charAt(0).toUpperCase()}${noun.slice(1)}`;
 
   const withMeta: DataTableColumn<TRow>[] = useMemo(
     () => [
@@ -96,15 +103,38 @@ export function LookupScreen<TRow extends LookupRow>({
   );
 
   async function submit(values: unknown): Promise<void> {
-    const isEdit = editing !== null;
-    await authorizedRequest(isEdit ? `${endpoint}/${editing.id}` : endpoint, {
-      method: isEdit ? 'PATCH' : 'POST',
-      body: values,
-    });
+    if (editing === null) {
+      await authorizedRequest(endpoint, { method: 'POST', body: values });
+    } else if (editing.isSystem) {
+      // §7A rule 7: the shared row is never written. This saves the
+      // workspace's own copy with these values and hides the shared one here.
+      await authorizedRequest(`${endpoint}/${editing.id}/customise`, { method: 'POST', body: values });
+    } else {
+      await authorizedRequest(`${endpoint}/${editing.id}`, { method: 'PATCH', body: values });
+    }
+    const wasEdit = editing !== null;
     setFormOpen(false);
     setEditing(null);
-    toast.success(isEdit ? 'Saved' : `${noun.charAt(0).toUpperCase()}${noun.slice(1)} added`);
+    toast.success(wasEdit ? 'Saved' : `${Noun} added`);
     await list.reload();
+  }
+
+  async function confirmDelete(): Promise<void> {
+    if (toDelete === null) return;
+    setDeleting(true);
+    try {
+      await authorizedRequest(`${endpoint}/${toDelete.id}`, { method: 'DELETE' });
+      toast.success(`${Noun} deleted`);
+      setToDelete(null);
+      await list.reload();
+    } catch (error) {
+      // A refusal names what still uses the row, which is the whole point —
+      // the operator needs to know to deactivate it instead.
+      toast.error(error instanceof ApiError ? error.message : `Could not delete the ${noun}.`);
+      setToDelete(null);
+    } finally {
+      setDeleting(false);
+    }
   }
 
   async function confirmToggle(): Promise<void> {
@@ -174,8 +204,7 @@ export function LookupScreen<TRow extends LookupRow>({
         isPending={list.isPending}
         actions={(row) => (
           <>
-            {/* §7A rule 7: a shared row is switchable, never editable. */}
-            {can(`${feature}.EDIT`) && !row.isSystem && (
+            {can(`${feature}.EDIT`) && (
               <Button
                 variant="text"
                 size="inline"
@@ -194,6 +223,11 @@ export function LookupScreen<TRow extends LookupRow>({
                 onClick={() => setToToggle(row)}
               >
                 {row.isActive ? 'Deactivate' : 'Activate'}
+              </Button>
+            )}
+            {can(`${feature}.DELETE`) && (
+              <Button variant="destructive" size="inline" onClick={() => setToDelete(row)}>
+                Delete
               </Button>
             )}
           </>
@@ -222,6 +256,11 @@ export function LookupScreen<TRow extends LookupRow>({
           if (!open) setEditing(null);
         }}
         title={editing === null ? addLabel.replace('+ ', '') : `Edit ${editing.name}`}
+        description={
+          editing?.isSystem === true
+            ? `${editing.name} is shared with every workspace. Saving makes your own copy with these changes and moves your records onto it. Other workspaces keep the original.`
+            : undefined
+        }
       >
         {renderForm({
           row: editing,
@@ -252,6 +291,25 @@ export function LookupScreen<TRow extends LookupRow>({
         destructive={toToggle?.isActive === true}
         isPending={isToggling}
         onConfirm={() => void confirmToggle()}
+      />
+
+      <ConfirmDialog
+        open={toDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setToDelete(null);
+        }}
+        title={`Delete this ${noun}?`}
+        message={
+          toDelete === null
+            ? ''
+            : toDelete.isSystem
+              ? `${toDelete.name} is shared. Deleting removes it from your workspace for good — other workspaces keep it. If your records already use it, deactivate it instead.`
+              : `${toDelete.name} will be removed from the list for good. This is for one added by mistake — if it has ever been used, deactivate it instead.`
+        }
+        confirmLabel="Delete"
+        destructive
+        isPending={isDeleting}
+        onConfirm={() => void confirmDelete()}
       />
     </div>
   );

@@ -343,22 +343,27 @@ model Permission {
 /// (§7A rule 7). Field list is inferred — §7A names the table but not its
 /// columns. See OPEN QUESTION 6.
 model TenantMasterOverride {
-  tenantId   BigInt   @map("tenant_id")
-  id         BigInt   @id @default(autoincrement())
+  tenantId   BigInt    @map("tenant_id")
+  id         BigInt    @id @default(autoincrement())
   /// Which master table the overridden row lives in, e.g. "port".
-  tableName  String   @map("table_name") @db.VarChar(63)
-  recordId   BigInt   @map("record_id")
+  tableName  String    @map("table_name") @db.VarChar(63)
+  recordId   BigInt    @map("record_id")
   /// false = hidden from this tenant.
-  isActive   Boolean  @default(true) @map("is_active")
+  isActive   Boolean   @default(true) @map("is_active")
   /// CR-003. When the workspace has customised the shared row, the id of the
   /// tenant-owned copy that replaced it. NOT a foreign key: the target lives
   /// in whichever table `tableName` names, so no single reference can express
   /// it. Set together with isActive = false — a replaced row is always hidden.
-  replacedBy BigInt?  @map("replaced_by")
-  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
-  createdBy  BigInt?  @map("created_by")
-  updatedBy  BigInt?  @map("updated_by")
+  replacedBy BigInt?   @map("replaced_by")
+  /// When the workspace deleted the shared row for itself. Set together with
+  /// isActive = false. The shared row is untouched; it is only gone from this
+  /// workspace's list, which a plain deactivation keeps it in so it can be
+  /// switched back on.
+  removedAt  DateTime? @map("removed_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy  BigInt?   @map("created_by")
+  updatedBy  BigInt?   @map("updated_by")
 
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
 

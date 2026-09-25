@@ -22,6 +22,7 @@ import {
 
 import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
 import { Prisma } from '../generated/prisma/client';
+import { recordReplacement, repointReferences } from '../lib/customise';
 import { HttpError } from '../lib/http-error';
 import {
   type CodeHolder,
@@ -29,15 +30,22 @@ import {
   excludeInactive,
   inactiveMasters,
 } from '../lib/master-visibility';
+import { assertDeletable } from '../lib/references';
 import { parseId, parseRefId } from '../lib/request';
 import {
   assertEditable,
+  type DeletableLookupModel,
+  deleteLookupRow,
   listSystemLookup,
   type LookupRow,
+  type LookupTable,
+  removeSharedRow,
+  replaceSharedLookup,
+  sharedRowOverride,
   type SimpleLookupModel,
   toggleSystemLookup,
 } from '../lib/system-lookup';
-import { withTenant } from '../lib/tenant-client';
+import { type TenantDb, withTenant } from '../lib/tenant-client';
 import { authenticate } from '../middleware/authenticate';
 import { requirePermission } from '../middleware/require-permission';
 
@@ -46,8 +54,13 @@ import { requirePermission } from '../middleware/require-permission';
  *
  * Structurally the Sea-Air Port reference implementation, five times over, with
  * the shared parts factored into lib/system-lookup. Each is system-capable: a
- * workspace sees the seeded rows plus its own, may add its own, may switch any
- * off for itself, and may never edit a shared one.
+ * workspace sees the seeded rows plus its own, may add its own, and may switch
+ * any off for itself.
+ *
+ * Since 2026-09-25 it may also Edit and Delete a shared one, at the client's
+ * request — without §7A rule 7 moving. Edit makes the workspace's own copy
+ * (`/customise`), Delete takes the row off this workspace's list; the shared
+ * row itself is never written by either.
  */
 export const rateLookupRouter: Router = Router();
 
@@ -96,6 +109,52 @@ async function assertCodeFree(
           'Deactivate it here first, or customise it to make your own copy.'
       : `Code ${code} is already in use.`,
   );
+}
+
+/** An insert of a workspace's own row, with a code clash said in words. */
+async function createOwn<T>(code: string, create: () => Promise<T>): Promise<T> {
+  try {
+    return await create();
+  } catch (error) {
+    if (isUniqueViolation(error, 'code')) throw HttpError.conflict(`Code ${code} is already in use.`);
+    throw error;
+  }
+}
+
+/**
+ * DELETE /…/:id for one lookup. The workspace's own row is soft-deleted; a
+ * shared one is taken off this workspace's list. lib/system-lookup has why.
+ */
+function registerDelete(
+  path: string,
+  table: LookupTable,
+  feature: string,
+  noun: string,
+  model: (db: TenantDb) => DeletableLookupModel,
+  onSharedRemoval?: (db: TenantDb, tenantId: bigint, userId: bigint, id: bigint) => Promise<void>,
+): void {
+  rateLookupRouter.delete(`/${path}/:id`, requirePermission(`${feature}.DELETE`), async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, noun);
+
+    await withTenant(auth.tenantId, (db) =>
+      deleteLookupRow({
+        db,
+        tenantId: auth.tenantId,
+        userId: auth.userId,
+        table,
+        model: model(db),
+        id,
+        notFoundMessage: `${noun.charAt(0).toUpperCase()}${noun.slice(1)} not found.`,
+        ...(onSharedRemoval === undefined
+          ? {}
+          : { onSharedRemoval: () => onSharedRemoval(db, auth.tenantId, auth.userId, id) }),
+      }),
+    );
+
+    const payload: ApiSuccess<{ deleted: true }> = { success: true, data: { deleted: true } };
+    res.json(payload);
+  });
 }
 
 // ===========================================================================
@@ -215,6 +274,61 @@ rateLookupRouter.post(
     const payload: ApiSuccess<{ isActive: boolean }> = { success: true, data: { isActive } };
     res.json(payload);
   },
+);
+
+/** Edit on a shared goods type: the workspace's own copy, with the changes. */
+rateLookupRouter.post(
+  '/goods-types/:id/customise',
+  requirePermission(`${GOODS_FEATURE}.EDIT`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'goods type');
+    const input = goodsTypeInputSchema.parse(req.body);
+
+    const copyId = await withTenant(auth.tenantId, async (db) =>
+      replaceSharedLookup({
+        db,
+        tenantId: auth.tenantId,
+        userId: auth.userId,
+        table: 'goodsType',
+        id,
+        shared: await db.goodsType.findFirst({
+          where: { id, deletedAt: null },
+          select: { tenantId: true, code: true, isActive: true },
+        }),
+        notFoundMessage: 'Goods type not found.',
+        createCopy: async (isActive) => {
+          await assertCodeFree(db, db.goodsType as never, 'goods_type', input.code, id);
+          const copy = await createOwn(input.code, () =>
+            db.goodsType.create({
+              data: {
+                tenantId: auth.tenantId,
+                code: input.code,
+                name: input.name,
+                description: input.description || null,
+                isActive,
+                createdBy: auth.userId,
+                updatedBy: auth.userId,
+              },
+              select: { id: true },
+            }),
+          );
+          return copy.id;
+        },
+      }),
+    );
+
+    const payload: ApiSuccess<{ id: string }> = { success: true, data: { id: copyId.toString() } };
+    res.status(201).json(payload);
+  },
+);
+
+registerDelete(
+  'goods-types',
+  'goodsType',
+  GOODS_FEATURE,
+  'goods type',
+  (db) => db.goodsType as unknown as DeletableLookupModel,
 );
 
 // ===========================================================================
@@ -400,6 +514,163 @@ rateLookupRouter.post(
   },
 );
 
+/**
+ * The shared Sea FCL rate tiers built on a shared container size, which this
+ * workspace has not already replaced or deleted for itself.
+ */
+async function sharedTiersOn(db: TenantDb, containerSizeId: bigint) {
+  const tiers = await db.rateTier.findMany({
+    where: { containerSizeId, tenantId: null, deletedAt: null },
+    select: {
+      id: true,
+      code: true,
+      mode: true,
+      label: true,
+      unit: true,
+      minValue: true,
+      maxValue: true,
+      sortOrder: true,
+      isActive: true,
+    },
+    orderBy: { id: 'asc' },
+  });
+  const live = [];
+  for (const tier of tiers) {
+    const override = await sharedRowOverride(db, 'rateTier', tier.id);
+    if (override?.replacedBy != null || override?.removedAt != null) continue;
+    live.push({ ...tier, isActiveHere: tier.isActive && (override?.isActive ?? true) });
+  }
+  return live;
+}
+
+/**
+ * Editing a shared container size takes its shared rate tiers along.
+ *
+ * The quotation pull matches an inquiry's container to a rate by comparing
+ * the volume's container_size_id with the tier's. The volumes move onto the
+ * copy; the seeded FCL-20STD tier is shared and cannot, so without this every
+ * 20STD rate this workspace holds would stop matching the moment it edited
+ * 20STD. Each tier gets the same treatment as its container: an own copy
+ * naming the new container, this workspace's rate lines moved onto it, and the
+ * shared tier hidden here alone.
+ *
+ * One exception: a shared tier the workspace had switched off and then reused
+ * the code of for its own. It is out of every picker already, and its code is
+ * taken, so it is left where it is.
+ */
+async function carrySharedTiers(
+  db: TenantDb,
+  tenantId: bigint,
+  userId: bigint,
+  sharedContainerId: bigint,
+  copyContainerId: bigint,
+): Promise<void> {
+  for (const tier of await sharedTiersOn(db, sharedContainerId)) {
+    const clash = await db.rateTier.findFirst({
+      where: { code: tier.code, tenantId: { not: null }, deletedAt: null },
+      select: { id: true },
+    });
+    if (clash !== null) continue;
+
+    const copy = await db.rateTier.create({
+      data: {
+        tenantId,
+        code: tier.code,
+        mode: tier.mode,
+        label: tier.label,
+        unit: tier.unit,
+        minValue: tier.minValue,
+        maxValue: tier.maxValue,
+        sortOrder: tier.sortOrder,
+        containerSizeId: copyContainerId,
+        isActive: tier.isActiveHere,
+        createdBy: userId,
+        updatedBy: userId,
+      },
+      select: { id: true },
+    });
+    await repointReferences(db, 'rate_tier', tier.id, copy.id);
+    await recordReplacement(db, tenantId, 'rate_tier', tier.id, copy.id, userId);
+  }
+}
+
+/** Edit on a shared container size: the workspace's own copy, with the changes. */
+rateLookupRouter.post(
+  '/container-sizes/:id/customise',
+  requirePermission(`${CONTAINER_FEATURE}.EDIT`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'container size');
+    const input = containerSizeInputSchema.parse(req.body);
+
+    const copyId = await withTenant(auth.tenantId, async (db) =>
+      replaceSharedLookup({
+        db,
+        tenantId: auth.tenantId,
+        userId: auth.userId,
+        table: 'containerSize',
+        id,
+        shared: await db.containerSize.findFirst({
+          where: { id, deletedAt: null },
+          select: { tenantId: true, code: true, isActive: true },
+        }),
+        notFoundMessage: 'Container size not found.',
+        createCopy: async (isActive) => {
+          await assertCodeFree(db, db.containerSize as never, 'container_size', input.code, id);
+          const copy = await createOwn(input.code, () =>
+            db.containerSize.create({
+              data: {
+                tenantId: auth.tenantId,
+                code: input.code,
+                name: input.name,
+                teuFactor: input.teuFactor,
+                sortOrder:
+                  input.sortOrder === undefined || input.sortOrder === '' ? 0 : Number(input.sortOrder),
+                maxVolumeCbm: capacity(input.maxVolumeCbm),
+                maxWeightKg: capacity(input.maxWeightKg),
+                tareWeightKg: capacity(input.tareWeightKg),
+                isActive,
+                createdBy: auth.userId,
+                updatedBy: auth.userId,
+              },
+              select: { id: true },
+            }),
+          );
+          return copy.id;
+        },
+        afterRepoint: (copyId) => carrySharedTiers(db, auth.tenantId, auth.userId, id, copyId),
+      }),
+    );
+
+    const payload: ApiSuccess<{ id: string }> = { success: true, data: { id: copyId.toString() } };
+    res.status(201).json(payload);
+  },
+);
+
+/*
+  Deleting a shared container size takes its shared tiers off the list too —
+  a 20STD column with no 20STD to pick is the same half-state the edit avoids.
+  Refused if this workspace's rates use one of those tiers, with the tier
+  named, because "used by 3 purchase rate lines" on a container is otherwise a
+  puzzle.
+*/
+registerDelete(
+  'container-sizes',
+  'containerSize',
+  CONTAINER_FEATURE,
+  'container size',
+  (db) => db.containerSize as unknown as DeletableLookupModel,
+  async (db, tenantId, userId, id) => {
+    const container = await db.containerSize.findFirst({ where: { id }, select: { code: true } });
+    for (const tier of await sharedTiersOn(db, id)) {
+      await assertDeletable(db, 'rate_tier', tier.id, `${container?.code ?? 'This container'}'s rate tier ${tier.code}`, {
+        ownRowsOnly: true,
+      });
+      await removeSharedRow(db, tenantId, 'rate_tier', tier.id, userId);
+    }
+  },
+);
+
 // ===========================================================================
 // Rate Tier — the table §2 exists for
 // ===========================================================================
@@ -491,27 +762,36 @@ function tierWriteData(input: ReturnType<typeof rateTierInputSchema.parse>, user
   };
 }
 
-rateLookupRouter.post('/rate-tiers', requirePermission(`${TIER_FEATURE}.CREATE`), async (req, res) => {
-  const auth = req.auth!;
-  const input = rateTierInputSchema.parse(req.body);
+/** The container a new tier names: required for Sea FCL, and it has to exist. */
+async function tierContainer(
+  db: TenantDb,
+  input: ReturnType<typeof rateTierInputSchema.parse>,
+): Promise<bigint | null> {
   const containerSizeId =
     input.containerSizeId === undefined || input.containerSizeId === ''
       ? null
       : parseRefId(input.containerSizeId, 'container size');
 
+  if (input.mode === 'SEA_FCL' && containerSizeId === null) {
+    throw HttpError.badRequest('A Sea FCL tier must name a container size.');
+  }
+  if (containerSizeId !== null) {
+    const container = await db.containerSize.findFirst({
+      where: { id: containerSizeId, deletedAt: null, isActive: true },
+      select: { id: true },
+    });
+    if (container === null) throw HttpError.badRequest('That container size is not available.');
+  }
+  return containerSizeId;
+}
+
+rateLookupRouter.post('/rate-tiers', requirePermission(`${TIER_FEATURE}.CREATE`), async (req, res) => {
+  const auth = req.auth!;
+  const input = rateTierInputSchema.parse(req.body);
+
   const created = await withTenant(auth.tenantId, async (db) => {
     await assertCodeFree(db, db.rateTier as never, 'rate_tier', input.code);
-
-    if (input.mode === 'SEA_FCL' && containerSizeId === null) {
-      throw HttpError.badRequest('A Sea FCL tier must name a container size.');
-    }
-    if (containerSizeId !== null) {
-      const container = await db.containerSize.findFirst({
-        where: { id: containerSizeId, deletedAt: null, isActive: true },
-        select: { id: true },
-      });
-      if (container === null) throw HttpError.badRequest('That container size is not available.');
-    }
+    const containerSizeId = await tierContainer(db, input);
 
     return db.rateTier.create({
       data: {
@@ -633,6 +913,60 @@ rateLookupRouter.post(
   },
 );
 
+/** Edit on a shared rate tier: the workspace's own copy, with the changes. */
+rateLookupRouter.post(
+  '/rate-tiers/:id/customise',
+  requirePermission(`${TIER_FEATURE}.EDIT`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'rate tier');
+    const input = rateTierInputSchema.parse(req.body);
+
+    const copyId = await withTenant(auth.tenantId, async (db) =>
+      replaceSharedLookup({
+        db,
+        tenantId: auth.tenantId,
+        userId: auth.userId,
+        table: 'rateTier',
+        id,
+        shared: await db.rateTier.findFirst({
+          where: { id, deletedAt: null },
+          select: { tenantId: true, code: true, isActive: true },
+        }),
+        notFoundMessage: 'Rate tier not found.',
+        createCopy: async (isActive) => {
+          await assertCodeFree(db, db.rateTier as never, 'rate_tier', input.code, id);
+          const containerSizeId = await tierContainer(db, input);
+          const copy = await createOwn(input.code, () =>
+            db.rateTier.create({
+              data: {
+                tenantId: auth.tenantId,
+                ...tierWriteData(input, auth.userId),
+                containerSizeId,
+                isActive,
+                createdBy: auth.userId,
+              },
+              select: { id: true },
+            }),
+          );
+          return copy.id;
+        },
+      }),
+    );
+
+    const payload: ApiSuccess<{ id: string }> = { success: true, data: { id: copyId.toString() } };
+    res.status(201).json(payload);
+  },
+);
+
+registerDelete(
+  'rate-tiers',
+  'rateTier',
+  TIER_FEATURE,
+  'rate tier',
+  (db) => db.rateTier as unknown as DeletableLookupModel,
+);
+
 // ===========================================================================
 // TOS and Inquiry Source — code + name only, so they share one shape
 // ===========================================================================
@@ -751,6 +1085,68 @@ function registerSimpleLookup(
       const payload: ApiSuccess<{ isActive: boolean }> = { success: true, data: { isActive } };
       res.json(payload);
     },
+  );
+
+  /** Edit on a shared row: the workspace's own copy, with the changes. */
+  rateLookupRouter.post(
+    `/${path}/:id/customise`,
+    requirePermission(`${feature}.EDIT`),
+    async (req, res) => {
+      const auth = req.auth!;
+      const id = parseId(req.params.id, noun);
+      const input = schema.parse(req.body);
+
+      const copyId = await withTenant(auth.tenantId, async (db) => {
+        // EXW…DDP is read in order, so a TOS copy takes the shared row's place
+        // in it rather than jumping to the top at 0.
+        const sortOrder =
+          table === 'tos'
+            ? (await db.tos.findFirst({ where: { id }, select: { sortOrder: true } }))?.sortOrder
+            : undefined;
+
+        return replaceSharedLookup({
+          db,
+          tenantId: auth.tenantId,
+          userId: auth.userId,
+          table,
+          id,
+          shared: await model(db).findFirst({
+            where: { id, deletedAt: null },
+            select: { id: true, tenantId: true, code: true, isActive: true },
+          }),
+          notFoundMessage: `${noun} not found.`,
+          createCopy: async (isActive) => {
+            await assertCodeFree(db, model(db) as never, overrideTable, input.code, id);
+            const copy = await createOwn(input.code, () =>
+              model(db).create({
+                data: {
+                  tenantId: auth.tenantId,
+                  code: input.code,
+                  name: input.name,
+                  ...(sortOrder === undefined ? {} : { sortOrder }),
+                  isActive,
+                  createdBy: auth.userId,
+                  updatedBy: auth.userId,
+                },
+                select: { id: true, code: true, name: true, isActive: true },
+              }),
+            );
+            return copy.id;
+          },
+        });
+      });
+
+      const payload: ApiSuccess<{ id: string }> = { success: true, data: { id: copyId.toString() } };
+      res.status(201).json(payload);
+    },
+  );
+
+  registerDelete(
+    path,
+    table,
+    feature,
+    noun.toLowerCase(),
+    (db) => model(db) as unknown as DeletableLookupModel,
   );
 }
 

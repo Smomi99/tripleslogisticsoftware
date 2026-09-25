@@ -68,7 +68,10 @@ export interface LookupRowDto {
   code: string;
   name: string;
   isActive: boolean;
-  /** Shared row (§7A rule 7) — visible to all, editable by none. */
+  /**
+   * Shared row (§7A rule 7) — visible to all, written by none. Editing one
+   * saves the workspace's own copy; deleting one hides it here alone.
+   */
   isSystem: boolean;
 }
 
@@ -87,13 +90,19 @@ export interface GoodsTypeDto extends LookupRowDto {
 
 // ------------------------------------------------------------ containerSize
 
-/** A capacity that may simply not be recorded yet — blank is a real answer. */
+/**
+ * A capacity that may simply not be recorded yet — blank is a real answer.
+ *
+ * The backslashes are doubled because this is a template literal: a bare `\d`
+ * there is just `d`, which made the pattern match "ddd" and refuse 26000, so
+ * no capacity could ever be saved from the form.
+ */
 const optionalDecimalField = (max: number, message: string) =>
   z
     .string()
     .trim()
     .refine(
-      (v) => v === '' || (new RegExp(`^\d{1,${max}}(\.\d{1,2})?$`).test(v) && Number(v) > 0),
+      (v) => v === '' || (new RegExp(`^\\d{1,${max}}(\\.\\d{1,2})?$`).test(v) && Number(v) > 0),
       message,
     )
     .optional();
