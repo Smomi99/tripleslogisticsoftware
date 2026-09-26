@@ -85,6 +85,8 @@ const ACTION_LABEL: Record<Action, string> = {
   CARRIER_POSITION: 'Carrier position',
   SET_BASE: 'Set base currency',
   BUILD: 'Re-pull',
+  // MODULE_ACCOUNTS §6: recording money in against a debit invoice.
+  RECEIVE: 'Receive payment',
 };
 
 export function PermissionMatrix({

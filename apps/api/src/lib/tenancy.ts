@@ -111,6 +111,12 @@ export const TENANT_OWNED_MODELS = [
   'BlDraft',
   'BlDraftContainer',
   'BlTemplate',
+  // Accounts (docs/MODULE_ACCOUNTS.md)
+  'DebitInvoice',
+  'DebitInvoiceLine',
+  'DebitInvoiceCost',
+  'DebitInvoiceCostLine',
+  'DebitInvoiceReceipt',
   'TenantMasterOverride',
   'User',
   'UserPermission',

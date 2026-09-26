@@ -133,6 +133,13 @@ export const ACTIONS = [
    * who can edit a load plan may do.
    */
   'OVERRIDE_COST',
+  /*
+   * MODULE_ACCOUNTS §6. Recording money in against a debit invoice is not
+   * editing it: it is a claim that cash arrived, and it closes a receivable.
+   * The person who raises an invoice is often not the person who may say it
+   * has been paid.
+   */
+  'RECEIVE',
 ] as const;
 
 export type Action = (typeof ACTIONS)[number];
@@ -516,11 +523,34 @@ export const FEATURES: readonly FeatureDefinition[] = [
   { module: 'DOCUMENTATION', feature: 'DOCUMENTATION.COPY_DOC_UPLOAD', label: 'Copy Doc Upload', actions: MASTER },
 
   // -- 6. Accounts -----------------------------------------------------------
+  /*
+   * docs/MODULE_ACCOUNTS.md §6, in the order of the redrawn Menu (M3–M16).
+   *
+   * AWAITING_FREIGHT_INV keeps its actions: VIEW is the queue, CREATE is
+   * `Make invoice`. The invoice it makes is a DEBIT_INVOICE from then on.
+   */
   { module: 'ACCOUNTS', feature: 'ACCOUNTS.AWAITING_FREIGHT_INV', label: 'Awaiting Freight Inv', actions: MASTER_APPROVE },
-  { module: 'ACCOUNTS', feature: 'ACCOUNTS.NEW_INVOICE_OTHER', label: 'New Invoice (Other)', actions: MASTER },
-  { module: 'ACCOUNTS', feature: 'ACCOUNTS.AMOUNT_RECEIVABLE', label: 'Amount Receivable', actions: MASTER },
-  { module: 'ACCOUNTS', feature: 'ACCOUNTS.NEW_CREDIT_INVOICE', label: 'New Credit Invoice', actions: MASTER_APPROVE },
-  { module: 'ACCOUNTS', feature: 'ACCOUNTS.AMOUNT_PAYABLE', label: 'Amount Payable', actions: MASTER },
+  /*
+   * Was NEW_INVOICE_OTHER ("New Invoice (Other)"); renamed in place by
+   * 20260926100000 so its grants survive. SEND is separate from EDIT for the
+   * quotation's reason: composing an invoice and putting it in front of a
+   * customer are different acts. VIEW_BUY_PRICE is §3.9 — whether a customer
+   * has paid and what the carrier charged are not the same grant.
+   */
+  {
+    module: 'ACCOUNTS',
+    feature: 'ACCOUNTS.DEBIT_INVOICE',
+    label: 'Debit Invoice',
+    actions: [...MASTER, 'SEND', 'EXPORT_PDF', 'CANCEL', 'RECEIVE', 'VIEW_BUY_PRICE'],
+  },
+  // Not built; the client's menu calls it Credit Invoice now. Key unchanged.
+  { module: 'ACCOUNTS', feature: 'ACCOUNTS.NEW_CREDIT_INVOICE', label: 'Credit Invoice', actions: MASTER_APPROVE },
+  /*
+   * Was AMOUNT_RECEIVABLE and AMOUNT_PAYABLE — the client merged the two
+   * screens into one. The receivable keys were renamed in place; grants on
+   * the payable ones were copied here before those rows were removed.
+   */
+  { module: 'ACCOUNTS', feature: 'ACCOUNTS.RECEIVABLE_PAYABLE', label: 'Receivable-Payable list', actions: MASTER },
   { module: 'ACCOUNTS', feature: 'ACCOUNTS.INCOME_STATEMENT', label: 'Income Statement', actions: READ_ONLY },
   { module: 'ACCOUNTS', feature: 'ACCOUNTS.BALANCE_SHEET', label: 'Balance Sheet', actions: READ_ONLY },
   { module: 'ACCOUNTS', feature: 'ACCOUNTS.CASH_FLOW_STATEMENT', label: 'Cash Flow Statement', actions: READ_ONLY },

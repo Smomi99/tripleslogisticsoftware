@@ -17,6 +17,12 @@ export interface ApiMeta {
    * with declined work on it. Only tabbed lists send it.
    */
   counts?: Record<string, number>;
+  /**
+   * Money totals across the whole filtered list, for a screen whose foot row
+   * adds up every page — the Receivable-Payable list's "Total =" (sheet C19).
+   * Decimal strings, never floats.
+   */
+  totals?: Record<string, string>;
 }
 
 export interface ApiError {

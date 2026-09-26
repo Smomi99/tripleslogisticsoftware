@@ -293,3 +293,38 @@ export async function nextHouseBlNo(
   `;
   return formatHouseBlNo(prefix, date, (rows[0]?.max_seq ?? 0) + 1);
 }
+
+// ---------------------------------------------------------------------------
+// Accounts (docs/MODULE_ACCOUNTS.md)
+// ---------------------------------------------------------------------------
+
+/** The debit invoice, DN-2026-000001 (§12 Q2's default). */
+export const DEBIT_INVOICE_PREFIX = 'DN';
+
+export function formatDebitInvoiceNo(year: number, sequence: number): string {
+  return formatDocumentNo(DEBIT_INVOICE_PREFIX, year, sequence);
+}
+
+/**
+ * The next debit invoice number: MAX over every row including cancelled ones,
+ * for the shipping order's reason. A number a customer has been sent is never
+ * handed to a different invoice (§3.7).
+ *
+ * MAX() is safe here where it was not for the BL draft: only staff sessions can
+ * see debit_invoice at all, and a staff session sees every row of its tenant.
+ */
+export async function nextDebitInvoiceNo(
+  db: TenantDb,
+  tenantId: bigint,
+  year: number,
+): Promise<string> {
+  const pattern = `${DEBIT_INVOICE_PREFIX}-${year}-%`;
+  const rows = await db.$queryRaw<{ max_seq: number | null }[]>`
+    SELECT MAX((regexp_replace(code, '^.*-', ''))::int) AS max_seq
+      FROM debit_invoice
+     WHERE tenant_id = ${tenantId}
+       AND series_year = ${year}
+       AND code LIKE ${pattern}
+  `;
+  return formatDebitInvoiceNo(year, (rows[0]?.max_seq ?? 0) + 1);
+}

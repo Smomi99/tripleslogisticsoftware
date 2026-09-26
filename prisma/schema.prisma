@@ -297,6 +297,12 @@ model Tenant {
   blDraftContainers   BlDraftContainer[]
   blTemplates         BlTemplate[]
 
+  debitInvoices         DebitInvoice[]
+  debitInvoiceLines     DebitInvoiceLine[]
+  debitInvoiceCosts     DebitInvoiceCost[]
+  debitInvoiceCostLines DebitInvoiceCostLine[]
+  debitInvoiceReceipts  DebitInvoiceReceipt[]
+
   @@index([slug])
   @@index([status])
   @@index([currencyId])
@@ -490,6 +496,9 @@ model Currency {
   quotationLines   QuotationLine[]  @relation("QuotationLineCurrency")
 
   clpCosts Clp[] @relation("ClpCostCurrency")
+
+  debitInvoices     DebitInvoice[]     @relation("DebitInvoiceCurrency")
+  debitInvoiceCosts DebitInvoiceCost[] @relation("DebitInvoiceCostCurrency")
   @@unique([tenantId, code])
   @@index([tenantId])
   @@index([currency])
@@ -553,6 +562,9 @@ model CostUnit {
   updatedByUser  User?           @relation("CostUnitUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
   quotationLines QuotationLine[] @relation("QuotationLineCostUnit")
 
+  debitInvoiceLines     DebitInvoiceLine[]     @relation("DebitInvoiceLineCostUnit")
+  debitInvoiceCostLines DebitInvoiceCostLine[] @relation("DebitInvoiceCostLineCostUnit")
+
   @@unique([tenantId, code])
   @@index([tenantId])
   @@map("cost_unit")
@@ -584,6 +596,9 @@ model CostHead {
   rateLocalCharges RateLocalCharge[]
   agentQuoteLines  AgentQuoteLine[]
   quotationLines   QuotationLine[]
+
+  debitInvoiceLines     DebitInvoiceLine[]
+  debitInvoiceCostLines DebitInvoiceCostLine[]
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -662,6 +677,7 @@ model Carrier {
   shipmentSchedules ShipmentSchedule[] @relation("ShipmentScheduleCarrier")
   clps              Clp[]              @relation("ClpCarrier")
   advises           ShipmentAdvise[]   @relation("ShipmentAdviseCarrier")
+  debitInvoiceCosts DebitInvoiceCost[] @relation("DebitInvoiceCostCarrier")
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -919,6 +935,8 @@ model Vendor {
 
   users User[] @relation("VendorUsers")
 
+  debitInvoiceCosts DebitInvoiceCost[] @relation("DebitInvoiceCostVendor")
+
   @@unique([tenantId, code])
   @@unique([tenantId, id])
   @@index([tenantId])
@@ -1144,6 +1162,8 @@ model Customer {
   shipments   Shipment[]
   blTemplates BlTemplate[] @relation("BlTemplateCustomer")
 
+  debitInvoices DebitInvoice[]
+
   @@unique([tenantId, code])
   @@unique([tenantId, id])
   @@index([tenantId])
@@ -1298,6 +1318,8 @@ model Agent {
   wonInquiries   Inquiry[]      @relation("InquiryWonAgent")
   blDrafts       BlDraft[]      @relation("BlDraftDeliveryAgent")
   blTemplates    BlTemplate[]   @relation("BlTemplateDeliveryAgent")
+
+  debitInvoiceCosts DebitInvoiceCost[] @relation("DebitInvoiceCostAgent")
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -1854,6 +1876,20 @@ model User {
   blDraftContainersUpdated BlDraftContainer[]   @relation("BlDraftContainerUpdatedBy")
   blTemplatesCreated       BlTemplate[]         @relation("BlTemplateCreatedBy")
   blTemplatesUpdated       BlTemplate[]         @relation("BlTemplateUpdatedBy")
+
+  debitInvoicesIssued          DebitInvoice[]         @relation("DebitInvoiceIssuedBy")
+  debitInvoicesSent            DebitInvoice[]         @relation("DebitInvoiceSentBy")
+  debitInvoicesCancelled       DebitInvoice[]         @relation("DebitInvoiceCancelledBy")
+  debitInvoicesCreated         DebitInvoice[]         @relation("DebitInvoiceCreatedBy")
+  debitInvoicesUpdated         DebitInvoice[]         @relation("DebitInvoiceUpdatedBy")
+  debitInvoiceLinesCreated     DebitInvoiceLine[]     @relation("DebitInvoiceLineCreatedBy")
+  debitInvoiceLinesUpdated     DebitInvoiceLine[]     @relation("DebitInvoiceLineUpdatedBy")
+  debitInvoiceCostsCreated     DebitInvoiceCost[]     @relation("DebitInvoiceCostCreatedBy")
+  debitInvoiceCostsUpdated     DebitInvoiceCost[]     @relation("DebitInvoiceCostUpdatedBy")
+  debitInvoiceCostLinesCreated DebitInvoiceCostLine[] @relation("DebitInvoiceCostLineCreatedBy")
+  debitInvoiceCostLinesUpdated DebitInvoiceCostLine[] @relation("DebitInvoiceCostLineUpdatedBy")
+  debitInvoiceReceiptsCreated  DebitInvoiceReceipt[]  @relation("DebitInvoiceReceiptCreatedBy")
+  debitInvoiceReceiptsUpdated  DebitInvoiceReceipt[]  @relation("DebitInvoiceReceiptUpdatedBy")
   @@unique([tenantId, username])
   @@unique([tenantId, email])
   @@unique([tenantId, code])
@@ -2173,6 +2209,9 @@ model ContainerSize {
   clps            Clp[]
   agentQuoteLines AgentQuoteLine[]  @relation("AgentQuoteLineContainerSize")
   quotationLines  QuotationLine[]   @relation("QuotationLineContainerSize")
+
+  debitInvoiceLines     DebitInvoiceLine[]     @relation("DebitInvoiceLineContainerSize")
+  debitInvoiceCostLines DebitInvoiceCostLine[] @relation("DebitInvoiceCostLineContainerSize")
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -3436,6 +3475,8 @@ model Quotation {
   /// The number plus its issue. A second revision of QTN-2026-000001 is a new
   /// row sharing the number, which is why code alone is not unique.
   clps Clp[] @relation("ClpQuotation")
+
+  debitInvoices DebitInvoice[]
   @@unique([tenantId, code, revisionNo])
   @@unique([tenantId, id])
   @@index([tenantId])
@@ -3870,6 +3911,7 @@ model Shipment {
   clps           Clp[]
   advises        ShipmentAdvise[]
   blDrafts       BlDraft[]
+  debitInvoices  DebitInvoice[]
 
   clpBookings ClpBooking[] @relation("ClpBookingShipment")
   @@unique([tenantId, code])
@@ -5081,4 +5123,321 @@ model BlTemplate {
   @@index([customerId])
   @@index([deliveryAgentId])
   @@map("bl_template")
+}
+
+// ===========================================================================
+// ACCOUNTS — docs/MODULE_ACCOUNTS.md
+// Awaiting Freight Inv, Debit Invoice, Receivable-Payable list.
+// ===========================================================================
+
+/// §3.2. FREIGHT is made from a booking on the awaiting list, one live per
+/// booking. OTHER is `Create New` — the old menu's "New Invoice (Other)".
+enum DebitInvoiceKind {
+  FREIGHT
+  OTHER
+
+  @@map("debit_invoice_kind")
+}
+
+/// §3.7. Payment status is not here: it is derived from the receipts, so it
+/// can never disagree with them.
+enum DebitInvoiceStatus {
+  DRAFT
+  ISSUED
+  CANCELLED
+
+  @@map("debit_invoice_status")
+}
+
+/// Which supplier a "Buying from …" block is owed to (sheet B21, B30, B38).
+enum SupplierPartyType {
+  CARRIER
+  AGENT
+  VENDOR
+
+  @@map("supplier_party_type")
+}
+
+/// Where a line's figures came from, so a pulled price and a typed one can be
+/// told apart on screen — the quotation grid's AUTO/MANUAL, for an invoice.
+enum InvoiceLineSource {
+  /// Pulled from the booking's quotation (sheet K14).
+  QUOTATION
+  /// The carrier cost CR-002 §9 allocated to this booking on a load plan.
+  LOAD_PLAN
+  MANUAL
+
+  @@map("invoice_line_source")
+}
+
+/// client: Awaiting Debit Note (the invoice it makes) / Debit note (Other)
+model DebitInvoice {
+  tenantId   BigInt @map("tenant_id")
+  id         BigInt @id @default(autoincrement())
+  /// DN-2026-000001: per workspace per year of the invoice date, numbered on
+  /// first save and never reused. A cancelled invoice keeps its number (§3.7).
+  code       String @db.VarChar(32)
+  seriesYear Int    @map("series_year")
+
+  kind DebitInvoiceKind @default(FREIGHT)
+
+  /// Required when FREIGHT (CHECK). An OTHER invoice may name a booking for
+  /// reference, and never takes its place on the awaiting list.
+  shipmentId  BigInt? @map("shipment_id")
+  /// The booking's quotation, kept so the list's Quotation No and Quotation
+  /// Date do not depend on the booking still pointing at it.
+  quotationId BigInt? @map("quotation_id")
+  customerId  BigInt  @map("customer_id")
+
+  invoiceDate DateTime @map("invoice_date") @db.Date
+
+  /// §3.3: one currency per invoice, the quotation's rule. The code is a
+  /// snapshot, like quotation_line.currency_code.
+  currencyId     BigInt  @map("currency_id")
+  currencyCode   String  @map("currency_code") @db.VarChar(10)
+  /// §3.4: base units per 1 unit of the invoice currency, frozen on the
+  /// document. Sheet G8: amount x rate = base amount.
+  conversionRate Decimal @map("conversion_rate") @db.Decimal(18, 10)
+
+  /// Sums, stored so the lists do not re-add them. Recomputed on every save.
+  totalAmount     Decimal @default(0) @map("total_amount") @db.Decimal(18, 4)
+  totalAmountBase Decimal @default(0) @map("total_amount_base") @db.Decimal(18, 4)
+  /// Grand total cost (sheet G46), in base. Gross profit is derived from this
+  /// and totalAmountBase, never stored (§3.4).
+  costTotalBase   Decimal @default(0) @map("cost_total_base") @db.Decimal(18, 4)
+
+  /// "Email id of Customer" (sheet B61), kept with the draft.
+  recipientEmails String[] @default([]) @map("recipient_emails")
+
+  status DebitInvoiceStatus @default(DRAFT)
+
+  issuedAt     DateTime? @map("issued_at") @db.Timestamptz(6)
+  issuedBy     BigInt?   @map("issued_by")
+  sentAt       DateTime? @map("sent_at") @db.Timestamptz(6)
+  sentBy       BigInt?   @map("sent_by")
+  /// The document as last sent: what the customer actually received.
+  pdfFile      String?   @map("pdf_file") @db.Text
+  cancelledAt  DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  cancelledBy  BigInt?   @map("cancelled_by")
+  cancelReason String?   @map("cancel_reason") @db.Text
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  shipment  Shipment?  @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict)
+  quotation Quotation? @relation(fields: [tenantId, quotationId], references: [tenantId, id], onDelete: Restrict)
+  customer  Customer   @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict)
+  /// Currency is system-capable, so a single-column key plus the tenant guard.
+  currency  Currency   @relation("DebitInvoiceCurrency", fields: [currencyId], references: [id], onDelete: Restrict)
+
+  issuedByUser    User? @relation("DebitInvoiceIssuedBy", fields: [issuedBy], references: [id], onDelete: Restrict)
+  sentByUser      User? @relation("DebitInvoiceSentBy", fields: [sentBy], references: [id], onDelete: Restrict)
+  cancelledByUser User? @relation("DebitInvoiceCancelledBy", fields: [cancelledBy], references: [id], onDelete: Restrict)
+  createdByUser   User? @relation("DebitInvoiceCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser   User? @relation("DebitInvoiceUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  lines    DebitInvoiceLine[]
+  costs    DebitInvoiceCost[]
+  receipts DebitInvoiceReceipt[]
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, shipmentId])
+  @@index([tenantId, customerId])
+  @@index([quotationId])
+  @@index([currencyId])
+  @@index([issuedBy])
+  @@index([sentBy])
+  @@index([cancelledBy])
+  @@map("debit_invoice")
+}
+
+/// client: Selling Price grid (sheet row 52)
+model DebitInvoiceLine {
+  tenantId       BigInt            @map("tenant_id")
+  id             BigInt            @id @default(autoincrement())
+  debitInvoiceId BigInt            @map("debit_invoice_id")
+  sortOrder      Int               @default(0) @map("sort_order")
+  source         InvoiceLineSource @default(MANUAL)
+
+  costHeadId   BigInt @map("cost_head_id")
+  costHeadName String @map("cost_head_name") @db.VarChar(200)
+
+  /// Null is "No size": a charge per document rather than per box.
+  containerSizeId   BigInt? @map("container_size_id")
+  containerSizeName String? @map("container_size_name") @db.VarChar(100)
+  costUnitId        BigInt? @map("cost_unit_id")
+  unitName          String? @map("unit_name") @db.VarChar(100)
+
+  quantity  Decimal  @db.Decimal(18, 3)
+  unitPrice Decimal  @map("unit_price") @db.Decimal(18, 4)
+  /// GENERATED quantity * unit_price: the sheet's "Total Amount".
+  amount    Decimal? @default(dbgenerated()) @db.Decimal(18, 4)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  debitInvoice  DebitInvoice   @relation(fields: [tenantId, debitInvoiceId], references: [tenantId, id], onDelete: Restrict)
+  costHead      CostHead       @relation(fields: [tenantId, costHeadId], references: [tenantId, id], onDelete: Restrict)
+  containerSize ContainerSize? @relation("DebitInvoiceLineContainerSize", fields: [containerSizeId], references: [id], onDelete: Restrict)
+  costUnit      CostUnit?      @relation("DebitInvoiceLineCostUnit", fields: [costUnitId], references: [id], onDelete: Restrict)
+
+  createdByUser User? @relation("DebitInvoiceLineCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("DebitInvoiceLineUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([debitInvoiceId])
+  @@index([costHeadId])
+  @@index([containerSizeId])
+  @@index([costUnitId])
+  @@map("debit_invoice_line")
+}
+
+/// client: one "Buying from Carrier / Agent / Vendor" block (sheet rows 21-44)
+model DebitInvoiceCost {
+  tenantId       BigInt            @map("tenant_id")
+  id             BigInt            @id @default(autoincrement())
+  debitInvoiceId BigInt            @map("debit_invoice_id")
+  sortOrder      Int               @default(0) @map("sort_order")
+  partyType      SupplierPartyType @map("party_type")
+
+  /// Exactly the one party_type names (CHECK). Carrier is system-capable, so a
+  /// single-column key plus the tenant guard; agent and vendor are composite.
+  carrierId BigInt? @map("carrier_id")
+  agentId   BigInt? @map("agent_id")
+  vendorId  BigInt? @map("vendor_id")
+
+  /// "Invoice no :", the supplier's own number as they printed it.
+  supplierInvoiceNo   String? @map("supplier_invoice_no") @db.VarChar(100)
+  /// "Upload Invoice": a storage key only, never the file (CLAUDE.md §2).
+  supplierInvoiceFile String? @map("supplier_invoice_file") @db.VarChar(500)
+
+  /// §3.3: one supplier invoice is in one currency.
+  currencyId     BigInt  @map("currency_id")
+  currencyCode   String  @map("currency_code") @db.VarChar(10)
+  conversionRate Decimal @map("conversion_rate") @db.Decimal(18, 10)
+
+  /// "Total Cost =", in the block's currency and in base.
+  totalAmount     Decimal @default(0) @map("total_amount") @db.Decimal(18, 4)
+  totalAmountBase Decimal @default(0) @map("total_amount_base") @db.Decimal(18, 4)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  debitInvoice DebitInvoice @relation(fields: [tenantId, debitInvoiceId], references: [tenantId, id], onDelete: Restrict)
+  carrier      Carrier?     @relation("DebitInvoiceCostCarrier", fields: [carrierId], references: [id], onDelete: Restrict)
+  agent        Agent?       @relation("DebitInvoiceCostAgent", fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
+  vendor       Vendor?      @relation("DebitInvoiceCostVendor", fields: [tenantId, vendorId], references: [tenantId, id], onDelete: Restrict)
+  currency     Currency     @relation("DebitInvoiceCostCurrency", fields: [currencyId], references: [id], onDelete: Restrict)
+
+  createdByUser User? @relation("DebitInvoiceCostCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("DebitInvoiceCostUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  lines DebitInvoiceCostLine[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([debitInvoiceId])
+  @@index([carrierId])
+  @@index([agentId])
+  @@index([vendorId])
+  @@index([currencyId])
+  @@map("debit_invoice_cost")
+}
+
+/// client: the grid inside a cost block (sheet rows 23, 32, 40)
+model DebitInvoiceCostLine {
+  tenantId           BigInt            @map("tenant_id")
+  id                 BigInt            @id @default(autoincrement())
+  debitInvoiceCostId BigInt            @map("debit_invoice_cost_id")
+  sortOrder          Int               @default(0) @map("sort_order")
+  source             InvoiceLineSource @default(MANUAL)
+
+  costHeadId   BigInt @map("cost_head_id")
+  costHeadName String @map("cost_head_name") @db.VarChar(200)
+
+  containerSizeId   BigInt? @map("container_size_id")
+  containerSizeName String? @map("container_size_name") @db.VarChar(100)
+  costUnitId        BigInt? @map("cost_unit_id")
+  unitName          String? @map("unit_name") @db.VarChar(100)
+
+  quantity  Decimal  @db.Decimal(18, 3)
+  /// "Buying price".
+  unitPrice Decimal  @map("unit_price") @db.Decimal(18, 4)
+  /// GENERATED quantity * unit_price.
+  amount    Decimal? @default(dbgenerated()) @db.Decimal(18, 4)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  cost          DebitInvoiceCost @relation(fields: [tenantId, debitInvoiceCostId], references: [tenantId, id], onDelete: Restrict)
+  costHead      CostHead         @relation(fields: [tenantId, costHeadId], references: [tenantId, id], onDelete: Restrict)
+  containerSize ContainerSize?   @relation("DebitInvoiceCostLineContainerSize", fields: [containerSizeId], references: [id], onDelete: Restrict)
+  costUnit      CostUnit?        @relation("DebitInvoiceCostLineCostUnit", fields: [costUnitId], references: [id], onDelete: Restrict)
+
+  createdByUser User? @relation("DebitInvoiceCostLineCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("DebitInvoiceCostLineUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([debitInvoiceCostId])
+  @@index([costHeadId])
+  @@index([containerSizeId])
+  @@index([costUnitId])
+  @@map("debit_invoice_cost_line")
+}
+
+/// client: "Receive" (Debit note (Other), rows 15-20)
+model DebitInvoiceReceipt {
+  tenantId       BigInt   @map("tenant_id")
+  id             BigInt   @id @default(autoincrement())
+  debitInvoiceId BigInt   @map("debit_invoice_id")
+  /// Sheet G15.
+  paymentDate    DateTime @map("payment_date") @db.Date
+  /// In the invoice's currency. Positive (CHECK).
+  amount         Decimal  @db.Decimal(18, 4)
+  /// At the invoice's frozen rate (§3.4), so a fully received invoice closes
+  /// to zero in both columns of the Receivable-Payable list.
+  amountBase     Decimal  @map("amount_base") @db.Decimal(18, 4)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  debitInvoice DebitInvoice @relation(fields: [tenantId, debitInvoiceId], references: [tenantId, id], onDelete: Restrict)
+
+  createdByUser User? @relation("DebitInvoiceReceiptCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("DebitInvoiceReceiptUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([debitInvoiceId])
+  @@map("debit_invoice_receipt")
 }

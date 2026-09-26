@@ -27,6 +27,7 @@ import { shippingOrderRouter } from './shipping-order.route';
 import { cargoReceiptRouter } from './cargo-receipt.route';
 import { shipmentAdviseRouter } from './shipment-advise.route';
 import { blDraftRouter } from './bl-draft.route';
+import { accountsRouter } from './accounts.route';
 import { customerPortalRouter } from './customer-portal.route';
 import { clpRouter } from './clp.route';
 import {
@@ -90,6 +91,10 @@ tenantRouter.use('/ops', opsWorklistRouter);
 tenantRouter.use('/documentation', shipmentAdviseRouter);
 tenantRouter.use('/documentation', blDraftRouter);
 tenantRouter.use('/documentation', docWorklistRouter);
+
+// Accounts (docs/MODULE_ACCOUNTS.md) — Awaiting Freight Inv, Debit Invoice,
+// Receivable-Payable list.
+tenantRouter.use('/accounts', accountsRouter);
 
 // The customer portal. Its own router, its own session kind (CR-004).
 tenantRouter.use('/portal', customerPortalRouter);

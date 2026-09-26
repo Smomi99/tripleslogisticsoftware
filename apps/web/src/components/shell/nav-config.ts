@@ -112,6 +112,10 @@ const ROUTES: Record<string, RouteEntry> = {
   ],
   // The client's new `BL Draft List` menu item (Menu K6).
   'DOCUMENTATION.BL_DRAFT': '/documentation/bl-draft',
+  // Accounts (docs/MODULE_ACCOUNTS.md), Menu M3, M4 and M6.
+  'ACCOUNTS.AWAITING_FREIGHT_INV': '/accounts/awaiting-freight-inv',
+  'ACCOUNTS.DEBIT_INVOICE': '/accounts/debit-invoice',
+  'ACCOUNTS.RECEIVABLE_PAYABLE': '/accounts/receivable-payable',
   'CUSTOMER.SHIPMENT': '/portal/shipment',
 };
 

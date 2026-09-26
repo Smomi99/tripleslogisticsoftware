@@ -32,3 +32,32 @@ export function requirePermission(key: string): RequestHandler {
     throw HttpError.forbidden('You do not have permission to do this.');
   };
 }
+
+/**
+ * The same guard, satisfied by any one of several keys.
+ *
+ * For the rare route two screens share — the debit invoice's lookup lists are
+ * read both by `Make invoice` on Awaiting Freight Inv and by editing on Debit
+ * Invoice (MODULE_ACCOUNTS §7). Requiring one would lock the other screen's
+ * users out of a form they are allowed to open.
+ */
+export function requireAnyPermission(...keys: string[]): RequestHandler {
+  for (const key of keys) {
+    if (!isPermissionKey(key)) {
+      throw new Error(
+        `Unknown permission "${key}". Add it to packages/shared/src/permissions.ts.`,
+      );
+    }
+  }
+  return function guard(req: Request, _res: Response, next: NextFunction): void {
+    const auth = req.auth;
+    if (auth === undefined) {
+      throw HttpError.unauthorized();
+    }
+    if (auth.isSuperadmin || keys.some((key) => auth.permissions.has(key))) {
+      next();
+      return;
+    }
+    throw HttpError.forbidden('You do not have permission to do this.');
+  };
+}

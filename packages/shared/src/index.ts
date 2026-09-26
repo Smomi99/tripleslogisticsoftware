@@ -5,6 +5,7 @@
  * and are imported by BOTH the API and the web app. A schema defined inside
  * apps/api or apps/web is a bug — the two sides drift the moment it happens.
  */
+export * from './accounts';
 export * from './api';
 export * from './auth';
 export * from './agent';

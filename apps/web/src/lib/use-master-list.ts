@@ -39,6 +39,8 @@ export function useMasterList<TRow, TSort extends string>(
   endpoint: string,
   defaultSort: TSort,
   limit: number = DEFAULT_PAGE_SIZE,
+  /** A register of documents reads newest first; master data reads A–Z. */
+  defaultOrder: 'asc' | 'desc' = 'asc',
 ): MasterListState<TRow, TSort> {
   const { authorizedList } = useSession();
 
@@ -51,7 +53,7 @@ export function useMasterList<TRow, TSort extends string>(
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [sortBy, setSortBy] = useState<TSort>(defaultSort);
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>(defaultOrder);
   const [filters, setFilters] = useState<Record<string, string>>({});
 
   // §8: search is server-side and debounced.
