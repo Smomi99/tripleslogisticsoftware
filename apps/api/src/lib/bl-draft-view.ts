@@ -39,6 +39,8 @@ export const blDraftArgs = {
     deliveryAgent: { select: { name: true } },
     pol: { select: { name: true } },
     pod: { select: { name: true } },
+    // §13: who issued the bill, for BL Print's confirmation and its list.
+    issuedByUser: { select: { username: true } },
     containers: {
       where: { deletedAt: null },
       orderBy: { id: 'asc' },
@@ -104,6 +106,7 @@ export function blDraftDto(
     submittedAt: stamp(row.submittedAt),
     approvedAt: stamp(row.approvedAt),
     sentAt: stamp(row.sentAt),
+    issuedAt: stamp(row.issuedAt),
     cancelReason: row.cancelReason,
     containers: row.containers.map(containerDto),
     recipients,

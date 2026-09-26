@@ -11,6 +11,7 @@ import {
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 
+import { BlPrintActions } from '@/components/doc/bl-print-actions';
 import { CargoStockTable } from '@/components/ops/cargo-stock-table';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -45,6 +46,7 @@ const TONE: Record<ShipmentStatus, 'active' | 'pending' | 'inactive' | 'overdue'
   CARGO_RECEIVED: 'active',
   ADVISED: 'active',
   BL_DRAFTED: 'active',
+  BL_ISSUED: 'active',
   SHORT_CLOSED: 'inactive',
   CANCELLED: 'overdue',
 };
@@ -56,6 +58,7 @@ const DETAIL_HEADER: Record<ShipmentWorklistId, string> = {
   CARGO_RECEIPT: 'Received',
   SHIPMENT_ADVISE: 'Advise',
   BL_DRAFT: 'Draft',
+  BL_PRINT: 'BL',
 };
 
 /** The endpoint behind each, each with its own permission on the server. */
@@ -65,6 +68,7 @@ const ENDPOINT: Record<ShipmentWorklistId, string> = {
   CARGO_RECEIPT: '/api/tenant/ops/cargo-receipts',
   SHIPMENT_ADVISE: '/api/tenant/documentation/shipment-advise',
   BL_DRAFT: '/api/tenant/documentation/bl-drafts/worklist',
+  BL_PRINT: '/api/tenant/documentation/bl-print',
 };
 
 const DESCRIPTION: Record<ShipmentWorklistId, string> = {
@@ -74,6 +78,7 @@ const DESCRIPTION: Record<ShipmentWorklistId, string> = {
   SHIPMENT_ADVISE:
     'Bookings with the cargo in and the container planned, and the advises already sent.',
   BL_DRAFT: 'Bookings that have been advised, and the bills of lading drafted against them.',
+  BL_PRINT: 'Approved bills of lading waiting to be issued, and the ones already issued.',
 };
 
 const EMPTY: Record<ShipmentWorklistId, { title: string; description: string }> = {
@@ -101,6 +106,11 @@ const EMPTY: Record<ShipmentWorklistId, { title: string; description: string }> 
     title: 'No bills of lading waiting',
     description:
       'A booking arrives here once its shipment advise has gone to the customer — that is where the BL number comes from.',
+  },
+  BL_PRINT: {
+    title: 'No bills of lading to issue',
+    description:
+      'A booking arrives here once its BL draft is approved. Approve a draft on the BL Draft screen to issue and print it.',
   },
 };
 
@@ -140,6 +150,8 @@ export function WorklistScreen({
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [isPending, setPending] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Bumped after an act on a row (BL Print's Issue BL) moves it to another tab.
+  const [reloadKey, setReloadKey] = useState(0);
 
   // Debounced, like every other search box in the product (§8).
   useEffect(() => {
@@ -194,7 +206,7 @@ export function WorklistScreen({
     return () => {
       cancelled = true;
     };
-  }, [authorizedList, isStock, mode, page, search, sortBy, sortOrder, view, worklist]);
+  }, [authorizedList, isStock, mode, page, reloadKey, search, sortBy, sortOrder, view, worklist]);
 
   const columns: DataTableColumn<ShipmentWorklistRow>[] = useMemo(
     () => [
@@ -433,6 +445,17 @@ export function WorklistScreen({
                     Print
                   </button>
                 )}
+              {/*
+              MODULE_DOCUMENTATION §13 — the screen's reason to exist: issue
+              the approved bill, then print its originals, or a copy.
+            */}
+              {worklist === 'BL_PRINT' && (
+                <BlPrintActions
+                  shipmentId={row.id}
+                  status={row.status}
+                  onChanged={() => setReloadKey((k) => k + 1)}
+                />
+              )}
             </>
           )}
           empty={

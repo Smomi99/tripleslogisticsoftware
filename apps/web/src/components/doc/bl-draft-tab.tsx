@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
 import { BlDraftForm, type BlDraftFormValues, bodyFrom, valuesFrom } from './bl-draft-form';
+import { BlPrintActions } from './bl-print-actions';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Input } from '@/components/ui/field';
@@ -27,6 +28,14 @@ import { useSession } from '@/lib/session';
  * (bl-draft-form.tsx) from the portal, and the two meet here: a draft the
  * customer submitted arrives in this tab as SUBMITTED, waiting to be approved.
  */
+
+/** Stored UTC, read in Dhaka (CLAUDE.md §9). */
+const inDhaka = (iso: string): string =>
+  new Date(iso).toLocaleString('en-GB', {
+    timeZone: 'Asia/Dhaka',
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
 
 const TONE: Record<BlDraftDto['status'], 'active' | 'pending' | 'inactive' | 'overdue'> = {
   DRAFT: 'pending',
@@ -140,6 +149,11 @@ export function BlDraftTab({
   }
 
   const editable = draft === null || draft.status === 'DRAFT' || draft.status === 'SUBMITTED';
+  /*
+   * Approved once. A draft sent to the customer to check is still waiting on
+   * that approval — it is frozen against edits, not against being accepted.
+   */
+  const approvable = draft !== null && draft.status !== 'CANCELLED' && draft.approvedAt === null;
   const blNo = draft?.blNo ?? prefill?.blNo ?? '';
 
   return (
@@ -154,6 +168,10 @@ export function BlDraftTab({
           )}
           {draft?.origin === 'CUSTOMER' && (
             <span className="text-cell text-steel">Drafted by the customer</span>
+          )}
+          {/* §13: issued on BL Print — the originals exist from here. */}
+          {draft?.issuedAt != null && (
+            <Status tone="active">BL issued {inDhaka(draft.issuedAt)}</Status>
           )}
         </div>
         <p className="font-mono text-cell tabular-nums text-steel">
@@ -244,7 +262,7 @@ export function BlDraftTab({
             Manage templates
           </Link>
         )}
-        {draft !== null && editable && can('DOCUMENTATION.BL_DRAFT.APPROVE') && (
+        {approvable && can('DOCUMENTATION.BL_DRAFT.APPROVE') && (
           <Button
             variant="secondary"
             disabled={isPending}
@@ -286,6 +304,22 @@ export function BlDraftTab({
           >
             Print
           </Button>
+        )}
+        {/*
+          BL Print's acts (§13), here as well as on its own list: this tab is
+          where the bill lives, and an operator who just approved it should not
+          have to go to another screen to issue it.
+        */}
+        {draft !== null && draft.approvedAt !== null && draft.status !== 'CANCELLED' && (
+          <BlPrintActions
+            shipmentId={booking.id}
+            status={booking.status}
+            variant="buttons"
+            onChanged={() => {
+              void load();
+              onChanged();
+            }}
+          />
         )}
         {draft !== null && draft.status !== 'CANCELLED' && can('DOCUMENTATION.BL_DRAFT.CANCEL') && (
           <Button variant="destructive" disabled={isPending} onClick={() => setCancelOpen(true)}>
@@ -393,6 +427,12 @@ export function BlDraftTab({
             The booking goes back to its shipment advise, and a new draft can be started against
             the same BL number.
           </p>
+          {draft?.issuedAt != null && (
+            <p className="text-body text-alert">
+              This bill was issued on {inDhaka(draft.issuedAt)}. Cancelling voids that issue — the
+              originals already printed are no longer the bill for this booking.
+            </p>
+          )}
           <Field id="blCancelReason" label="Reason" required>
             <Input
               id="blCancelReason"

@@ -150,8 +150,9 @@ This one is the same, with one difference: membership is decided by **the absenc
 invoice**, not by a shipment status alone, because invoicing does not move the booking (§3.8).
 
 A booking is awaiting its debit note while it is **confirmed** — `APPROVED_FOR_SHIPMENT`, `SO_ISSUED`,
-`SO_SKIPPED`, `PART_RECEIVED`, `CARGO_RECEIVED`, `ADVISED`, `BL_DRAFTED` or `SHORT_CLOSED` — and has no
-`ISSUED` freight invoice. Not yet confirmed (`BOOKING_RECEIVED`, `VESSEL_PROPOSED`), `REJECTED` and
+`SO_SKIPPED`, `PART_RECEIVED`, `CARGO_RECEIVED`, `ADVISED`, `BL_DRAFTED`, `BL_ISSUED` or `SHORT_CLOSED`
+— and has no `ISSUED` freight invoice. (`BL_ISSUED` arrived with BL Print, MODULE_DOCUMENTATION §13;
+it is F22's last step before the Debit Note, so it counts as *ready* with `ADVISED` and `BL_DRAFTED`.) Not yet confirmed (`BOOKING_RECEIVED`, `VESSEL_PROPOSED`), `REJECTED` and
 `CANCELLED` bookings never appear. §12 Q1 asks whether the client wants it narrower.
 
 `Status` shows where the invoice stands (`Awaiting invoice` / `Draft`), with the booking's own stage

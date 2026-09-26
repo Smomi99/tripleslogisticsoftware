@@ -43,6 +43,11 @@ const TAB_FOR: Record<string, string> = {
   'CUSTOMER_SERVICE.SCHEDULE.CREATE': 'schedule',
   'CUSTOMER_SERVICE.SHIPPING_ORDER.VIEW': 'shipping-order',
   'OPERATION.CARGO_RECEIPT.VIEW': 'cargo-receipt',
+  // Documentation (MODULE_DOCUMENTATION): the advise, the draft, and BL Print's
+  // Issue BL all work on the booking's own tabs.
+  'DOCUMENTATION.SHIPMENT_ADVISE.VIEW': 'shipment-advise',
+  'DOCUMENTATION.BL_DRAFT.VIEW': 'bl',
+  'DOCUMENTATION.BL_PRINT.VIEW': 'bl',
 };
 
 const TONE: Record<ShipmentStatus, 'active' | 'pending' | 'inactive' | 'overdue'> = {
@@ -56,6 +61,7 @@ const TONE: Record<ShipmentStatus, 'active' | 'pending' | 'inactive' | 'overdue'
   CARGO_RECEIVED: 'active',
   ADVISED: 'active',
   BL_DRAFTED: 'active',
+  BL_ISSUED: 'active',
   SHORT_CLOSED: 'inactive',
   CANCELLED: 'overdue',
 };

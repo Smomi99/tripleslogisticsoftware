@@ -47,8 +47,8 @@
 1. **The rest of the portal columns** (§7.3, §12 Q7) — Inquiry List, Quotation
    List, Shipment Booking, Shipment status, Financial Statement on the Customer
    column, and the Agent column's three. No wireframes exist for any of them.
-2. **BL Print and Copy Doc upload** (Menu K7, K8) — the next two screens in the
-   Documentation module, and not part of what was asked for here.
+2. **Copy Doc upload** (Menu K8) — the last screen in the Documentation module.
+   **BL Print (K7) is built — §13, 2026-09-26.**
 
 **Two deviations worth recording.** `runtimeDatabaseUrl` no longer falls back to
 the owner connection in production — CR-004 F6; it now refuses to boot, because
@@ -280,7 +280,7 @@ CARGO_RECEIVED ─► ADVISED ─► BL_DRAFTED         (+ CANCELLED / SHORT_CLO
 
 - `ADVISED` — set when the advise is **sent**, not when it is saved. A draft advise is not an event
   the customer has seen.
-- `BL_DRAFTED` — set when a BL draft reaches `APPROVED`. `BL_ISSUED` belongs to BL Print, later.
+- `BL_DRAFTED` — set when a BL draft reaches `APPROVED`. `BL_ISSUED` came with BL Print (§13).
 
 The alternative, if the client would rather not grow the enum: derive both queues from document
 existence (*has a FINAL CLP and no SENT advise*). It works, but the booking list's Status column then
@@ -412,6 +412,11 @@ BL DRAFT
   staff:     (none) ─Make BL draft─► DRAFT ─Save & Send──► SENT
   customer:  (none) ─Make BL draft─► DRAFT ─Save & Submit─► SUBMITTED ─staff APPROVE─► APPROVED ─Save & Send─► SENT
   APPROVED sets shipment → BL_DRAFTED.  A SUBMITTED draft is read-only to the customer.
+  A staff draft SENT before approval (to be checked) can still be APPROVED, once (§13.9).
+
+BL PRINT (§13)
+  BL_DRAFTED ─Issue BL─► BL_ISSUED        originals print from here; a copy prints from approval
+  cancelling the approved or issued draft ─► ADVISED   (the issue is voided, kept on the record)
 ```
 
 Rules:
@@ -598,3 +603,127 @@ Nothing below is guessed at in the schema. Each has a working default so the bui
 | 8 | **Inbound BL.** Both BL sheets say *"Only for Outbound shipment-Sea"*. Does an inbound shipment get a BL screen at all, and is there an air equivalent (HAWB draft)? | Outbound sea only, as written |
 | 9 | **`Also Notify Party` and `Forwarding Agent-References`** — free text, or pulled from the agent master? | Free text, with the agent's details pullable into it |
 | 10 | **The two new shipment statuses** (§3.8) — confirm `ADVISED` and `BL_DRAFTED`, or keep the queues derived. | Add them |
+
+---
+
+## 13. BL PRINT (Menu K7) — built 2026-09-26
+
+### 13.1 What the workbook says
+
+There is **no BL Print sheet** in `Design.xlsx`. What the workbook does say:
+
+| Cell | Says |
+|---|---|
+| Menu K7 | `- BL Print` — the menu item, under Documentation, after `BL Draft List` |
+| Menu F22 | *"… Shipment Advise > EGM > SI Submission > **BL Issue** > Debit Note"* |
+| Menu B44 / D44 / F44 / G44 | `BL Draft & Print` — Outbound **Yes**, Inbound **skip**, *"For inbound Arrnage to upload a file"* |
+| BL Draft-outbound D56 | `No. of Original BL` |
+| BL Draft-outbound E61 | `Print` — the draft's own print, built in phase E and unchanged |
+
+So BL Print is the chain's **BL Issue**: the approved draft becomes the issued bill, and its
+originals are printed. Everything below that is not in those cells is a default, and each one is in
+§13.10.
+
+### 13.2 Decisions
+
+1. **A worklist of bookings, like its neighbours.** Rows are bookings whose BL draft is approved,
+   in two tabs: **To issue** (`BL_DRAFTED`) and **Issued** (`BL_ISSUED`). Same screen component,
+   columns and search as BL Draft; the detail column gives the House BL, the MBL and how many
+   originals — or says the draft left the count empty.
+2. **`BL_ISSUED` is a shipment status**, after `BL_DRAFTED` — §3.8's reasoning again: a worklist is
+   the status enum narrowed, and the Booking List's status column should keep telling the truth.
+3. **The issue is recorded on the draft**: `bl_draft.issued_at` / `issued_by`. No new table — the
+   issued bill *is* the approved draft; nothing about it changes but the fact that it was issued.
+4. **The printed bill is the approved page**, drawn by the same renderer as the draft, plus a
+   marking under the foot. Nothing on it is retyped at print time.
+
+### 13.3 Rules
+
+1. **Only an approved draft is issued or printed** (`approved_at` set). A CHECK makes `issued_at`
+   impossible without `approved_at`.
+2. **Issuing is one-way.** A second issue is refused. A wrong bill is corrected the way every issued
+   document here is (§5 rule 3): cancel the draft on the BL Draft screen and draft it again.
+   Cancelling an issued draft voids the issue — the booking goes back to `ADVISED`, the cancelled
+   row keeps its `issued_at` — and the replacement draft carries the same House BL number.
+3. **The number of originals is the approved draft's** (D56). `Issue BL` asks for it only when the
+   draft left it empty, because a bill has to say how many originals exist and the approved draft
+   can no longer be edited. It is never changed at issue — that would be editing the approved bill.
+4. **Originals print only once issued.** Before that, only a non-negotiable copy prints.
+5. **Outbound sea only**, as BL Draft is (§12 Q8). Inbound's *"arrange to upload a file"* (G44)
+   belongs to Copy Doc upload, not this screen.
+
+### 13.4 The printed document
+
+- `ORIGINAL`: one page per original, each stamped **ORIGINAL** with **`n of N`**, the date of issue
+  (in the workspace's time zone) and a signature line *"For {company} — authorised signatory"*.
+- `COPY`: one page stamped **COPY · NON-NEGOTIABLE**, with a faint diagonal *COPY* — the draft's
+  *DRAFT* reasoning again: a copy must never pass for an original.
+- Neither carries the *DRAFT* watermark. Header line: *"Booking … · Issued 2026-09-26"*.
+
+### 13.5 Schema — migration `20260926140000_bl_print`
+
+```
+ALTER TYPE shipment_status ADD VALUE 'BL_ISSUED' AFTER 'BL_DRAFTED'
+bl_draft
+  + issued_at  timestamptz NULL
+  + issued_by  bigint NULL -> user   (indexed)
+  CHECK bl_draft_issue_has_issuer      (issued_at IS NULL) = (issued_by IS NULL)
+  CHECK bl_draft_issue_needs_approval  issued_at IS NULL OR approved_at IS NOT NULL
+```
+
+Affects `shipment` (a new enum value) and `bl_draft` (two nullable columns). Nothing is renamed or
+dropped; every existing row satisfies both CHECKs. RLS, grants and the audit trigger already cover
+`bl_draft`.
+
+### 13.6 Permissions — registry diff
+
+```diff
+-  DOCUMENTATION.BL_PRINT   actions: READ_ONLY                                 // VIEW, EXPORT
++  DOCUMENTATION.BL_PRINT   actions: [...READ_ONLY, 'ISSUE', 'EXPORT_PDF']
+```
+
+`ISSUE` and `EXPORT_PDF` already exist in `ACTIONS`. **After deploy: `pnpm db:seed`** for the two new
+keys, then grant them on the Roles screen.
+
+### 13.7 API
+
+| Method | Route | Permission |
+|---|---|---|
+| GET | `/documentation/bl-print` — the worklist, `view` = `TO_ISSUE` or `ISSUED` | `DOCUMENTATION.BL_PRINT.VIEW` |
+| GET | `/documentation/bookings/:id/bl` | `…BL_PRINT.VIEW` |
+| POST | `/documentation/bookings/:id/bl/issue` — body `{ originalBlCount? }` | `…BL_PRINT.ISSUE` |
+| GET | `/documentation/bookings/:id/bl/pdf` — `kind` = `ORIGINAL` or `COPY` | `…BL_PRINT.EXPORT_PDF` |
+
+### 13.8 Screens
+
+- **Documentation → BL Print** (`/documentation/bl-print`): the worklist, with `Issue BL`,
+  `Print originals` and `Print copy` in the Action column. `Issue BL` opens a confirmation showing
+  the booking, House BL, MBL, route, laden-on-board date and the count (asked for when empty); on
+  success the originals open for printing.
+- **The BL tab on the booking** carries the same three actions once the draft is approved, shows
+  *"BL issued {date}"*, and its cancel dialog warns when the bill being cancelled was issued.
+- The Booking List's action for `BL_DRAFTED` is now **Issue BL**, opening the BL tab.
+
+### 13.9 Found on the way — fixed
+
+1. **A draft sent before approval was stuck.** `Save & Send` works on a draft that is not yet
+   approved (it goes out watermarked, for the customer to check), but `Approve` then refused it as
+   "sent", and `Cancel` asked the booking to move `ADVISED -> ADVISED` and was refused too — so that
+   booking could never reach BL Print. Approve now accepts a sent, unapproved draft (once), and
+   cancel moves the booking back only when the draft had been approved.
+2. **The test PDF reader dropped every other stream** — it resumed inside the word `endstream`.
+   Invisible on one-page documents; found by the first multi-page one.
+3. The Booking List's documentation actions opened the Overview tab; they now open the tab that
+   does the work.
+
+### 13.10 Open questions — for the client
+
+| # | Question | Working default |
+|---|---|---|
+| 1 | Is there a BL layout (pre-printed stationery, a carrier's form) the print must fit? | The BL Draft layout, marked ORIGINAL or COPY |
+| 2 | Should non-negotiable copies print with the originals (e.g. 3 + 3)? | Copies print on their own, one at a time |
+| 3 | May originals be reprinted after issue, and should a reprint be logged or marked? | Reprint allowed to `EXPORT_PDF` holders, not logged |
+| 4 | Express release / seaway bill: is `No. of Original BL = 0` how those are recorded? | 0 is accepted; nothing prints as original, copies only |
+| 5 | Must `Laden on Board Date` be set before a bill is issued? | Not required; the Issue dialog warns when it is empty |
+| 6 | Does the customer see the issued bill, and its date, in their portal? | The portal's draft data carries `issuedAt`; nothing new is drawn |
+| 7 | Inbound's *"arrange to upload a file"* (G44) | Belongs to Copy Doc upload (K8), not built |

@@ -52,6 +52,7 @@ const TONE: Record<ShipmentStatus, 'active' | 'pending' | 'inactive' | 'overdue'
   CARGO_RECEIVED: 'active',
   ADVISED: 'active',
   BL_DRAFTED: 'active',
+  BL_ISSUED: 'active',
   SHORT_CLOSED: 'inactive',
   CANCELLED: 'overdue',
 };

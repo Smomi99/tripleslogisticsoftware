@@ -1870,6 +1870,7 @@ model User {
   blDraftsApproved         BlDraft[]            @relation("BlDraftApprovedBy")
   blDraftsSent             BlDraft[]            @relation("BlDraftSentBy")
   blDraftsCancelled        BlDraft[]            @relation("BlDraftCancelledBy")
+  blDraftsIssued           BlDraft[]            @relation("BlDraftIssuedBy")
   blDraftsCreated          BlDraft[]            @relation("BlDraftCreatedBy")
   blDraftsUpdated          BlDraft[]            @relation("BlDraftUpdatedBy")
   blDraftContainersCreated BlDraftContainer[]   @relation("BlDraftContainerCreatedBy")
@@ -3774,8 +3775,11 @@ enum ShipmentStatus {
   /// it is SENT, never when it is merely saved — a draft is not an event the
   /// customer has seen.
   ADVISED
-  /// The BL draft has been approved. BL_ISSUED belongs to BL Print, later.
+  /// The BL draft has been approved.
   BL_DRAFTED
+  /// MODULE_DOCUMENTATION §13 — BL Print (Menu K7) has issued the bill. The
+  /// Menu sheet's chain (F22) is "… SI Submission > BL Issue > Debit Note".
+  BL_ISSUED
   SHORT_CLOSED
   CANCELLED
 
@@ -5000,6 +5004,11 @@ model BlDraft {
   cancelledBy  BigInt?   @map("cancelled_by")
   cancelReason String?   @map("cancel_reason") @db.Text
 
+  /// §13, BL Print. The bill was issued: from here the originals print. Kept
+  /// on a cancelled draft, so a voided issue stays on the record.
+  issuedAt DateTime? @map("issued_at") @db.Timestamptz(6)
+  issuedBy BigInt?   @map("issued_by")
+
   pdfFile String? @map("pdf_file") @db.Text
 
   isActive  Boolean   @default(true) @map("is_active")
@@ -5021,6 +5030,7 @@ model BlDraft {
   approvedByUser  User? @relation("BlDraftApprovedBy", fields: [approvedBy], references: [id], onDelete: Restrict)
   sentByUser      User? @relation("BlDraftSentBy", fields: [sentBy], references: [id], onDelete: Restrict)
   cancelledByUser User? @relation("BlDraftCancelledBy", fields: [cancelledBy], references: [id], onDelete: Restrict)
+  issuedByUser    User? @relation("BlDraftIssuedBy", fields: [issuedBy], references: [id], onDelete: Restrict)
   createdByUser   User? @relation("BlDraftCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser   User? @relation("BlDraftUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
@@ -5039,6 +5049,7 @@ model BlDraft {
   @@index([submittedBy])
   @@index([approvedBy])
   @@index([sentBy])
+  @@index([issuedBy])
   @@map("bl_draft")
 }
 

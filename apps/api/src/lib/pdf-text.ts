@@ -57,7 +57,10 @@ export function extractPdfText(pdf: Buffer): string {
         pieces.push(unescapePdf(op[3]));
       }
     }
-    index = end + 1;
+    // Past the whole keyword: resuming one byte in finds the "stream" inside
+    // "endstream" and swallows the next real stream whole — every other page of
+    // a multi-page document went missing that way.
+    index = end + 'endstream'.length;
   }
 
   return pieces.join(String.fromCharCode(10));
@@ -150,7 +153,10 @@ export function placements(pdf: Buffer): PdfPlacement[] {
         if (run.trim() !== '') out.push({ y, text: run });
       }
     }
-    index = end + 1;
+    // Past the whole keyword: resuming one byte in finds the "stream" inside
+    // "endstream" and swallows the next real stream whole — every other page of
+    // a multi-page document went missing that way.
+    index = end + 'endstream'.length;
   }
 
   return out;

@@ -64,7 +64,11 @@ const SPEC: Record<ShipmentStatus, ShipmentStatus[]> = {
   // to the stage before it, because a booking with no live document is one
   // waiting for that document.
   ADVISED: ['BL_DRAFTED', 'CARGO_RECEIVED'],
-  BL_DRAFTED: ['ADVISED'],
+  // §13, BL Print: the approved bill is issued — Menu F22's "BL Issue".
+  BL_DRAFTED: ['BL_ISSUED', 'ADVISED'],
+  // Issuing is one-way; a wrong bill is cancelled and redrafted, which returns
+  // the booking to its advise like any other cancelled approved draft.
+  BL_ISSUED: ['ADVISED'],
   SHORT_CLOSED: [],
   CANCELLED: [],
 };

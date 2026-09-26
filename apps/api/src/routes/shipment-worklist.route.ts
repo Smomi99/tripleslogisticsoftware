@@ -16,6 +16,7 @@ import {
 import { Prisma } from '../generated/prisma/client';
 import { HttpError } from '../lib/http-error';
 import { renderRequiredContainer } from '../lib/render-volumes';
+import { tenantDayOf } from '../lib/tenant-day';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
 import { authenticate } from '../middleware/authenticate';
 import { requirePermission } from '../middleware/require-permission';
@@ -64,6 +65,7 @@ function count(n: number, one: string, many = `${one}s`): string {
  */
 async function detailsFor(
   db: TenantDb,
+  tenantId: bigint,
   worklist: ShipmentWorklistId,
   ids: bigint[],
 ): Promise<Map<string, string>> {
@@ -190,7 +192,14 @@ async function detailsFor(
       db.blDraft.findMany({
         where: { shipmentId: { in: ids }, deletedAt: null, status: { not: 'CANCELLED' } },
         orderBy: { id: 'desc' },
-        select: { shipmentId: true, code: true, status: true, origin: true, blNo: true },
+        select: {
+          shipmentId: true,
+          code: true,
+          status: true,
+          origin: true,
+          blNo: true,
+          issuedAt: true,
+        },
       }),
       db.shipmentAdvise.findMany({
         where: { shipmentId: { in: ids }, deletedAt: null, status: 'SENT' },
@@ -209,7 +218,9 @@ async function detailsFor(
        * The status label already names them on a submitted draft ("Submitted
        * by customer"), so repeating the origin there reads as a stutter.
        */
-      const state = BL_DRAFT_STATUS_LABEL[draft.status].toLowerCase();
+      // Once BL Print has issued it, that is the news (§13).
+      const state =
+        draft.issuedAt === null ? BL_DRAFT_STATUS_LABEL[draft.status].toLowerCase() : 'BL issued';
       out.set(
         key,
         draft.origin === 'CUSTOMER'
@@ -223,6 +234,50 @@ async function detailsFor(
       out.set(
         key,
         `HBL ${advise.houseBlNo}${advise.mblNo === null ? '' : `, MBL ${advise.mblNo}`} — no draft yet`,
+      );
+    }
+    return out;
+  }
+
+  if (worklist === 'BL_PRINT') {
+    /*
+     * MODULE_DOCUMENTATION §13. What an operator at the printer needs to know
+     * before loading stationery: which bill, and how many originals — or that
+     * the draft left the count empty, which Issue BL will ask for.
+     */
+    const [drafts, dayOf] = await Promise.all([
+      db.blDraft.findMany({
+        where: {
+          shipmentId: { in: ids },
+          deletedAt: null,
+          status: { not: 'CANCELLED' },
+          approvedAt: { not: null },
+        },
+        orderBy: { id: 'desc' },
+        select: {
+          shipmentId: true,
+          blNo: true,
+          originalBlCount: true,
+          issuedAt: true,
+          advise: { select: { mblNo: true } },
+        },
+      }),
+      tenantDayOf(db, tenantId),
+    ]);
+
+    for (const draft of drafts) {
+      const key = draft.shipmentId.toString();
+      if (out.has(key)) continue;
+      const bill = `HBL ${draft.blNo}${draft.advise.mblNo === null ? '' : `, MBL ${draft.advise.mblNo}`}`;
+      const originals =
+        draft.originalBlCount === null
+          ? 'number of originals not set'
+          : count(draft.originalBlCount, 'original');
+      out.set(
+        key,
+        draft.issuedAt === null
+          ? `${bill} — ${originals}, not issued`
+          : `${bill} — issued ${dayOf(draft.issuedAt)}, ${originals}`,
       );
     }
     return out;
@@ -431,6 +486,7 @@ function handler(worklist: ShipmentWorklistId) {
 
       const detail = await detailsFor(
         db,
+        auth.tenantId,
         worklist,
         found.map((r) => r.id),
       );
@@ -517,4 +573,11 @@ docWorklistRouter.get(
   '/bl-drafts/worklist',
   requirePermission(`${SHIPMENT_WORKLISTS.BL_DRAFT.feature}.VIEW`),
   handler('BL_DRAFT'),
+);
+
+// BL Print (Menu K7) — the approved bills, to issue and print (§13).
+docWorklistRouter.get(
+  '/bl-print',
+  requirePermission(`${SHIPMENT_WORKLISTS.BL_PRINT.feature}.VIEW`),
+  handler('BL_PRINT'),
 );

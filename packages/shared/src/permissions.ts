@@ -519,7 +519,18 @@ export const FEATURES: readonly FeatureDefinition[] = [
     actions: ['VIEW', 'CREATE', 'EDIT', 'TOGGLE_STATUS'],
     childScreen: true,
   },
-  { module: 'DOCUMENTATION', feature: 'DOCUMENTATION.BL_PRINT', label: 'BL Print', actions: READ_ONLY },
+  /*
+   * MODULE_DOCUMENTATION §13. ISSUE is the chain's "BL Issue" (Menu F22):
+   * one-way, like the shipping order's, and what makes originals printable.
+   * EXPORT_PDF prints them, and the non-negotiable copy. READ_ONLY stays
+   * underneath because production's permission rows already point at it.
+   */
+  {
+    module: 'DOCUMENTATION',
+    feature: 'DOCUMENTATION.BL_PRINT',
+    label: 'BL Print',
+    actions: [...READ_ONLY, 'ISSUE', 'EXPORT_PDF'],
+  },
   { module: 'DOCUMENTATION', feature: 'DOCUMENTATION.COPY_DOC_UPLOAD', label: 'Copy Doc Upload', actions: MASTER },
 
   // -- 6. Accounts -----------------------------------------------------------

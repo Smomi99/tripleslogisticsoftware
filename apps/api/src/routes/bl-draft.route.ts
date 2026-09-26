@@ -20,7 +20,7 @@ import {
   loadBlDraftById,
   loadLiveBlDraft,
 } from '../lib/bl-draft-view';
-import { renderBlDraftPdf } from '../lib/bl-draft-pdf';
+import { type BlDraftPdfInput, renderBlDraftPdf } from '../lib/bl-draft-pdf';
 import { letterheadOf } from '../lib/letterhead';
 import { logger } from '../lib/logger';
 import { putFile } from '../lib/storage';
@@ -105,6 +105,24 @@ export function blDraftWriteData(input: ReturnType<typeof blDraftInputSchema.par
     originalBlCount: input.originalBlCount ?? null,
     ladenOnBoardDate: input.ladenOnBoardDate == null ? null : new Date(input.ladenOnBoardDate),
   };
+}
+
+/**
+ * A draft is approved once, and never after it was cancelled.
+ *
+ * SENT without an approval is the ordinary case, not an odd one: the draft went
+ * to the customer to check, watermarked, and approving it once they confirm is
+ * what moves the booking on to BL Print (§13). Refusing it — as the edit guard
+ * below rightly does for edits — left that booking with no way forward but a
+ * cancellation and a second draft of the same bill.
+ */
+function assertBlApprovable(row: { code: string; status: string; approvedAt: Date | null }): void {
+  if (row.status === 'CANCELLED') {
+    throw new HttpError(409, 'BL_DRAFT_CANCELLED', `${row.code} was cancelled.`);
+  }
+  if (row.approvedAt !== null) {
+    throw new HttpError(409, 'BL_DRAFT_SETTLED', `${row.code} has already been approved.`);
+  }
 }
 
 /** An approved or sent draft is the document, not a form. §5 rule 3. */
@@ -329,7 +347,7 @@ blDraftRouter.post(
 
     const data = await withTenant(auth.tenantId, async (db) => {
       const row = await loadBlDraftById(db, id);
-      assertBlEditable(row);
+      assertBlApprovable(row);
 
       await db.blDraft.update({
         where: { id },
@@ -448,9 +466,17 @@ blDraftRouter.post(
         },
       });
 
-      // Back to the advise it still has — a booking with no live draft is one
-      // waiting for one.
-      if (row.status === 'APPROVED' || row.status === 'SENT') {
+      /*
+       * Back to the advise it still has — a booking with no live draft is one
+       * waiting for one.
+       *
+       * Only an approved draft ever moved the booking on: to BL_DRAFTED, and to
+       * BL_ISSUED once BL Print issued it (§13), so cancelling an issued bill
+       * lands here too and voids the issue. A draft that was only sent to the
+       * customer to check never moved it, and the booking is still ADVISED —
+       * keying this on SENT asked for ADVISED -> ADVISED and refused the cancel.
+       */
+      if (row.approvedAt !== null) {
         await transitionShipment(db, {
           shipmentId: row.shipmentId,
           to: 'ADVISED',
@@ -652,29 +678,26 @@ blDraftRouter.post(
 );
 
 /**
- * The bytes of the BL draft, built from the saved row.
+ * What the bill says, read from the saved row.
  *
- * Shared by the print endpoint and by `Save & Send`, so what the customer
- * receives is the page the operator printed. The watermark follows the status:
- * anything not yet approved prints as a draft.
+ * One reading for the draft and for BL Print's originals (§13), so an issued
+ * bill prints exactly the page that was approved — only the marking differs.
  */
-export async function blDraftDocument(
+export async function blDocumentInput(
   db: TenantDb,
   tenantId: bigint,
   row: BlDraftRow,
-): Promise<{ filename: string; pdf: Buffer }> {
+): Promise<Omit<BlDraftPdfInput, 'status' | 'isDraft'>> {
   const head = await letterheadOf(db, tenantId);
   const dayOf = (d: Date | null): string | null =>
     d === null ? null : d.toISOString().slice(0, 10);
 
-  const pdf = await renderBlDraftPdf({
+  return {
     ...head,
     blNo: row.blNo,
     mblNo: row.advise.mblNo,
     manifestNo: row.manifestNo,
     bookingNo: row.shipment.code,
-    status: BL_DRAFT_STATUS_LABEL[row.status],
-    isDraft: row.status === 'DRAFT' || row.status === 'SUBMITTED',
     shipperText: row.shipperText,
     consigneeText: row.consigneeText,
     notifyText: row.notifyText,
@@ -704,6 +727,25 @@ export async function blDraftDocument(
     freightPayableAt: row.freightPayableAt,
     originalBlCount: row.originalBlCount,
     ladenOnBoardDate: dayOf(row.ladenOnBoardDate),
+  };
+}
+
+/**
+ * The bytes of the BL draft, built from the saved row.
+ *
+ * Shared by the print endpoint and by `Save & Send`, so what the customer
+ * receives is the page the operator printed. The watermark follows the status:
+ * anything not yet approved prints as a draft.
+ */
+export async function blDraftDocument(
+  db: TenantDb,
+  tenantId: bigint,
+  row: BlDraftRow,
+): Promise<{ filename: string; pdf: Buffer }> {
+  const pdf = await renderBlDraftPdf({
+    ...(await blDocumentInput(db, tenantId, row)),
+    status: BL_DRAFT_STATUS_LABEL[row.status],
+    isDraft: row.status === 'DRAFT' || row.status === 'SUBMITTED',
   });
 
   return { filename: `${row.code}.pdf`, pdf };

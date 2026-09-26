@@ -107,21 +107,27 @@ export const INVOICEABLE_SHIPMENT_STATUSES = [
   'CARGO_RECEIVED',
   'ADVISED',
   'BL_DRAFTED',
+  'BL_ISSUED',
   'SHORT_CLOSED',
 ] as const satisfies readonly ShipmentStatus[];
 
 /**
  * The stages at which the chain in Menu F22 has reached its end: the advise
- * has gone to the customer, or the BL has been drafted. A filter, not a gate —
- * an accountant may bill a prepaid job earlier (§12 Q1).
+ * has gone to the customer, the BL has been drafted, or it has been issued —
+ * F22's own last step before the Debit Note. A filter, not a gate — an
+ * accountant may bill a prepaid job earlier (§12 Q1).
  */
-export const READY_TO_INVOICE_STATUSES = ['ADVISED', 'BL_DRAFTED'] as const satisfies readonly ShipmentStatus[];
+export const READY_TO_INVOICE_STATUSES = [
+  'ADVISED',
+  'BL_DRAFTED',
+  'BL_ISSUED',
+] as const satisfies readonly ShipmentStatus[];
 
 export const AWAITING_STAGES = ['READY', 'EARLIER'] as const;
 export type AwaitingStage = (typeof AWAITING_STAGES)[number];
 
 export const AWAITING_STAGE_LABEL: Record<AwaitingStage, string> = {
-  READY: 'Advised or BL drafted',
+  READY: 'Advised, BL drafted or issued',
   EARLIER: 'Earlier stages',
 };
 

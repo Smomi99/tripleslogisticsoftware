@@ -29,6 +29,8 @@ export const SHIPMENT_STATUSES = [
   // after the cargo arrived, because finalising a CLP moves nothing.
   'ADVISED',
   'BL_DRAFTED',
+  // MODULE_DOCUMENTATION §13: BL Print issued the bill (Menu F22, "BL Issue").
+  'BL_ISSUED',
   'SHORT_CLOSED',
   'CANCELLED',
 ] as const;
@@ -45,6 +47,7 @@ export const SHIPMENT_STATUS_LABEL: Record<ShipmentStatus, string> = {
   CARGO_RECEIVED: 'Cargo received',
   ADVISED: 'Shipment advised',
   BL_DRAFTED: 'BL drafted',
+  BL_ISSUED: 'BL issued',
   SHORT_CLOSED: 'Short closed',
   CANCELLED: 'Cancelled',
 };
@@ -135,7 +138,14 @@ export const SHIPMENT_TRANSITIONS: Record<ShipmentStatus, readonly ShipmentStatu
   // A cancelled BL draft returns the booking to the advise it still has, and a
   // replacement draft moves it forward again from there. No self-loop: unlike a
   // revised schedule, neither of these is re-decided in place.
-  BL_DRAFTED: ['ADVISED', 'CANCELLED'],
+  BL_DRAFTED: ['BL_ISSUED', 'ADVISED', 'CANCELLED'],
+  /*
+   * MODULE_DOCUMENTATION §13. Issuing is one-way, like issuing a shipping
+   * order: a wrong bill is cancelled on the BL Draft screen and drafted again,
+   * which returns the booking to its advise exactly as cancelling an approved
+   * draft does. There is no "un-issue" that leaves the draft standing.
+   */
+  BL_ISSUED: ['ADVISED', 'CANCELLED'],
   SHORT_CLOSED: ['CANCELLED'],
   CANCELLED: [],
 };
@@ -199,7 +209,10 @@ export function shipmentAction(
       return { label: 'Make Shipment Advise', permission: 'DOCUMENTATION.SHIPMENT_ADVISE.VIEW' };
     case 'ADVISED':
       return { label: 'Make BL draft', permission: 'DOCUMENTATION.BL_DRAFT.VIEW' };
+    // The next link in Menu F22's chain, "BL Issue", done on BL Print (K7).
     case 'BL_DRAFTED':
+      return { label: 'Issue BL', permission: 'DOCUMENTATION.BL_PRINT.VIEW' };
+    case 'BL_ISSUED':
     case 'SHORT_CLOSED':
     case 'CANCELLED':
       return { label: 'View', permission: 'CUSTOMER_SERVICE.CARGO_BOOKING.VIEW' };
@@ -608,7 +621,7 @@ export const SHIPMENT_WORKLISTS = {
     feature: 'DOCUMENTATION.SHIPMENT_ADVISE',
     tab: 'shipment-advise',
     awaiting: ['CARGO_RECEIVED'],
-    settled: ['ADVISED', 'BL_DRAFTED'],
+    settled: ['ADVISED', 'BL_DRAFTED', 'BL_ISSUED'],
     waiting: 'The shipment advise to go to the customer.',
     views: [
       {
@@ -620,7 +633,7 @@ export const SHIPMENT_WORKLISTS = {
       {
         id: 'ADVISED',
         label: 'Advised',
-        statuses: ['ADVISED', 'BL_DRAFTED'],
+        statuses: ['ADVISED', 'BL_DRAFTED', 'BL_ISSUED'],
         hint: 'The customer has the advise, with its House BL number.',
       },
     ],
@@ -636,7 +649,7 @@ export const SHIPMENT_WORKLISTS = {
     feature: 'DOCUMENTATION.BL_DRAFT',
     tab: 'bl',
     awaiting: ['ADVISED'],
-    settled: ['BL_DRAFTED'],
+    settled: ['BL_DRAFTED', 'BL_ISSUED'],
     waiting: 'A bill of lading to be drafted and agreed.',
     views: [
       {
@@ -648,8 +661,38 @@ export const SHIPMENT_WORKLISTS = {
       {
         id: 'DRAFTED',
         label: 'Drafted',
+        statuses: ['BL_DRAFTED', 'BL_ISSUED'],
+        hint: 'Approved drafts. BL Print issues them and prints the originals.',
+      },
+    ],
+  },
+  /*
+   * MODULE_DOCUMENTATION §13 — BL Print (Menu K7).
+   *
+   * No sheet draws this screen, so it takes the shape of its neighbours: a list
+   * of bookings, the approved ones waiting to be issued and the ones already
+   * issued. What it adds is the one act the chain names (F22, "BL Issue") and
+   * the originals that act makes printable.
+   */
+  BL_PRINT: {
+    label: 'BL Print',
+    feature: 'DOCUMENTATION.BL_PRINT',
+    tab: 'bl',
+    awaiting: ['BL_DRAFTED'],
+    settled: ['BL_ISSUED'],
+    waiting: 'The approved bill of lading to be issued and its originals printed.',
+    views: [
+      {
+        id: 'TO_ISSUE',
+        label: 'To issue',
         statuses: ['BL_DRAFTED'],
-        hint: 'Approved drafts, ready for BL print.',
+        hint: 'Approved bills of lading. Issue one to print its originals; a non-negotiable copy prints any time.',
+      },
+      {
+        id: 'ISSUED',
+        label: 'Issued',
+        statuses: ['BL_ISSUED'],
+        hint: 'Issued bills of lading. Print the originals again, or a non-negotiable copy.',
       },
     ],
   },

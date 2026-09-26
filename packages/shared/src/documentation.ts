@@ -255,6 +255,8 @@ export interface BlDraftDto {
   submittedAt: string | null;
   approvedAt: string | null;
   sentAt: string | null;
+  /** §13: set by BL Print. Kept on a cancelled draft — a voided issue is history. */
+  issuedAt: string | null;
   cancelReason: string | null;
 
   containers: BlDraftContainerDto[];
@@ -264,7 +266,15 @@ export interface BlDraftDto {
 export interface BlDraftPrefillDto
   extends Omit<
     BlDraftDto,
-    'id' | 'code' | 'status' | 'origin' | 'submittedAt' | 'approvedAt' | 'sentAt' | 'cancelReason'
+    | 'id'
+    | 'code'
+    | 'status'
+    | 'origin'
+    | 'submittedAt'
+    | 'approvedAt'
+    | 'sentAt'
+    | 'issuedAt'
+    | 'cancelReason'
   > {
   blockedReason: string | null;
 }
@@ -330,6 +340,61 @@ export const blDraftCancelSchema = z.object({
 });
 
 export type BlDraftCancelInput = z.infer<typeof blDraftCancelSchema>;
+
+// ------------------------------------------------------------------ BL print
+
+/**
+ * BL Print (Menu K7) — docs/MODULE_DOCUMENTATION.md §13.
+ *
+ * ORIGINAL prints one page per original (D56's "No. of Original BL"), each
+ * marked with its number; COPY prints one page marked non-negotiable. Only an
+ * issued bill prints originals (§13.3 rule 4).
+ */
+export const BL_PRINT_KINDS = ['ORIGINAL', 'COPY'] as const;
+export type BlPrintKind = (typeof BL_PRINT_KINDS)[number];
+
+export const blPrintQuerySchema = z.object({
+  kind: z.enum(BL_PRINT_KINDS).default('ORIGINAL'),
+});
+
+/**
+ * `Issue BL`.
+ *
+ * The number of originals is the approved draft's. It is asked for here only
+ * when the draft left D56 empty: the approved draft is frozen, and a bill has
+ * to say how many originals were issued. It cannot be changed here when the
+ * draft already has one — that is a correction to the bill, which is cancel
+ * and redraft (§5 rule 3).
+ */
+export const blIssueSchema = z.object({
+  originalBlCount: z
+    .number()
+    .int('Use a whole number.')
+    .min(0, 'That cannot be negative.')
+    .max(99, 'That is too many.')
+    .nullish(),
+});
+
+export type BlIssueInput = z.infer<typeof blIssueSchema>;
+
+/** What BL Print shows about a booking's bill, and what `Issue BL` confirms. */
+export interface BlPrintDto {
+  shipmentId: string;
+  bookingNo: string;
+  customerName: string;
+  draftId: string;
+  draftCode: string;
+  draftStatus: BlDraftStatus;
+  blNo: string;
+  mblNo: string | null;
+  polName: string;
+  podName: string;
+  originalBlCount: number | null;
+  ladenOnBoardDate: string | null;
+  approvedAt: string | null;
+  issuedAt: string | null;
+  issuedByName: string | null;
+}
 
 // ----------------------------------------------------------------- templates
 
