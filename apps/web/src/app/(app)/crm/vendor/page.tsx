@@ -341,7 +341,8 @@ function VendorForm({
       bankDetails: '',
       tinNo: '',
       vatNo: '',
-      openingBalance: '',
+      weOwe: '',
+      vendorOwe: '',
       openingCurrencyId: '',
     },
   });
@@ -356,7 +357,8 @@ function VendorForm({
       bankDetails: vendor?.bankDetails ?? '',
       tinNo: vendor?.tinNo ?? '',
       vatNo: vendor?.vatNo ?? '',
-      openingBalance: vendor?.openingBalance ?? '',
+      weOwe: vendor?.weOwe ?? '',
+      vendorOwe: vendor?.vendorOwe ?? '',
       openingCurrencyId: vendor?.openingCurrencyId ?? '',
     });
     setFormError(null);
@@ -418,13 +420,17 @@ function VendorForm({
       <Field id="vatNo" label="VAT / BIN" error={errors.vatNo?.message}>
         <Input id="vatNo" numeric {...register('vatNo')} />
       </Field>
-      {/* Opening figures for the accounts ledger. */}
-      <Field
-        id="openingBalance"
-        label="Opening balance"
-        error={errors.openingBalance?.message}
-      >
-        <Input id="openingBalance" numeric inputMode="decimal" {...register('openingBalance')} />
+      {/*
+        Opening figures for the accounts ledger — the agent's two columns
+        (client, 2026-09-27). Each names its own side, so what we owe a vendor
+        is never typed as a positive number and read as money owed to us.
+      */}
+      <Field id="weOwe" label="We owe (Dr)" error={errors.weOwe?.message}>
+        <Input id="weOwe" numeric inputMode="decimal" {...register('weOwe')} />
+      </Field>
+
+      <Field id="vendorOwe" label="Vendor owe (Cr)" error={errors.vendorOwe?.message}>
+        <Input id="vendorOwe" numeric inputMode="decimal" {...register('vendorOwe')} />
       </Field>
 
       <Field

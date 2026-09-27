@@ -254,7 +254,8 @@ export default function QuotationListPage() {
             >
               View
             </Link>
-            {can('CUSTOMER_SERVICE.QUOTATION.EDIT') && row.status !== 'SUPERSEDED' && (
+            {/* §5.6: an accepted quotation reopens once all its bookings are cancelled. */}
+            {can('CUSTOMER_SERVICE.QUOTATION.EDIT') && row.editable && (
               <Link
                 href={{ pathname: `/cs/quotation/${row.id}` }}
                 className="text-cell text-harbour hover:underline"

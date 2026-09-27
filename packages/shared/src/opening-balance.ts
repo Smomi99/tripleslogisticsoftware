@@ -13,15 +13,13 @@ import { z } from 'zod';
  * in the database, so no future write path can post a figure with no currency.
  */
 
-/** Signed: a customer or vendor balance can fall either side of zero. */
-export const signedMoneyField = (message: string) =>
-  z
-    .string()
-    .trim()
-    .refine((v) => v === '' || /^-?\d{1,14}(\.\d{1,4})?$/.test(v), message)
-    .optional();
-
-/** Unsigned: the agent's two columns each name their own side already. */
+/**
+ * Unsigned: the two opening columns each name their own side already — "We
+ * owe" and "Agent / Customer / Vendor owe". Customer and vendor used to take
+ * one signed figure; the client moved them to the agent's pair on 2026-09-27
+ * (MODULE_ACCOUNTS §14.14), because a payable typed as a positive number read
+ * as money owed to us.
+ */
 export const unsignedMoneyField = (message: string) =>
   z
     .string()
@@ -51,10 +49,4 @@ export function currencyRequiredFor(
   currencyId: string | undefined,
 ): boolean {
   return !amounts.some(hasAmount) || (currencyId ?? '') !== '';
-}
-
-export interface OpeningBalanceDto {
-  openingBalance: string | null;
-  openingCurrencyId: string | null;
-  openingCurrencyCode: string | null;
 }

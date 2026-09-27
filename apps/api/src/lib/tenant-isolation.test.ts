@@ -207,8 +207,9 @@ describe('model tier registry', () => {
     // shipment tables + the two schedule tables + shipping_order + the two
     // cargo receipt tables + commodity_business_port + the two CLP tables
     // + clp_booking (CR-002) + the five documentation tables
-    // (MODULE_DOCUMENTATION §4) + the five accounts tables (MODULE_ACCOUNTS §4).
-    expect(known.length).toBe(93);
+    // (MODULE_DOCUMENTATION §4) + the five accounts tables (MODULE_ACCOUNTS §4)
+    // + the seven tables of the books (MODULE_ACCOUNTS §14).
+    expect(known.length).toBe(100);
   });
 
   it('applies the caller row level security to every view', async () => {

@@ -554,7 +554,14 @@ export const FEATURES: readonly FeatureDefinition[] = [
     label: 'Debit Invoice',
     actions: [...MASTER, 'SEND', 'EXPORT_PDF', 'CANCEL', 'RECEIVE', 'VIEW_BUY_PRICE'],
   },
-  // Not built; the client's menu calls it Credit Invoice now. Key unchanged.
+  /*
+   * MODULE_ACCOUNTS §14.2: the suppliers' invoices — the cost blocks of issued
+   * debit invoices. Key unchanged since the menu called it New Credit Invoice.
+   * VIEW is the list. The sheet's Edit and Delete change a debit invoice's cost
+   * side, so they ride on ACCOUNTS.DEBIT_INVOICE.EDIT + VIEW_BUY_PRICE — the
+   * grant that already does exactly that on the invoice — rather than on a
+   * DELETE this module may not carry (CR-002). Make Payment is EXPENSE.CREATE.
+   */
   { module: 'ACCOUNTS', feature: 'ACCOUNTS.NEW_CREDIT_INVOICE', label: 'Credit Invoice', actions: MASTER_APPROVE },
   /*
    * Was AMOUNT_RECEIVABLE and AMOUNT_PAYABLE — the client merged the two
@@ -562,10 +569,62 @@ export const FEATURES: readonly FeatureDefinition[] = [
    * the payable ones were copied here before those rows were removed.
    */
   { module: 'ACCOUNTS', feature: 'ACCOUNTS.RECEIVABLE_PAYABLE', label: 'Receivable-Payable list', actions: MASTER },
+  /*
+   * MODULE_ACCOUNTS §14. The books, in the order of Menu M7–M12.
+   *
+   * The four Transaction screens are four features because the sheets make
+   * them four jobs: the person who may pay a bill is not always the person who
+   * may bank a cheque, and neither is automatically trusted with a free-form
+   * journal. A voucher is never edited once in the books — CANCEL retires it,
+   * with a reason, and it is entered again.
+   *
+   * Journal alone has a draft (`Save`) and a posting (`Save & agreed`), so it
+   * alone carries EDIT and APPROVE: writing a journal and agreeing it into the
+   * books are separate acts, the way sending a quotation is separate from
+   * building one.
+   */
+  {
+    module: 'ACCOUNTS',
+    feature: 'ACCOUNTS.CHART_OF_ACCOUNTS',
+    label: 'Chart of accounts',
+    actions: ['VIEW', 'CREATE', 'EDIT', 'TOGGLE_STATUS'],
+  },
+  {
+    module: 'ACCOUNTS',
+    feature: 'ACCOUNTS.JOURNAL',
+    label: 'Journal',
+    actions: ['VIEW', 'CREATE', 'EDIT', 'APPROVE', 'CANCEL'],
+  },
+  { module: 'ACCOUNTS', feature: 'ACCOUNTS.EXPENSE', label: 'Expense', actions: ['VIEW', 'CREATE', 'CANCEL'] },
+  { module: 'ACCOUNTS', feature: 'ACCOUNTS.INCOME', label: 'Income', actions: ['VIEW', 'CREATE', 'CANCEL'] },
+  {
+    module: 'ACCOUNTS',
+    feature: 'ACCOUNTS.INTERNAL_TRANSFER',
+    label: 'Internal Transfer',
+    actions: ['VIEW', 'CREATE', 'CANCEL'],
+  },
   { module: 'ACCOUNTS', feature: 'ACCOUNTS.INCOME_STATEMENT', label: 'Income Statement', actions: READ_ONLY },
   { module: 'ACCOUNTS', feature: 'ACCOUNTS.BALANCE_SHEET', label: 'Balance Sheet', actions: READ_ONLY },
   { module: 'ACCOUNTS', feature: 'ACCOUNTS.CASH_FLOW_STATEMENT', label: 'Cash Flow Statement', actions: READ_ONLY },
   { module: 'ACCOUNTS', feature: 'ACCOUNTS.TA_DA', label: 'TA/DA', actions: MASTER_APPROVE },
+  /*
+   * Menu M17–M19: Accounts' own Setting group. Configuration rather than
+   * business history, but it lives in a transactional module, so it retires
+   * by going inactive (CR-002) — a bank account a voucher has posted to can
+   * never simply vanish.
+   */
+  {
+    module: 'ACCOUNTS',
+    feature: 'ACCOUNTS.BANK_SETUP',
+    label: 'Bank Set up',
+    actions: ['VIEW', 'CREATE', 'EDIT', 'TOGGLE_STATUS'],
+  },
+  {
+    module: 'ACCOUNTS',
+    feature: 'ACCOUNTS.ACCOUNT_SETUP',
+    label: 'Account Set up',
+    actions: ['VIEW', 'CREATE', 'EDIT', 'TOGGLE_STATUS'],
+  },
 
   // -- 7. Setting ------------------------------------------------------------
   // Workstation and Warehouse are on the §3 menu but have no wireframe (§11).

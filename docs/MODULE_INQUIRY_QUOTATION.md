@@ -310,6 +310,8 @@ When the business is won through an agent, the user picks the winning agent on t
    the result on the quotation for the PDF.
 7. `Amount in words` is generated from the USD total on save.
 8. **Editing a SENT quotation creates revision 2**, marks revision 1 `SUPERSEDED`, and keeps both.
+   An `ACCEPTED` quotation is revised the same way once every booking raised from it is cancelled
+   (MODULE_BOOKING_CARGO §5.6).
    Quotation numbers do not get reused.
 9. On send: status → `SENT`, inquiry → `QUOTED`, PDF generated and attached, `email_log` written.
 

@@ -179,12 +179,21 @@ export const INVOICE_SELECT = {
         orderBy: [{ sortOrder: 'asc' as const }, { id: 'asc' as const }],
         select: LINE_SELECT,
       },
+      // §14.6: Expense vouchers paid against this block (the credit invoice).
+      payments: { where: { deletedAt: null }, select: { amount: true } },
     },
   },
   receipts: {
     where: { deletedAt: null },
     orderBy: [{ paymentDate: 'asc' as const }, { id: 'asc' as const }],
-    select: { id: true, paymentDate: true, amount: true, amountBase: true, createdAt: true },
+    select: {
+      id: true,
+      paymentDate: true,
+      amount: true,
+      amountBase: true,
+      createdAt: true,
+      journalEntry: { select: { id: true, code: true } },
+    },
   },
 } satisfies Prisma.DebitInvoiceSelect;
 
@@ -268,9 +277,18 @@ export function costEditable(row: { status: string }): boolean {
   return row.status !== 'CANCELLED';
 }
 
-/** §3.7 and §12 Q7: nothing reverses a receipt yet, so one blocks cancelling. */
-export function cancellable(row: { status: string }, receiptCount: number): boolean {
-  return row.status !== 'CANCELLED' && receiptCount === 0;
+/**
+ * §3.7. Money received against the invoice, or paid against any of its credit
+ * invoices, blocks cancelling while it stands. Cancelling the Income or
+ * Expense voucher that moved it takes it back (§14.4), and then this opens.
+ */
+export function cancellable(row: { status: string }, receiptCount: number, paymentCount = 0): boolean {
+  return row.status !== 'CANCELLED' && receiptCount === 0 && paymentCount === 0;
+}
+
+/** How many supplier payments stand against an invoice's cost blocks. */
+export function paymentCountOf(row: { costs: { payments: unknown[] }[] }): number {
+  return row.costs.reduce((n, c) => n + c.payments.length, 0);
 }
 
 // ------------------------------------------------------------- the DTO
@@ -313,6 +331,7 @@ export function invoiceDto(
   const costs: DebitInvoiceCostDto[] | null = ctx.canViewBuyPrice
     ? row.costs.map((cost) => {
         const party = partyOf(cost);
+        const paid = paymentOf(cost.totalAmount, cost.payments);
         return {
           id: cost.id.toString(),
           partyType: cost.partyType,
@@ -327,6 +346,9 @@ export function invoiceDto(
           totalAmount: money(cost.totalAmount),
           totalAmountBase: money(cost.totalAmountBase),
           lines: cost.lines.map((l) => lineDto(l, cost.conversionRate)),
+          paidAmount: money(paid.received),
+          outstandingAmount: money(paid.outstanding),
+          paymentStatus: paid.status,
         };
       })
     : null;
@@ -369,6 +391,8 @@ export function invoiceDto(
       amount: money(r.amount),
       amountBase: money(r.amountBase),
       recordedAt: r.createdAt.toISOString(),
+      journalEntryId: r.journalEntry?.id.toString() ?? null,
+      journalEntryCode: r.journalEntry?.code ?? null,
     })),
     issuedAt: row.issuedAt?.toISOString() ?? null,
     sentAt: row.sentAt?.toISOString() ?? null,
@@ -376,7 +400,7 @@ export function invoiceDto(
     cancelReason: row.cancelReason,
     sellEditable: sellEditable(row, row.receipts.length),
     costEditable: costEditable(row),
-    cancellable: cancellable(row, row.receipts.length),
+    cancellable: cancellable(row, row.receipts.length, paymentCountOf(row)),
   };
 }
 
@@ -529,9 +553,20 @@ async function writeCosts(
 ): Promise<void> {
   const existing = await db.debitInvoiceCost.findMany({
     where: { debitInvoiceId: invoiceId, deletedAt: null },
-    select: { id: true },
+    select: {
+      id: true,
+      partyType: true,
+      carrierId: true,
+      agentId: true,
+      vendorId: true,
+      currencyId: true,
+      conversionRate: true,
+      supplierInvoiceNo: true,
+      payments: { where: { deletedAt: null }, select: { amount: true } },
+    },
   });
   const existingIds = new Set(existing.map((c) => c.id.toString()));
+  const byId = new Map(existing.map((c) => [c.id.toString(), c]));
   const kept = new Set<string>();
 
   for (const [index, block] of costs.entries()) {
@@ -577,6 +612,29 @@ async function writeCosts(
         throw HttpError.badRequest('One of the cost blocks does not belong to this invoice.');
       }
       costId = BigInt(block.id);
+      /*
+       * §14.6: once an Expense voucher has paid against a credit invoice, who
+       * it is owed to and the currency and rate it is booked at are what the
+       * payment was measured against. Moving any of them would leave the
+       * supplier's ledger settling a figure that no longer exists.
+       */
+      const before = byId.get(block.id)!;
+      if (before.payments.length > 0) {
+        const partyBefore = before.carrierId ?? before.agentId ?? before.vendorId;
+        if (
+          before.partyType !== block.partyType ||
+          partyBefore !== partyId ||
+          before.currencyId !== currencyId ||
+          !before.conversionRate.equals(rate)
+        ) {
+          throw new HttpError(
+            409,
+            'CREDIT_INVOICE_PAID',
+            `${before.supplierInvoiceNo ?? 'That supplier invoice'} has been paid against, so its supplier, ` +
+              'currency and rate can no longer change. Cancel the payment voucher first.',
+          );
+        }
+      }
       await db.debitInvoiceCost.update({ where: { id: costId }, data });
     } else {
       const made = await db.debitInvoiceCost.create({
@@ -604,9 +662,31 @@ async function writeCosts(
       });
     }
     await retotalCost(db, costId, rate);
+
+    const paidSoFar = (byId.get(costId.toString())?.payments ?? []).reduce((sum, p) => sum.plus(p.amount), ZERO);
+    if (paidSoFar.greaterThan(0)) {
+      const after = await db.debitInvoiceCost.findFirst({ where: { id: costId }, select: { totalAmount: true } });
+      if (after !== null && after.totalAmount.lessThan(paidSoFar)) {
+        throw new HttpError(
+          409,
+          'CREDIT_INVOICE_PAID',
+          `${block.supplierInvoiceNo ?? 'That supplier invoice'} has ${money(paidSoFar)} paid against it, ` +
+            'so it cannot come to less than that.',
+        );
+      }
+    }
   }
 
   const dropped = [...existingIds].filter((id) => !kept.has(id)).map((id) => BigInt(id));
+  const paidAndDropped = dropped.map((id) => byId.get(id.toString())!).filter((c) => c.payments.length > 0);
+  if (paidAndDropped.length > 0) {
+    throw new HttpError(
+      409,
+      'CREDIT_INVOICE_PAID',
+      `${paidAndDropped[0]!.supplierInvoiceNo ?? 'A supplier invoice'} has been paid against, so it cannot be ` +
+        'removed. Cancel the payment voucher first.',
+    );
+  }
   if (dropped.length > 0) {
     await db.debitInvoiceCostLine.updateMany({
       where: { debitInvoiceCostId: { in: dropped }, deletedAt: null },

@@ -511,9 +511,12 @@ export function ShipmentBookingScreen({
       )}
 
       {booking?.status === 'CANCELLED' ? (
-        <p className="rounded-manifest border border-alert/30 bg-alert/5 px-3 py-2 text-body text-hull">
-          <span className="font-medium">Cancelled.</span> {booking.cancelReason}
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-manifest border border-alert/30 bg-alert/5 px-3 py-2">
+          <p className="text-body text-hull">
+            <span className="font-medium">Cancelled.</span> {booking.cancelReason}
+          </p>
+          <QuotationAfterCancel booking={booking} />
+        </div>
       ) : (
         !editable && (
           <p className="rounded-manifest border border-signal/30 bg-signal/5 px-3 py-2 text-body text-hull">
@@ -1210,6 +1213,12 @@ export function ShipmentBookingScreen({
             {booking?.code} stops here and nothing further can be done with it. Say why — this is
             the only record of it, and it is what accounts and the customer will read later.
           </p>
+          <p className="text-body text-steel">
+            If the customer&rsquo;s requirement has changed, revise quotation{' '}
+            <span className="font-mono tabular-nums">{booking?.quotationCode}</span> once this is
+            cancelled: it reopens as soon as none of its bookings is live, and the new revision keeps
+            the same number.
+          </p>
           <Field id="cancelReason" label="Reason" required>
             <Input
               id="cancelReason"
@@ -1235,4 +1244,37 @@ export function ShipmentBookingScreen({
       </Modal>
     </div>
   );
+}
+
+/**
+ * MODULE_BOOKING_CARGO §5.6 — what a cancelled booking offers for its
+ * quotation. The customer's requirement changed, so the quotation is revised
+ * (same number, next revision) and sent again; the accepted revision stays as
+ * it was, with this booking pointing at it.
+ */
+function QuotationAfterCancel({ booking }: { booking: ShipmentDto }) {
+  const { can } = useSession();
+  const current = booking.currentQuotation;
+  if (current === null) return null;
+
+  if (current.editable && can('CUSTOMER_SERVICE.QUOTATION.EDIT')) {
+    return (
+      <Link
+        href={{ pathname: `/cs/quotation/${current.id}` }}
+        className="text-body font-medium text-harbour hover:underline"
+      >
+        Revise quotation {booking.quotationCode}
+        {current.revisionNo > 1 ? ` (rev ${current.revisionNo})` : ''}
+      </Link>
+    );
+  }
+  if (current.liveBookingCodes.length > 0) {
+    return (
+      <p className="text-cell text-steel">
+        {booking.quotationCode} is still booked on {current.liveBookingCodes.join(', ')}, so it cannot be
+        revised yet.
+      </p>
+    );
+  }
+  return null;
 }

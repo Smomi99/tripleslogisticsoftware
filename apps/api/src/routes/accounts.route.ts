@@ -5,6 +5,8 @@ import {
   type AwaitingFreightInvRow,
   awaitingFreightInvQuerySchema,
   buildMeta,
+  type CreditInvoiceRow,
+  creditInvoiceListQuerySchema,
   type DebitInvoiceDto,
   type DebitInvoiceListRow,
   type DebitInvoiceOptionsDto,
@@ -13,7 +15,6 @@ import {
   debitInvoiceCostsSaveSchema,
   debitInvoiceDisplayStatus,
   debitInvoiceListQuerySchema,
-  debitInvoiceReceiptSchema,
   debitInvoiceSaveSchema,
   debitInvoiceSendSchema,
   INVOICEABLE_SHIPMENT_STATUSES,
@@ -25,6 +26,7 @@ import {
   type ReceivablePayableRow,
   receivablePayableQuerySchema,
   type ShipmentStatus,
+  type SupplierPartyType,
 } from '@ff/shared';
 
 import { Prisma } from '../generated/prisma/client';
@@ -38,11 +40,13 @@ import {
   costEditable,
   currencyOf,
   dec,
+  describeLines,
   type InvoiceRow,
   invoiceDto,
   isoOf,
   loadInvoice,
   money,
+  paymentCountOf,
   paymentOf,
   prefillFor,
   quotedAmount,
@@ -51,7 +55,6 @@ import {
   saveCostSide,
   saveSellSide,
   sellEditable,
-  toBase,
   day,
 } from '../lib/debit-invoice';
 import { renderDebitInvoicePdf } from '../lib/debit-invoice-pdf';
@@ -62,12 +65,14 @@ import { letterheadOf } from '../lib/letterhead';
 import { logger } from '../lib/logger';
 import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import {
+  emptyBalance,
   isOpen,
   ledgerEntries,
   ledgerTotals,
   partyBalances,
   partyKey,
   totalsOf,
+  unbilledBalances,
 } from '../lib/receivable-payable';
 import { renderRequiredContainer } from '../lib/render-volumes';
 import { parseId } from '../lib/request';
@@ -82,7 +87,11 @@ import { uploadSingle } from '../middleware/upload';
  *
  *   Awaiting Freight Inv      the queue of confirmed bookings not yet invoiced
  *   Debit Invoice             the invoice itself, from a booking or `Create New`
+ *   Credit Invoice            the suppliers' invoices those carry (§14.2)
  *   Receivable-Payable list   who owes whom, and each party's ledger
+ *
+ * Money in and out is the books' (ledger.route.ts): `Receive` and `Make
+ * Payment` open the Income and Expense vouchers, which settle what they name.
  *
  * Every write re-reads the invoice inside its transaction and applies §3.7
  * there — never trusting the state the browser last saw.
@@ -93,6 +102,7 @@ accountsRouter.use(authenticate);
 const AWAITING = 'ACCOUNTS.AWAITING_FREIGHT_INV';
 const INVOICE = 'ACCOUNTS.DEBIT_INVOICE';
 const LEDGER = 'ACCOUNTS.RECEIVABLE_PAYABLE';
+const CREDIT = 'ACCOUNTS.NEW_CREDIT_INVOICE';
 
 type Auth = AuthContext;
 
@@ -498,6 +508,10 @@ accountsRouter.get('/debit-invoices', requirePermission(`${INVOICE}.VIEW`), asyn
             select: { id: true, code: true, quotationDate: true, inquiry: { select: { code: true } } },
           },
           receipts: { where: { deletedAt: null }, select: { amount: true } },
+          costs: {
+            where: { deletedAt: null },
+            select: { payments: { where: { deletedAt: null }, select: { id: true } } },
+          },
         },
       }),
       db.debitInvoice.count({ where }),
@@ -529,7 +543,7 @@ accountsRouter.get('/debit-invoices', requirePermission(`${INVOICE}.VIEW`), asyn
       outstandingAmount: money(payment.outstanding),
       status: row.status,
       displayStatus: debitInvoiceDisplayStatus(row.status, payment.status),
-      cancellable: cancellable(row, row.receipts.length),
+      cancellable: cancellable(row, row.receipts.length, paymentCountOf(row)),
     };
   });
 
@@ -615,8 +629,8 @@ accountsRouter.patch('/debit-invoices/:id', requirePermission(`${INVOICE}.EDIT`)
         409,
         'SELL_SIDE_LOCKED',
         `Money has been received against ${row.code}, so what the customer was billed can no ` +
-          'longer change. The cost side can still be updated; to correct the bill, the receipt ' +
-          'has to be reversed first.',
+          'longer change. The cost side can still be updated; to correct the bill, cancel the ' +
+          'Income voucher that received it first.',
       );
     }
 
@@ -839,12 +853,20 @@ accountsRouter.post('/debit-invoices/:id/cancel', requirePermission(`${INVOICE}.
     if (row.status === 'CANCELLED') {
       throw new HttpError(409, 'INVOICE_CANCELLED', `${row.code} was already cancelled.`);
     }
-    if (!cancellable(row, row.receipts.length)) {
+    if (row.receipts.length > 0) {
       throw new HttpError(
         409,
         'MONEY_RECEIVED',
         `Money has been received against ${row.code}, so it cannot be cancelled while that ` +
-          'receipt stands.',
+          'receipt stands. Cancel the Income voucher that received it first.',
+      );
+    }
+    if (!cancellable(row, row.receipts.length, paymentCountOf(row))) {
+      throw new HttpError(
+        409,
+        'MONEY_PAID',
+        `A supplier has been paid against ${row.code}, so it cannot be cancelled while that ` +
+          'payment stands. Cancel the Expense voucher that paid it first.',
       );
     }
     await db.debitInvoice.update({
@@ -864,60 +886,13 @@ accountsRouter.post('/debit-invoices/:id/cancel', requirePermission(`${INVOICE}.
   res.json(payload);
 });
 
-/** `Receive` (sheet N8, rows 15–20). */
-accountsRouter.post('/debit-invoices/:id/receipts', requirePermission(`${INVOICE}.RECEIVE`), async (req, res) => {
-  const auth = req.auth!;
-  const id = parseId(req.params.id, 'debit invoice');
-  const input = debitInvoiceReceiptSchema.parse(req.body);
-
-  const data = await withTenant(auth.tenantId, async (db) => {
-    const row = await loadInvoice(db, id);
-    if (row.status !== 'ISSUED') {
-      throw new HttpError(
-        409,
-        'NOT_ISSUED',
-        row.status === 'DRAFT'
-          ? `${row.code} is still a draft. Send it before recording money against it.`
-          : `${row.code} was cancelled.`,
-      );
-    }
-    const payment = paymentOf(row.totalAmount, row.receipts);
-    const amount = new Prisma.Decimal(input.amount);
-    if (amount.greaterThan(payment.outstanding)) {
-      throw new HttpError(
-        409,
-        'OVER_RECEIVED',
-        `That is more than the ${row.currencyCode} ${payment.outstanding.toFixed(2)} still outstanding on ${row.code}.`,
-      );
-    }
-    /*
-     * At the invoice's frozen rate (§3.4). The receipt that closes the invoice
-     * takes whatever base is left rather than its own rounded product, so a
-     * fully received invoice comes to exactly zero in both columns of the
-     * Receivable-Payable list, not a stray 0.0001.
-     */
-    const receivedBase = row.receipts.reduce((sum, r) => sum.plus(r.amountBase), new Prisma.Decimal(0));
-    const amountBase = amount.equals(payment.outstanding)
-      ? row.totalAmountBase.minus(receivedBase)
-      : toBase(amount, row.conversionRate);
-
-    await db.debitInvoiceReceipt.create({
-      data: {
-        tenantId: auth.tenantId,
-        debitInvoiceId: id,
-        paymentDate: new Date(`${input.paymentDate}T00:00:00.000Z`),
-        amount,
-        amountBase,
-        createdBy: auth.userId,
-        updatedBy: auth.userId,
-      },
-    });
-    return dtoFor(db, auth, id);
-  });
-
-  const payload: ApiSuccess<DebitInvoiceDto> = { success: true, data };
-  res.status(201).json(payload);
-});
+/*
+ * `Receive` (sheet N8) opens the Income sheet now (Design.xlsx 2026-09-27): the
+ * receipt is written by the Income voucher that banks the money, in
+ * ledger.route.ts. The old form that recorded a receipt with no bank behind it
+ * is gone, so there is one way for a customer to have paid, and it moves the
+ * bank balance (§14.6).
+ */
 
 // ------------------------------------------ the supplier's invoice file
 
@@ -1054,14 +1029,10 @@ accountsRouter.get('/receivable-payable', requirePermission(`${LEDGER}.VIEW`), a
       .filter((p) => needle === undefined || p.name.toLowerCase().includes(needle) || p.code.toLowerCase().includes(needle))
       .sort((a, b) => (query.sortOrder === 'desc' ? b.name.localeCompare(a.name) : a.name.localeCompare(b.name)));
 
-    const zero = {
-      receivableUsd: new Prisma.Decimal(0),
-      receivableBase: new Prisma.Decimal(0),
-      payableUsd: new Prisma.Decimal(0),
-      payableBase: new Prisma.Decimal(0),
-      rateMissing: false,
-    };
-    const withBalance = listed.map((p) => ({ party: p, balance: balances.get(partyKey(p.type, p.id)) ?? zero }));
+    const withBalance = listed.map((p) => ({
+      party: p,
+      balance: balances.get(partyKey(p.type, p.id)) ?? emptyBalance(),
+    }));
     const page = withBalance.slice((query.page - 1) * query.limit, query.page * query.limit);
 
     return {
@@ -1072,6 +1043,8 @@ accountsRouter.get('/receivable-payable', requirePermission(`${LEDGER}.VIEW`), a
         partyName: party.name,
         receivableUsd: money(balance.receivableUsd),
         receivableBase: money(balance.receivableBase),
+        unbilledUsd: money(balance.unbilledUsd),
+        unbilledBase: money(balance.unbilledBase),
         payableUsd: money(balance.payableUsd),
         payableBase: money(balance.payableBase),
         rateMissing: balance.rateMissing,
@@ -1090,7 +1063,7 @@ accountsRouter.get('/receivable-payable', requirePermission(`${LEDGER}.VIEW`), a
   res.json(payload);
 });
 
-/** One party's ledger — the `Ledger.` sheet, read-only until payments exist (§12 Q9). */
+/** One party's ledger — the `Ledger.` sheet (§2.5), with its payments (§14.6). */
 accountsRouter.get(
   '/receivable-payable/:partyType/:partyId',
   requirePermission(`${LEDGER}.VIEW`),
@@ -1109,7 +1082,11 @@ accountsRouter.get(
       if (party === undefined) throw HttpError.notFound('That party was not found.');
 
       const base = await baseCurrency(db, auth.tenantId);
-      const entries = await ledgerEntries(db, auth.tenantId, base, { type: partyType, id: partyId });
+      const party_ = { type: partyType, id: partyId };
+      const [entries, unbilled] = await Promise.all([
+        ledgerEntries(db, auth.tenantId, base, party_),
+        unbilledBalances(db, auth.tenantId, base, party_),
+      ]);
       return {
         partyType,
         partyId: partyId.toString(),
@@ -1117,11 +1094,205 @@ accountsRouter.get(
         partyName: party.name,
         baseCurrencyCode: base === null ? null : isoOf(base),
         entries,
-        totals: ledgerTotals(entries),
+        totals: ledgerTotals(entries, unbilled.get(partyKey(partyType, partyId))),
       };
     });
 
     const payload: ApiSuccess<LedgerDto> = { success: true, data };
+    res.json(payload);
+  },
+);
+
+// ===========================================================================
+// Credit Invoice (sheet `Credit Invoice`, §14.2)
+// ===========================================================================
+
+/*
+ * The suppliers' invoices: every cost block of an issued debit invoice, each
+ * one carrier's, agent's or vendor's bill for a job. The sheet is the old
+ * `Ledger.` drill-down retitled, with the supplier's own invoice number in
+ * column C — so this is that ledger, for every supplier at once.
+ *
+ * PAID and PARTIAL are derived from the payments, so filtering on them asks
+ * the database for the sums, as the debit invoice list does for receipts.
+ */
+async function costIdsByPayment(db: TenantDb, tenantId: bigint, want: 'PAID' | 'PARTIAL'): Promise<bigint[]> {
+  const rows = await db.$queryRaw<{ id: bigint }[]>`
+    SELECT c.id
+      FROM debit_invoice_cost c
+      JOIN debit_invoice i ON i.id = c.debit_invoice_id
+      LEFT JOIN (
+        SELECT debit_invoice_cost_id, SUM(amount) AS paid
+          FROM supplier_payment
+         WHERE deleted_at IS NULL
+         GROUP BY debit_invoice_cost_id
+      ) p ON p.debit_invoice_cost_id = c.id
+     WHERE c.tenant_id = ${tenantId}
+       AND c.deleted_at IS NULL
+       AND i.deleted_at IS NULL
+       AND i.status = 'ISSUED'
+       AND ${
+         want === 'PAID'
+           ? Prisma.sql`COALESCE(p.paid, 0) >= c.total_amount`
+           : Prisma.sql`COALESCE(p.paid, 0) > 0 AND COALESCE(p.paid, 0) < c.total_amount`
+       }
+  `;
+  return rows.map((r) => r.id);
+}
+
+accountsRouter.get('/credit-invoices', requirePermission(`${CREDIT}.VIEW`), async (req, res) => {
+  const auth = req.auth!;
+  const query = creditInvoiceListQuerySchema.parse(req.query);
+
+  const { rows, total } = await withTenant(auth.tenantId, async (db) => {
+    let paymentWhere: Prisma.DebitInvoiceCostWhereInput = {};
+    if (query.payment === 'UNPAID') paymentWhere = { payments: { none: { deletedAt: null } } };
+    else if (query.payment !== undefined) {
+      paymentWhere = { id: { in: await costIdsByPayment(db, auth.tenantId, query.payment) } };
+    }
+
+    const needle = query.search;
+    const where: Prisma.DebitInvoiceCostWhereInput = {
+      deletedAt: null,
+      debitInvoice: { status: 'ISSUED', deletedAt: null },
+      ...paymentWhere,
+      ...(query.partyType === undefined ? {} : { partyType: query.partyType }),
+      ...(needle === undefined
+        ? {}
+        : {
+            OR: [
+              { supplierInvoiceNo: { contains: needle, mode: 'insensitive' } },
+              { debitInvoice: { code: { contains: needle, mode: 'insensitive' } } },
+              { debitInvoice: { shipment: { code: { contains: needle, mode: 'insensitive' } } } },
+              { carrier: { name: { contains: needle, mode: 'insensitive' } } },
+              { agent: { name: { contains: needle, mode: 'insensitive' } } },
+              { vendor: { name: { contains: needle, mode: 'insensitive' } } },
+            ],
+          }),
+    };
+
+    const sortable: Record<string, Prisma.DebitInvoiceCostOrderByWithRelationInput> = {
+      date: { debitInvoice: { invoiceDate: query.sortOrder } },
+      amount: { totalAmountBase: query.sortOrder },
+    };
+
+    const [found, counted] = await Promise.all([
+      db.debitInvoiceCost.findMany({
+        where,
+        // A register of documents: newest first.
+        orderBy: sortable[query.sortBy ?? ''] ?? { id: 'desc' },
+        skip: (query.page - 1) * query.limit,
+        take: query.limit,
+        select: {
+          id: true,
+          partyType: true,
+          carrierId: true,
+          agentId: true,
+          vendorId: true,
+          supplierInvoiceNo: true,
+          currencyCode: true,
+          conversionRate: true,
+          totalAmount: true,
+          totalAmountBase: true,
+          carrier: { select: { name: true } },
+          agent: { select: { name: true } },
+          vendor: { select: { name: true } },
+          lines: {
+            where: { deletedAt: null },
+            orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+            select: { costHeadName: true, quantity: true, containerSizeName: true },
+          },
+          debitInvoice: {
+            select: { id: true, code: true, invoiceDate: true, shipment: { select: { code: true } } },
+          },
+          payments: { where: { deletedAt: null }, select: { amount: true } },
+        },
+      }),
+      db.debitInvoiceCost.count({ where }),
+    ]);
+    return { rows: found, total: counted };
+  });
+
+  const data: CreditInvoiceRow[] = rows.map((row) => {
+    const paid = paymentOf(row.totalAmount, row.payments);
+    const partyType = row.partyType as SupplierPartyType;
+    const partyId = row.carrierId ?? row.agentId ?? row.vendorId;
+    const name =
+      partyType === 'CARRIER' ? row.carrier?.name : partyType === 'AGENT' ? row.agent?.name : row.vendor?.name;
+    return {
+      id: row.id.toString(),
+      debitInvoiceId: row.debitInvoice.id.toString(),
+      debitInvoiceCode: row.debitInvoice.code,
+      bookingCode: row.debitInvoice.shipment?.code ?? null,
+      date: day(row.debitInvoice.invoiceDate) ?? '',
+      supplierInvoiceNo: row.supplierInvoiceNo,
+      partyType,
+      partyId: partyId?.toString() ?? '',
+      partyName: name ?? '—',
+      description: `${describeLines(row.lines)} — ${row.debitInvoice.shipment?.code ?? row.debitInvoice.code}`,
+      currencyCode: row.currencyCode,
+      amount: money(row.totalAmount),
+      conversionRate: row.conversionRate.toString(),
+      amountBase: money(row.totalAmountBase),
+      paidAmount: money(paid.received),
+      outstandingAmount: money(paid.outstanding),
+      paymentStatus: paid.status,
+      deletable: row.payments.length === 0,
+    };
+  });
+
+  const payload: ApiSuccess<CreditInvoiceRow[]> = {
+    success: true,
+    data,
+    meta: buildMeta(query.page, query.limit, total),
+  };
+  res.json(payload);
+});
+
+/**
+ * The sheet's `Delete` (J8): the supplier's invoice comes off the debit
+ * invoice it was recorded on — exactly what removing the block on the invoice
+ * does, so it is guarded by the grant that does that (§14.2). Soft, like every
+ * removed line here, and refused once anything has been paid against it.
+ */
+accountsRouter.delete(
+  '/credit-invoices/:id',
+  requirePermission(`${INVOICE}.EDIT`),
+  requirePermission(`${INVOICE}.VIEW_BUY_PRICE`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'credit invoice');
+
+    await withTenant(auth.tenantId, async (db) => {
+      const cost = await db.debitInvoiceCost.findFirst({
+        where: { id, deletedAt: null },
+        select: {
+          id: true,
+          debitInvoiceId: true,
+          supplierInvoiceNo: true,
+          debitInvoice: { select: { code: true, status: true, deletedAt: true } },
+          _count: { select: { payments: { where: { deletedAt: null } } } },
+        },
+      });
+      if (cost === null || cost.debitInvoice.deletedAt !== null) throw HttpError.notFound('Credit invoice not found.');
+      if (!costEditable(cost.debitInvoice)) {
+        throw new HttpError(409, 'INVOICE_CANCELLED', `${cost.debitInvoice.code} was cancelled and cannot be changed.`);
+      }
+      if (cost._count.payments > 0) {
+        throw new HttpError(
+          409,
+          'CREDIT_INVOICE_PAID',
+          `${cost.supplierInvoiceNo ?? 'That supplier invoice'} has been paid against, so it cannot be ` +
+            'removed. Cancel the payment voucher first.',
+        );
+      }
+      const gone = { deletedAt: new Date(), isActive: false, updatedBy: auth.userId };
+      await db.debitInvoiceCostLine.updateMany({ where: { debitInvoiceCostId: id, deletedAt: null }, data: gone });
+      await db.debitInvoiceCost.update({ where: { id }, data: gone });
+      await retotalInvoice(db, cost.debitInvoiceId);
+    });
+
+    const payload: ApiSuccess<{ deleted: true }> = { success: true, data: { deleted: true } };
     res.json(payload);
   },
 );

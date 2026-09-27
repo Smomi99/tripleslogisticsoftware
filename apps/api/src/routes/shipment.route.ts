@@ -3,6 +3,7 @@ import { Router } from 'express';
 import {
   type ApiSuccess,
   buildMeta,
+  quotationCanChange,
   type ShipmentCargoLineDto,
   type ShipmentCargoLineInput,
   shipmentCancelSchema,
@@ -121,7 +122,7 @@ const shipmentArgs = {
 /** Exactly what the query above returns, so toDto needs no casts. */
 type ShipmentRow = Prisma.ShipmentGetPayload<typeof shipmentArgs>;
 
-function toDto(row: ShipmentRow): ShipmentDto {
+function toDto(row: ShipmentRow, currentQuotation: ShipmentDto['currentQuotation']): ShipmentDto {
   return {
     id: row.id.toString(),
     code: row.code,
@@ -135,6 +136,7 @@ function toDto(row: ShipmentRow): ShipmentDto {
 
     quotationId: row.quotationId.toString(),
     quotationCode: row.quotation.code,
+    currentQuotation,
     shipmentType: row.shipmentType,
     // §5.4's inbound SKIP S/O reads this. Not stored on the booking: §4.1's
     // column list has no movement_type, and the quotation already carries it.
@@ -212,7 +214,39 @@ function toDto(row: ShipmentRow): ShipmentDto {
 async function loadShipment(db: TenantDb, id: bigint): Promise<ShipmentDto> {
   const row = await db.shipment.findFirst({ where: { id, deletedAt: null }, ...shipmentArgs });
   if (row === null) throw HttpError.notFound('Booking not found.');
-  return toDto(row);
+  return toDto(row, await currentQuotationOf(db, row.quotation.code));
+}
+
+/**
+ * §5.6: the quotation a booking was raised on, as it stands now — its own
+ * revision, or the later one that replaced it — and whether it can be
+ * revised. What a cancelled booking's "Revise quotation" opens.
+ *
+ * Every revision shares its number and exactly one is not SUPERSEDED at a time
+ * (quotation_live_revision_key), so the number finds it.
+ */
+async function currentQuotationOf(db: TenantDb, code: string): Promise<ShipmentDto['currentQuotation']> {
+  const current = await db.quotation.findFirst({
+    where: { code, deletedAt: null, status: { not: 'SUPERSEDED' } },
+    orderBy: { revisionNo: 'desc' },
+    select: {
+      id: true,
+      revisionNo: true,
+      status: true,
+      shipments: { where: { deletedAt: null }, select: { code: true, status: true } },
+    },
+  });
+  if (current === null) return null;
+  return {
+    id: current.id.toString(),
+    revisionNo: current.revisionNo,
+    status: current.status,
+    editable: quotationCanChange(
+      current.status,
+      current.shipments.map((b) => b.status),
+    ),
+    liveBookingCodes: current.shipments.filter((b) => b.status !== 'CANCELLED').map((b) => b.code),
+  };
 }
 
 /**

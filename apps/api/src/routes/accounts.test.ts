@@ -10,7 +10,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
  * followed the whole way round the loop the client drew:
  *
  *   booking -> Awaiting Freight Inv -> Make invoice -> Save & Send
- *     -> Receive -> Receivable-Payable list -> the party's ledger
+ *     -> Receive (an Income voucher, §14.6) -> Receivable-Payable list
+ *     -> the party's ledger
  *
  * and every figure is checked against arithmetic done here from the rates the
  * workspace actually holds, not against numbers copied out of the code.
@@ -73,6 +74,7 @@ function as(token: string, slug: string) {
   return {
     get: (p: string) => wrap(request(app).get(`/api/tenant/accounts${p}`)),
     post: (p: string) => wrap(request(app).post(`/api/tenant/accounts${p}`)),
+    delete: (p: string) => wrap(request(app).delete(`/api/tenant/accounts${p}`)),
     patch: (p: string) => wrap(request(app).patch(`/api/tenant/accounts${p}`)),
     put: (p: string) => wrap(request(app).put(`/api/tenant/accounts${p}`)),
   };
@@ -83,8 +85,17 @@ const fixed4 = (v: InstanceType<typeof Prisma.Decimal>) => v.toDecimalPlaces(4).
 
 async function cleanup(): Promise<void> {
   const scope = `(SELECT id FROM tenant WHERE slug IN ('${SLUG_A}', '${SLUG_B}'))`;
+  const wipe = (table: string, extra = '') =>
+    owner.$executeRawUnsafe(`DELETE FROM "${table}" WHERE tenant_id IN ${scope}${extra}`);
+  // The books first: they point at the invoices, the parties and the users.
+  for (const table of ['debit_invoice_receipt', 'supplier_payment', 'opening_settlement', 'journal_line', 'journal_entry', 'bank_account']) {
+    await wipe(table);
+  }
+  // The chart points at itself: sub ledgers go before their ledgers.
+  await wipe('ledger_account', ' AND parent_id IS NOT NULL');
+  await wipe('ledger_account');
+  await wipe('bank');
   for (const table of [
-    'debit_invoice_receipt',
     'debit_invoice_cost_line',
     'debit_invoice_cost',
     'debit_invoice_line',
@@ -106,7 +117,7 @@ async function cleanup(): Promise<void> {
     'email_log',
     'user',
   ]) {
-    await owner.$executeRawUnsafe(`DELETE FROM "${table}" WHERE tenant_id IN ${scope}`);
+    await wipe(table);
   }
   await owner.$executeRaw`DELETE FROM tenant WHERE slug IN (${SLUG_A}, ${SLUG_B})`;
 }
@@ -159,7 +170,7 @@ async function makeWorld(name: string, slug: string, tag: string): Promise<World
       businessArea: 'OUTBOUND',
       industrySectorId: sector.id,
       // §3.6: the CRM opening balance is where this ledger starts.
-      openingBalance: '500',
+      customerOwe: '500',
       openingCurrencyId: usd,
     },
     select: { id: true },
@@ -377,6 +388,37 @@ function saveBody(world: World) {
 
 let invoiceId: string;
 
+/**
+ * `Receive` on the Debit Invoice list opens the Income sheet (§14.6): the
+ * money is banked into Cash on Hand and the invoice is named as what it pays.
+ * The deposit is the amount at the invoice's own rate, so the two figures
+ * describe the same money.
+ */
+async function receive(amount: string) {
+  const options = (await asA().get('/vouchers/options')).body.data as {
+    moneyAccounts: { id: string; systemKey: string | null }[];
+    accounts: { id: string; systemKey: string | null }[];
+  };
+  const cash = options.moneyAccounts.find((a) => a.systemKey === 'ASSET.CASH.ON_HAND')!.id;
+  const freightIncome = options.accounts.find((a) => a.systemKey === 'INCOME.SERVICE.SEA_FCL')!.id;
+  const banked = fixed4(D(amount).times(usdRate));
+  return asA()
+    .post('/income')
+    .send({
+      entryDate: TODAY,
+      moneyAccountId: cash,
+      amount: banked,
+      lines: [{ ledgerAccountId: freightIncome, amount: banked }],
+      settlement: {
+        partyType: 'CUSTOMER',
+        partyId: A.customerId.toString(),
+        against: 'INVOICE',
+        documentId: invoiceId,
+        amount,
+      },
+    });
+}
+
 describe('Awaiting Freight Inv', () => {
   it('lists the confirmed booking, and not the unconfirmed one or the other workspace’s', async () => {
     const res = await asA().get('/awaiting-freight-inv?limit=100');
@@ -519,9 +561,14 @@ describe('Make invoice → Save & Send → Receive', () => {
   });
 
   it('records part of the money, then locks the sell side but not the cost side (§3.7)', async () => {
-    const part = await asA().post(`/debit-invoices/${invoiceId}/receipts`).send({ paymentDate: TODAY, amount: '1000' });
-    expect(part.status, JSON.stringify(part.body.error ?? {})).toBe(201);
+    const voucher = await receive('1000');
+    expect(voucher.status, JSON.stringify(voucher.body.error ?? {})).toBe(201);
+    expect(voucher.body.data.code).toBe(`RV-${YEAR}-000001`);
+    expect(voucher.body.data.settlement).toMatchObject({ against: 'INVOICE', reference: `DN-${YEAR}-000001`, amount: '1000.0000' });
+
+    const part = await asA().get(`/debit-invoices/${invoiceId}`);
     expect(part.body.data.displayStatus).toBe('PARTIAL');
+    expect(part.body.data.receipts[0].journalEntryCode).toBe(`RV-${YEAR}-000001`);
     expect(part.body.data.outstandingAmount).toBe('2050.0000');
     expect(part.body.data.sellEditable).toBe(false);
     expect(part.body.data.costEditable).toBe(true);
@@ -534,6 +581,7 @@ describe('Make invoice → Save & Send → Receive', () => {
     const cancel = await asA().post(`/debit-invoices/${invoiceId}/cancel`).send({ reason: 'Wrong customer' });
     expect(cancel.status).toBe(409);
     expect(cancel.body.error.code).toBe('MONEY_RECEIVED');
+    expect(cancel.body.error.message).toContain('Cancel the Income voucher');
 
     // The carrier's revised invoice still lands.
     const body = saveBody(A);
@@ -550,14 +598,15 @@ describe('Make invoice → Save & Send → Receive', () => {
   });
 
   it('refuses more than is outstanding, then closes to exactly zero (§5 rule 4)', async () => {
-    const over = await asA().post(`/debit-invoices/${invoiceId}/receipts`).send({ paymentDate: TODAY, amount: '3000' });
+    const over = await receive('3000');
     expect(over.status).toBe(409);
     expect(over.body.error.code).toBe('OVER_RECEIVED');
 
-    const rest = await asA().post(`/debit-invoices/${invoiceId}/receipts`).send({ paymentDate: TODAY, amount: '2050' });
+    const rest = await receive('2050');
     expect(rest.status, JSON.stringify(rest.body.error ?? {})).toBe(201);
-    expect(rest.body.data.displayStatus).toBe('PAID');
-    expect(rest.body.data.outstandingAmount).toBe('0.0000');
+    const paid = await asA().get(`/debit-invoices/${invoiceId}`);
+    expect(paid.body.data.displayStatus).toBe('PAID');
+    expect(paid.body.data.outstandingAmount).toBe('0.0000');
 
     // Only the CRM opening is left on the customer — in both columns, exactly.
     const res = await asA().get('/receivable-payable?limit=100&partyType=CUSTOMER');
@@ -725,7 +774,7 @@ describe('who may see what', () => {
     ]) {
       expect((await bare.get(path)).status, path).toBe(403);
     }
-    expect((await bare.post(`/debit-invoices/${invoiceId}/receipts`).send({ paymentDate: TODAY, amount: '1' })).status).toBe(403);
+    expect((await bare.post('/income').send({ entryDate: TODAY })).status).toBe(403);
 
     const anon = await request(app).get('/api/tenant/accounts/debit-invoices').set('X-Tenant-Slug', SLUG_A);
     expect(anon.status).toBe(401);

@@ -108,12 +108,21 @@ export function CustomerDetailDrawer({
           </div>
         )}
 
-        {customer.openingBalance !== null && customer.openingBalance !== '' && (
-          <div className="border-t border-line pt-4">
-            <dt className="label-manifest">Opening balance</dt>
-            <dd className="font-mono text-body tabular-nums text-hull">
-              {`${customer.openingCurrencyCode ?? ''} ${customer.openingBalance}`.trim()}
-            </dd>
+        {(customer.weOwe !== null || customer.customerOwe !== null) && (
+          <div className="grid gap-x-6 gap-y-3 border-t border-line pt-4 sm:grid-cols-2">
+            {(
+              [
+                ['We owe (Dr)', customer.weOwe],
+                ['Customer owe (Cr)', customer.customerOwe],
+              ] as [string, string | null][]
+            ).map(([label, value]) => (
+              <div key={label}>
+                <dt className="label-manifest">{label}</dt>
+                <dd className="font-mono text-body tabular-nums text-hull">
+                  {value === null || value === '' ? '—' : `${customer.openingCurrencyCode ?? ''} ${value}`.trim()}
+                </dd>
+              </div>
+            ))}
           </div>
         )}
 

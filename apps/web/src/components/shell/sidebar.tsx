@@ -129,13 +129,20 @@ export function Sidebar() {
 
               {isOpen && !collapsed && (
                 <ul>
-                  {group.items.map((item) => {
+                  {group.items.map((item, index) => {
                     const isActive =
                       item.href !== null && pathname.startsWith(item.href);
+                    // The client's nested menu headings ("- Transaction"):
+                    // drawn once, above the first visible item they cover.
+                    const heading =
+                      item.section !== undefined && item.section !== group.items[index - 1]?.section
+                        ? item.section
+                        : null;
                     const content = (
                       <span
                         className={cn(
                           'flex items-center border-l-[3px] py-1.5 pl-[13px] pr-4 text-body transition-colors duration-[120ms]',
+                          item.section !== undefined && 'pl-[25px]',
                           isActive
                             ? 'border-harbour bg-white/10 text-white'
                             : 'border-transparent text-white/75 hover:bg-white/5 hover:text-white',
@@ -149,6 +156,9 @@ export function Sidebar() {
                     // two menu items (§3's Shipment Booking - Sea / - Air).
                     return (
                       <li key={item.href ?? item.label}>
+                        {heading !== null && (
+                          <span className="block px-4 pb-0.5 pt-2 text-cell text-white/45">{heading}</span>
+                        )}
                         {item.href === null ? (
                           <span title="Not built yet">{content}</span>
                         ) : (

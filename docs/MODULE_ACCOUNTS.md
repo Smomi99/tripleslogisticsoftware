@@ -1,4 +1,9 @@
-# MODULE SPEC — ACCOUNTS: AWAITING FREIGHT INV · DEBIT INVOICE · RECEIVABLE-PAYABLE — **v1, transcribed from `Design.xlsx`**
+# MODULE SPEC — ACCOUNTS: AWAITING FREIGHT INV · DEBIT INVOICE · CREDIT INVOICE · RECEIVABLE-PAYABLE · THE BOOKS — **v2, transcribed from `Design.xlsx`**
+
+> **v2 (2026-09-27).** The client's second Accounts delivery is §13 and §14: Chart of accounts, the four
+> Transaction screens (Journal, Expense, Income, Internal Transfer), Bank and Account Set up, the Credit
+> Invoice list, and the Unbilled column on the Receivable-Payable list. Where §14 changes an earlier
+> section, that section says so.
 
 > **How to use.** Start a Claude Code session with:
 > *"Read CLAUDE.md, then /docs/MODULE_ACCOUNTS.md."*
@@ -22,10 +27,10 @@ unchanged except `Menu`. Eight sheets are new:
 | `Awaiting Debit Note` | Accounts → **Awaiting Freight Inv**, and the invoice it makes | **built** |
 | `Debit note (Other)` | Accounts → **Debit Invoice** (list, `Create New`, `Receive`) | **built** |
 | `Receiveable-Payable list` | Accounts → **Receivable-Payable list** (sheet title: `Ledger`) | **built** |
-| `Ledger.` | One party's ledger (`Ledger - CMA`) — the list's drill-down | read-only view built; `Make Payment`, `Edit`, `Delete` are §12 Q9 |
-| `Chart of accounts` | Accounts → Chart of accounts | not built — next phase |
-| `Journal` | Accounts → Transaction → Journal | not built — next phase |
-| `Expense-Vendor`, `Expense-regular` | Accounts → Transaction → Expense | not built — next phase |
+| `Ledger.` | One party's ledger (`Ledger - CMA`) — the list's drill-down | built; became `Credit Invoice` in v2 (§14.2) |
+| `Chart of accounts` | Accounts → Chart of accounts | **built in v2** (§14.1) |
+| `Journal` | Accounts → Transaction → Journal | **built in v2** (§14.4) |
+| `Expense-Vendor`, `Expense-regular` | Accounts → Transaction → Expense | **built in v2** (§14.4–§14.6) |
 
 ### 0.1 The Accounts menu, before and after
 
@@ -210,6 +215,9 @@ the form and walking away leaves no half-made invoice behind.
 
 ### 3.6 Receivable and payable are computed from the documents
 
+> v2: still true. Payments and receipts are now written by vouchers, beside settlement rows that lower
+> these same balances (§14.6); an Unbilled column sits between them (§14.7).
+
 `Receivable` for a customer = their issued invoices − what has been received against them, plus the
 opening balance from CRM. `Payable` to a carrier, agent or vendor = the cost blocks of issued invoices,
 plus the opening balance. Computed on read, not written to a second table: while nothing else posts
@@ -217,10 +225,10 @@ to a party (no payment screen yet, §12 Q9), a posting table would be a copy tha
 the documents it copies. When Journal and Expense land, they get a ledger table and these documents
 post into it.
 
-Openings follow the CRM fields' own signs: customer and vendor `opening_balance` is signed — positive
-is owed to us (receivable), negative is owed by us (payable). The agent's `agent_owe` is receivable and
-`we_owe` is payable. Carriers have no opening balance. Openings are converted at today's rate, because
-nothing froze one.
+Openings come from each party's two CRM columns: what they owe us (`customer_owe`, `vendor_owe`,
+`agent_owe`) is receivable, and what we owe them (`we_owe`) is payable. Customer and vendor had one signed
+`opening_balance` until §14.14 moved them to the agent's pair. Carriers have no opening balance. Openings
+are converted at today's rate, because nothing froze one.
 
 The **USD** columns carry what is denominated in US dollars; the **Base** columns carry everything,
 converted. A party billed partly in taka shows the dollar part in USD and the whole in base — the
@@ -234,9 +242,10 @@ the reader's head. §12 Q5.
   editable only until money is received against it; after that, a correction is cancel-and-reissue.
   The **cost side** stays editable for the life of the invoice: a carrier's invoice routinely arrives
   after the customer has been billed, and it changes nothing the customer was sent.
-- `CANCELLED` — reason mandatory, read-only, number kept forever. Refused once money has been
-  received (there is no receipt reversal yet — §12 Q7). Cancelling a freight invoice returns its
-  booking to the awaiting list.
+- `CANCELLED` — reason mandatory, read-only, number kept forever. Refused while money received
+  against it, or paid against any of its credit invoices, stands. Cancelling the Income or Expense
+  voucher that moved it takes it back first (§14.4). Cancelling a freight invoice returns its booking to
+  the awaiting list.
 
 Numbered `DN-2026-000001` when first saved, per workspace per year of the invoice date, like every
 other document a customer sees; never reused — a cancelled invoice keeps its number (§12 Q2).
@@ -365,7 +374,7 @@ holds both features. The seed creates the new keys; no existing role is granted 
 | POST | `/debit-invoices/:id/send` | `.SEND` — issues a draft, (re)sends an issued one |
 | GET | `/debit-invoices/:id/pdf` | `.EXPORT_PDF` |
 | POST | `/debit-invoices/:id/cancel` | `.CANCEL` — reason required |
-| POST | `/debit-invoices/:id/receipts` | `.RECEIVE` |
+| ~~POST~~ | ~~`/debit-invoices/:id/receipts`~~ | removed in v2 — `Receive` opens Income (§14.6) |
 | POST / GET | `/debit-invoices/:id/costs/:costId/file` | `.EDIT` + `.VIEW_BUY_PRICE` / `.VIEW_BUY_PRICE` |
 | GET | `/receivable-payable` | `RECEIVABLE_PAYABLE.VIEW` |
 | GET | `/receivable-payable/:partyType/:partyId` | `RECEIVABLE_PAYABLE.VIEW` — the ledger |
@@ -436,6 +445,323 @@ Nothing below is guessed at in the schema. Each has a working default so the bui
 | 4 | **More than one carrier, agent or vendor on one job?** The sheet draws one block each. | One block each on screen; the table allows more for when it is needed |
 | 5 | **The USD and Base columns** for money billed in taka or a third currency. | USD = the dollar-denominated part; Base = everything converted (§3.6) |
 | 6 | **Should the customer's PDF show the base-currency equivalent?** The quotation stopped printing a second currency on 2026-09-11. | Yes on the invoice only, because the invoice's rate is the rate the payment is booked at |
-| 7 | **A receipt entered in error** — reversal, or delete? Neither is on the sheet. | Not built; a receipt is final for now |
+| 7 | **A receipt entered in error** — reversal, or delete? Neither is on the sheet. | **Answered by v2:** cancel the Income voucher that banked it (§14.4) |
 | 8 | **`Receive` form** shows `Invoice Amount` and `Payment Date` only. Part payments are implied by the Ledger sheet's `Partial Paid`. | An `Amount received` field, defaulting to the outstanding balance |
-| 9 | **Paying a supplier.** `Make Payment` on the Ledger sheet and the Expense sheets. | Next phase, with Chart of accounts and Journal — payables accumulate until then |
+| 9 | **Paying a supplier.** `Make Payment` on the Ledger sheet and the Expense sheets. | **Answered by v2:** Expense against the credit invoice (§14.6) |
+
+---
+
+## 13. SOURCE, SECOND DELIVERY — `Design.xlsx`, 2026-09-27
+
+The client redrew the rest of the Accounts menu. Diffed sheet by sheet against the copy committed with
+§1–§12; every sheet outside Accounts is unchanged except `Menu`.
+
+| Sheet | What changed | Where it is built |
+|---|---|---|
+| `Menu` | M17–M19 added: `Setting` · `- Bank Set up` · `- Account Set up`. Hyperlinks now point Debit Invoice → `Debit Invoice`, Credit Invoice → `Credit Invoice`, Expense → `Expense-regular`, Income → `Income-Other`, Internal Transfer → `Internal Transfer` | §14.8 |
+| `Receiveable-Payable list` | **New column group** `Unbilled Amount` (F7) — `Unbill Amount(USD)` · `Unbill Amount(Base Cur)` — between Receivable and Payable; the title moved to I3 | §14.7 |
+| `Debit note (Other)` → `Debit Invoice` | Renamed. The receive form (rows 15–20) is gone; `Receive` (N8) now hyperlinks to the `Income` sheet | §14.6 |
+| `Ledger.` → `Credit Invoice` | Renamed and retitled `Credit Invoice`; column C reads `Vendor/Agent/Carrier Inv No`; `Make Payment` (I8) hyperlinks to `Expense-Vendor` | §14.2 |
+| `Chart of accounts` | H6 `Asset = Liabbilities - Owner's Equity`; B64–C68 `Expense Ledger - Predefined · Ledger: Cost of Service · Sub Ledger: Sea Freight-FCL` | §14.1 |
+| `Journal` | Sample filled in: C10 `Salary for the month of Sep 2026`; rows 20–21 `Bank Minus 500000` (credit) and `Salary( Expense+` 500000 (debit) | §14.4 |
+| `Expense-Vendor` | G17 `( minus 100)` beside `Payment from`, G21 `100` on the category row | §14.4, §14.6 |
+| `Income` (new) | `Income/Receive`: Date · `Income From : ( Customer)` · `Select Invoice No : ( View invoice )` · Description · `Deposit to` · `Income Category` grid (`Select Income Category` · Amount · add) · Debit Amount · Credit Amount · Difference · Save | §14.4, §14.6 |
+| `Income-Other` (new) | Date · Description · `Deposit to : ( bank or cash account` · Income Category grid · Debit / Credit / Difference · Save | §14.4 |
+| `Internal Transfer` (new) | Date · `Transfer From : ( All bank account )` · Description · `Transfer To` grid (`Select account` · Amount · add) · Debit / Credit / Difference · Save | §14.4 |
+| `bank setup` (new) | Bank Name · Branch · Bank Address · Swift No · Routing number · IBAN No · Save | §14.3 |
+| `Account setup` (new) | Account Name · Account Nuber · Select Bank · Select Branch · Bank Address · Swift No · Routing number · IBAN No · Save (sample: Triple S Logistics, 08633033878, Bank Asia Plc, Ring Road, BAHDD9876, 07214563) | §14.3 |
+| `Expense-regular` | Unchanged; now the Expense menu item's target | §14.4 |
+
+`Income statement`, `Balance Sheet`, `Cash Flow Statement` and `TA/DA` are still on the menu with no sheet
+of their own — see §14.9 Q1.
+
+---
+
+## 14. THE BOOKS — Chart of accounts, Transaction, Bank / Account set up
+
+### 14.0 The one decision everything else follows
+
+**The four Transaction screens are the books; the invoices stay the party ledgers.**
+
+Every sheet the client drew for money moving — `Expense-regular`, `Expense-Vendor`, `Income`,
+`Income-Other`, `Internal Transfer`, `Journal` — is a balanced double entry in the workspace base: an
+account on one side, categories on the other, and `Debit Amount / Credit Amount / Difference` at the foot.
+Each one is saved as a **voucher** (`journal_entry`) with its debit and credit **lines** (`journal_line`).
+The chart's balances, and later the statements, are sums of posted voucher lines — nothing else.
+
+Debit and credit invoices do **not** post to the books when they are issued. They remain what §3.6 made
+them: the documents the Receivable-Payable list and each party's ledger are computed from. When a voucher
+pays or banks against a party, it leaves a **settlement** row beside it (§14.6), and that row lowers the
+party's balance.
+
+Why not post invoices on issue (accrual)? Because the sheets were not drawn that way: `Expense-Vendor` asks
+for an **Expense Category** against the supplier's invoice, and `Income` for an **Income Category** against
+the customer's. Posting the invoice first would count that income or expense twice. §14.9 Q2 puts the
+choice to the client; the tables are the same either way, so moving to accrual later means adding postings,
+not reshaping anything.
+
+### 14.1 Chart of accounts (sheet `Chart of accounts`)
+
+- **Two levels, as B64–C68 say**: a **Ledger** (`parent_id` NULL) under one of five heads, and **Sub
+  Ledgers** under a ledger. A sub ledger shares its ledger's head. The trigger `ledger_account_parent_guard`
+  enforces both, so the chart cannot go three deep.
+- **Predefined** (B64): every ledger and sub ledger on the sheet is seeded into each workspace **the first
+  time anything reads the chart** (`ensureChart`, idempotent, race-safe on `UNIQUE(tenant_id, system_key)`).
+  No data migration and no onboarding step, so every workspace, old or new, gets the same chart. A workspace
+  owns its copy: it renames and extends it freely. Each predefined row carries a stable `system_key`
+  (`ASSET.BANK`, `EXPENSE.COST_OF_SERVICE.SEA_FCL`, …) that the product holds on to instead of the name.
+- **Spelling corrected on seeding**: Customs Clearence → Clearance, Gain/Loss on Foreight → Foreign
+  Exchange, Computer Hardard → Hardware, Computer- Software → Computer Software, Sales Incetive → Incentive,
+  Office Stationary → Stationery, Repair and Manatainence → Maintenance, Telphone → Telephone, Untilities →
+  Utilities, Vehical → Vehicle, Un catagories / Uncatagories → Uncategorized, Commision → Commission. "Cash
+  short or less" is kept as written, since its meaning is unclear (§14.9 Q7).
+- **Not seeded**: the three sample bank sub ledgers (Z11–Z13, "Bank Asia Ltd-878"). They are real accounts,
+  made by Account Set up (§14.3).
+- `+ ADD new` beside a ledger adds a sub ledger; `++` (C9) adds a ledger. Under **Bank**, `+ ADD new` goes
+  to Account Set up instead, so an account's number and branch are never missing.
+- **Postable** = a sub ledger, or a ledger with no sub ledgers (Discount, Gain on Foreign Exchange, …).
+- **Balance** per account = its posted debits minus credits (asset, expense) or credits minus debits
+  (liability, equity, income), in the base. A ledger's balance adds its sub ledgers. The sheet shows no
+  balance column; it is derived rather than stored, and without it nobody could see what a bank holds.
+- **Retiring**: Active/Inactive only (§4 rule 3). **Bank** and **Cash** cannot be switched off, because every
+  voucher screen draws from them. A ledger with active sub ledgers cannot be switched off. A bank account's
+  own sub ledger is renamed and switched off from Account Set up, never from the chart.
+
+### 14.2 Credit Invoice (sheet `Credit Invoice`)
+
+The old `Ledger.` drill-down, retitled, for every supplier at once. A **credit invoice** is a cost block
+(`debit_invoice_cost`) of an **issued** debit invoice: one carrier's, agent's or vendor's bill for a job.
+A draft debit invoice's cost blocks are Unbilled (§14.7), not credit invoices yet.
+
+Columns: `Vendor/Agent/Carrier Inv No` (in the code gutter) · Date · supplier (**added**: the list covers
+every supplier, so it must name each) · Description · Amount (the block's currency) · Conversion Rate ·
+Amount (Base Cur) · Payment Status (`Unpaid` / `Partially paid` / `Paid`, derived from payments) · Action.
+
+- `Make Payment` → Expense, prefilled against this invoice (§14.6).
+- `Edit` → the debit invoice it was recorded on, where the cost side stays editable (§3.7).
+- `Delete` → soft-removes the cost block. That is exactly what removing the block on the invoice does, so it
+  takes the same grant (`DEBIT_INVOICE.EDIT` + `VIEW_BUY_PRICE`). Refused once anything is paid against it.
+
+Once a credit invoice has a payment, its supplier, currency and rate are frozen, its total cannot fall below
+what was paid, and it cannot be removed. Its debit invoice cannot be cancelled while that payment stands
+(`MONEY_PAID`).
+
+### 14.3 Bank Set up and Account Set up
+
+- **Bank Set up**: one row per **branch** of a bank (`UNIQUE(tenant, lower(bank_name), lower(branch))`),
+  with the sheet's six fields.
+- **Account Set up**: Account Name, Account Number, `Select Bank` then `Select Branch`. Bank Address, Swift
+  No, Routing number and IBAN No are **shown from the chosen branch**, not typed again (see §14.9 Q4 on
+  IBAN).
+- An account and its **sub ledger under Asset → Bank** are made in one transaction. The sub ledger is named
+  as on the sheet, bank plus last three digits (`Bank Asia Plc-878`), or the full number if that would
+  collide. Renaming the bank or changing the number renames it. Switching the account off switches it off.
+
+### 14.4 The four Transaction screens
+
+| Screen | Sheet | Debit | Credit |
+|---|---|---|---|
+| Expense | `Expense-regular` / `Expense-Vendor` | each **Expense Category** row | **Payment from** (a Bank or Cash sub ledger) |
+| Income | `Income-Other` / `Income` | **Deposit to** (Bank or Cash) | each **Income Category** row |
+| Internal Transfer | `Internal Transfer` | each **Transfer To** row (Bank or Cash, not the source) | **Transfer From** |
+| Journal | `Journal` | the rows as written | the rows as written |
+
+- **Money account** ("Asset like Bank, Cash", F17) = an active sub ledger under the **Bank** or **Cash**
+  ledger. The form shows each one's balance. "Transfer From (All bank account)" lists Cash too, because
+  depositing cash in the bank is a transfer (§14.9 Q5).
+- **Categories** are filtered to the head the sheet names: Expense Category → Expense accounts, Income
+  Category → Income accounts. The Journal takes any postable account.
+- **Balance**: Expense, Income and Transfer take one **Amount** for the money account and require the rows
+  to add up to it. The Journal requires Total Debit = Total Credit. The form keeps Save closed while the
+  Difference is not nil, the server refuses it, and a **deferred constraint trigger**
+  (`journal_line_balanced`) refuses a posted voucher that does not balance at COMMIT.
+- **All in the base currency.** The sheets have no currency field. What crosses currencies is the
+  settlement (§14.6).
+- **Journal: `Save` and `Save & agreed`.** `Save` keeps a **draft**, which moves no balance and can be edited.
+  `Save & agreed` **posts** it. Writing (`CREATE`/`EDIT`) and agreeing (`APPROVE`) are separate grants.
+  Expense, Income and Transfer have only `Save`, so they post at once.
+- **A posted voucher is never edited.** `Cancel` needs a reason, keeps the number, takes it out of every
+  balance, and takes back whatever it settled (§14.6). This answers §12 Q7: a wrong receipt is reversed by
+  cancelling its Income voucher.
+- **Numbers**, per workspace per kind per year: `JV-2026-000001` (Journal), `PV-` (Expense, payment
+  voucher), `RV-` (Income, receipt voucher), `TV-` (Internal Transfer) — §14.9 Q6.
+- `Upload file` / `Upload Payment voucher`: one attachment per voucher, stored by key.
+- Each screen opens on a **list** of its vouchers (§8), with `+ New` for the sheet's form.
+
+### 14.5 What the Expense and Income forms pre-fill
+
+`Receive` (Debit Invoice list, the invoice, the customer's ledger) opens **Income** against that invoice.
+`Make Payment` (Credit Invoice list, the invoice's cost block, the supplier's ledger) opens **Expense**
+against that credit invoice. Both pre-fill:
+
+- the party and the invoice, with its outstanding amount;
+- the banked amount, at the invoice's own rate — a suggestion; the voucher records the bank's actual figure;
+- one category row: **Income on Service** / **Cost of Service** for the booking's service (Sea FCL, Sea
+  LCL, Air), when the invoice has a booking. This is a default the operator can change, not a rule
+  (§14.9 Q3).
+
+### 14.6 Settlements — what a voucher closes on a party's ledger
+
+| Voucher | Against | Row written | Party balance |
+|---|---|---|---|
+| Income, **Income From** a customer | an issued **debit invoice** | `debit_invoice_receipt` (+ `journal_entry_id`) | receivable ↓ |
+| Expense, **Pay to** a vendor / carrier / agent | a **credit invoice** | `supplier_payment` | payable ↓ |
+| either | the party's **CRM opening balance** | `opening_settlement` | that side ↓ |
+
+- `amount` on the settlement is in the **document's currency**: what comes off the invoice. The voucher's
+  own figures are in the base: what the bank moved. For a base-currency document the two must be the same
+  figure; otherwise their ratio is the rate the bank gave, and the form shows it.
+- A settlement never exceeds what is outstanding (`OVER_RECEIVED` / `OVER_PAID`). The one that closes a
+  document takes the base still open, so it nets to exactly zero (the §3.4 receipt rule, now also for
+  payments).
+- Receiving against a debit invoice also needs `ACCOUNTS.DEBIT_INVOICE.RECEIVE` (§6): banking income and
+  saying a customer paid are separate grants.
+- **The old `Receive` form is retired** (`POST /debit-invoices/:id/receipts` removed). There is now one
+  way for a customer to have paid, and it moves the bank balance. Receipts recorded before today keep
+  `journal_entry_id` NULL and still count.
+- Opening settlements are converted at today's rate, as the opening is (§3.6), so a fully settled opening
+  nets to zero. Carriers have no opening, so none is settled.
+
+### 14.7 The Receivable-Payable list's Unbilled column
+
+`Unbilled Amount` (F7) = money on a job whose debit invoice has **not been issued yet**:
+
+- **Customer**: a draft debit invoice's total (its own frozen rate). For a confirmed booking on Awaiting
+  Freight Inv with no invoice started, its **quoted amount**, at today's rate.
+- **Carrier / agent / vendor**: the cost blocks of a draft debit invoice.
+
+It is shown beside Receivable and Payable, never inside them. "Only open balances" counts it, the `Total =`
+row adds it, and each party's ledger shows it in its totals.
+
+### 14.8 Menu
+
+Accounts, in the Menu sheet's order, with the client's nesting drawn as sidebar sub-headings:
+Awaiting Freight Inv · Debit Invoice · Credit Invoice · Receivable-Payable list · Chart of accounts ·
+**Transaction**: Journal · Expense · Income · Internal Transfer · Income Statement · Balance Sheet · Cash Flow
+Statement · TA/DA · **Setting**: Bank Set up · Account Set up.
+
+### 14.9 Schema — `20260927120000_accounts_books`
+
+```
+ledger_account       code ACC-001, account_type ENUM(ASSET,LIABILITY,EQUITY,INCOME,EXPENSE),
+                     parent_id FK self (composite), name, system_key UNIQUE(tenant, system_key)
+                     name unique per head (ledgers) / per ledger (sub ledgers), live rows only
+bank                 code BNK-001, bank_name, branch, bank_address, swift_no, routing_no, iban_no
+bank_account         code BAC-001, account_name, account_no, bank_id FK, ledger_account_id FK UNIQUE
+journal_entry        code JV/PV/RV/TV-yyyy-nnnnnn, series_year, kind, entry_date, description,
+                     attachment_file, status ENUM(DRAFT,POSTED,CANCELLED),
+                     party_type + customer/agent/carrier/vendor_id (CHECK: exactly the one named),
+                     total_amount, posted_at/by, cancelled_at/by, cancel_reason (CHECK when CANCELLED)
+journal_line         journal_entry_id, ledger_account_id, debit, credit NUMERIC(18,4)
+                     CHECK exactly one side positive; deferred trigger: a POSTED voucher balances
+supplier_payment     journal_entry_id, debit_invoice_cost_id, payment_date, amount > 0, amount_base
+opening_settlement   journal_entry_id, side ENUM(RECEIVABLE,PAYABLE), party (never CARRIER),
+                     settlement_date, currency_id + code, amount > 0
+debit_invoice_receipt  + journal_entry_id NULL
+```
+
+All seven tables follow §4: `tenant_id` first, composite FKs to tenant-owned parents, the tenant guard on
+carrier and currency, RLS in the single-comparison form, `ff_app` without DELETE, and the audit trigger.
+No existing column is changed and no row is rewritten.
+
+**After deploy:** `pnpm db:deploy`, then `pnpm db:seed` for the new permission keys, then grant the new
+features to the accounts role. The chart seeds itself.
+
+### 14.10 Permissions — registry diff
+
+```diff
+ ACCOUNTS.NEW_CREDIT_INVOICE   'Credit Invoice'   VIEW is the list (actions unchanged)
++ACCOUNTS.CHART_OF_ACCOUNTS    'Chart of accounts'  VIEW CREATE EDIT TOGGLE_STATUS
++ACCOUNTS.JOURNAL              'Journal'            VIEW CREATE EDIT APPROVE CANCEL
++ACCOUNTS.EXPENSE              'Expense'            VIEW CREATE CANCEL
++ACCOUNTS.INCOME               'Income'             VIEW CREATE CANCEL
++ACCOUNTS.INTERNAL_TRANSFER    'Internal Transfer'  VIEW CREATE CANCEL
++ACCOUNTS.BANK_SETUP           'Bank Set up'        VIEW CREATE EDIT TOGGLE_STATUS
++ACCOUNTS.ACCOUNT_SETUP        'Account Set up'     VIEW CREATE EDIT TOGGLE_STATUS
+```
+
+No `DELETE` anywhere in Accounts (CR-002, enforced by `permissions.test.ts`). The Credit Invoice's `Delete`
+rides on `DEBIT_INVOICE.EDIT` + `VIEW_BUY_PRICE` (§14.2). No `EXPORT` is declared: none is built, and an
+unusable checkbox in the matrix is worse than an absent one.
+
+### 14.11 API — `/api/tenant/accounts`
+
+| Method | Route | Permission |
+|---|---|---|
+| GET / POST | `/chart` | `CHART_OF_ACCOUNTS.VIEW` / `.CREATE` |
+| PATCH · POST | `/chart/:id` · `/chart/:id/toggle-status` | `.EDIT` · `.TOGGLE_STATUS` |
+| GET / POST · PATCH · POST | `/banks` · `/banks/:id` · `/banks/:id/toggle-status` | `BANK_SETUP.*` |
+| GET / POST · PATCH · POST | `/bank-accounts` · `/bank-accounts/:id` · `…/toggle-status` | `ACCOUNT_SETUP.*` |
+| GET | `/bank-accounts/banks` | `ACCOUNT_SETUP.VIEW` — Select Bank / Branch |
+| GET / POST | `/journal`, `/expense`, `/income`, `/internal-transfer` | that screen's `.VIEW` / `.CREATE` |
+| GET · POST | `/<screen>/:id` · `/<screen>/:id/cancel` | `.VIEW` · `.CANCEL` |
+| POST / GET | `/<screen>/:id/file` | `.CREATE` / `.VIEW` |
+| PATCH · POST | `/journal/:id` · `/journal/:id/post` | `JOURNAL.EDIT` (+`APPROVE` to agree) · `JOURNAL.APPROVE` |
+| GET | `/vouchers/options` | any of the four `.CREATE`, or `JOURNAL.EDIT` |
+| GET | `/vouchers/open-documents`, `/vouchers/document-party` | `EXPENSE.CREATE` or `INCOME.CREATE` |
+| GET | `/credit-invoices` | `NEW_CREDIT_INVOICE.VIEW` |
+| DELETE | `/credit-invoices/:id` | `DEBIT_INVOICE.EDIT` + `DEBIT_INVOICE.VIEW_BUY_PRICE` |
+| ~~POST~~ | ~~`/debit-invoices/:id/receipts`~~ | removed — Income (§14.6) |
+
+### 14.12 Tests
+
+`ledger.test.ts`, 25 cases across two workspaces built from nothing:
+
+- the chart seeded once, extended, protected, and kept two levels deep **in the database**;
+- a bank branch and account appearing as a money account;
+- each of the four screens with exact balances, including a draft journal that moves nothing until agreed,
+  and a clerk who may write it but not agree it;
+- a posted voucher that does not balance, refused **in the database**;
+- a credit invoice paid in part and then in full, with the over-payment, the delete, the re-price and the
+  debit invoice cancel all refused;
+- a receipt banked and then cancelled, reopening the invoice;
+- an opening balance settled;
+- the Unbilled column from a quoted booking and then from its draft;
+- a guard on every route, and two-workspace isolation.
+
+`accounts.test.ts` now receives through Income vouchers. `tenant-isolation.test.ts` counts 100 models.
+
+### 14.13 Open questions — for the client
+
+Nothing here is guessed in the schema. Each has the working default the build uses.
+
+| # | Question | Working default |
+|---|---|---|
+| 1 | **Income Statement, Balance Sheet, Cash Flow Statement, TA/DA** are on the menu with no sheet. H6 on the chart also writes `Asset = Liabilities - Owner's Equity`; the accounting identity is Assets = Liabilities **+** Owner's Equity. | Not built. The books now hold everything they need; they wait on a layout, and the H6 sign needs confirming. |
+| 2 | **Should a debit invoice post to the books when it is issued** (accrual: receivable and income on issue, payable and cost of service for its suppliers)? | No. Invoices are the party ledgers, and the vouchers are the books, as the Expense-Vendor and Income sheets draw them (§14.0). |
+| 3 | **Which category does money against an invoice belong to?** | Pre-selected from the booking's service (Sea FCL / LCL / Air) under Cost of Service / Income on Service; the operator can change it. |
+| 4 | **IBAN is on Bank Set up**, but an IBAN identifies an account, not a branch. | As drawn: kept on the bank row and shown on Account Set up. |
+| 5 | **Transfer From "(All bank account)"** — does that exclude Cash? | Cash is included, so depositing cash in the bank is a transfer. |
+| 6 | **Voucher numbers.** Only `PL-001` was ever given (CLAUDE.md §11 item 4). | `JV-` / `PV-` / `RV-` / `TV-2026-000001`, per workspace per kind per year. |
+| 7 | **"Cash short or less"** (B50) — "Cash short or over"? | Seeded as written. |
+| 8 | **Paying a supplier without an invoice** (an advance), or **receiving from an agent** (`agent_owe`) — neither sheet shows it. | Not offered. Pay to and Income From settle an invoice or the CRM opening balance. A Journal can record anything else. |
+| 9 | **Bank accounts in a foreign currency** (a USD account). Account Set up has no currency. | Every account is kept in the base. A USD receipt is banked at its base value, and the dollar amount is recorded on the invoice it settles. |
+
+### 14.14 Customer and vendor openings: the agent's two columns (client, 2026-09-27)
+
+**The request.** "On the agent we have We owe (Dr) and Agent owe (Cr) inputs, that's why we get proper
+result in the Receivable-Payable list. Add these two fields to the customer and vendor, and remove the
+opening balance inputs."
+
+**Why the single figure gave the wrong result.** Customer and vendor held one signed Opening Balance:
+positive meant "owed to us", negative "we owe them". A payable typed the natural way, as a positive
+number, therefore landed on the **receivable** side. Two columns that each name their side cannot be
+entered backwards. They also let a party owe on one account while being owed on another, which one
+figure cannot express.
+
+| Party | Before | After (migration `20260927140000_customer_vendor_we_owe_they_owe`) |
+|---|---|---|
+| Customer | `opening_balance` (signed) | `we_owe` — **We owe (Dr)** · `customer_owe` — **Customer owe (Cr)** |
+| Vendor | `opening_balance` (signed) | `we_owe` — **We owe (Dr)** · `vendor_owe` — **Vendor owe (Cr)** |
+| Agent | `we_owe` · `agent_owe` | unchanged |
+
+- One currency for both figures (`opening_currency_id`, unchanged). The database refuses a figure without
+  one (`*_opening_needs_currency`) and refuses a negative figure (`*_opening_not_negative`).
+- **Existing figures moved by the rule they were entered under.** A positive balance became *owe us*,
+  a negative one became *we owe*, and a zero became neither. Every balance reads exactly as it did before
+  the migration. Where a figure was entered with the wrong sign — a vendor payable typed as a positive
+  number — the operator corrects it now, in the field that names the side. Nothing was guessed.
+- `opening_balance` is dropped once its figures are copied. No view depended on it.
+- Settling an opening (§14.6) is unchanged: Expense pays what *we owe* a vendor, carrier or agent, and
+  Income receives what a *customer owes*. A vendor's or agent's *owe us* figure, and what we owe a
+  customer, are still recorded by Journal (§14.13 Q8).

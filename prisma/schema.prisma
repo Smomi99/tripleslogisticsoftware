@@ -303,6 +303,14 @@ model Tenant {
   debitInvoiceCostLines DebitInvoiceCostLine[]
   debitInvoiceReceipts  DebitInvoiceReceipt[]
 
+  ledgerAccounts     LedgerAccount[]
+  banks              Bank[]
+  bankAccounts       BankAccount[]
+  journalEntries     JournalEntry[]
+  journalLines       JournalLine[]
+  supplierPayments   SupplierPayment[]
+  openingSettlements OpeningSettlement[]
+
   @@index([slug])
   @@index([status])
   @@index([currencyId])
@@ -499,6 +507,8 @@ model Currency {
 
   debitInvoices     DebitInvoice[]     @relation("DebitInvoiceCurrency")
   debitInvoiceCosts DebitInvoiceCost[] @relation("DebitInvoiceCostCurrency")
+
+  openingSettlements OpeningSettlement[] @relation("OpeningSettlementCurrency")
   @@unique([tenantId, code])
   @@index([tenantId])
   @@index([currency])
@@ -678,6 +688,7 @@ model Carrier {
   clps              Clp[]              @relation("ClpCarrier")
   advises           ShipmentAdvise[]   @relation("ShipmentAdviseCarrier")
   debitInvoiceCosts DebitInvoiceCost[] @relation("DebitInvoiceCostCarrier")
+  journalEntries    JournalEntry[]     @relation("JournalEntryCarrier")
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -905,13 +916,14 @@ model Vendor {
   tinNo              String?   @map("tin_no") @db.VarChar(50)
   /// Client's spec: vat_no (BIN).
   vatNo              String?   @map("vat_no") @db.VarChar(50)
-  /// Opening balance for the accounts ledger: what this party's account
-  /// already stood at when the workspace started using the system. Signed —
-  /// positive is owed to us. Not derived from anything, so it is entered once
-  /// and then only corrected.
-  openingBalance     Decimal?  @map("opening_balance") @db.Decimal(18, 4)
-  /// The currency the opening balance is in. Required whenever a balance is
-  /// entered; a figure with no currency cannot be posted to a ledger.
+  /// The opening figures for the accounts ledger, the agent's two columns
+  /// (client, 2026-09-27): what we owed the vendor and what the vendor owed us
+  /// when the workspace started using the system — kept apart rather than
+  /// netted into one signed figure, so neither side can be entered backwards.
+  weOwe              Decimal?  @map("we_owe") @db.Decimal(18, 4)
+  vendorOwe          Decimal?  @map("vendor_owe") @db.Decimal(18, 4)
+  /// Required whenever either figure is entered; a figure with no currency
+  /// cannot be posted to a ledger.
   openingCurrencyId  BigInt?   @map("opening_currency_id")
   isActive           Boolean   @default(true) @map("is_active")
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -935,7 +947,9 @@ model Vendor {
 
   users User[] @relation("VendorUsers")
 
-  debitInvoiceCosts DebitInvoiceCost[] @relation("DebitInvoiceCostVendor")
+  debitInvoiceCosts  DebitInvoiceCost[]  @relation("DebitInvoiceCostVendor")
+  journalEntries     JournalEntry[]      @relation("JournalEntryVendor")
+  openingSettlements OpeningSettlement[] @relation("OpeningSettlementVendor")
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -1120,13 +1134,14 @@ model Customer {
   imSeaVolumeTeuMonth Decimal?     @map("im_sea_volume_teu_month") @db.Decimal(18, 4)
   /// Import air volume, KG per month.
   imAirVolumeKgMonth  Decimal?     @map("im_air_volume_kg_month") @db.Decimal(18, 4)
-  /// Opening balance for the accounts ledger: what this party's account
-  /// already stood at when the workspace started using the system. Signed —
-  /// positive is owed to us. Not derived from anything, so it is entered once
-  /// and then only corrected.
-  openingBalance      Decimal?     @map("opening_balance") @db.Decimal(18, 4)
-  /// The currency the opening balance is in. Required whenever a balance is
-  /// entered; a figure with no currency cannot be posted to a ledger.
+  /// The opening figures for the accounts ledger, the agent's two columns
+  /// (client, 2026-09-27): what we owed the customer (an advance, a credit)
+  /// and what the customer owed us when the workspace started using the
+  /// system — kept apart rather than netted into one signed figure.
+  weOwe               Decimal?     @map("we_owe") @db.Decimal(18, 4)
+  customerOwe         Decimal?     @map("customer_owe") @db.Decimal(18, 4)
+  /// Required whenever either figure is entered; a figure with no currency
+  /// cannot be posted to a ledger.
   openingCurrencyId   BigInt?      @map("opening_currency_id")
   /// Free text about the account. Asked for by the client on 2026-08-29; not in
   /// §6, so it is recorded in §11 rather than quietly assumed.
@@ -1162,7 +1177,9 @@ model Customer {
   shipments   Shipment[]
   blTemplates BlTemplate[] @relation("BlTemplateCustomer")
 
-  debitInvoices DebitInvoice[]
+  debitInvoices      DebitInvoice[]
+  journalEntries     JournalEntry[]      @relation("JournalEntryCustomer")
+  openingSettlements OpeningSettlement[] @relation("OpeningSettlementCustomer")
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -1319,7 +1336,9 @@ model Agent {
   blDrafts       BlDraft[]      @relation("BlDraftDeliveryAgent")
   blTemplates    BlTemplate[]   @relation("BlTemplateDeliveryAgent")
 
-  debitInvoiceCosts DebitInvoiceCost[] @relation("DebitInvoiceCostAgent")
+  debitInvoiceCosts  DebitInvoiceCost[]  @relation("DebitInvoiceCostAgent")
+  journalEntries     JournalEntry[]      @relation("JournalEntryAgent")
+  openingSettlements OpeningSettlement[] @relation("OpeningSettlementAgent")
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -1891,6 +1910,24 @@ model User {
   debitInvoiceCostLinesUpdated DebitInvoiceCostLine[] @relation("DebitInvoiceCostLineUpdatedBy")
   debitInvoiceReceiptsCreated  DebitInvoiceReceipt[]  @relation("DebitInvoiceReceiptCreatedBy")
   debitInvoiceReceiptsUpdated  DebitInvoiceReceipt[]  @relation("DebitInvoiceReceiptUpdatedBy")
+
+  // The books (MODULE_ACCOUNTS.md §14)
+  ledgerAccountsCreated      LedgerAccount[]     @relation("LedgerAccountCreatedBy")
+  ledgerAccountsUpdated      LedgerAccount[]     @relation("LedgerAccountUpdatedBy")
+  banksCreated               Bank[]              @relation("BankCreatedBy")
+  banksUpdated               Bank[]              @relation("BankUpdatedBy")
+  bankAccountsCreated        BankAccount[]       @relation("BankAccountCreatedBy")
+  bankAccountsUpdated        BankAccount[]       @relation("BankAccountUpdatedBy")
+  journalEntriesPosted       JournalEntry[]      @relation("JournalEntryPostedBy")
+  journalEntriesCancelled    JournalEntry[]      @relation("JournalEntryCancelledBy")
+  journalEntriesCreated      JournalEntry[]      @relation("JournalEntryCreatedBy")
+  journalEntriesUpdated      JournalEntry[]      @relation("JournalEntryUpdatedBy")
+  journalLinesCreated        JournalLine[]       @relation("JournalLineCreatedBy")
+  journalLinesUpdated        JournalLine[]       @relation("JournalLineUpdatedBy")
+  supplierPaymentsCreated    SupplierPayment[]   @relation("SupplierPaymentCreatedBy")
+  supplierPaymentsUpdated    SupplierPayment[]   @relation("SupplierPaymentUpdatedBy")
+  openingSettlementsCreated  OpeningSettlement[] @relation("OpeningSettlementCreatedBy")
+  openingSettlementsUpdated  OpeningSettlement[] @relation("OpeningSettlementUpdatedBy")
   @@unique([tenantId, username])
   @@unique([tenantId, email])
   @@unique([tenantId, code])
@@ -5362,7 +5399,8 @@ model DebitInvoiceCost {
   createdByUser User? @relation("DebitInvoiceCostCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User? @relation("DebitInvoiceCostUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
-  lines DebitInvoiceCostLine[]
+  lines    DebitInvoiceCostLine[]
+  payments SupplierPayment[]
 
   @@unique([tenantId, id])
   @@index([tenantId])
@@ -5433,6 +5471,353 @@ model DebitInvoiceReceipt {
   /// At the invoice's frozen rate (§3.4), so a fully received invoice closes
   /// to zero in both columns of the Receivable-Payable list.
   amountBase     Decimal  @map("amount_base") @db.Decimal(18, 4)
+  /// The Income voucher that banked this money (§14.6). Null only on the
+  /// receipts recorded by the old Receive form, before money was booked.
+  journalEntryId BigInt?  @map("journal_entry_id")
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  debitInvoice DebitInvoice  @relation(fields: [tenantId, debitInvoiceId], references: [tenantId, id], onDelete: Restrict)
+  journalEntry JournalEntry? @relation(fields: [tenantId, journalEntryId], references: [tenantId, id], onDelete: Restrict)
+
+  createdByUser User? @relation("DebitInvoiceReceiptCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("DebitInvoiceReceiptUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([debitInvoiceId])
+  @@index([journalEntryId])
+  @@map("debit_invoice_receipt")
+}
+
+// ===========================================================================
+// ACCOUNTS — the books: docs/MODULE_ACCOUNTS.md §14
+// Chart of accounts, Bank / Account set up, Journal, Expense, Income,
+// Internal Transfer, and what those vouchers settle.
+// ===========================================================================
+
+/// The five heads of the chart (sheet `Chart of accounts`, row 6).
+enum LedgerAccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  INCOME
+  EXPENSE
+
+  @@map("ledger_account_type")
+}
+
+/// Which of the four Transaction screens wrote a voucher (Menu M9–M12).
+enum JournalEntryKind {
+  JOURNAL
+  EXPENSE
+  INCOME
+  TRANSFER
+
+  @@map("journal_entry_kind")
+}
+
+/// §14.4. DRAFT is the Journal sheet's `Save`; POSTED is `Save & agreed`, and
+/// the only state the books count. A posted voucher is never edited — it is
+/// cancelled, with a reason, and entered again.
+enum JournalEntryStatus {
+  DRAFT
+  POSTED
+  CANCELLED
+
+  @@map("journal_entry_status")
+}
+
+/// Everyone a party ledger is kept for (the Receivable-Payable list's rows).
+enum LedgerPartyType {
+  CUSTOMER
+  AGENT
+  CARRIER
+  VENDOR
+
+  @@map("ledger_party_type")
+}
+
+/// Which side of a party's balance a settlement closes.
+enum SettlementSide {
+  RECEIVABLE
+  PAYABLE
+
+  @@map("settlement_side")
+}
+
+/// client: Chart of accounts — a Ledger (parent_id NULL) or a Sub Ledger
+/// (sheet B64–C68: "Ledger: Cost of Service · Sub Ledger: Sea Freight-FCL").
+model LedgerAccount {
+  tenantId    BigInt            @map("tenant_id")
+  id          BigInt            @id @default(autoincrement())
+  code        String            @db.VarChar(32)
+  accountType LedgerAccountType @map("account_type")
+  /// Null for a Ledger. A Sub Ledger's parent is a Ledger of the same type —
+  /// never another Sub Ledger (trigger ledger_account_parent_guard).
+  parentId    BigInt?           @map("parent_id")
+  name        String            @db.VarChar(200)
+  /// The predefined chart's stable handle (sheet B64 "Predefined"), e.g.
+  /// ASSET.BANK. Null on an account a workspace added itself.
+  systemKey   String?           @map("system_key") @db.VarChar(64)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  parent   LedgerAccount?  @relation("LedgerAccountParent", fields: [tenantId, parentId], references: [tenantId, id], onDelete: Restrict)
+  children LedgerAccount[] @relation("LedgerAccountParent")
+
+  createdByUser User? @relation("LedgerAccountCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("LedgerAccountUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  bankAccount  BankAccount?
+  journalLines JournalLine[]
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@unique([tenantId, systemKey])
+  @@index([tenantId])
+  @@index([tenantId, parentId])
+  @@map("ledger_account")
+}
+
+/// client: bank setup
+model Bank {
+  tenantId    BigInt  @map("tenant_id")
+  id          BigInt  @id @default(autoincrement())
+  code        String  @db.VarChar(32)
+  bankName    String  @map("bank_name") @db.VarChar(200)
+  branch      String  @db.VarChar(200)
+  bankAddress String? @map("bank_address") @db.Text
+  swiftNo     String? @map("swift_no") @db.VarChar(20)
+  routingNo   String? @map("routing_no") @db.VarChar(20)
+  ibanNo      String? @map("iban_no") @db.VarChar(40)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  createdByUser User? @relation("BankCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("BankUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  accounts BankAccount[]
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@map("bank")
+}
+
+/// client: Account setup. Bank Address, Swift No, Routing number and IBAN No
+/// are the chosen bank branch's, shown from it rather than copied (§14.3).
+model BankAccount {
+  tenantId        BigInt @map("tenant_id")
+  id              BigInt @id @default(autoincrement())
+  code            String @db.VarChar(32)
+  accountName     String @map("account_name") @db.VarChar(200)
+  accountNo       String @map("account_no") @db.VarChar(50)
+  /// "Select Bank" + "Select Branch": one bank setup row is one branch.
+  bankId          BigInt @map("bank_id")
+  /// The account's Sub Ledger under Asset → Bank ("Bank Asia Ltd-878"), made
+  /// with it and renamed with it. What every voucher posts to.
+  ledgerAccountId BigInt @map("ledger_account_id")
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  bank          Bank          @relation(fields: [tenantId, bankId], references: [tenantId, id], onDelete: Restrict)
+  ledgerAccount LedgerAccount @relation(fields: [tenantId, ledgerAccountId], references: [tenantId, id], onDelete: Restrict)
+
+  createdByUser User? @relation("BankAccountCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("BankAccountUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@unique([tenantId, ledgerAccountId])
+  @@index([tenantId])
+  @@index([bankId])
+  @@map("bank_account")
+}
+
+/// client: Journal / Expense-regular / Expense-Vendor / Income / Income-Other /
+/// Internal Transfer — one voucher, whichever screen wrote it (§14.4).
+model JournalEntry {
+  tenantId   BigInt @map("tenant_id")
+  id         BigInt @id @default(autoincrement())
+  /// JV- / PV- / RV- / TV-2026-000001, per workspace per kind per year.
+  code       String @db.VarChar(32)
+  seriesYear Int    @map("series_year")
+
+  kind        JournalEntryKind
+  entryDate   DateTime         @map("entry_date") @db.Date
+  description String?          @db.Text
+  /// "Upload file" (Journal) / "Upload Payment voucher" (Expense): a storage
+  /// key only, never the file (CLAUDE.md §2).
+  attachmentFile String? @map("attachment_file") @db.VarChar(500)
+
+  status JournalEntryStatus @default(DRAFT)
+
+  /// "Pay to" (Expense-Vendor) / "Income From" (Income). Exactly the one id
+  /// party_type names (CHECK). Carrier is system-capable: single-column key
+  /// plus the tenant guard.
+  partyType  LedgerPartyType? @map("party_type")
+  customerId BigInt?          @map("customer_id")
+  agentId    BigInt?          @map("agent_id")
+  carrierId  BigInt?          @map("carrier_id")
+  vendorId   BigInt?          @map("vendor_id")
+
+  /// Σ debits (= Σ credits), in the workspace base. Recomputed on every save.
+  totalAmount Decimal @default(0) @map("total_amount") @db.Decimal(18, 4)
+
+  postedAt     DateTime? @map("posted_at") @db.Timestamptz(6)
+  postedBy     BigInt?   @map("posted_by")
+  cancelledAt  DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  cancelledBy  BigInt?   @map("cancelled_by")
+  cancelReason String?   @map("cancel_reason") @db.Text
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  customer Customer? @relation("JournalEntryCustomer", fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict)
+  agent    Agent?    @relation("JournalEntryAgent", fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
+  carrier  Carrier?  @relation("JournalEntryCarrier", fields: [carrierId], references: [id], onDelete: Restrict)
+  vendor   Vendor?   @relation("JournalEntryVendor", fields: [tenantId, vendorId], references: [tenantId, id], onDelete: Restrict)
+
+  postedByUser    User? @relation("JournalEntryPostedBy", fields: [postedBy], references: [id], onDelete: Restrict)
+  cancelledByUser User? @relation("JournalEntryCancelledBy", fields: [cancelledBy], references: [id], onDelete: Restrict)
+  createdByUser   User? @relation("JournalEntryCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser   User? @relation("JournalEntryUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  lines              JournalLine[]
+  receipts           DebitInvoiceReceipt[]
+  supplierPayments   SupplierPayment[]
+  openingSettlements OpeningSettlement[]
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([tenantId, kind, status])
+  @@index([customerId])
+  @@index([agentId])
+  @@index([carrierId])
+  @@index([vendorId])
+  @@index([postedBy])
+  @@index([cancelledBy])
+  @@map("journal_entry")
+}
+
+/// One debit or one credit of a voucher, always in the workspace base.
+model JournalLine {
+  tenantId        BigInt  @map("tenant_id")
+  id              BigInt  @id @default(autoincrement())
+  journalEntryId  BigInt  @map("journal_entry_id")
+  sortOrder       Int     @default(0) @map("sort_order")
+  ledgerAccountId BigInt  @map("ledger_account_id")
+  /// Exactly one of the two is positive (CHECK). A posted voucher's debits and
+  /// credits are equal (constraint trigger journal_line_balanced).
+  debit           Decimal @default(0) @db.Decimal(18, 4)
+  credit          Decimal @default(0) @db.Decimal(18, 4)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  journalEntry  JournalEntry  @relation(fields: [tenantId, journalEntryId], references: [tenantId, id], onDelete: Restrict)
+  ledgerAccount LedgerAccount @relation(fields: [tenantId, ledgerAccountId], references: [tenantId, id], onDelete: Restrict)
+
+  createdByUser User? @relation("JournalLineCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("JournalLineUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([journalEntryId])
+  @@index([ledgerAccountId])
+  @@map("journal_line")
+}
+
+/// client: Expense-Vendor against a Credit Invoice ("Select Invoice No :"),
+/// the payable side of what debit_invoice_receipt is for the receivable.
+model SupplierPayment {
+  tenantId           BigInt   @map("tenant_id")
+  id                 BigInt   @id @default(autoincrement())
+  journalEntryId     BigInt   @map("journal_entry_id")
+  debitInvoiceCostId BigInt   @map("debit_invoice_cost_id")
+  paymentDate        DateTime @map("payment_date") @db.Date
+  /// In the credit invoice's currency. Positive (CHECK).
+  amount             Decimal  @db.Decimal(18, 4)
+  /// At the credit invoice's frozen rate, so a fully paid one closes to zero
+  /// in both columns of the Receivable-Payable list — the receipt's rule.
+  amountBase         Decimal  @map("amount_base") @db.Decimal(18, 4)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant       Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  journalEntry JournalEntry     @relation(fields: [tenantId, journalEntryId], references: [tenantId, id], onDelete: Restrict)
+  cost         DebitInvoiceCost @relation(fields: [tenantId, debitInvoiceCostId], references: [tenantId, id], onDelete: Restrict)
+
+  createdByUser User? @relation("SupplierPaymentCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("SupplierPaymentUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([journalEntryId])
+  @@index([debitInvoiceCostId])
+  @@map("supplier_payment")
+}
+
+/// Money in or out against a CRM opening balance — the one thing on a party
+/// ledger that no invoice stands behind (§14.6).
+model OpeningSettlement {
+  tenantId       BigInt          @map("tenant_id")
+  id             BigInt          @id @default(autoincrement())
+  journalEntryId BigInt          @map("journal_entry_id")
+  side           SettlementSide
+  /// Never CARRIER: carriers hold no opening balance (CHECK).
+  partyType      LedgerPartyType @map("party_type")
+  customerId     BigInt?         @map("customer_id")
+  agentId        BigInt?         @map("agent_id")
+  vendorId       BigInt?         @map("vendor_id")
+  settlementDate DateTime        @map("settlement_date") @db.Date
+  /// The opening's currency. Its base is worked out at read time, at today's
+  /// rate, exactly as the opening's own is — so a settled opening nets to zero.
+  currencyId     BigInt          @map("currency_id")
+  currencyCode   String          @map("currency_code") @db.VarChar(10)
+  amount         Decimal         @db.Decimal(18, 4)
 
   isActive  Boolean   @default(true) @map("is_active")
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -5442,13 +5827,21 @@ model DebitInvoiceReceipt {
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  debitInvoice DebitInvoice @relation(fields: [tenantId, debitInvoiceId], references: [tenantId, id], onDelete: Restrict)
+  journalEntry JournalEntry @relation(fields: [tenantId, journalEntryId], references: [tenantId, id], onDelete: Restrict)
+  customer     Customer?    @relation("OpeningSettlementCustomer", fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict)
+  agent        Agent?       @relation("OpeningSettlementAgent", fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
+  vendor       Vendor?      @relation("OpeningSettlementVendor", fields: [tenantId, vendorId], references: [tenantId, id], onDelete: Restrict)
+  currency     Currency     @relation("OpeningSettlementCurrency", fields: [currencyId], references: [id], onDelete: Restrict)
 
-  createdByUser User? @relation("DebitInvoiceReceiptCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
-  updatedByUser User? @relation("DebitInvoiceReceiptUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  createdByUser User? @relation("OpeningSettlementCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("OpeningSettlementUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   @@unique([tenantId, id])
   @@index([tenantId])
-  @@index([debitInvoiceId])
-  @@map("debit_invoice_receipt")
+  @@index([journalEntryId])
+  @@index([customerId])
+  @@index([agentId])
+  @@index([vendorId])
+  @@index([currencyId])
+  @@map("opening_settlement")
 }

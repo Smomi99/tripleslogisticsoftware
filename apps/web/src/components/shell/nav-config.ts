@@ -114,10 +114,18 @@ const ROUTES: Record<string, RouteEntry> = {
   'DOCUMENTATION.BL_DRAFT': '/documentation/bl-draft',
   // BL Print (Menu K7) — the approved bills, to issue and print (§13).
   'DOCUMENTATION.BL_PRINT': '/documentation/bl-print',
-  // Accounts (docs/MODULE_ACCOUNTS.md), Menu M3, M4 and M6.
+  // Accounts (docs/MODULE_ACCOUNTS.md), Menu M3–M19.
   'ACCOUNTS.AWAITING_FREIGHT_INV': '/accounts/awaiting-freight-inv',
   'ACCOUNTS.DEBIT_INVOICE': '/accounts/debit-invoice',
+  'ACCOUNTS.NEW_CREDIT_INVOICE': '/accounts/credit-invoice',
   'ACCOUNTS.RECEIVABLE_PAYABLE': '/accounts/receivable-payable',
+  'ACCOUNTS.CHART_OF_ACCOUNTS': '/accounts/chart-of-accounts',
+  'ACCOUNTS.JOURNAL': '/accounts/journal',
+  'ACCOUNTS.EXPENSE': '/accounts/expense',
+  'ACCOUNTS.INCOME': '/accounts/income',
+  'ACCOUNTS.INTERNAL_TRANSFER': '/accounts/internal-transfer',
+  'ACCOUNTS.BANK_SETUP': '/accounts/bank-setup',
+  'ACCOUNTS.ACCOUNT_SETUP': '/accounts/account-setup',
   'CUSTOMER.SHIPMENT': '/portal/shipment',
 };
 
@@ -137,11 +145,29 @@ const UNLISTED_ROUTES: Record<string, string> = {
   'DOCUMENTATION.BL_TEMPLATE': '/documentation/bl-template',
 };
 
+/**
+ * A heading inside a module's group, for menu items the client nests.
+ *
+ * The Accounts column of the Menu sheet puts Journal, Expense, Income and
+ * Internal Transfer under "- Transaction" (M8), and Bank and Account Set up
+ * under "Setting" (M17). A section only groups what is already there — the
+ * items and their order are still the registry's.
+ */
+const NAV_SECTION: Record<string, string> = {
+  'ACCOUNTS.JOURNAL': 'Transaction',
+  'ACCOUNTS.EXPENSE': 'Transaction',
+  'ACCOUNTS.INCOME': 'Transaction',
+  'ACCOUNTS.INTERNAL_TRANSFER': 'Transaction',
+  'ACCOUNTS.BANK_SETUP': 'Setting',
+  'ACCOUNTS.ACCOUNT_SETUP': 'Setting',
+};
+
 export interface NavItem {
   feature: string;
   label: string;
   href: Route | null;
   viewPermission: string;
+  section?: string;
 }
 
 export interface NavGroup {
@@ -168,12 +194,14 @@ export function buildNav(): NavGroup[] {
           viewPermission: `${f.feature}.VIEW`,
         }));
       }
+      const section = NAV_SECTION[f.feature];
       return [
         {
           feature: f.feature,
           label: f.label,
           href: (route as Route | undefined) ?? null,
           viewPermission: `${f.feature}.VIEW`,
+          ...(section === undefined ? {} : { section }),
         },
       ];
     }),

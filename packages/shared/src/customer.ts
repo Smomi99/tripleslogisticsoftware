@@ -3,7 +3,7 @@ import { z } from 'zod';
 import {
   currencyRequiredFor,
   openingCurrencyField,
-  signedMoneyField,
+  unsignedMoneyField,
 } from './opening-balance';
 
 import { listQuerySchema } from './api';
@@ -57,8 +57,13 @@ export const customerInputSchema = z.object({
   exAirVolumeKgMonth: volumeSchema,
   imSeaVolumeTeuMonth: volumeSchema,
   imAirVolumeKgMonth: volumeSchema,
-  /** Opening figures for the accounts ledger. Positive is owed to us. */
-  openingBalance: signedMoneyField('Enter an opening balance, or leave it blank.'),
+  /**
+   * The opening figures for the accounts ledger — the agent's two columns
+   * (client, 2026-09-27): what we owed them and what they owed us, each on
+   * its own side, never netted into one signed figure.
+   */
+  weOwe: unsignedMoneyField('Enter an amount, or leave it blank.'),
+  customerOwe: unsignedMoneyField('Enter an amount, or leave it blank.'),
   openingCurrencyId: openingCurrencyField,
   /**
    * Two fields the client asked for on 2026-08-29. Neither is in §6, so both
@@ -71,8 +76,8 @@ export const customerInputSchema = z.object({
     .trim()
     .regex(/^\d*$/, 'Choose a salesman.')
     .optional(),
-}).refine((v) => currencyRequiredFor([v.openingBalance], v.openingCurrencyId), {
-  message: 'Choose the currency the opening balance is in.',
+}).refine((v) => currencyRequiredFor([v.weOwe, v.customerOwe], v.openingCurrencyId), {
+  message: 'Choose the currency those opening figures are in.',
   path: ['openingCurrencyId'],
 });
 
@@ -103,7 +108,8 @@ export interface CustomerDto {
   exAirVolumeKgMonth: string | null;
   imSeaVolumeTeuMonth: string | null;
   imAirVolumeKgMonth: string | null;
-  openingBalance: string | null;
+  weOwe: string | null;
+  customerOwe: string | null;
   openingCurrencyId: string | null;
   openingCurrencyCode: string | null;
   notes: string | null;

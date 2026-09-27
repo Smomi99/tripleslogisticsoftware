@@ -54,7 +54,8 @@ const SELECT = {
   exAirVolumeKgMonth: true,
   imSeaVolumeTeuMonth: true,
   imAirVolumeKgMonth: true,
-  openingBalance: true,
+  weOwe: true,
+  customerOwe: true,
   openingCurrencyId: true,
   openingCurrency: { select: { code: true } },
   notes: true,
@@ -79,7 +80,8 @@ type CustomerRow = {
   exAirVolumeKgMonth: Prisma.Decimal | null;
   imSeaVolumeTeuMonth: Prisma.Decimal | null;
   imAirVolumeKgMonth: Prisma.Decimal | null;
-  openingBalance: Prisma.Decimal | null;
+  weOwe: Prisma.Decimal | null;
+  customerOwe: Prisma.Decimal | null;
   openingCurrencyId: bigint | null;
   openingCurrency: { code: string } | null;
   notes: string | null;
@@ -108,7 +110,8 @@ function toDto(row: CustomerRow): CustomerDto {
     exAirVolumeKgMonth: decimal(row.exAirVolumeKgMonth),
     imSeaVolumeTeuMonth: decimal(row.imSeaVolumeTeuMonth),
     imAirVolumeKgMonth: decimal(row.imAirVolumeKgMonth),
-    openingBalance: money(row.openingBalance),
+    weOwe: money(row.weOwe),
+    customerOwe: money(row.customerOwe),
     openingCurrencyId: row.openingCurrencyId?.toString() ?? null,
     openingCurrencyCode: row.openingCurrency?.code ?? null,
     notes: row.notes,
@@ -334,7 +337,8 @@ customerRouter.post('/', requirePermission(`${FEATURE}.CREATE`), async (req, res
             exAirVolumeKgMonth: volume(input.exAirVolumeKgMonth),
             imSeaVolumeTeuMonth: volume(input.imSeaVolumeTeuMonth),
             imAirVolumeKgMonth: volume(input.imAirVolumeKgMonth),
-            openingBalance: moneyIn(input.openingBalance),
+            weOwe: moneyIn(input.weOwe),
+            customerOwe: moneyIn(input.customerOwe),
             openingCurrencyId: refIn(input.openingCurrencyId),
             notes: input.notes || null,
             salesmanId: refIn(input.salesmanId),
@@ -382,7 +386,8 @@ customerRouter.patch('/:id', requirePermission(`${FEATURE}.EDIT`), async (req, r
         exAirVolumeKgMonth: volume(input.exAirVolumeKgMonth),
         imSeaVolumeTeuMonth: volume(input.imSeaVolumeTeuMonth),
         imAirVolumeKgMonth: volume(input.imAirVolumeKgMonth),
-        openingBalance: moneyIn(input.openingBalance),
+        weOwe: moneyIn(input.weOwe),
+        customerOwe: moneyIn(input.customerOwe),
         openingCurrencyId: refIn(input.openingCurrencyId),
         notes: input.notes || null,
         salesmanId: refIn(input.salesmanId),

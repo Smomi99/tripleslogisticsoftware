@@ -330,6 +330,39 @@ The client states single or multiple POs may be approved. So:
    and the customer will argue about later, and the trail is the answer.
 6. Never let received exceed booked without an explicit override and a reason.
 
+### 5.6 Changing the quotation after a booking is cancelled (client, 2026-09-27)
+
+*"When I cancel the booking there should be an option to edit that quotation — sometimes the
+requirement changes."*
+
+**Rule: the quotation is revised, never edited in place.** Raising a booking marks its quotation
+`ACCEPTED`, which locks it. Once **every** booking raised from it is `CANCELLED`, it reopens: the
+next change is saved as **revision N+1 under the same number** (`DRAFT`, to be sent to the customer
+again), and the accepted revision becomes `SUPERSEDED`. This is MODULE_INQUIRY_QUOTATION §5.3 rule 8,
+the rule a `SENT` quotation already follows, applied to an accepted one.
+
+Why not unlock it in place:
+
+- The cancelled booking was raised on revision N's price and terms, and so was anything built on it
+  (a schedule, a debit invoice). Editing revision N would rewrite what those records say they came
+  from. The booking keeps pointing at revision N.
+- One quotation can carry several bookings (§5.2 rule 1). While any of them is live — including
+  `REJECTED`, which can go back to a new proposal — it is being worked on the accepted price, so the
+  quotation stays locked. The refusal names the live bookings (`409 QUOTATION_BOOKED`).
+
+Where it shows:
+
+| Screen | What it offers |
+|---|---|
+| Booking, once cancelled | **Revise quotation QTN-…** beside the cancellation reason. It opens the quotation as it stands now, following any later revision. If another booking still holds it, the banner names that booking instead. |
+| Cancel dialog | One line saying the quotation can be revised once no booking on it is live. |
+| Quotation | The bookings raised from it, with their status. The note under the buttons says what a save will do: issue the next revision, or why it cannot yet. |
+| Quotation List | `Edit` only where a change is possible. |
+
+The server decides (`quotationCanChange` in `@ff/shared`, returned as `editable` on the quotation and
+`currentQuotation` on the booking), so no screen can offer what the API would refuse. No new permission:
+revising is `CUSTOMER_SERVICE.QUOTATION.EDIT`, as it is for a sent quotation. No schema change.
+
 ---
 
 ## 6. SCREENS

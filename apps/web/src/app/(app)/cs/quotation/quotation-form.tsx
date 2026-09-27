@@ -6,9 +6,9 @@ import {
   type QuotationLineDto,
   type QuotationLineGroup,
   isoCurrency,
-  quotationIsEditable,
   TRANSIT_TYPES,
   loadingTypeLabel,
+  SHIPMENT_STATUS_LABEL,
 } from '@ff/shared';
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
@@ -121,7 +121,10 @@ export function QuotationForm({
 }) {
   const { authorizedRequest, authorizedObjectUrl, can } = useSession();
 
-  const editable = quotationIsEditable(quotation.status) && can('CUSTOMER_SERVICE.QUOTATION.EDIT');
+  // The server decides (quotationCanChange): a draft, a sent offer, or an
+  // accepted one whose bookings were all cancelled (MODULE_BOOKING_CARGO §5.6).
+  const editable = quotation.editable && can('CUSTOMER_SERVICE.QUOTATION.EDIT');
+  const liveBookings = quotation.bookings.filter((b) => b.status !== 'CANCELLED');
   const [lines, setLines] = useState<LineDraft[]>(quotation.lines.map(toDraft));
   const [validityDate, setValidityDate] = useState(quotation.validityDate ?? '');
   const [transitType, setTransitType] = useState(quotation.transitType ?? '');
@@ -646,7 +649,41 @@ export function QuotationForm({
               {quotation.revisionNo + 1} and keeps this one on the record.
             </p>
           )}
+          {quotation.status === 'ACCEPTED' && quotation.editable && (
+            <p className="text-cell text-steel">
+              Every booking raised on it was cancelled. Editing it now issues revision{' '}
+              {quotation.revisionNo + 1} under the same number, to send to the customer again. This
+              revision stays on the record as it was accepted, with its cancelled bookings.
+            </p>
+          )}
+          {quotation.status === 'ACCEPTED' && !quotation.editable && liveBookings.length > 0 && (
+            <p className="text-cell text-steel">
+              Booked on {liveBookings.map((b) => b.code).join(', ')}. To change the price or terms,
+              cancel {liveBookings.length === 1 ? 'that booking' : 'those bookings'} first, then revise
+              it here — or raise a new quotation from the inquiry.
+            </p>
+          )}
         </div>
+        {quotation.bookings.length > 0 && (
+          <p className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-cell text-steel">
+            <span className="label-manifest">Bookings</span>
+            {quotation.bookings.map((b) =>
+              can('CUSTOMER_SERVICE.CARGO_BOOKING.VIEW') ? (
+                <Link
+                  key={b.id}
+                  href={{ pathname: `/cs/shipment-booking/${b.id}` }}
+                  className="font-mono tabular-nums text-harbour hover:underline"
+                >
+                  {b.code} · {SHIPMENT_STATUS_LABEL[b.status]}
+                </Link>
+              ) : (
+                <span key={b.id} className="font-mono tabular-nums">
+                  {b.code} · {SHIPMENT_STATUS_LABEL[b.status]}
+                </span>
+              ),
+            )}
+          </p>
+        )}
       </section>
     </div>
   );

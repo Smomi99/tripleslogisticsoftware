@@ -57,7 +57,8 @@ export function CustomerForm({ customer }: { customer: CustomerDto | null }) {
       exAirVolumeKgMonth: '',
       imSeaVolumeTeuMonth: '',
       imAirVolumeKgMonth: '',
-      openingBalance: '',
+      weOwe: '',
+      customerOwe: '',
       openingCurrencyId: '',
       notes: '',
       salesmanId: '',
@@ -89,7 +90,8 @@ export function CustomerForm({ customer }: { customer: CustomerDto | null }) {
       exAirVolumeKgMonth: customer.exAirVolumeKgMonth ?? '',
       imSeaVolumeTeuMonth: customer.imSeaVolumeTeuMonth ?? '',
       imAirVolumeKgMonth: customer.imAirVolumeKgMonth ?? '',
-      openingBalance: customer.openingBalance ?? '',
+      weOwe: customer.weOwe ?? '',
+      customerOwe: customer.customerOwe ?? '',
       openingCurrencyId: customer.openingCurrencyId ?? '',
       notes: customer.notes ?? '',
       salesmanId: customer.salesmanId ?? '',
@@ -217,9 +219,17 @@ export function CustomerForm({ customer }: { customer: CustomerDto | null }) {
         <Input id="imAirVolumeKgMonth" numeric inputMode="decimal" {...register('imAirVolumeKgMonth')} />
       </Field>
 
-      {/* Opening figures for the accounts ledger. */}
-      <Field id="openingBalance" label="Opening balance" error={errors.openingBalance?.message}>
-        <Input id="openingBalance" numeric inputMode="decimal" {...register('openingBalance')} />
+      {/*
+        Opening figures for the accounts ledger — the agent's two columns
+        (client, 2026-09-27). Each names its own side, so a payable is never
+        typed as a positive number and read as money owed to us.
+      */}
+      <Field id="weOwe" label="We owe (Dr)" error={errors.weOwe?.message}>
+        <Input id="weOwe" numeric inputMode="decimal" {...register('weOwe')} />
+      </Field>
+
+      <Field id="customerOwe" label="Customer owe (Cr)" error={errors.customerOwe?.message}>
+        <Input id="customerOwe" numeric inputMode="decimal" {...register('customerOwe')} />
       </Field>
 
       <Field id="openingCurrencyId" label="Currency" error={errors.openingCurrencyId?.message}>

@@ -10,6 +10,7 @@ import {
   type InvoiceLineSource,
   PAYMENT_STATUS_LABEL,
   SHIPMENT_STATUS_LABEL,
+  SUPPLIER_PAYMENT_STATUS_LABEL,
   SUPPLIER_PARTY_LABEL,
   SUPPLIER_PARTY_TYPES,
   type SupplierPartyType,
@@ -734,16 +735,19 @@ export function DebitInvoiceForm({
                       </>
                     )}
                   </div>
-                  <p className="font-mono text-body tabular-nums text-hull">
-                    <span className="label-manifest mr-2">Total Cost =</span>
-                    {fmt(totals.total)} {blockCode}
-                    {!isBase(block.currencyId) && (
-                      <span className="text-steel">
-                        {' '}
-                        · {fmt(totals.base)} {baseCode}
-                      </span>
-                    )}
-                  </p>
+                  <div className="flex flex-col items-end gap-1">
+                    <p className="font-mono text-body tabular-nums text-hull">
+                      <span className="label-manifest mr-2">Total Cost =</span>
+                      {fmt(totals.total)} {blockCode}
+                      {!isBase(block.currencyId) && (
+                        <span className="text-steel">
+                          {' '}
+                          · {fmt(totals.base)} {baseCode}
+                        </span>
+                      )}
+                    </p>
+                    <CreditInvoicePaid invoice={invoice} blockId={block.id} />
+                  </div>
                 </div>
               </div>
             );
@@ -838,11 +842,31 @@ export function DebitInvoiceForm({
                 </Status>
               </span>
             </p>
+            {invoice.paymentStatus !== 'PAID' && can('ACCOUNTS.DEBIT_INVOICE.RECEIVE') && can('ACCOUNTS.INCOME.CREATE') && (
+              <Link
+                href={`/accounts/income/new?debitInvoice=${invoice.id}` as Route}
+                className="mt-2 inline-block text-body text-harbour hover:underline"
+              >
+                Receive
+              </Link>
+            )}
             {invoice.receipts.length > 0 && (
               <ul className="mt-2 flex flex-col gap-1">
                 {invoice.receipts.map((r) => (
                   <li key={r.id} className="font-mono text-cell tabular-nums text-steel">
                     {r.paymentDate} · {money(invoice.currencyCode, r.amount)}
+                    {r.journalEntryId !== null && (
+                      <>
+                        {' · '}
+                        {can('ACCOUNTS.INCOME.VIEW') ? (
+                          <Link href={`/accounts/income/${r.journalEntryId}` as Route} className="text-harbour hover:underline">
+                            {r.journalEntryCode}
+                          </Link>
+                        ) : (
+                          r.journalEntryCode
+                        )}
+                      </>
+                    )}
                   </li>
                 ))}
               </ul>
@@ -1149,5 +1173,35 @@ function LineGrid({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * What Expense vouchers have paid against a saved cost block — the Credit
+ * Invoice's Payment Status (§14.2), with `Make Payment` beside it.
+ */
+function CreditInvoicePaid({ invoice, blockId }: { invoice: DebitInvoiceDto | null; blockId: string | null }) {
+  const { can } = useSession();
+  const cost = invoice?.costs?.find((c) => c.id === blockId);
+  if (invoice === null || invoice.status !== 'ISSUED' || cost === undefined) return null;
+  return (
+    <p className="flex items-center gap-3 text-cell text-steel">
+      <Status tone={cost.paymentStatus === 'PAID' ? 'active' : 'pending'}>
+        {SUPPLIER_PAYMENT_STATUS_LABEL[cost.paymentStatus]}
+      </Status>
+      {cost.paymentStatus !== 'UNPAID' && (
+        <span className="font-mono tabular-nums">
+          {money(cost.currencyCode, cost.paidAmount)} paid
+        </span>
+      )}
+      {cost.paymentStatus !== 'PAID' && can('ACCOUNTS.EXPENSE.CREATE') && (
+        <Link
+          href={`/accounts/expense/new?creditInvoice=${cost.id}` as Route}
+          className="text-harbour hover:underline"
+        >
+          Make Payment
+        </Link>
+      )}
+    </p>
   );
 }
