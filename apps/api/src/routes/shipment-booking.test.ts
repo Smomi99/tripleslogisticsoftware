@@ -999,3 +999,108 @@ describe('the quotation this booking answers', () => {
     await owner.quotation.update({ where: { id: quotationId }, data: { status: 'DRAFT' } });
   });
 });
+
+describe('revising the quotation once its bookings are cancelled (§5.6)', () => {
+  /** A quotation that has been sent, as the fixture's is not. */
+  async function sentQuotation(code: string): Promise<string> {
+    const base = await owner.quotation.findUniqueOrThrow({ where: { id: quotationId } });
+    const made = await owner.quotation.create({
+      data: {
+        tenantId,
+        code,
+        seriesYear: base.seriesYear,
+        inquiryId: base.inquiryId,
+        quotationDate: base.quotationDate,
+        customerId: base.customerId,
+        shipmentType: base.shipmentType,
+        movementType: base.movementType,
+        polId: base.polId,
+        podId: base.podId,
+        carrierId: base.carrierId,
+        localCurrencyId: base.localCurrencyId,
+        conversionRate: base.conversionRate,
+        status: 'SENT',
+        sentAt: new Date(),
+      },
+      select: { id: true },
+    });
+    return made.id.toString();
+  }
+
+  async function book(qId: string): Promise<string> {
+    const res = await as(token)
+      .post('/api/tenant/cs/bookings')
+      .send(body([{ poNo: 'PO-R', itemCode: 'IT-R', ctnQty: 1 }], { quotationId: qId }));
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    return (res.body as BookingBody).data.id;
+  }
+
+  const cancel = (id: string) =>
+    as(token).post(`/api/tenant/cs/bookings/${id}/cancel`).send({ reason: 'Customer changed the requirement' });
+  const quotation = async (id: string) => (await as(token).get(`/api/tenant/cs/quotations/${id}`)).body.data;
+  const revise = (id: string) =>
+    as(token).patch(`/api/tenant/cs/quotations/${id}`).send({ validityDate: '2026-12-31' });
+
+  it('stays locked while any booking raised from it is live, and names it', async () => {
+    const q = await sentQuotation('BK-QTN-R1');
+    const first = await book(q);
+    expect((await quotation(q)).status).toBe('ACCEPTED');
+    expect((await quotation(q)).editable).toBe(false);
+
+    const refused = await revise(q);
+    expect(refused.status).toBe(409);
+    expect(refused.body.error.code).toBe('QUOTATION_BOOKED');
+
+    // §5.2 rule 1: a second exporter, a second booking on the same quotation.
+    const second = await book(q);
+    await cancel(first);
+    const stillRefused = await revise(q);
+    expect(stillRefused.status).toBe(409);
+    const secondCode = (await as(token).get(`/api/tenant/cs/bookings/${second}`)).body.data.code as string;
+    expect(stillRefused.body.error.message).toContain(secondCode);
+
+    // The cancelled booking says why it cannot offer the revision yet.
+    const firstView = (await as(token).get(`/api/tenant/cs/bookings/${first}`)).body.data;
+    expect(firstView.currentQuotation).toMatchObject({ id: q, editable: false, liveBookingCodes: [secondCode] });
+  });
+
+  it('reopens once all are cancelled, and a change issues the next revision', async () => {
+    const q = await sentQuotation('BK-QTN-R2');
+    const bookingId = await book(q);
+    expect((await cancel(bookingId)).status).toBe(200);
+
+    const reopened = await quotation(q);
+    expect(reopened.status).toBe('ACCEPTED');
+    expect(reopened.editable).toBe(true);
+    expect(reopened.bookings).toEqual([expect.objectContaining({ id: bookingId, status: 'CANCELLED' })]);
+
+    // What the cancelled booking offers: "Revise quotation".
+    const cancelled = (await as(token).get(`/api/tenant/cs/bookings/${bookingId}`)).body.data;
+    expect(cancelled.currentQuotation).toMatchObject({ id: q, revisionNo: 1, editable: true, liveBookingCodes: [] });
+
+    const revised = await revise(q);
+    expect(revised.status, JSON.stringify(revised.body)).toBe(200);
+    const rev2 = revised.body.data;
+    expect(rev2.id).not.toBe(q);
+    expect(rev2.code).toBe('BK-QTN-R2');
+    expect(rev2.revisionNo).toBe(2);
+    // A new offer: it goes to the customer again before anything is booked on it.
+    expect(rev2.status).toBe('DRAFT');
+    expect(rev2.validityDate).toBe('2026-12-31');
+
+    // The accepted revision is kept as it was, and the booking still points at it.
+    const rev1 = await quotation(q);
+    expect(rev1.status).toBe('SUPERSEDED');
+    expect(rev1.editable).toBe(false);
+    const after = (await as(token).get(`/api/tenant/cs/bookings/${bookingId}`)).body.data;
+    expect(after.quotationId).toBe(q);
+    // ...and now leads to the revision that replaced it.
+    expect(after.currentQuotation).toMatchObject({ id: rev2.id, revisionNo: 2, editable: true });
+
+    // The list offers Edit on the live revision only.
+    const list = await as(token).get('/api/tenant/cs/quotations?search=BK-QTN-R2');
+    const byRev = new Map(list.body.data.map((r: { revisionNo: number; editable: boolean }) => [r.revisionNo, r.editable]));
+    expect(byRev.get(2)).toBe(true);
+    if (byRev.has(1)) expect(byRev.get(1)).toBe(false);
+  });
+});

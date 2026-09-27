@@ -1,5 +1,8 @@
 import { z } from 'zod';
 
+// Type-only: shipment.ts imports from here, so a value import would be a cycle.
+import type { ShipmentStatus } from './shipment';
+
 /**
  * The quotation (§4.4, §5.3, §6.5) — the price the customer actually reads.
  *
@@ -41,6 +44,33 @@ export const QUOTATION_EDITABLE: readonly QuotationStatus[] = ['DRAFT', 'SENT'];
 
 export function quotationIsEditable(status: string): boolean {
   return (QUOTATION_EDITABLE as readonly string[]).includes(status);
+}
+
+/**
+ * Whether a quotation can still be changed, given the bookings raised from it
+ * (MODULE_BOOKING_CARGO §5.6).
+ *
+ * DRAFT is edited in place. SENT, and an ACCEPTED quotation none of whose
+ * bookings is still live, are changed by issuing the next revision under the
+ * same number (MODULE_INQUIRY_QUOTATION §5.3 rule 8) — the accepted revision
+ * stays on the record, with the cancelled bookings that were made on it.
+ *
+ * Only CANCELLED releases a booking's hold. A REJECTED booking is still live:
+ * C/S can put a new sailing to the customer from it.
+ */
+export function quotationCanChange(
+  status: string,
+  bookingStatuses: readonly string[],
+): boolean {
+  if (quotationIsEditable(status)) return true;
+  return status === 'ACCEPTED' && bookingStatuses.every((s) => s === 'CANCELLED');
+}
+
+/** A booking raised from a quotation, as the quotation shows it. */
+export interface QuotationBookingDto {
+  id: string;
+  code: string;
+  status: ShipmentStatus;
 }
 
 // ---------------------------------------------------------------------- DTOs
@@ -153,6 +183,11 @@ export interface QuotationDto {
   status: QuotationStatus;
   sentAt: string | null;
 
+  /** Every booking raised from this revision, cancelled ones included. */
+  bookings: QuotationBookingDto[];
+  /** quotationCanChange, decided by the server so the screen cannot drift. */
+  editable: boolean;
+
   commodities: QuotationCommodityDto[];
   lines: QuotationLineDto[];
   recipients: QuotationRecipientDto[];
@@ -180,6 +215,8 @@ export interface QuotationListItemDto {
   totalAmountUsd: string | null;
   /** What that total is in. Null when the charges do not share one currency. */
   totalCurrencyCode: string | null;
+  /** quotationCanChange: whether the list offers Edit. */
+  editable: boolean;
 }
 
 /**

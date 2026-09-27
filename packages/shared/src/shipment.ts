@@ -392,6 +392,20 @@ export interface ShipmentDto {
 
   quotationId: string;
   quotationCode: string;
+  /**
+   * The quotation as it stands now: this booking's revision, or the later one
+   * that replaced it. What a cancelled booking's "Revise quotation" opens
+   * (MODULE_BOOKING_CARGO §5.6). Null only if every revision was removed.
+   */
+  currentQuotation: {
+    id: string;
+    revisionNo: number;
+    status: string;
+    /** quotationCanChange — every booking on it is cancelled, or it is not yet accepted. */
+    editable: boolean;
+    /** Its bookings that are still live, when they are what keeps it locked. */
+    liveBookingCodes: string[];
+  } | null;
   shipmentType: (typeof SHIPMENT_TYPES)[number];
   /** Read through the quotation — §5.4's inbound SKIP S/O is decided on it. */
   movementType: string;

@@ -6,7 +6,7 @@ import {
   type QuotationCommodityDto,
   quotationCreateSchema,
   type QuotationDto,
-  quotationIsEditable,
+  quotationCanChange,
   type QuotationLineDto,
   type QuotationListItemDto,
   quotationListQuerySchema,
@@ -52,7 +52,8 @@ import { requirePermission } from '../middleware/require-permission';
  *     holds us to.
  *  3. Editing a SENT quotation does not edit it — it issues revision 2 and
  *     supersedes revision 1 (§5.3 rule 8). Both are kept and the number is
- *     never reused.
+ *     never reused. An ACCEPTED quotation is revised the same way once every
+ *     booking raised from it has been cancelled (MODULE_BOOKING_CARGO §5.6).
  */
 
 export const quotationRouter: Router = Router();
@@ -109,6 +110,12 @@ const QUOTATION_INCLUDE = {
       priceSourceLocalChargeId: true,
       remarks: true,
     },
+  },
+  // The bookings raised from this revision decide whether it can still change.
+  shipments: {
+    where: { deletedAt: null },
+    orderBy: { id: 'asc' },
+    select: { id: true, code: true, status: true },
   },
 } satisfies Prisma.QuotationInclude;
 
@@ -211,6 +218,12 @@ function toDto(row: QuotationRow): QuotationDto {
 
     status: row.status,
     sentAt: row.sentAt?.toISOString() ?? null,
+
+    bookings: row.shipments.map((b) => ({ id: b.id.toString(), code: b.code, status: b.status })),
+    editable: quotationCanChange(
+      row.status,
+      row.shipments.map((b) => b.status),
+    ),
 
     commodities: row.commodities.map<QuotationCommodityDto>((c) => ({
       id: c.id.toString(),
@@ -767,6 +780,7 @@ quotationRouter.get('/quotations', requirePermission(`${FEATURE}.VIEW`), async (
           pol: { select: { name: true, portCode: true } },
           pod: { select: { name: true, portCode: true } },
           commodities: { where: { isActive: true }, select: { commodityName: true } },
+          shipments: { where: { deletedAt: null }, select: { status: true } },
           inquiry: {
             select: {
               code: true,
@@ -808,6 +822,10 @@ quotationRouter.get('/quotations', requirePermission(`${FEATURE}.VIEW`), async (
     status: row.status,
     totalAmountUsd: num(row.totalAmountUsd),
     totalCurrencyCode: currencyTotals(row.lines).totalCurrencyCode,
+    editable: quotationCanChange(
+      row.status,
+      row.shipments.map((b) => b.status),
+    ),
   }));
 
   const payload: ApiSuccess<QuotationListItemDto[]> = {
@@ -835,6 +853,13 @@ quotationRouter.get('/quotations/:id', requirePermission(`${FEATURE}.VIEW`), asy
  * Editing a SENT quotation does not: it copies the document forward as revision
  * 2, applies the edit there, and marks revision 1 SUPERSEDED. A customer
  * holding revision 1 must still be able to find the thing they were sent.
+ *
+ * An ACCEPTED quotation takes the same path once every booking raised from it
+ * is cancelled (MODULE_BOOKING_CARGO §5.6): the customer's requirement
+ * changed, so they are sent a new revision, and the accepted one stays exactly
+ * as it was — the cancelled bookings still point at it, and so does anything
+ * that was built on them. While any booking is live it stays locked, because
+ * that booking is being worked on the accepted price.
  */
 quotationRouter.patch('/quotations/:id', requirePermission(`${FEATURE}.EDIT`), async (req, res) => {
   const auth = req.auth!;
@@ -846,13 +871,24 @@ quotationRouter.patch('/quotations/:id', requirePermission(`${FEATURE}.EDIT`), a
 
   const targetId = await withTenant(auth.tenantId, async (db) => {
     const current = await findScoped(db, auth, id);
-    if (!quotationIsEditable(current.status)) {
+    if (!quotationCanChange(current.status, current.shipments.map((b) => b.status))) {
+      const live = current.shipments.filter((b) => b.status !== 'CANCELLED').map((b) => b.code);
+      if (current.status === 'ACCEPTED' && live.length > 0) {
+        throw new HttpError(
+          409,
+          'QUOTATION_BOOKED',
+          `${current.code} is booked on ${live.join(', ')}. Cancel ${live.length === 1 ? 'that booking' : 'those bookings'} ` +
+            'first to revise it, or raise a new quotation from the inquiry.',
+        );
+      }
       throw HttpError.conflict(
         `This quotation is ${current.status.toLowerCase()} and can no longer be changed.`,
       );
     }
 
-    const revising = current.status === 'SENT';
+    // A sent offer, or an accepted one whose bookings were all cancelled, is
+    // never changed in place: the change becomes the next revision.
+    const revising = current.status === 'SENT' || current.status === 'ACCEPTED';
     let workingId = current.id;
 
     if (revising) {
