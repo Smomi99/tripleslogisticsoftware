@@ -111,10 +111,11 @@ function describe(row: AuditRow): { summary: string; detail: string | null } {
     }
 
     case 'shipment_commodity':
-      return {
-        summary: created ? 'Commodity added' : removed ? 'Commodity removed' : 'Commodity edited',
-        detail: null,
-      };
+      // No deleted_at on this table: taking a commodity off the booking
+      // deactivates its row, and putting it back reactivates the same one.
+      if (created || row.action === 'REACTIVATE') return { summary: 'Commodity added', detail: null };
+      if (removed || row.action === 'DEACTIVATE') return { summary: 'Commodity removed', detail: null };
+      return { summary: 'Commodity edited', detail: null };
 
     case 'shipment_schedule': {
       const version = str(row.new_values, 'version_no') ?? str(row.old_values, 'version_no') ?? '?';

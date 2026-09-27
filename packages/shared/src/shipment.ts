@@ -871,6 +871,20 @@ const shipmentHeader = {
   goodsHandoverDate: isoDate.nullish(),
   transitType: z.enum(TRANSIT_TYPES).nullish(),
   warehouseCfs: z.string().trim().max(1000, 'That is too long.').nullish(),
+  /**
+   * Copied down from the quotation and editable like the rest of the header,
+   * each commodity with its own HS code. Left out, a new booking inherits the
+   * quotation's and an edit leaves the booking's as they are.
+   */
+  commodities: z
+    .array(
+      z.object({
+        commodityItemId: z.string().min(1, 'Choose the commodity.'),
+        hsCode: z.string().trim().max(50, 'HS code is too long.').nullish(),
+      }),
+    )
+    .max(20, 'That is more commodities than one booking carries.')
+    .optional(),
 };
 
 /** A shipment that arrives before it leaves is a typo, not a schedule. */

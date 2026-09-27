@@ -50,6 +50,13 @@ interface Options {
   goodsTypes: { id: string; name: string }[];
   tos: { id: string; name: string }[];
   modes: { id: string; name: string }[];
+  commodities: { id: string; name: string; hsCode: string | null }[];
+}
+
+/** One commodity on the header, with the HS code that belongs to it. */
+interface DraftCommodity {
+  commodityItemId: string;
+  hsCode: string;
 }
 
 /** A grid row while it is being edited: everything is text, as typed. */
@@ -150,6 +157,7 @@ export function ShipmentBookingScreen({
   const [goodsHandoverDate, setGoodsHandoverDate] = useState('');
   const [transitType, setTransitType] = useState('');
   const [warehouseCfs, setWarehouseCfs] = useState('');
+  const [commodityRows, setCommodityRows] = useState<DraftCommodity[]>([]);
 
   const [lines, setLines] = useState<DraftLine[]>([]);
   const [newLine, setNewLine] = useState<DraftLine>({ key: nextKey(), ...EMPTY_LINE });
@@ -174,6 +182,9 @@ export function ShipmentBookingScreen({
     setEtd(source.etd ?? '');
     setEta(source.eta ?? '');
     setTransitType(source.transitType ?? '');
+    setCommodityRows(
+      source.commodities.map((c) => ({ commodityItemId: c.commodityItemId, hsCode: c.hsCode ?? '' })),
+    );
     if ('exporterName' in source) {
       setExporterName(source.exporterName ?? '');
       setExporterAddress(source.exporterAddress ?? '');
@@ -331,6 +342,10 @@ export function ShipmentBookingScreen({
       goodsHandoverDate: goodsHandoverDate === '' ? null : goodsHandoverDate,
       transitType: transitType === '' ? null : transitType,
       warehouseCfs: orNull(warehouseCfs),
+      // A row left on "Select a commodity" is not a commodity.
+      commodities: commodityRows
+        .filter((c) => c.commodityItemId !== '')
+        .map((c) => ({ commodityItemId: c.commodityItemId, hsCode: orNull(c.hsCode) })),
       cargoLines: lines.map(toInput),
     };
   }
@@ -435,7 +450,31 @@ export function ShipmentBookingScreen({
 
   const quotationCode = booking?.quotationCode ?? prefill?.quotationCode ?? '—';
   const customerName = booking?.customerName ?? prefill?.customerName ?? '—';
-  const commodities = booking?.commodities ?? prefill?.commodities ?? [];
+  // The live master list, plus anything already on the booking that the master
+  // has since switched off — without it, that row's select would read blank.
+  const commodityChoices = [
+    ...options.commodities,
+    ...(booking?.commodities ?? prefill?.commodities ?? [])
+      .filter((c) => !options.commodities.some((o) => o.id === c.commodityItemId))
+      .map((c) => ({ id: c.commodityItemId, name: c.commodityName, hsCode: c.hsCode })),
+  ];
+  const shownCommodities: DraftCommodity[] =
+    commodityRows.length === 0 ? [{ commodityItemId: '', hsCode: '' }] : commodityRows;
+
+  function editCommodity(index: number, patch: Partial<DraftCommodity>): void {
+    setCommodityRows((current) => {
+      const list = current.length === 0 ? [{ commodityItemId: '', hsCode: '' }] : [...current];
+      list[index] = { ...list[index]!, ...patch };
+      return list;
+    });
+  }
+
+  function pickCommodity(index: number, commodityItemId: string): void {
+    // The HS code follows the commodity from the master and stays editable. A
+    // different commodity never keeps the previous one's code.
+    const match = commodityChoices.find((c) => c.id === commodityItemId);
+    editCommodity(index, { commodityItemId, hsCode: match?.hsCode ?? '' });
+  }
   // §3's mode-conditional labels. The only thing sea and air disagree about.
   const carrierLabel = isAir ? 'Airlines' : 'Carrier';
   const polLabel = isAir ? 'AOL' : 'POL';
@@ -491,22 +530,77 @@ export function ShipmentBookingScreen({
           <Field id="customer" label="Customer">
             <Input id="customer" value={customerName} readOnly disabled />
           </Field>
-          <Field id="commodity" label="Commodity">
-            <Input
-              id="commodity"
-              value={commodities.map((c) => c.commodityName).join(', ') || '—'}
-              readOnly
-              disabled
-            />
-          </Field>
-          <Field id="hsCode" label="HS Code">
-            <Input
-              id="hsCode"
-              value={commodities.map((c) => c.hsCode).filter(Boolean).join(', ') || '—'}
-              readOnly
-              disabled
-            />
-          </Field>
+          {/*
+            Commodity and HS code, one pair per row, as on the inquiry. Copied
+            from the quotation and editable here (§5.2 rule 2); the quotation
+            keeps what it was issued with.
+          */}
+          <div className="flex flex-col gap-1.5 md:col-span-2">
+            <div className="grid grid-cols-[minmax(0,1fr)_10rem_2rem] gap-2">
+              <label htmlFor="commodity-0" className="label-manifest">
+                Commodity
+              </label>
+              <label htmlFor="hsCode-0" className="label-manifest">
+                HS Code
+              </label>
+            </div>
+            {shownCommodities.map((row, index) => (
+              <div key={index} className="grid grid-cols-[minmax(0,1fr)_10rem_2rem] items-start gap-2">
+                <Select
+                  id={`commodity-${index}`}
+                  aria-label={index === 0 ? undefined : `Commodity ${index + 1}`}
+                  value={row.commodityItemId}
+                  disabled={!canEdit}
+                  onChange={(e) => pickCommodity(index, e.target.value)}
+                >
+                  <option value="">{canEdit ? 'Select a commodity' : '—'}</option>
+                  {commodityChoices.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </Select>
+                <Input
+                  id={`hsCode-${index}`}
+                  aria-label={index === 0 ? undefined : `HS code ${index + 1}`}
+                  numeric
+                  value={row.hsCode}
+                  disabled={!canEdit}
+                  onChange={(e) => editCommodity(index, { hsCode: e.target.value })}
+                />
+                {canEdit && shownCommodities.length > 1 && (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    size="inline"
+                    aria-label={`Remove commodity ${index + 1}`}
+                    onClick={() =>
+                      setCommodityRows((current) => current.filter((_, i) => i !== index))
+                    }
+                  >
+                    ×
+                  </Button>
+                )}
+              </div>
+            ))}
+            {canEdit && (
+              <div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="compact"
+                  onClick={() =>
+                    setCommodityRows((current) => [
+                      ...(current.length === 0 ? [{ commodityItemId: '', hsCode: '' }] : current),
+                      { commodityItemId: '', hsCode: '' },
+                    ])
+                  }
+                >
+                  Add commodity
+                </Button>
+              </div>
+            )}
+          </div>
 
           <Field id="exporterName" label="Exporter">
             <Input

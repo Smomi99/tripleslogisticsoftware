@@ -36,6 +36,9 @@ let tokenNoSubmit: string;
 let quotationId: bigint;
 let carrierId: bigint;
 let portId: bigint;
+/** The quotation's commodity, and one it does not name. */
+let commodityId: bigint;
+let otherCommodityId: bigint;
 
 function as(t: string) {
   return {
@@ -186,6 +189,19 @@ beforeAll(async () => {
     data: { tenantId, code: 'BK-CIT', industrySectorId: sector.id, name: 'Knit Tops' },
     select: { id: true },
   });
+  commodityId = commodity.id;
+  otherCommodityId = (
+    await owner.commodityItem.create({
+      data: {
+        tenantId,
+        code: 'BK-CIT-2',
+        industrySectorId: sector.id,
+        name: 'Denim Jeans',
+        hsCode: '6203.42',
+      },
+      select: { id: true },
+    })
+  ).id;
   const customer = await owner.customer.create({
     data: {
       tenantId,
@@ -423,6 +439,105 @@ describe('editing the grid', () => {
         ],
       });
     expect(res.status).toBe(404);
+  });
+});
+
+describe('changing the commodity (§5.2 rule 2)', () => {
+  interface Commodities {
+    data: { commodities: { commodityItemId: string; commodityName: string; hsCode: string | null }[] };
+  }
+
+  const patchCommodities = (id: string, commodities: unknown[] | undefined) =>
+    as(token)
+      .patch(`/api/tenant/cs/bookings/${id}`)
+      .send({
+        carrierId: carrierId.toString(),
+        polId: portId.toString(),
+        podId: portId.toString(),
+        ...(commodities === undefined ? {} : { commodities }),
+      });
+
+  it('swaps it on the booking and leaves the quotation as issued', async () => {
+    const booking = await createBooking([{ poNo: 'PO-COM-1', itemCode: 'ITEM', ctnQty: 1 }]);
+    const res = await patchCommodities(booking.id, [
+      { commodityItemId: otherCommodityId.toString(), hsCode: '6203.42' },
+    ]);
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const { commodities } = (res.body as Commodities).data;
+    expect(commodities).toHaveLength(1);
+    expect(commodities[0]?.commodityName).toBe('Denim Jeans');
+    expect(commodities[0]?.hsCode).toBe('6203.42');
+
+    // Edits never write back to the quotation.
+    const quoted = await owner.quotationCommodity.findMany({
+      where: { quotationId, isActive: true },
+      select: { commodityName: true },
+    });
+    expect(quoted.map((q) => q.commodityName)).toEqual(['Knit Tops']);
+  });
+
+  it('keeps the commodities when an edit does not send them', async () => {
+    const booking = await createBooking([{ poNo: 'PO-COM-2', itemCode: 'ITEM', ctnQty: 1 }]);
+    await patchCommodities(booking.id, [{ commodityItemId: otherCommodityId.toString() }]);
+    const res = await patchCommodities(booking.id, undefined);
+
+    expect(res.status).toBe(200);
+    expect((res.body as Commodities).data.commodities.map((c) => c.commodityName)).toEqual([
+      'Denim Jeans',
+    ]);
+  });
+
+  it('puts back a commodity that was taken off, without a duplicate row', async () => {
+    // shipment_commodity is unique per commodity with no deleted_at, so this
+    // has to reactivate the old row rather than insert a second one.
+    const booking = await createBooking([{ poNo: 'PO-COM-3', itemCode: 'ITEM', ctnQty: 1 }]);
+    await patchCommodities(booking.id, [{ commodityItemId: otherCommodityId.toString() }]);
+    const res = await patchCommodities(booking.id, [
+      { commodityItemId: commodityId.toString(), hsCode: '6109.90' },
+    ]);
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const { commodities } = (res.body as Commodities).data;
+    expect(commodities.map((c) => c.commodityName)).toEqual(['Knit Tops']);
+    expect(commodities[0]?.hsCode).toBe('6109.90');
+    expect(
+      await owner.shipmentCommodity.count({ where: { shipmentId: BigInt(booking.id) } }),
+    ).toBe(2);
+  });
+
+  it('takes the form’s commodities when the booking is raised', async () => {
+    const res = await as(token)
+      .post('/api/tenant/cs/bookings')
+      .send(
+        body([{ poNo: 'PO-COM-4', itemCode: 'ITEM', ctnQty: 1 }], {
+          commodities: [{ commodityItemId: otherCommodityId.toString(), hsCode: '6203.42' }],
+        }),
+      );
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect((res.body as Commodities).data.commodities.map((c) => c.commodityName)).toEqual([
+      'Denim Jeans',
+    ]);
+  });
+
+  it('refuses a commodity this workspace does not have', async () => {
+    // Another workspace's item reads exactly like this one under RLS.
+    const booking = await createBooking([{ poNo: 'PO-COM-5', itemCode: 'ITEM', ctnQty: 1 }]);
+    const res = await patchCommodities(booking.id, [{ commodityItemId: '999999999' }]);
+
+    expect(res.status).toBe(400);
+    expect((res.body as { error: { message: string } }).error.message).toMatch(/commodit/i);
+  });
+
+  it('shows a commodity taken off as removed in the Activities tab', async () => {
+    const booking = await createBooking([{ poNo: 'PO-COM-6', itemCode: 'ITEM', ctnQty: 1 }]);
+    await patchCommodities(booking.id, [{ commodityItemId: otherCommodityId.toString() }]);
+
+    const res = await as(token).get(`/api/tenant/cs/bookings/${booking.id}/activities`);
+    const summaries = (res.body as { data: { summary: string }[] }).data.map((e) => e.summary);
+    expect(summaries).toContain('Commodity removed');
+    expect(summaries.filter((s) => s === 'Commodity added')).toHaveLength(2);
   });
 });
 

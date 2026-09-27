@@ -316,6 +316,72 @@ async function reconcileCargo(
 }
 
 /**
+ * Writes the booking's commodities (§5.2 rule 2: copied from the quotation,
+ * editable here, never written back).
+ *
+ * Reconciled rather than replaced: shipment_commodity is unique per commodity
+ * and has no deleted_at to step aside, so a commodity taken off and later put
+ * back reactivates its old row — inserting a second one would collide.
+ *
+ * A commodity already on the booking or its quotation is accepted even if the
+ * master has since switched it off; deactivating an item must not stop a
+ * booking being saved with the cargo it was quoted for. Anything new has to be
+ * live in this workspace's own list.
+ */
+async function writeCommodities(
+  db: TenantDb,
+  tenantId: bigint,
+  shipmentId: bigint,
+  quotationId: bigint,
+  rows: readonly { commodityItemId: string; hsCode?: string | null }[],
+): Promise<void> {
+  // One row per commodity; if the form sent one twice, the first HS code wins.
+  const wanted = new Map<bigint, string | null>();
+  for (const row of rows) {
+    const id = parseRefId(row.commodityItemId, 'commodity');
+    if (!wanted.has(id)) wanted.set(id, row.hsCode || null);
+  }
+
+  const [existing, quoted] = await Promise.all([
+    db.shipmentCommodity.findMany({
+      where: { shipmentId },
+      select: { id: true, commodityItemId: true, isActive: true },
+    }),
+    db.quotationCommodity.findMany({ where: { quotationId }, select: { commodityItemId: true } }),
+  ]);
+  const known = new Set([...existing, ...quoted].map((r) => r.commodityItemId));
+  const fresh = [...wanted.keys()].filter((id) => !known.has(id));
+  if (fresh.length > 0) {
+    const found = await db.commodityItem.count({
+      where: { id: { in: fresh }, deletedAt: null, isActive: true },
+    });
+    if (found !== fresh.length) {
+      throw HttpError.badRequest('One of those commodities is not available.');
+    }
+  }
+
+  const byItem = new Map(existing.map((r) => [r.commodityItemId, r.id]));
+  for (const [commodityItemId, hsCode] of wanted) {
+    const rowId = byItem.get(commodityItemId);
+    if (rowId === undefined) {
+      await db.shipmentCommodity.create({ data: { tenantId, shipmentId, commodityItemId, hsCode } });
+    } else {
+      await db.shipmentCommodity.update({ where: { id: rowId }, data: { hsCode, isActive: true } });
+    }
+  }
+
+  const dropped = existing
+    .filter((r) => r.isActive && !wanted.has(r.commodityItemId))
+    .map((r) => r.id);
+  if (dropped.length > 0) {
+    await db.shipmentCommodity.updateMany({
+      where: { id: { in: dropped } },
+      data: { isActive: false },
+    });
+  }
+}
+
+/**
  * §4 rule 10's row scope, the shape quotation already uses, one hop further.
  *
  * A booking reaches its salesman through its quotation's inquiry. Without
@@ -497,7 +563,7 @@ shipmentRouter.get('/booking-options', requirePermission(`${FEATURE}.VIEW`), asy
      * was written for, and one this endpoint reintroduced until now.
      */
     const inactive = await inactiveMasters(db);
-    const [carriers, ports, goodsTypes, tos, modes, vessels] = await Promise.all([
+    const [carriers, ports, goodsTypes, tos, modes, vessels, commodities] = await Promise.all([
       db.carrier.findMany({
         where: { ...excludeInactive(inactive, 'carrier'), ...active },
         select: { id: true, name: true },
@@ -529,6 +595,13 @@ shipmentRouter.get('/booking-options', requirePermission(`${FEATURE}.VIEW`), asy
         select: { id: true, name: true },
         orderBy: { name: 'asc' },
       }),
+      // The HS code comes along so picking a commodity can prefill it, as the
+      // inquiry form does.
+      db.commodityItem.findMany({
+        where: active,
+        select: { id: true, name: true, hsCode: true },
+        orderBy: { name: 'asc' },
+      }),
     ]);
 
     const plain = (rows: { id: bigint; name: string }[]) =>
@@ -541,6 +614,7 @@ shipmentRouter.get('/booking-options', requirePermission(`${FEATURE}.VIEW`), asy
       tos: plain(tos),
       modes: plain(modes),
       vessels: plain(vessels),
+      commodities: commodities.map((c) => ({ id: c.id.toString(), name: c.name, hsCode: c.hsCode })),
     };
   });
 
@@ -714,21 +788,17 @@ shipmentRouter.post('/bookings', requirePermission(`${FEATURE}.CREATE`), async (
       });
     }
 
-    // §5.2 rule 2's commodities, inherited from the quotation.
-    const commodities = await db.quotationCommodity.findMany({
-      where: { quotationId: quotation.id, isActive: true },
-      select: { commodityItemId: true, hsCode: true },
-    });
-    if (commodities.length > 0) {
-      await db.shipmentCommodity.createMany({
-        data: commodities.map((c) => ({
-          tenantId: auth.tenantId,
-          shipmentId,
-          commodityItemId: c.commodityItemId,
-          hsCode: c.hsCode,
-        })),
-      });
-    }
+    // §5.2 rule 2's commodities: the form's when it sent them — the operator
+    // may have changed what the quotation said — else the quotation's own.
+    const commodities =
+      input.commodities ??
+      (
+        await db.quotationCommodity.findMany({
+          where: { quotationId: quotation.id, isActive: true },
+          select: { commodityItemId: true, hsCode: true },
+        })
+      ).map((c) => ({ commodityItemId: c.commodityItemId.toString(), hsCode: c.hsCode }));
+    await writeCommodities(db, auth.tenantId, shipmentId, quotation.id, commodities);
 
     await reconcileCargo(db, auth.tenantId, shipmentId, auth.userId, input.cargoLines);
     return loadShipment(db, shipmentId);
@@ -746,7 +816,7 @@ shipmentRouter.patch('/bookings/:id', requirePermission(`${FEATURE}.EDIT`), asyn
   const data = await withTenant(auth.tenantId, async (db) => {
     const existing = await db.shipment.findFirst({
       where: { id, deletedAt: null },
-      select: { id: true, status: true, code: true },
+      select: { id: true, status: true, code: true, quotationId: true },
     });
     if (existing === null) throw HttpError.notFound('Booking not found.');
     assertEditable(existing.status, existing.code);
@@ -780,6 +850,9 @@ shipmentRouter.patch('/bookings/:id', requirePermission(`${FEATURE}.EDIT`), asyn
       },
     });
 
+    if (input.commodities !== undefined) {
+      await writeCommodities(db, auth.tenantId, id, existing.quotationId, input.commodities);
+    }
     if (input.cargoLines !== undefined) {
       await reconcileCargo(db, auth.tenantId, id, auth.userId, input.cargoLines);
     }
