@@ -82,6 +82,13 @@ export const CODE_PREFIX = {
   // takes the plain padder.
   blTemplate: 'BLT',
 
+  // Accounts — the books (docs/MODULE_ACCOUNTS.md §14). Vouchers use the
+  // yearly series JV-/PV-/RV-/TV-2026-000001 (JOURNAL_ENTRY_PREFIX); the
+  // chart and the bank set-ups are internal, so they take the plain padder.
+  ledgerAccount: 'ACC',
+  bank: 'BNK',
+  bankAccount: 'BAC',
+
   // §7 RBAC
   role: 'ROL',
   user: 'USR',

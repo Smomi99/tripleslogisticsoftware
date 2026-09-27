@@ -251,12 +251,12 @@ export const debitInvoiceCancelSchema = z.object({
   reason: z.string().trim().min(1, 'Say why this invoice is being cancelled.').max(2000, 'That reason is too long.'),
 });
 
-/** `Receive` (sheet N8, rows 15–20). */
-export const debitInvoiceReceiptSchema = z.object({
-  paymentDate: isoDate,
-  amount: money.refine((v) => Number(v) > 0, 'Enter the amount received.'),
-});
-export type DebitInvoiceReceiptInput = z.input<typeof debitInvoiceReceiptSchema>;
+/*
+ * `Receive` (sheet N8) now opens the Income sheet (Design.xlsx 2026-09-27):
+ * money in is banked by an Income voucher, which records the receipt — see
+ * journalEntryInputSchema in ./ledger. There is no second way to say a
+ * customer paid that leaves the bank balance unmoved (§14.6).
+ */
 
 /** What the server works with once a body has been parsed. */
 export type InvoiceLineData = z.output<typeof invoiceLineInputSchema>;
@@ -354,6 +354,10 @@ export interface DebitInvoiceCostDto {
   totalAmount: string;
   totalAmountBase: string;
   lines: DebitInvoiceLineDto[];
+  /** §14.6: what Expense vouchers have paid against this credit invoice. */
+  paidAmount: string;
+  outstandingAmount: string;
+  paymentStatus: PaymentStatus;
 }
 
 export interface DebitInvoiceReceiptDto {
@@ -362,6 +366,9 @@ export interface DebitInvoiceReceiptDto {
   amount: string;
   amountBase: string;
   recordedAt: string;
+  /** The Income voucher that banked it; null on a receipt from before the books. */
+  journalEntryId: string | null;
+  journalEntryCode: string | null;
 }
 
 /** The booking an invoice was raised against, as the invoice shows it. */
@@ -516,6 +523,12 @@ export interface ReceivablePayableRow {
   receivableBase: string;
   payableUsd: string;
   payableBase: string;
+  /**
+   * The sheet's new "Unbilled Amount" (Design.xlsx 2026-09-27, F7): money on
+   * jobs whose debit invoice has not been issued yet — §14.7.
+   */
+  unbilledUsd: string;
+  unbilledBase: string;
   /** True when an opening balance is in a currency with no rate to convert it. */
   rateMissing: boolean;
 }
@@ -523,11 +536,22 @@ export interface ReceivablePayableRow {
 export interface ReceivablePayableTotals {
   receivableUsd: string;
   receivableBase: string;
+  unbilledUsd: string;
+  unbilledBase: string;
   payableUsd: string;
   payableBase: string;
 }
 
-export const LEDGER_ENTRY_KINDS = ['OPENING', 'DEBIT_INVOICE', 'RECEIPT', 'SUPPLIER_INVOICE'] as const;
+export const LEDGER_ENTRY_KINDS = [
+  'OPENING',
+  'DEBIT_INVOICE',
+  'RECEIPT',
+  'SUPPLIER_INVOICE',
+  // §14.6: an Expense voucher against a credit invoice, and money in or out
+  // against an opening balance.
+  'PAYMENT',
+  'OPENING_SETTLEMENT',
+] as const;
 export type LedgerEntryKind = (typeof LEDGER_ENTRY_KINDS)[number];
 
 /** One row of a party's Ledger (sheet `Ledger.` row 7). */
@@ -545,6 +569,11 @@ export interface LedgerEntryDto {
   amountBase: string | null;
   paymentStatus: PaymentStatus | null;
   debitInvoiceId: string | null;
+  /** A supplier invoice's cost block — what `Make Payment` settles. */
+  creditInvoiceId: string | null;
+  /** The voucher behind a receipt, payment or settlement. */
+  journalEntryId: string | null;
+  journalEntryCode: string | null;
 }
 
 export interface LedgerDto {

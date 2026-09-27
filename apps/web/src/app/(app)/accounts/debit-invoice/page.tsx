@@ -3,7 +3,6 @@
 import {
   DEBIT_INVOICE_DISPLAY_STATUS_LABEL,
   DEBIT_INVOICE_DISPLAY_STATUSES,
-  type DebitInvoiceDto,
   type DebitInvoiceListRow,
   DEFAULT_PAGE_SIZE,
 } from '@ff/shared';
@@ -31,10 +30,10 @@ import { useMasterList } from '@/lib/use-master-list';
  *
  * Every debit invoice, whether made from a booking on Awaiting Freight Inv or
  * raised by hand with `Create New`. The row actions are the sheet's:
- * `Receive` (the form on rows 15–20), `Edit` and `Cancel`.
+ * `Receive`, `Edit` and `Cancel`. Receive opens the Income sheet
+ * (Design.xlsx 2026-09-27, N8's link), so the money is banked by a voucher
+ * and the bank balance moves with it (§14.6).
  */
-
-const today = (): string => new Date().toISOString().slice(0, 10);
 
 export default function DebitInvoiceListPage() {
   const { can, authorizedRequest } = useSession();
@@ -46,9 +45,6 @@ export default function DebitInvoiceListPage() {
     DEFAULT_PAGE_SIZE,
     'desc',
   );
-  const [receiving, setReceiving] = useState<DebitInvoiceListRow | null>(null);
-  const [paymentDate, setPaymentDate] = useState(today());
-  const [received, setReceived] = useState('');
   const [cancelling, setCancelling] = useState<DebitInvoiceListRow | null>(null);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
@@ -111,28 +107,6 @@ export default function DebitInvoiceListPage() {
     [canViewQuotation],
   );
 
-  async function receive(): Promise<void> {
-    if (receiving === null) return;
-    setBusy(true);
-    try {
-      const done = await authorizedRequest<DebitInvoiceDto>(
-        `/api/tenant/accounts/debit-invoices/${receiving.id}/receipts`,
-        { method: 'POST', body: { paymentDate, amount: received.trim() } },
-      );
-      toast.success(
-        done.paymentStatus === 'PAID'
-          ? `${done.code} received in full`
-          : `Received — ${money(done.currencyCode, done.outstandingAmount)} still due`,
-      );
-      setReceiving(null);
-      await list.reload();
-    } catch (caught) {
-      toast.error(caught instanceof ApiError ? caught.message : 'Could not record the payment.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function cancel(): Promise<void> {
     if (cancelling === null) return;
     setBusy(true);
@@ -155,7 +129,7 @@ export default function DebitInvoiceListPage() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Debit Invoice"
-        description="Every debit invoice — made from a booking, or raised by hand. Record money received against it here."
+        description="Every debit invoice — made from a booking, or raised by hand. Receive banks the money against it."
         action={
           can('ACCOUNTS.DEBIT_INVOICE.CREATE') ? (
             <Button onClick={() => router.push('/accounts/debit-invoice/new' as Route)}>+ Create New</Button>
@@ -217,19 +191,17 @@ export default function DebitInvoiceListPage() {
         isPending={list.isPending}
         actions={(row) => (
           <>
-            {row.status === 'ISSUED' && row.displayStatus !== 'PAID' && can('ACCOUNTS.DEBIT_INVOICE.RECEIVE') && (
-              <Button
-                variant="text"
-                size="inline"
-                onClick={() => {
-                  setReceiving(row);
-                  setPaymentDate(today());
-                  setReceived(Number(row.outstandingAmount).toFixed(2));
-                }}
-              >
-                Receive
-              </Button>
-            )}
+            {row.status === 'ISSUED' &&
+              row.displayStatus !== 'PAID' &&
+              can('ACCOUNTS.DEBIT_INVOICE.RECEIVE') &&
+              can('ACCOUNTS.INCOME.CREATE') && (
+                <Link
+                  href={`/accounts/income/new?debitInvoice=${row.id}` as Route}
+                  className="text-body text-harbour hover:underline"
+                >
+                  Receive
+                </Link>
+              )}
             <Link
               href={`/accounts/debit-invoice/${row.id}` as Route}
               className="text-body text-harbour hover:underline"
@@ -274,61 +246,6 @@ export default function DebitInvoiceListPage() {
           )
         }
       />
-
-      {/* ------------------------------------ Receive (sheet rows 15–20) */}
-      <Modal
-        open={receiving !== null}
-        onOpenChange={(open) => {
-          if (!open) setReceiving(null);
-        }}
-        title={`Receive against ${receiving?.code ?? ''}`}
-        description="Record money the customer has paid. Part payments are fine — the rest stays outstanding."
-      >
-        {receiving !== null && (
-          <div className="flex flex-col gap-4">
-            <dl className="grid grid-cols-2 gap-x-6 gap-y-2">
-              {(
-                [
-                  ['Inquiry No', receiving.inquiryCode],
-                  ['Quotation No', receiving.quotationCode],
-                  ['Booking No', receiving.bookingCode],
-                  ['Debit Invoice No', receiving.code],
-                  ['Customer', receiving.customerName],
-                  ['Invoice Amount', money(receiving.currencyCode, receiving.totalAmount)],
-                  ['Outstanding', money(receiving.currencyCode, receiving.outstandingAmount)],
-                ] as [string, string | null][]
-              ).map(([label, value]) => (
-                <div key={label}>
-                  <dt className="label-manifest">{label}</dt>
-                  <dd className="text-body text-hull">{value ?? '—'}</dd>
-                </div>
-              ))}
-            </dl>
-            <div className="grid grid-cols-2 gap-3">
-              <Field id="paymentDate" label="Payment Date" required>
-                <Input id="paymentDate" type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
-              </Field>
-              <Field id="received" label={`Amount received (${receiving.currencyCode})`} required>
-                <Input
-                  id="received"
-                  numeric
-                  inputMode="decimal"
-                  value={received}
-                  onChange={(e) => setReceived(e.target.value)}
-                />
-              </Field>
-            </div>
-            <div className="flex justify-end gap-3">
-              <Button variant="secondary" onClick={() => setReceiving(null)}>
-                Close
-              </Button>
-              <Button disabled={busy || received.trim() === '' || paymentDate === ''} onClick={() => void receive()}>
-                {busy ? 'Recording…' : 'Record payment'}
-              </Button>
-            </div>
-          </div>
-        )}
-      </Modal>
 
       {/* ------------------------------------------------- Cancel (P8) */}
       <Modal

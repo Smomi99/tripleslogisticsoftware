@@ -22,9 +22,11 @@ import { useMasterList } from '@/lib/use-master-list';
  * sheet, titled `Ledger` (docs/MODULE_ACCOUNTS.md §2.4, §3.6).
  *
  * Who owes us and whom we owe: issued invoices less what was received, the
- * costs on them, and the opening balances from CRM. The USD columns hold the
- * dollar-denominated part; the base columns hold everything, converted. Each
- * name opens that party's ledger, where every figure is in its own currency.
+ * costs on them less what was paid, and the opening balances from CRM. The
+ * sheet's Unbilled Amount (F7, Design.xlsx 2026-09-27) sits between the two:
+ * money on jobs whose debit invoice has not gone out yet (§14.7). The USD
+ * columns hold the dollar-denominated part; the base columns hold everything,
+ * converted. Each name opens that party's ledger, in its own currencies.
  */
 export default function ReceivablePayablePage() {
   const list = useMasterList<ReceivablePayableRow, 'name'>('/api/tenant/accounts/receivable-payable', 'name');
@@ -67,6 +69,18 @@ export default function ReceivablePayablePage() {
         ),
       },
       {
+        id: 'unbilledUsd',
+        header: 'Unbilled (USD)',
+        numeric: true,
+        cell: (r) => <span className="font-mono tabular-nums">{amount(r.unbilledUsd)}</span>,
+      },
+      {
+        id: 'unbilledBase',
+        header: 'Unbilled (Base Cur)',
+        numeric: true,
+        cell: (r) => <span className="font-mono tabular-nums">{amount(r.unbilledBase)}</span>,
+      },
+      {
         id: 'payableUsd',
         header: 'Payable (USD)',
         numeric: true,
@@ -88,7 +102,7 @@ export default function ReceivablePayablePage() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Receivable-Payable list"
-        description="Who owes us, and whom we owe. Issued invoices less money received, what suppliers charged on them, and the opening balances from CRM."
+        description="Who owes us, and whom we owe. Issued invoices less money received, what suppliers charged less what was paid, the opening balances from CRM — and, between them, what is on jobs not invoiced yet."
       />
 
       <div className="flex flex-wrap items-end gap-3">
@@ -165,7 +179,7 @@ export default function ReceivablePayablePage() {
           ) : (
             <EmptyState
               title="Nothing is owed either way"
-              description="Balances appear here once a debit invoice is sent, or when a customer, agent or vendor has an opening balance in CRM."
+              description="Balances appear here once a booking is confirmed or a debit invoice is sent, or when a customer, agent or vendor has an opening balance in CRM."
             />
           )
         }
@@ -173,11 +187,13 @@ export default function ReceivablePayablePage() {
 
       {/* The sheet's "Total =" row (C19): every page, not just this one. */}
       {totals !== undefined && list.rows.length > 0 && (
-        <div className="grid grid-cols-2 gap-4 rounded-manifest border border-line bg-paper px-4 py-3 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 rounded-manifest border border-line bg-paper px-4 py-3 sm:grid-cols-3 xl:grid-cols-6">
           {(
             [
               ['Total receivable (USD)', totals.receivableUsd],
               ['Total receivable (Base Cur)', totals.receivableBase],
+              ['Total unbilled (USD)', totals.unbilledUsd],
+              ['Total unbilled (Base Cur)', totals.unbilledBase],
               ['Total payable (USD)', totals.payableUsd],
               ['Total payable (Base Cur)', totals.payableBase],
             ] as [string, string | undefined][]

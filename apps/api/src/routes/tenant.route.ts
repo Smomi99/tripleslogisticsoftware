@@ -29,6 +29,7 @@ import { shipmentAdviseRouter } from './shipment-advise.route';
 import { blDraftRouter } from './bl-draft.route';
 import { blPrintRouter } from './bl-print.route';
 import { accountsRouter } from './accounts.route';
+import { ledgerRouter } from './ledger.route';
 import { customerPortalRouter } from './customer-portal.route';
 import { clpRouter } from './clp.route';
 import {
@@ -96,8 +97,11 @@ tenantRouter.use('/documentation', blPrintRouter);
 tenantRouter.use('/documentation', docWorklistRouter);
 
 // Accounts (docs/MODULE_ACCOUNTS.md) — Awaiting Freight Inv, Debit Invoice,
-// Receivable-Payable list.
+// Credit Invoice, Receivable-Payable list.
 tenantRouter.use('/accounts', accountsRouter);
+// The books (§14): Chart of accounts, the four Transaction screens, and the
+// Bank / Account set-ups.
+tenantRouter.use('/accounts', ledgerRouter);
 
 // The customer portal. Its own router, its own session kind (CR-004).
 tenantRouter.use('/portal', customerPortalRouter);
