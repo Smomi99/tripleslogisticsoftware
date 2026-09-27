@@ -225,10 +225,10 @@ to a party (no payment screen yet, §12 Q9), a posting table would be a copy tha
 the documents it copies. When Journal and Expense land, they get a ledger table and these documents
 post into it.
 
-Openings follow the CRM fields' own signs: customer and vendor `opening_balance` is signed — positive
-is owed to us (receivable), negative is owed by us (payable). The agent's `agent_owe` is receivable and
-`we_owe` is payable. Carriers have no opening balance. Openings are converted at today's rate, because
-nothing froze one.
+Openings come from each party's two CRM columns: what they owe us (`customer_owe`, `vendor_owe`,
+`agent_owe`) is receivable, and what we owe them (`we_owe`) is payable. Customer and vendor had one signed
+`opening_balance` until §14.14 moved them to the agent's pair. Carriers have no opening balance. Openings
+are converted at today's rate, because nothing froze one.
 
 The **USD** columns carry what is denominated in US dollars; the **Base** columns carry everything,
 converted. A party billed partly in taka shows the dollar part in USD and the whole in base — the
@@ -736,3 +736,32 @@ Nothing here is guessed in the schema. Each has the working default the build us
 | 7 | **"Cash short or less"** (B50) — "Cash short or over"? | Seeded as written. |
 | 8 | **Paying a supplier without an invoice** (an advance), or **receiving from an agent** (`agent_owe`) — neither sheet shows it. | Not offered. Pay to and Income From settle an invoice or the CRM opening balance. A Journal can record anything else. |
 | 9 | **Bank accounts in a foreign currency** (a USD account). Account Set up has no currency. | Every account is kept in the base. A USD receipt is banked at its base value, and the dollar amount is recorded on the invoice it settles. |
+
+### 14.14 Customer and vendor openings: the agent's two columns (client, 2026-09-27)
+
+**The request.** "On the agent we have We owe (Dr) and Agent owe (Cr) inputs, that's why we get proper
+result in the Receivable-Payable list. Add these two fields to the customer and vendor, and remove the
+opening balance inputs."
+
+**Why the single figure gave the wrong result.** Customer and vendor held one signed Opening Balance:
+positive meant "owed to us", negative "we owe them". A payable typed the natural way, as a positive
+number, therefore landed on the **receivable** side. Two columns that each name their side cannot be
+entered backwards. They also let a party owe on one account while being owed on another, which one
+figure cannot express.
+
+| Party | Before | After (migration `20260927140000_customer_vendor_we_owe_they_owe`) |
+|---|---|---|
+| Customer | `opening_balance` (signed) | `we_owe` — **We owe (Dr)** · `customer_owe` — **Customer owe (Cr)** |
+| Vendor | `opening_balance` (signed) | `we_owe` — **We owe (Dr)** · `vendor_owe` — **Vendor owe (Cr)** |
+| Agent | `we_owe` · `agent_owe` | unchanged |
+
+- One currency for both figures (`opening_currency_id`, unchanged). The database refuses a figure without
+  one (`*_opening_needs_currency`) and refuses a negative figure (`*_opening_not_negative`).
+- **Existing figures moved by the rule they were entered under.** A positive balance became *owe us*,
+  a negative one became *we owe*, and a zero became neither. Every balance reads exactly as it did before
+  the migration. Where a figure was entered with the wrong sign — a vendor payable typed as a positive
+  number — the operator corrects it now, in the field that names the side. Nothing was guessed.
+- `opening_balance` is dropped once its figures are copied. No view depended on it.
+- Settling an opening (§14.6) is unchanged: Expense pays what *we owe* a vendor, carrier or agent, and
+  Income receives what a *customer owes*. A vendor's or agent's *owe us* figure, and what we owe a
+  customer, are still recorded by Journal (§14.13 Q8).

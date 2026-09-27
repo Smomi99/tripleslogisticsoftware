@@ -568,27 +568,42 @@ interface OpeningPosition {
   payable: Prisma.Decimal;
 }
 
-/** A party's CRM opening, on the side its sign says (20260819180000). */
+/**
+ * A party's CRM opening: what they owe us (receivable) and what we owe them
+ * (payable), each its own column — the agent's pair, and since §14.14 the
+ * customer's and vendor's too.
+ */
 export async function openingOf(
   db: TenantDb,
   type: LedgerPartyType,
   id: bigint,
 ): Promise<OpeningPosition | null> {
   const currency = { select: { currency: true } } as const;
-  if (type === 'CUSTOMER' || type === 'VENDOR') {
-    const where = { id, deletedAt: null };
-    const select = { openingBalance: true, openingCurrencyId: true, openingCurrency: currency } as const;
-    const row =
-      type === 'CUSTOMER'
-        ? await db.customer.findFirst({ where, select })
-        : await db.vendor.findFirst({ where, select });
-    if (row === null || row.openingCurrencyId === null || row.openingBalance === null) return null;
-    const value = dec(row.openingBalance);
+  const where = { id, deletedAt: null };
+  if (type === 'CUSTOMER') {
+    const row = await db.customer.findFirst({
+      where,
+      select: { customerOwe: true, weOwe: true, openingCurrencyId: true, openingCurrency: currency },
+    });
+    if (row === null || row.openingCurrencyId === null) return null;
     return {
       currencyId: row.openingCurrencyId,
       currencyCode: isoCurrency(row.openingCurrency?.currency ?? ''),
-      receivable: value.greaterThan(0) ? value : ZERO,
-      payable: value.lessThan(0) ? value.negated() : ZERO,
+      receivable: dec(row.customerOwe),
+      payable: dec(row.weOwe),
+    };
+  }
+  if (type === 'VENDOR') {
+    const row = await db.vendor.findFirst({
+      where,
+      select: { vendorOwe: true, weOwe: true, openingCurrencyId: true, openingCurrency: currency },
+    });
+    if (row === null || row.openingCurrencyId === null) return null;
+    return {
+      currencyId: row.openingCurrencyId,
+      currencyCode: isoCurrency(row.openingCurrency?.currency ?? ''),
+      receivable: dec(row.vendorOwe),
+      payable: dec(row.weOwe),
     };
   }
   if (type === 'AGENT') {

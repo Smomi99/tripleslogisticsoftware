@@ -175,7 +175,7 @@ async function makeWorld(name: string, slug: string, tag: string): Promise<World
       name: `Trust Cargo ${tag}`,
       country: 'Bangladesh',
       vendorTypeId: vendorType.id,
-      openingBalance: '-20000',
+      weOwe: '20000',
       openingCurrencyId: bdt,
     },
     select: { id: true },

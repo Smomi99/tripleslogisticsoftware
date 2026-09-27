@@ -59,7 +59,8 @@ const VENDOR_SELECT = {
   bankDetails: true,
   tinNo: true,
   vatNo: true,
-  openingBalance: true,
+  weOwe: true,
+  vendorOwe: true,
   openingCurrencyId: true,
   openingCurrency: { select: { code: true } },
   isActive: true,
@@ -79,7 +80,8 @@ interface VendorRow {
   bankDetails: string | null;
   tinNo: string | null;
   vatNo: string | null;
-  openingBalance: Prisma.Decimal | null;
+  weOwe: Prisma.Decimal | null;
+  vendorOwe: Prisma.Decimal | null;
   openingCurrencyId: bigint | null;
   openingCurrency: { code: string } | null;
   isActive: boolean;
@@ -100,7 +102,8 @@ function toDto(row: VendorRow): VendorDto {
     bankDetails: row.bankDetails,
     tinNo: row.tinNo,
     vatNo: row.vatNo,
-    openingBalance: money(row.openingBalance),
+    weOwe: money(row.weOwe),
+    vendorOwe: money(row.vendorOwe),
     openingCurrencyId: row.openingCurrencyId?.toString() ?? null,
     openingCurrencyCode: row.openingCurrency?.code ?? null,
     isActive: row.isActive,
@@ -222,7 +225,8 @@ vendorRouter.post('/', requirePermission(`${FEATURE}.CREATE`), async (req, res) 
             bankDetails: input.bankDetails || null,
             tinNo: input.tinNo || null,
             vatNo: input.vatNo || null,
-            openingBalance: moneyIn(input.openingBalance),
+            weOwe: moneyIn(input.weOwe),
+            vendorOwe: moneyIn(input.vendorOwe),
             openingCurrencyId: refIn(input.openingCurrencyId),
             createdBy: auth.userId,
             updatedBy: auth.userId,
@@ -270,7 +274,8 @@ vendorRouter.patch('/:id', requirePermission(`${FEATURE}.EDIT`), async (req, res
         bankDetails: input.bankDetails || null,
         tinNo: input.tinNo || null,
         vatNo: input.vatNo || null,
-        openingBalance: moneyIn(input.openingBalance),
+        weOwe: moneyIn(input.weOwe),
+        vendorOwe: moneyIn(input.vendorOwe),
         openingCurrencyId: refIn(input.openingCurrencyId),
         updatedBy: auth.userId,
       },

@@ -12,6 +12,10 @@ import { signAccessToken } from '../lib/jwt';
  * The opening figures a party's ledger will start from, and Vendor's move to
  * CRM.
  *
+ * Every party keeps the agent's two columns — We owe (Dr) and <party> owe
+ * (Cr) — since the client asked on 2026-09-27 for customer and vendor to lose
+ * their single signed Opening Balance (MODULE_ACCOUNTS §14.14).
+ *
  * §4 rule 6 requires a currency stored alongside every amount, and that is
  * asserted at both layers on purpose: the API so the operator is told which box
  * to fix, and a CHECK constraint so no future write path — an import, a script,
@@ -28,6 +32,7 @@ let tenantId: bigint;
 let token: string;
 let currencyId: bigint;
 let vendorTypeId: bigint;
+let sectorId: bigint;
 
 function as(t = token) {
   return {
@@ -38,7 +43,7 @@ function as(t = token) {
 
 async function cleanup(): Promise<void> {
   const scope = `(SELECT id FROM tenant WHERE slug = '${SLUG}')`;
-  for (const t of ['agent_expert_area', 'agent_port_coverage', 'agent_network_member', 'agent', 'vendor', 'customer', '"user"']) {
+  for (const t of ['agent_expert_area', 'agent_port_coverage', 'agent_network_member', 'agent', 'vendor', 'customer', 'industry_sector', '"user"']) {
     await owner.$executeRawUnsafe(`DELETE FROM ${t} WHERE tenant_id IN ${scope}`);
   }
   await owner.$executeRaw`DELETE FROM tenant WHERE slug = ${SLUG}`;
@@ -46,8 +51,13 @@ async function cleanup(): Promise<void> {
 
 beforeAll(async () => {
   await cleanup();
+  // In the base currency, so the list can put a figure in its base columns
+  // without a rate — a workspace with no base marks every opening rateMissing.
+  currencyId = (
+    await owner.currency.findFirstOrThrow({ where: { tenantId: null, currency: { startsWith: 'BDT' } }, select: { id: true } })
+  ).id;
   const tenant = await owner.tenant.create({
-    data: { name: 'OB Alpha', slug: SLUG, country: 'Bangladesh' },
+    data: { name: 'OB Alpha', slug: SLUG, country: 'Bangladesh', currencyId },
     select: { id: true },
   });
   tenantId = tenant.id;
@@ -69,8 +79,10 @@ beforeAll(async () => {
     permissions: [],
     tokenVersion: 0,
   });
-  currencyId = (await owner.currency.findFirstOrThrow({ select: { id: true } })).id;
   vendorTypeId = (await owner.vendorType.findFirstOrThrow({ select: { id: true } })).id;
+  sectorId = (
+    await owner.industrySector.create({ data: { tenantId, code: 'ISC-ob', name: 'OB Garments' }, select: { id: true } })
+  ).id;
 });
 
 afterAll(async () => {
@@ -115,32 +127,83 @@ describe('Vendor moved to CRM', () => {
 });
 
 describe('opening balances', () => {
-  it('stores a vendor balance and reads it back with its currency', async () => {
+  it('stores a vendor’s two sides and reads them back with their currency', async () => {
     const response = await as()
       .post('/api/tenant/crm/vendors')
       .send({
         name: 'OB Vendor',
         country: 'Bangladesh',
         vendorTypeId: vendorTypeId.toString(),
-        // Signed: negative means we owe them.
-        openingBalance: '-2500.7500',
+        // What we owe them is typed as it is said — no minus sign.
+        weOwe: '2500.7500',
         openingCurrencyId: currencyId.toString(),
       });
 
     expect(response.status, JSON.stringify(response.body.error ?? {})).toBe(201);
-    expect(response.body.data.openingBalance).toBe('-2500.7500');
+    expect(response.body.data.weOwe).toBe('2500.7500');
+    expect(response.body.data.vendorOwe).toBeNull();
     expect(response.body.data.openingCurrencyId).toBe(currencyId.toString());
     expect(response.body.data.openingCurrencyCode).not.toBeNull();
+    expect(response.body.data).not.toHaveProperty('openingBalance');
   });
 
-  it('refuses a balance with no currency', async () => {
+  it('keeps a customer’s two sides apart rather than netting them', async () => {
+    const response = await as()
+      .post('/api/tenant/crm/customers')
+      .send({
+        name: 'OB Customer',
+        country: 'Bangladesh',
+        customerType: 'EXPORTER',
+        businessArea: 'OUTBOUND',
+        industrySectorId: sectorId.toString(),
+        weOwe: '300.0000',
+        customerOwe: '1200.0000',
+        openingCurrencyId: currencyId.toString(),
+      });
+
+    expect(response.status, JSON.stringify(response.body.error ?? {})).toBe(201);
+    expect(response.body.data.weOwe).toBe('300.0000');
+    expect(response.body.data.customerOwe).toBe('1200.0000');
+  });
+
+  it('puts each side on its own column of the Receivable-Payable list', async () => {
+    const list = await as().get('/api/tenant/accounts/receivable-payable?limit=100');
+    expect(list.status, JSON.stringify(list.body.error ?? {})).toBe(200);
+    const byName = new Map(list.body.data.map((r: { partyName: string }) => [r.partyName, r]));
+
+    // What we owe the vendor is payable — never money owed to us.
+    const vendor = byName.get('OB Vendor') as Record<string, string>;
+    expect(vendor.receivableBase).toBe('0.0000');
+    expect(vendor.payableBase).toBe('2500.7500');
+
+    // A customer owing us on one account while we owe them on another shows both.
+    const customer = byName.get('OB Customer') as Record<string, string>;
+    expect(customer.receivableBase).toBe('1200.0000');
+    expect(customer.payableBase).toBe('300.0000');
+  });
+
+  it('refuses a negative figure — each column already names its side', async () => {
+    const response = await as()
+      .post('/api/tenant/crm/vendors')
+      .send({
+        name: 'OB Vendor Negative',
+        country: 'Bangladesh',
+        vendorTypeId: vendorTypeId.toString(),
+        vendorOwe: '-100',
+        openingCurrencyId: currencyId.toString(),
+      });
+    expect(response.status).toBe(400);
+    expect(response.body.error.fields.vendorOwe).toBeDefined();
+  });
+
+  it('refuses a figure with no currency', async () => {
     const response = await as()
       .post('/api/tenant/crm/vendors')
       .send({
         name: 'OB Vendor No Currency',
         country: 'Bangladesh',
         vendorTypeId: vendorTypeId.toString(),
-        openingBalance: '100.0000',
+        vendorOwe: '100.0000',
       });
 
     expect(response.status).toBe(400);
@@ -199,7 +262,10 @@ describe('opening balances', () => {
     // ...but putting a figure on it without a currency is not, and the CHECK
     // constraint refuses it even though this write bypasses the API entirely.
     await expect(
-      owner.$executeRaw`UPDATE vendor SET opening_balance = 500 WHERE name = 'OB Vendor Plain'`,
+      owner.$executeRaw`UPDATE vendor SET vendor_owe = 500 WHERE name = 'OB Vendor Plain'`,
     ).rejects.toThrow(/opening_needs_currency/);
+    await expect(
+      owner.$executeRaw`UPDATE customer SET we_owe = -1, opening_currency_id = ${currencyId} WHERE name = 'OB Customer'`,
+    ).rejects.toThrow(/opening_not_negative/);
   });
 });

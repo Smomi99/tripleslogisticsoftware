@@ -112,10 +112,11 @@ interface OpeningMovement {
 }
 
 /**
- * The CRM opening figures (20260819180000), each on the side its sign says:
- * customer and vendor opening_balance is signed, positive owed to us; the
- * agent keeps agent_owe (receivable) and we_owe (payable) apart. Carriers have
- * none. Less what vouchers have settled against them (§14.6).
+ * The CRM opening figures, each party's two columns on their own sides: what
+ * they owe us (agent_owe, customer_owe, vendor_owe) is receivable, what we owe
+ * them (we_owe) is payable — the agent's pair since 20260819180000, the
+ * customer's and vendor's since §14.14. Carriers have none. Less what vouchers
+ * have settled against them (§14.6).
  */
 async function openingMovements(db: TenantDb, filter?: PartyFilter): Promise<OpeningMovement[]> {
   const wants = (type: LedgerPartyType): boolean => filter === undefined || filter.type === type;
@@ -125,14 +126,24 @@ async function openingMovements(db: TenantDb, filter?: PartyFilter): Promise<Ope
   const [customers, vendors, agents, settlements] = await Promise.all([
     wants('CUSTOMER')
       ? db.customer.findMany({
-          where: { ...idFilter('CUSTOMER'), deletedAt: null, openingBalance: { not: null }, openingCurrencyId: { not: null } },
-          select: { id: true, openingBalance: true, openingCurrencyId: true, openingCurrency: currency, createdAt: true },
+          where: {
+            ...idFilter('CUSTOMER'),
+            deletedAt: null,
+            openingCurrencyId: { not: null },
+            OR: [{ weOwe: { not: null } }, { customerOwe: { not: null } }],
+          },
+          select: { id: true, weOwe: true, customerOwe: true, openingCurrencyId: true, openingCurrency: currency, createdAt: true },
         })
       : Promise.resolve([]),
     wants('VENDOR')
       ? db.vendor.findMany({
-          where: { ...idFilter('VENDOR'), deletedAt: null, openingBalance: { not: null }, openingCurrencyId: { not: null } },
-          select: { id: true, openingBalance: true, openingCurrencyId: true, openingCurrency: currency, createdAt: true },
+          where: {
+            ...idFilter('VENDOR'),
+            deletedAt: null,
+            openingCurrencyId: { not: null },
+            OR: [{ weOwe: { not: null } }, { vendorOwe: { not: null } }],
+          },
+          select: { id: true, weOwe: true, vendorOwe: true, openingCurrencyId: true, openingCurrency: currency, createdAt: true },
         })
       : Promise.resolve([]),
     wants('AGENT')
@@ -191,23 +202,17 @@ async function openingMovements(db: TenantDb, filter?: PartyFilter): Promise<Ope
     out.push({ key: partyKey(type, id), side, amount, currencyId, currencyCode: code, date, settlement: null });
   };
 
-  for (const [type, rows] of [
-    ['CUSTOMER', customers],
-    ['VENDOR', vendors],
-  ] as const) {
-    for (const row of rows) {
-      if (row.openingCurrencyId === null) continue;
-      const value = dec(row.openingBalance);
-      const code = isoCurrency(row.openingCurrency?.currency ?? '');
-      if (value.greaterThan(0)) add(type, row.id, 'RECEIVABLE', value, row.openingCurrencyId, code, row.createdAt);
-      if (value.lessThan(0)) add(type, row.id, 'PAYABLE', value.negated(), row.openingCurrencyId, code, row.createdAt);
-    }
-  }
-  for (const row of agents) {
+  // Every party the same way: what they owe us, and what we owe them.
+  const pairs = [
+    ...customers.map((r) => ({ type: 'CUSTOMER' as const, row: r, theyOwe: r.customerOwe })),
+    ...vendors.map((r) => ({ type: 'VENDOR' as const, row: r, theyOwe: r.vendorOwe })),
+    ...agents.map((r) => ({ type: 'AGENT' as const, row: r, theyOwe: r.agentOwe })),
+  ];
+  for (const { type, row, theyOwe } of pairs) {
     if (row.openingCurrencyId === null) continue;
     const code = isoCurrency(row.openingCurrency?.currency ?? '');
-    add('AGENT', row.id, 'RECEIVABLE', dec(row.agentOwe), row.openingCurrencyId, code, row.createdAt);
-    add('AGENT', row.id, 'PAYABLE', dec(row.weOwe), row.openingCurrencyId, code, row.createdAt);
+    add(type, row.id, 'RECEIVABLE', dec(theyOwe), row.openingCurrencyId, code, row.createdAt);
+    add(type, row.id, 'PAYABLE', dec(row.weOwe), row.openingCurrencyId, code, row.createdAt);
   }
   for (const s of settlements) {
     const id = s.customerId ?? s.agentId ?? s.vendorId;

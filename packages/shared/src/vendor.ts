@@ -3,7 +3,7 @@ import { z } from 'zod';
 import {
   currencyRequiredFor,
   openingCurrencyField,
-  signedMoneyField,
+  unsignedMoneyField,
 } from './opening-balance';
 
 import { listQuerySchema } from './api';
@@ -30,11 +30,16 @@ export const vendorInputSchema = z.object({
   tinNo: z.string().trim().max(50, 'TIN is too long.').optional(),
   /** The client writes vat_no (BIN) — Bangladesh Business Identification Number. */
   vatNo: z.string().trim().max(50, 'VAT/BIN is too long.').optional(),
-  /** Opening figures for the accounts ledger. Positive is owed to us. */
-  openingBalance: signedMoneyField('Enter an opening balance, or leave it blank.'),
+  /**
+   * The opening figures for the accounts ledger — the agent's two columns
+   * (client, 2026-09-27): what we owed them and what they owed us, each on
+   * its own side, never netted into one signed figure.
+   */
+  weOwe: unsignedMoneyField('Enter an amount, or leave it blank.'),
+  vendorOwe: unsignedMoneyField('Enter an amount, or leave it blank.'),
   openingCurrencyId: openingCurrencyField,
-}).refine((v) => currencyRequiredFor([v.openingBalance], v.openingCurrencyId), {
-  message: 'Choose the currency the opening balance is in.',
+}).refine((v) => currencyRequiredFor([v.weOwe, v.vendorOwe], v.openingCurrencyId), {
+  message: 'Choose the currency those opening figures are in.',
   path: ['openingCurrencyId'],
 });
 
@@ -60,7 +65,8 @@ export interface VendorDto {
   bankDetails: string | null;
   tinNo: string | null;
   vatNo: string | null;
-  openingBalance: string | null;
+  weOwe: string | null;
+  vendorOwe: string | null;
   openingCurrencyId: string | null;
   openingCurrencyCode: string | null;
   isActive: boolean;

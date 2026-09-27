@@ -170,7 +170,7 @@ async function makeWorld(name: string, slug: string, tag: string): Promise<World
       businessArea: 'OUTBOUND',
       industrySectorId: sector.id,
       // §3.6: the CRM opening balance is where this ledger starts.
-      openingBalance: '500',
+      customerOwe: '500',
       openingCurrencyId: usd,
     },
     select: { id: true },
