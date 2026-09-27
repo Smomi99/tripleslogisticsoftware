@@ -586,7 +586,7 @@ function volumeRows(
  *
  * Volumes are matched and rewritten rather than deleted and recreated: §4
  * rule 3 forbids the hard delete, and the tenant client refuses deleteMany
- * outright. Rows the new input drops are deactivated, not removed.
+ * outright. Rows the new input drops are soft-deleted, not removed.
  */
 /**
  * Rewrites who an inquiry goes to.
@@ -682,12 +682,17 @@ async function updateInquiry(
     if (match === undefined) {
       await db.inquiryVolume.create({ data: { ...row, tenantId: auth.tenantId, inquiryId: id } });
     } else {
+      // Every column the grid edits, not only the amounts: a price or a box
+      // type changed on a size already there must not keep its old value.
       await db.inquiryVolume.update({
         where: { id: match },
         data: {
+          containerTypeId: row.containerTypeId ?? null,
           quantity: row.quantity ?? null,
           cbm: row.cbm ?? null,
           weightKg: row.weightKg ?? null,
+          targetPrice: row.targetPrice ?? null,
+          containerSizeNote: row.containerSizeNote ?? null,
           isActive: true,
           updatedBy: auth.userId,
         },
@@ -695,10 +700,17 @@ async function updateInquiry(
       byKey.delete(key);
     }
   }
+  /*
+   * Soft-deleted, not just deactivated. Every reader of the grid — this
+   * screen, the quotation, the shipment, the agent's view — filters on
+   * deleted_at, so a row left merely inactive went on showing: switch FCL to
+   * LCL and the old containers sat beside the new CBM. deleted_at is also what
+   * the once-per-size indexes key on, so a size removed here can come back.
+   */
   for (const orphan of byKey.values()) {
     await db.inquiryVolume.update({
       where: { id: orphan },
-      data: { isActive: false, updatedBy: auth.userId },
+      data: { deletedAt: new Date(), isActive: false, updatedBy: auth.userId },
     });
   }
 

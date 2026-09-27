@@ -443,6 +443,57 @@ describe('§5.5 Edit — blocked once WON', () => {
     expect(second.body.data.volumes[0].cbm).toBe('20.000');
   });
 
+  it('drops the containers when FCL is switched to LCL', async () => {
+    const size = (
+      await owner.containerSize.findFirstOrThrow({ where: { tenantId: null }, select: { id: true } })
+    ).id.toString();
+
+    await as(tokenSales)
+      .patch(path())
+      .send({ ...body(), volumes: [{ volumeKind: 'FCL', containerSizeId: size, quantity: '2' }] });
+    const lcl = await as(tokenSales)
+      .patch(path())
+      .send({ ...body(), loadingType: 'LCL', volumes: [{ volumeKind: 'LCL', cbm: '15' }] });
+    expect(lcl.status, JSON.stringify(lcl.body.error ?? {})).toBe(200);
+
+    // The bug this guards: the FCL row was only deactivated, and every reader
+    // filters on deleted_at, so "2 x 20STD" sat beside the new 15 CBM.
+    const read = await as(tokenSales).get(path());
+    expect(read.body.data.volumes).toHaveLength(1);
+    expect(read.body.data.volumes[0].volumeKind).toBe('LCL');
+    expect(read.body.data.volumes[0].cbm).toBe('15.000');
+
+    // And back again: the dropped size must not block its own return.
+    const fcl = await as(tokenSales)
+      .patch(path())
+      .send({ ...body(), volumes: [{ volumeKind: 'FCL', containerSizeId: size, quantity: '1' }] });
+    expect(fcl.status, JSON.stringify(fcl.body.error ?? {})).toBe(200);
+    expect(fcl.body.data.volumes).toHaveLength(1);
+    expect(fcl.body.data.volumes[0].quantity).toBe(1);
+  });
+
+  it('keeps a price changed on a size already in the grid', async () => {
+    const size = (
+      await owner.containerSize.findFirstOrThrow({ where: { tenantId: null }, select: { id: true } })
+    ).id.toString();
+    const currencyId = (
+      await owner.currency.findFirstOrThrow({ where: { tenantId: null }, select: { id: true } })
+    ).id.toString();
+    const line = (targetPrice: string, containerSizeNote: string) => ({
+      ...body(),
+      currencyId,
+      volumes: [
+        { volumeKind: 'FCL', containerSizeId: size, quantity: '1', targetPrice, containerSizeNote },
+      ],
+    });
+
+    await as(tokenSales).patch(path()).send(line('1000', 'Dry'));
+    const res = await as(tokenSales).patch(path()).send(line('1200', 'Reefer'));
+    expect(res.status, JSON.stringify(res.body.error ?? {})).toBe(200);
+    expect(res.body.data.volumes[0].targetPrice).toBe('1200.0000');
+    expect(res.body.data.volumes[0].containerSizeNote).toBe('Reefer');
+  });
+
   it('refuses once the inquiry is WON', async () => {
     await as(tokenSales).post(path('/status')).send({ status: 'WON' });
     const res = await as(tokenSales).patch(path()).send(body());
