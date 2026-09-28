@@ -195,7 +195,26 @@ const RATE_TIERS = [
 
 /** System lookup values from §5 and §6. tenant_id stays NULL — see §7A rule 7. */
 const SYSTEM_LOOKUPS = {
-  costUnit: ['Container', 'HBL', 'HAWB', 'MBL', 'MAWB', 'CBM', 'Trip', 'Contract', 'M.Ton', 'KG'],
+  /*
+   * Appended only, never reordered — keyed by index-derived code (CUN-001...),
+   * and cost heads, rates and invoice lines already point at these.
+   */
+  costUnit: [
+    'Container',
+    'HBL',
+    'HAWB',
+    'MBL',
+    'MAWB',
+    'CBM',
+    'Trip',
+    'Contract',
+    'M.Ton',
+    'KG',
+    // Added 2026-09-28 at the client's request.
+    'Document',
+    'Carton',
+    'Pallet',
+  ],
   carrierType: ['MLO', 'NVOCC', 'Airline', 'SOC'],
   /*
    * Appended only, never reordered — keyed by index-derived code (VET-001...),
