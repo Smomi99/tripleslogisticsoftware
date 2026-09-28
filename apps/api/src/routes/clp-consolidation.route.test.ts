@@ -62,6 +62,7 @@ function as(token: string) {
     post: (p: string) => wrap(request(app).post(p)),
     patch: (p: string) => wrap(request(app).patch(p)),
     put: (p: string) => wrap(request(app).put(p)),
+    delete: (p: string) => wrap(request(app).delete(p)),
   };
 }
 
@@ -1088,6 +1089,39 @@ describe('the booking detail sees plans made by either path', () => {
     // §4's soft delete, unchanged by the fallback: neither shape comes back.
     expect(plansOf(await as(tokenAll).get(detail(a.id)))).toHaveLength(0);
     expect(plansOf(await as(tokenAll).get(detail(b.id)))).toHaveLength(0);
+  });
+
+  it('Remove this container takes an empty draft off the booking, either shape', async () => {
+    /*
+      The route used to soft-delete first and only then ask which booking to
+      rebuild — a question that reads live plans only. It found nothing,
+      answered 404, and the transaction put the plan back on screen.
+    */
+    const a = await booking({ label: 'cdrma', loadingType: 'LCL' });
+    const legacy = await as(tokenAll)
+      .post(`/api/tenant/ops/bookings/${a.id}/clps`)
+      .send({ containerSizeId: size20.toString() });
+    const legacyId = track(legacy.body.data.id);
+
+    const b = await booking({ label: 'cdrmb', loadingType: 'LCL' });
+    const consolidated = await as(tokenAll)
+      .post('/api/tenant/ops/clps/consolidate')
+      .send({ shipmentIds: [b.id.toString()], containerSizeId: size20.toString() });
+    const consolidatedId = track(consolidated.body.data.id);
+
+    for (const [who, id] of [
+      [a, legacyId],
+      [b, consolidatedId],
+    ] as const) {
+      const res = await as(tokenAll).delete(`/api/tenant/ops/clps/${id}`);
+      expect(res.status).toBe(200);
+      // The plan handed back is the booking's, without the removed card.
+      expect(plansOf(res)).toHaveLength(0);
+      // And it stays removed on the next read.
+      expect(plansOf(await as(tokenAll).get(detail(who.id)))).toHaveLength(0);
+      const row = await owner.clp.findFirstOrThrow({ where: { id }, select: { deletedAt: true } });
+      expect(row.deletedAt).not.toBeNull();
+    }
   });
 
   it('drops a participation without resurrecting the plan through the fallback', async () => {

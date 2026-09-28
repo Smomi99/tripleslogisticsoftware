@@ -1054,11 +1054,17 @@ clpRouter.delete('/clps/:id', requirePermission(`${FEATURE}.EDIT`), async (req, 
       );
     }
 
+    /*
+      Resolved before the delete. participantShipmentIds reads only live plans,
+      so asking afterwards found nothing, threw 404, and the transaction rolled
+      the removal back — the card stayed on screen under "no longer exists".
+    */
+    const shipmentId = await planShipmentId(db, clpId);
     await db.clp.update({
       where: { id: clpId },
       data: { deletedAt: new Date(), isActive: false, updatedBy: auth.userId },
     });
-    return buildPlan(db, await planShipmentId(db, clpId));
+    return buildPlan(db, shipmentId);
   });
 
   const payload: ApiSuccess<ClpPlan> = { success: true, data };
