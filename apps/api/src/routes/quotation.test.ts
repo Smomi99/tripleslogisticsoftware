@@ -58,6 +58,8 @@ async function cleanup(): Promise<void> {
   await owner.$executeRawUnsafe(`UPDATE tenant SET currency_id = NULL WHERE slug = '${SLUG}'`);
   for (const table of [
     'notification_setting',
+    // A booking row the draft-delete case raises, holding its quotation.
+    'shipment',
     'quotation_followup',
     'quotation_recipient',
     'quotation_commodity',
@@ -111,6 +113,9 @@ const patch = (path: string, body: object) =>
     .set('Authorization', `Bearer ${token}`)
     .set('X-Tenant-Slug', SLUG)
     .send(body);
+
+const del = (path: string, bearer = token) =>
+  request(app).delete(path).set('Authorization', `Bearer ${bearer}`).set('X-Tenant-Slug', SLUG);
 
 beforeAll(async () => {
   await cleanup();
@@ -1340,5 +1345,121 @@ describe('the quotation prints in its own currency', () => {
         data: { currencyId: tenant.currencyId },
       });
     }
+  });
+});
+
+describe('deleting a draft (MODULE_INQUIRY_QUOTATION §11 Q13)', () => {
+  /*
+   * Answered 2026-09-29: a delete limited to DRAFT. A draft revision is the
+   * other half of rule 8's edit, so deleting it discards the edit and puts
+   * back the issue the customer holds.
+   */
+  const url = (id: string) => `/api/tenant/cs/quotations/${id}`;
+  const send = (id: string) =>
+    post(`${url(id)}/send`, {
+      recipients: [{ email: 'buyer@customer.test', kind: 'TO' }],
+    }).expect(200);
+
+  it('deletes a draft that never went out, softly, and never reuses its number', async () => {
+    const draft = (await create().expect(201)).body.data as { id: string; code: string };
+
+    const res = await del(url(draft.id)).expect(200);
+    expect(res.body.data).toEqual({ deleted: true, restored: null });
+
+    await as(url(draft.id)).expect(404);
+    const listed = await as(`/api/tenant/cs/quotations?search=${draft.code}`).expect(200);
+    expect(listed.body.data).toHaveLength(0);
+
+    // §4 rule 3: the row stays, retired.
+    const row = await owner.quotation.findFirstOrThrow({
+      where: { id: BigInt(draft.id) },
+      select: { deletedAt: true, isActive: true },
+    });
+    expect(row.deletedAt).not.toBeNull();
+    expect(row.isActive).toBe(false);
+    // Written by the table's audit trigger, once — the route adds nothing.
+    expect(
+      await owner.auditLog.count({
+        where: { tenantId, tableName: 'quotation', recordId: BigInt(draft.id), action: 'DELETE' },
+      }),
+    ).toBe(1);
+
+    const next = (await create().expect(201)).body.data as { code: string };
+    expect(next.code > draft.code).toBe(true);
+  });
+
+  it('refuses anything that has been sent, and leaves it as it was', async () => {
+    const sent = (await create().expect(201)).body.data as { id: string };
+    await send(sent.id);
+
+    const res = await del(url(sent.id)).expect(409);
+    expect(JSON.stringify(res.body)).toContain('Only a draft can be deleted');
+    expect((await as(url(sent.id)).expect(200)).body.data.status).toBe('SENT');
+  });
+
+  it('discards a draft revision and puts the sent issue back', async () => {
+    const q = (await create().expect(201)).body.data as { id: string };
+    await send(q.id);
+    const rev2 = (await patch(url(q.id), { validityDate: '2026-10-31' }).expect(200)).body
+      .data as { id: string; revisionNo: number };
+    expect(rev2.revisionNo).toBe(2);
+
+    const res = await del(url(rev2.id)).expect(200);
+    expect(res.body.data.restored).toEqual({ id: q.id, revisionNo: 1, status: 'SENT' });
+
+    const back = (await as(url(q.id)).expect(200)).body.data;
+    expect(back.status).toBe('SENT');
+    expect(back.editable).toBe(true);
+    // What the customer was sent, untouched by the discarded edit.
+    expect(back.validityDate).toBe('2026-09-30');
+
+    // Revising again issues rev 3: rev 2 is deleted, but its number is on the record.
+    const rev3 = await patch(url(q.id), { validityDate: '2026-11-30' }).expect(200);
+    expect(rev3.body.data.revisionNo).toBe(3);
+  });
+
+  it('puts an accepted issue back as accepted, and still revisable', async () => {
+    const q = (await create().expect(201)).body.data as { id: string; code: string };
+    await send(q.id);
+
+    // What raising a booking writes (shipment.route), then its cancellation (§5.6).
+    const header = await owner.quotation.findFirstOrThrow({
+      where: { id: BigInt(q.id) },
+      select: { customerId: true, carrierId: true, polId: true, podId: true },
+    });
+    const admin = await owner.user.findFirstOrThrow({
+      where: { tenantId, username: 'admin-q' },
+      select: { id: true },
+    });
+    await owner.shipment.create({
+      data: {
+        tenantId,
+        code: `BKG-${q.code}`,
+        seriesYear: 2026,
+        quotationId: BigInt(q.id),
+        shipmentType: 'SEA',
+        ...header,
+        status: 'CANCELLED',
+        cancelledAt: new Date(),
+        cancelledBy: admin.id,
+        cancelReason: 'Customer moved the cargo to next month.',
+      },
+    });
+    await owner.quotation.update({ where: { id: BigInt(q.id) }, data: { status: 'ACCEPTED' } });
+
+    const rev2 = (await patch(url(q.id), { validityDate: '2026-10-31' }).expect(200)).body
+      .data as { id: string };
+    const res = await del(url(rev2.id)).expect(200);
+    expect(res.body.data.restored.status).toBe('ACCEPTED');
+
+    const back = (await as(url(q.id)).expect(200)).body.data;
+    expect(back.status).toBe('ACCEPTED');
+    expect(back.editable).toBe(true);
+  });
+
+  it('needs DELETE, which EDIT does not carry', async () => {
+    const draft = (await create().expect(201)).body.data as { id: string };
+    await del(url(draft.id), tokenNoPdf).expect(403);
+    expect((await as(url(draft.id)).expect(200)).body.data.status).toBe('DRAFT');
   });
 });

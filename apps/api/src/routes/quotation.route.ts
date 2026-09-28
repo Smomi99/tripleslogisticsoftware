@@ -906,12 +906,24 @@ quotationRouter.patch('/quotations/:id', requirePermission(`${FEATURE}.EDIT`), a
         data: { status: 'SUPERSEDED', updatedBy: auth.userId },
       });
 
+      /*
+        After every issue of this number, deleted ones included. A discarded
+        draft revision puts the issue before it back (DELETE below), and
+        quotation_tenant_id_code_revision_no_key still counts the deleted row —
+        so "current + 1" would try to issue the discarded number again.
+      */
+      const last = await db.quotation.findFirst({
+        where: { code: current.code },
+        orderBy: { revisionNo: 'desc' },
+        select: { revisionNo: true },
+      });
+
       const next = await db.quotation.create({
         data: {
           tenantId: auth.tenantId,
           code: current.code,
           seriesYear: current.seriesYear,
-          revisionNo: current.revisionNo + 1,
+          revisionNo: (last?.revisionNo ?? current.revisionNo) + 1,
           inquiryId: current.inquiryId,
           quotationDate: current.quotationDate,
           validityDate: current.validityDate,
@@ -1196,6 +1208,84 @@ quotationRouter.patch('/quotations/:id', requirePermission(`${FEATURE}.EDIT`), a
 
   const row = await withTenant(auth.tenantId, (db) => findScoped(db, auth, targetId));
   const payload: ApiSuccess<QuotationDto> = { success: true, data: toDto(row) };
+  res.json(payload);
+});
+
+/**
+ * DELETE /api/tenant/cs/quotations/:id — a draft raised in error.
+ *
+ * MODULE_INQUIRY_QUOTATION §11 Q13, answered 2026-09-29: a delete limited to
+ * DRAFT. Only a draft has never left the building; anything sent is history
+ * and is retired by its own status. Soft, as §4 rule 3 requires, and the
+ * number is not reused — nextQuotationNo reads deleted rows too.
+ *
+ * A draft revision is the second half of rule 8's edit, which superseded the
+ * issue the customer holds. Deleting the revision discards that edit, so the
+ * issue before it goes back to what it was and is live and bookable again:
+ * ACCEPTED if a booking was ever raised from it — raising one is the only
+ * thing that writes ACCEPTED — and SENT otherwise.
+ */
+quotationRouter.delete('/quotations/:id', requirePermission(`${FEATURE}.DELETE`), async (req, res) => {
+  const auth = req.auth!;
+  const id = parseId(req.params.id, 'quotation');
+
+  const restored = await withTenant(auth.tenantId, async (db) => {
+    const current = await findScoped(db, auth, id);
+    if (current.status !== 'DRAFT') {
+      throw HttpError.conflict(
+        `${current.code} is ${current.status.toLowerCase()}, so it stays on the record. ` +
+          'Only a draft can be deleted.',
+      );
+    }
+
+    /*
+      Retired first. quotation_live_revision_key allows one live issue per
+      number and is checked per statement, so the draft has to stop being live
+      before the issue it replaced can be live again — the mirror of the order
+      PATCH is forced into.
+    */
+    await db.quotation.update({
+      where: { id: current.id },
+      data: { deletedAt: new Date(), isActive: false, updatedBy: auth.userId },
+    });
+
+    if (current.revisionNo === 1) return null;
+
+    const previous = await db.quotation.findFirst({
+      where: {
+        code: current.code,
+        revisionNo: { lt: current.revisionNo },
+        status: 'SUPERSEDED',
+        deletedAt: null,
+      },
+      orderBy: { revisionNo: 'desc' },
+      select: { id: true, revisionNo: true, _count: { select: { shipments: true } } },
+    });
+    if (previous === null) return null;
+
+    const status: QuotationStatus = previous._count.shipments > 0 ? 'ACCEPTED' : 'SENT';
+    await db.quotation.update({
+      where: { id: previous.id },
+      data: { status, updatedBy: auth.userId },
+    });
+    return { id: previous.id, revisionNo: previous.revisionNo, status };
+  });
+
+  // No recordAudit: the table's trigger already writes the soft delete as
+  // DELETE and the restored issue's status change as UPDATE.
+  const payload: ApiSuccess<{
+    deleted: true;
+    restored: { id: string; revisionNo: number; status: QuotationStatus } | null;
+  }> = {
+    success: true,
+    data: {
+      deleted: true,
+      restored:
+        restored === null
+          ? null
+          : { id: restored.id.toString(), revisionNo: restored.revisionNo, status: restored.status },
+    },
+  };
   res.json(payload);
 });
 

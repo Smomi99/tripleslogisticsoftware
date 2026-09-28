@@ -137,18 +137,26 @@ describe('the registry', () => {
    *
    * It is still not a hard delete anywhere: the routes set `deleted_at`, and
    * §4 rule 3 holds.
+   *
+   * One named exception: a DRAFT quotation (MODULE_INQUIRY_QUOTATION §11 Q13).
+   * A draft has never been sent, so it is not history yet, and the route
+   * refuses every other status. Named here so that a second exception is a
+   * decision somebody makes, not a line that slips in.
    */
+  const DELETE_EXCEPTIONS = ['CUSTOMER_SERVICE.QUOTATION'];
+
   it('grants DELETE to master data only, never to transactional records', () => {
     const withDelete = FEATURES.filter((f) => f.actions.includes('DELETE'));
 
     expect(withDelete.length).toBeGreaterThan(0);
     const wrongModule = withDelete.filter(
-      (f) => f.module !== 'SETTING' && f.module !== 'CRM',
+      (f) =>
+        f.module !== 'SETTING' && f.module !== 'CRM' && !DELETE_EXCEPTIONS.includes(f.feature),
     );
     expect(wrongModule.map((f) => f.feature)).toEqual([]);
   });
 
-  it('keeps DELETE off every transactional module', () => {
+  it('keeps DELETE off every transactional module but the draft quotation', () => {
     const transactional = FEATURES.filter((f) =>
       ['PURCHASE', 'SALES', 'CUSTOMER_SERVICE', 'OPERATION', 'DOCUMENTATION', 'ACCOUNTS'].includes(
         f.module,
@@ -156,7 +164,7 @@ describe('the registry', () => {
     );
     expect(transactional.length).toBeGreaterThan(20);
     expect(transactional.filter((f) => f.actions.includes('DELETE')).map((f) => f.feature)).toEqual(
-      [],
+      DELETE_EXCEPTIONS,
     );
   });
 

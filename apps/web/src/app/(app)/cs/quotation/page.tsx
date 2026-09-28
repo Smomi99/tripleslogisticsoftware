@@ -16,6 +16,7 @@ import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Input, Select } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/form-layout';
+import { ConfirmDialog } from '@/components/ui/modal';
 import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
@@ -51,8 +52,14 @@ function money(value: string | null): string {
   return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+/** What DELETE reports back: the issue that went live again, if any. */
+interface DeleteResult {
+  deleted: true;
+  restored: { id: string; revisionNo: number; status: QuotationStatus } | null;
+}
+
 export default function QuotationListPage() {
-  const { authorizedList: list, can } = useSession();
+  const { authorizedList: list, authorizedRequest, can } = useSession();
   const router = useRouter();
 
   const [rows, setRows] = useState<QuotationListItemDto[]>([]);
@@ -63,6 +70,10 @@ export default function QuotationListPage() {
   const [status, setStatus] = useState<'' | QuotationStatus>('');
   const [isPending, setPending] = useState(true);
   const [followingUp, setFollowingUp] = useState<QuotationListItemDto | null>(null);
+  const [toDelete, setToDelete] = useState<QuotationListItemDto | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  // Bumped after a delete so the page reloads without moving off it.
+  const [reload, setReload] = useState(0);
 
   // Debounced, like every other search box in the product (§8).
   useEffect(() => {
@@ -101,7 +112,34 @@ export default function QuotationListPage() {
     return () => {
       cancelled = true;
     };
-  }, [list, page, query, status]);
+  }, [list, page, query, status, reload]);
+
+  /*
+    A draft raised in error (§11 Q13). A draft revision takes its edit with it:
+    the server puts the issue the customer holds back, and the toast says so,
+    because that row changes status in the list as this one disappears.
+  */
+  async function deleteDraft(): Promise<void> {
+    if (toDelete === null) return;
+    setDeleting(true);
+    try {
+      const result = await authorizedRequest<DeleteResult>(
+        `/api/tenant/cs/quotations/${toDelete.id}`,
+        { method: 'DELETE' },
+      );
+      toast.success(
+        result.restored === null
+          ? `${toDelete.code} deleted`
+          : `${toDelete.code} rev ${toDelete.revisionNo} deleted — rev ${result.restored.revisionNo} is live again`,
+      );
+      setToDelete(null);
+      setReload((n) => n + 1);
+    } catch (caught) {
+      toast.error(caught instanceof ApiError ? caught.message : 'Could not delete that quotation.');
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   const columns: DataTableColumn<QuotationListItemDto>[] = [
     {
@@ -295,11 +333,34 @@ export default function QuotationListPage() {
                   Booking
                 </Button>
               ))}
+            {/* §11 Q13 — a draft only; anything sent is history. */}
+            {can('CUSTOMER_SERVICE.QUOTATION.DELETE') && row.status === 'DRAFT' && (
+              <Button variant="destructive" size="inline" onClick={() => setToDelete(row)}>
+                Delete
+              </Button>
+            )}
           </span>
         )}
       />
 
       <FollowupDrawer quotation={followingUp} onClose={() => setFollowingUp(null)} />
+
+      <ConfirmDialog
+        open={toDelete !== null}
+        onOpenChange={(open) => !open && setToDelete(null)}
+        title={toDelete === null ? 'Delete draft?' : `Delete ${toDelete.code}?`}
+        message={
+          toDelete === null
+            ? ''
+            : toDelete.revisionNo > 1
+              ? `This discards revision ${toDelete.revisionNo}. The quotation the customer was sent becomes the live one again.`
+              : 'This draft has not been sent to anyone. It leaves the list, and its number is not reused.'
+        }
+        confirmLabel="Delete draft"
+        destructive
+        isPending={deleting}
+        onConfirm={() => void deleteDraft()}
+      />
     </div>
   );
 }

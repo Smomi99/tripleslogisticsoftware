@@ -369,12 +369,12 @@ export const FEATURES: readonly FeatureDefinition[] = [
     feature: 'CUSTOMER_SERVICE.QUOTATION',
     label: 'Quotation',
     /*
-     * §7 lists DELETE. CR-002 does not allow it here: DELETE is for master data
-     * a user typed twice, and a quotation is business history retired by its own
-     * status. A draft raised in error is a real case the rule does not cover —
-     * see §11, question 13. Following the stricter rule until the client answers.
+     * DELETE is the one exception to CR-002's master-data-only rule, and a
+     * narrow one: the route refuses anything but a DRAFT. A draft has never
+     * left the building, so it is not yet business history — MODULE_INQUIRY_
+     * QUOTATION §11 Q13, answered 2026-09-29 as "a delete limited to DRAFT".
      */
-    actions: ['VIEW', 'CREATE', 'EDIT', 'SEND', 'FOLLOWUP', 'EXPORT_PDF', 'VIEW_ALL'],
+    actions: ['VIEW', 'CREATE', 'EDIT', 'DELETE', 'SEND', 'FOLLOWUP', 'EXPORT_PDF', 'VIEW_ALL'],
   },
   /*
    * Column-level, like PURCHASE's VIEW_BUY_PRICE. Adding a cost head nobody

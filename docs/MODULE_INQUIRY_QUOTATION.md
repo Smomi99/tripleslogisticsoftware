@@ -509,6 +509,11 @@ wrong number on a customer-facing document.
     not exist. But a draft raised against the wrong inquiry is a real case neither rule covers, and
     there is currently no way to remove one. Confirm whether a `CANCELLED` status, or a delete
     limited to `DRAFT`, is what the client wants.
+    **Answered 2026-09-29: a delete limited to `DRAFT`.** `CUSTOMER_SERVICE.QUOTATION.DELETE`, a
+    `Delete` action on Draft rows of the Quotation List, soft delete, number never reused. Deleting
+    a draft *revision* discards that edit: the issue it superseded goes back to `SENT`, or to
+    `ACCEPTED` if a booking was ever raised from it, and the next revision takes the next unused
+    number.
 14. **What names the freight on a quotation?** The price table prices the box but does not name the
     charge: `freight_rate` carries no cost head, only `rate_local_charge` does. So auto-pull can
     name the Seal, ENS and HBL lines and cannot name the Ocean Freight line. It is asked on the
