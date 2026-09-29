@@ -721,16 +721,17 @@ const EMAIL_TEMPLATES = [
     name: 'Customer — latest freight rates',
     subject: '{{subject}}',
     bodyText: [
-      'Dear {{customerName}},',
+      // Generic: one letter to many customers (client, 2026-09-29).
+      'Dear Sir/Madam,',
       '',
       '{{message}}',
       '',
       '{{rates}}',
       '',
-      'Kind regards,',
+      // The workspace's email signature, closing words included.
       '{{signOff}}',
     ].join('\n'),
-    variables: ['customerName', 'subject', 'message', 'rates', 'signOff'],
+    variables: ['subject', 'message', 'rates', 'signOff'],
   },
 ] as const;
 

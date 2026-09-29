@@ -468,7 +468,7 @@ function PriceEmailScreen() {
           <Step
             n={2}
             title="Rates"
-            hint="One POL to several PODs, or several POLs to one POD. Only lanes with a published rate today are offered."
+            hint="One POL to several PODs, or several POLs to one POD. The rates shown are the ones published and valid today."
           >
             {context !== null && context.modes.length === 0 ? (
               <p className="text-body text-steel">
@@ -566,7 +566,7 @@ function PriceEmailScreen() {
           <Step
             n={3}
             title="Message"
-            hint="The same letter goes to everyone, opening with their own company name. Edit anything."
+            hint="One letter, opening “Dear Sir/Madam,” and ending with the email signature from Settings → Notifications. Every customer gets their own copy, sent to their own addresses only."
           >
             <div className="flex flex-col gap-4">
               <div className="flex flex-col gap-3">
@@ -597,7 +597,6 @@ function PriceEmailScreen() {
                 replyTo={replyTo}
                 subject={subject}
                 html={priceEmailHtml({
-                  customerName: preview?.customerName ?? 'Customer name',
                   message,
                   rates: chosen,
                   includeLocalCharges: includeLocal,
@@ -778,7 +777,7 @@ function Preview({
 }) {
   return (
     <div className="flex min-w-0 flex-col rounded-manifest border border-line bg-paper">
-      <p className="label-manifest border-b border-line px-3 py-2">Preview — {customerName}</p>
+      <p className="label-manifest border-b border-line px-3 py-2">Preview — {customerName}’s copy</p>
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 border-b border-line bg-surface px-3 py-2 text-cell">
         <dt className="text-steel">To</dt>
         <dd className="break-all text-hull">{to.length === 0 ? '—' : to.join(', ')}</dd>

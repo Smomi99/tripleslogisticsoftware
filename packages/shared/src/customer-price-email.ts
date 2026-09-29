@@ -155,16 +155,23 @@ export interface PriceEmailRecipientsDto {
 export interface PriceEmailContextDto {
   /** Reply-To on every letter. Empty means the send is refused until it is set. */
   priceTeamEmails: string[];
-  /** The sender's name and designation, then the company block. */
+  /**
+   * The email signature from Settings → Notifications, which closes the
+   * letter — closing words and all. Nothing is added around it: no sender
+   * name or designation, and no "Kind regards," of our own, because the
+   * client's signature already carries both (2026-09-29).
+   */
   signOff: string;
   /** The Price List modes this user may read, in the order they are offered. */
   modes: RateMode[];
 }
 
 /**
- * What can be picked, drawn from the rates on offer rather than the whole port
- * master: a lane with no live rate would only produce an empty letter, so it
- * is simply not offered.
+ * What can be picked: every active port of the mode's kind (sea ports for Sea
+ * FCL and LCL, airports for Air) and every active carrier — the Price List's
+ * own choices. Offering only lanes with a live rate hid most of the port list
+ * (client, 2026-09-29); a lane with no rate now simply says so under the
+ * pickers instead.
  */
 export interface PriceEmailOptionsDto {
   pols: LookupOption[];
@@ -333,6 +340,13 @@ export function defaultPriceEmailSubject(
   return `${RATE_MODE_LABEL[mode]} rates: ${side(polNames, 'origins')} to ${side(podNames, 'destinations')}`;
 }
 
+/**
+ * How every letter opens. Generic on purpose (client, 2026-09-29): it is one
+ * letter to many customers, and a company name in the greeting reads as a
+ * mail merge. The same words the rate requests to agents and carriers use.
+ */
+export const PRICE_EMAIL_GREETING = 'Dear Sir/Madam,';
+
 /** The common part of the letter, pre-filled and editable before sending. */
 export const DEFAULT_PRICE_EMAIL_MESSAGE = [
   'Hope you are doing well.',
@@ -350,21 +364,19 @@ export const DEFAULT_PRICE_EMAIL_MESSAGE = [
  * CUSTOMER_PRICE_OFFER template has the same shape.
  */
 export function composePriceEmailBody(parts: {
-  customerName: string;
   message: string;
   rates: string;
   signOff: string;
 }): string {
   const signOff = parts.signOff.trim();
   return [
-    `Dear ${parts.customerName},`,
+    PRICE_EMAIL_GREETING,
     '',
     parts.message.trim(),
     '',
     parts.rates.trim(),
-    '',
-    'Kind regards,',
-    ...(signOff === '' ? [] : [signOff]),
+    // The signature carries its own closing ("Best regards,") — no second one here.
+    ...(signOff === '' ? [] : ['', signOff]),
   ].join('\n');
 }
 
@@ -547,11 +559,10 @@ export function priceEmailRatesHtml(
  * shows. The screen previews exactly this, so what the sender reads before
  * pressing Send is what the customer gets.
  *
- * Every value is escaped: the message and the customer's name are typed by
- * people, and a "<" in either must arrive as a "<", not as markup.
+ * Every value is escaped: the message and the signature are typed by people,
+ * and a "<" in either must arrive as a "<", not as markup.
  */
 export function priceEmailHtml(parts: {
-  customerName: string;
   message: string;
   rates: FreightRateDto[];
   includeLocalCharges: boolean;
@@ -565,12 +576,15 @@ export function priceEmailHtml(parts: {
   const signOff = parts.signOff.trim();
   return [
     '<div style="font-family:Segoe UI,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5;color:#10243A">',
-    `<p style="margin:0 0 12px">Dear ${escapeHtml(parts.customerName)},</p>`,
+    `<p style="margin:0 0 12px">${escapeHtml(PRICE_EMAIL_GREETING)}</p>`,
     paragraphs,
     priceEmailRatesHtml(parts.rates, { includeLocalCharges: parts.includeLocalCharges }),
-    `<p style="margin:20px 0 0">Kind regards,${signOff === '' ? '' : `<br>${htmlLines(signOff)}`}</p>`,
+    // The signature closes the letter, with its own "Best regards," if it has one.
+    signOff === '' ? '' : `<p style="margin:20px 0 0">${htmlLines(signOff)}</p>`,
     '</div>',
-  ].join('\n');
+  ]
+    .filter((part) => part !== '')
+    .join('\n');
 }
 
 // ----------------------------------------------------------------------- send

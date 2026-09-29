@@ -30,6 +30,7 @@ import { checkAddresses } from '../lib/email-check';
 import { queueMail } from '../lib/email-queue';
 import { HttpError } from '../lib/http-error';
 import { parseAddressList } from '../lib/mailer';
+import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import { visibleRates } from '../lib/rate-visibility';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
 import { type AuthContext, authenticate } from '../middleware/authenticate';
@@ -70,8 +71,6 @@ function assertPriceList(auth: AuthContext, mode: RateMode): void {
   }
 }
 
-/** Midnight today, so a rate valid through today is still on offer — as the Price List reads it. */
-const startOfToday = (): Date => new Date(new Date().toISOString().slice(0, 10));
 
 async function priceTeam(db: TenantDb): Promise<string[]> {
   const row = await db.notificationSetting.findFirst({ select: { priceTeamEmails: true } });
@@ -79,22 +78,15 @@ async function priceTeam(db: TenantDb): Promise<string[]> {
 }
 
 /**
- * Who the letter is from: the sender's name and designation, then the
- * company block from Settings → Notifications — the same sign-off the rate
- * requests to agents and carriers carry.
+ * How the letter ends: the email signature from Settings → Notifications,
+ * closing words and all, and nothing else. The sender's name, designation
+ * and a "Kind regards," of our own were all dropped at the client's request
+ * (2026-09-29) — the signature already carries them, and one letter going to
+ * many customers is from the company, not from whoever pressed Send.
  */
-async function signOff(db: TenantDb, userId: bigint): Promise<string> {
-  const [user, setting] = await Promise.all([
-    db.user.findFirst({
-      where: { id: userId },
-      select: { employee: { select: { name: true, designation: true } } },
-    }),
-    db.notificationSetting.findFirst({ select: { signatureBlock: true } }),
-  ]);
-  return [user?.employee?.name, user?.employee?.designation, setting?.signatureBlock]
-    .map((v) => (v ?? '').trim())
-    .filter((v) => v !== '')
-    .join('\n');
+async function signOff(db: TenantDb): Promise<string> {
+  const setting = await db.notificationSetting.findFirst({ select: { signatureBlock: true } });
+  return setting?.signatureBlock?.trim() ?? '';
 }
 
 /** GET …/context — what the screen needs before anything is picked. */
@@ -104,7 +96,7 @@ customerPriceEmailRouter.get('/context', requirePermission(PERMISSION), async (r
     auth.tenantId,
     async (db): Promise<PriceEmailContextDto> => ({
       priceTeamEmails: await priceTeam(db),
-      signOff: await signOff(db, auth.userId),
+      signOff: await signOff(db),
       modes: RATE_MODES.filter((mode) => mayReadPriceList(auth, mode)),
     }),
   );
@@ -113,38 +105,49 @@ customerPriceEmailRouter.get('/context', requirePermission(PERMISSION), async (r
 });
 
 /**
- * GET …/options?mode= — the POLs, PODs and carriers that have a rate on offer
- * today, read with the Price List's own filter (published, still valid).
+ * GET …/options?mode= — every active port of the mode's kind and every active
+ * carrier, as the Price List offers them.
+ *
+ * It used to offer only lanes with a rate on offer today, which hid most of
+ * the port list (client, 2026-09-29). A lane with no rate now says so under
+ * the pickers instead.
  */
 customerPriceEmailRouter.get('/options', requirePermission(PERMISSION), async (req, res) => {
   const auth = req.auth!;
   const { mode } = modeQuerySchema.parse(req.query);
   assertPriceList(auth, mode);
 
-  const rows = await withTenant(auth.tenantId, (db) =>
-    db.freightRate.findMany({
-      where: { deletedAt: null, mode, status: 'PUBLISHED', validTo: { gte: startOfToday() } },
-      select: {
-        pol: { select: { id: true, name: true, portCode: true } },
-        pod: { select: { id: true, name: true, portCode: true } },
-        carrier: { select: { id: true, name: true } },
-      },
-    }),
-  );
-
-  const distinct = (items: LookupOption[]): LookupOption[] =>
-    [...new Map(items.map((item) => [item.id, item])).values()].sort((a, b) =>
-      a.name.localeCompare(b.name),
-    );
-  const port = (p: { id: bigint; name: string; portCode: string }): LookupOption => ({
-    id: p.id.toString(),
-    name: `${p.name} (${p.portCode})`,
+  const { ports, carriers } = await withTenant(auth.tenantId, async (db) => {
+    // A shared row this workspace switched off is an override, not a flag on
+    // the row (§7A rule 7) — the same reading the Price List's pickers make.
+    const inactive = await inactiveMasters(db);
+    return {
+      ports: await db.port.findMany({
+        where: {
+          ...excludeInactive(inactive, 'port'),
+          deletedAt: null,
+          isActive: true,
+          type: mode === 'AIR' ? 'AIRPORT' : 'SEAPORT',
+        },
+        select: { id: true, name: true, portCode: true },
+        orderBy: { name: 'asc' },
+      }),
+      carriers: await db.carrier.findMany({
+        where: { ...excludeInactive(inactive, 'carrier'), deletedAt: null, isActive: true },
+        select: { id: true, name: true },
+        orderBy: { name: 'asc' },
+      }),
+    };
   });
 
+  const portOptions: LookupOption[] = ports.map((p) => ({
+    id: p.id.toString(),
+    name: `${p.name} (${p.portCode})`,
+  }));
   const data: PriceEmailOptionsDto = {
-    pols: distinct(rows.map((r) => port(r.pol))),
-    pods: distinct(rows.map((r) => port(r.pod))),
-    carriers: distinct(rows.map((r) => ({ id: r.carrier.id.toString(), name: r.carrier.name }))),
+    pols: portOptions,
+    pods: portOptions,
+    carriers: carriers.map((c) => ({ id: c.id.toString(), name: c.name })),
   };
   const payload: ApiSuccess<PriceEmailOptionsDto> = { success: true, data };
   res.json(payload);
@@ -291,10 +294,12 @@ customerPriceEmailRouter.post('/send', requirePermission(PERMISSION), async (req
   const { customers, replyTo, sender } = await withTenant(auth.tenantId, async (db) => ({
     customers: await db.customer.findMany({
       where: { id: { in: ids }, deletedAt: null, isActive: true },
+      // The outbox fills in a stable order, the one the recipients were listed in.
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
       select: { id: true, name: true },
     }),
     replyTo: await priceTeam(db),
-    sender: await signOff(db, auth.userId),
+    sender: await signOff(db),
   }));
 
   if (replyTo.length === 0) {
@@ -317,17 +322,27 @@ customerPriceEmailRouter.post('/send', requirePermission(PERMISSION), async (req
         'expired or withdrawn. Pick the lanes again to reload the rates.',
     );
   }
-  const ratesText = priceEmailRatesText(rates, { includeLocalCharges: input.includeLocalCharges });
+  /*
+   * The same letter for everyone — the greeting is "Dear Sir/Madam," — so it
+   * is built once. Each customer still gets their own copy, addressed to
+   * their own contacts only: the letter is shared, the address book is not.
+   */
+  const variables = {
+    subject: input.subject,
+    message: input.message,
+    rates: priceEmailRatesText(rates, { includeLocalCharges: input.includeLocalCharges }),
+    signOff: sender,
+  };
+  // The table. The text part is its stand-in for clients without HTML.
+  const html = priceEmailHtml({
+    message: input.message,
+    rates,
+    includeLocalCharges: input.includeLocalCharges,
+    signOff: sender,
+  });
 
   let queued = 0;
   for (const customer of customers) {
-    const variables = {
-      customerName: customer.name,
-      subject: input.subject,
-      message: input.message,
-      rates: ratesText,
-      signOff: sender,
-    };
     const result = await queueMail({
       tenantId: auth.tenantId,
       templateKey: CUSTOMER_PRICE_OFFER,
@@ -338,14 +353,7 @@ customerPriceEmailRouter.post('/send', requirePermission(PERMISSION), async (req
       relatedId: customer.id,
       actorId: auth.userId,
       fallback: { subject: input.subject, bodyText: composePriceEmailBody(variables) },
-      // The table. The text part above is its stand-in for clients without HTML.
-      html: priceEmailHtml({
-        customerName: customer.name,
-        message: input.message,
-        rates,
-        includeLocalCharges: input.includeLocalCharges,
-        signOff: sender,
-      }),
+      html,
     });
     if (result.queued) queued += 1;
   }

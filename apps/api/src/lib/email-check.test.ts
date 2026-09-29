@@ -250,19 +250,25 @@ describe('the rates as the letter prints them', () => {
       expect(html).toContain('min 90.00');
     });
 
-    it('escapes what people typed, and keeps their paragraphs', () => {
+    it('greets generically, escapes what people typed, and keeps their paragraphs', () => {
       const html = priceEmailHtml({
-        customerName: '<b>Acme & Co</b>',
         message: 'Line one\nline two\n\nSecond <paragraph>',
         rates: [rate],
         includeLocalCharges: false,
-        signOff: 'Rahim\nPricing',
+        signOff: 'Tripple S Logistics\n<b>Dhaka</b> & Chattogram',
       });
-      expect(html).toContain('Dear &lt;b&gt;Acme &amp; Co&lt;/b&gt;,');
-      expect(html).not.toContain('<b>Acme');
+      expect(html).toContain('>Dear Sir/Madam,</p>');
       expect(html).toContain('>Line one<br>line two</p>');
       expect(html).toContain('>Second &lt;paragraph&gt;</p>');
-      expect(html).toContain('Kind regards,<br>Rahim<br>Pricing');
+      expect(html).toContain('>Tripple S Logistics<br>&lt;b&gt;Dhaka&lt;/b&gt; &amp; Chattogram</p>');
+      expect(html).not.toContain('<b>Dhaka');
+      // The signature brings its own closing; none is added.
+      expect(html).not.toContain('Kind regards');
+    });
+
+    it('ends at the table when no signature is set, with no empty closing', () => {
+      const html = priceEmailHtml({ message: 'Rates.', rates: [rate], includeLocalCharges: false, signOff: '' });
+      expect(html.endsWith('</table>\n</div>')).toBe(true);
     });
   });
 });
@@ -277,16 +283,21 @@ describe('the subject and the letter', () => {
     );
   });
 
-  it('greets the customer by name and signs off under the sender', () => {
+  it('greets Sir/Madam — one letter to many — and ends with the email signature alone', () => {
     expect(
       composePriceEmailBody({
-        customerName: 'Dhaka Apparels',
         message: 'Please find our rates.',
         rates: '• 20STD: USD 1,250.00',
-        signOff: 'Rahim Uddin\nPricing Manager',
+        signOff: 'Best regards,\nTripple S Logistics\nDhaka',
       }),
     ).toBe(
-      'Dear Dhaka Apparels,\n\nPlease find our rates.\n\n• 20STD: USD 1,250.00\n\nKind regards,\nRahim Uddin\nPricing Manager',
+      'Dear Sir/Madam,\n\nPlease find our rates.\n\n• 20STD: USD 1,250.00\n\nBest regards,\nTripple S Logistics\nDhaka',
+    );
+  });
+
+  it('ends at the rates when no signature is set', () => {
+    expect(composePriceEmailBody({ message: 'Rates.', rates: '• 20STD', signOff: '' })).toBe(
+      'Dear Sir/Madam,\n\nRates.\n\n• 20STD',
     );
   });
 });

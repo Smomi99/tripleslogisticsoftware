@@ -52,6 +52,9 @@ let pol: bigint;
 let hamburg: bigint;
 let rotterdam: bigint;
 let antwerp: bigint;
+let airportId: bigint;
+let closedId: bigint;
+let quietId: bigint;
 let carrierA: bigint;
 let carrierB: bigint;
 const rateId = { hamburg: '', rotterdam: '', lapsed: '', draft: '' };
@@ -232,10 +235,22 @@ beforeAll(async () => {
   customer.bare = await makeCustomer(tenantId, 'CPE-5', 'CPE No Contact', garments);
 
   // ------------------------------------------------------------------ rates
-  const port = async (code: string, name: string) =>
+  const port = async (
+    code: string,
+    name: string,
+    over: { type?: 'SEAPORT' | 'AIRPORT'; isActive?: boolean } = {},
+  ) =>
     (
       await owner.port.create({
-        data: { tenantId, code, name, portCode: code, country: 'X', type: 'SEAPORT' },
+        data: {
+          tenantId,
+          code,
+          name,
+          portCode: code,
+          country: 'X',
+          type: over.type ?? 'SEAPORT',
+          isActive: over.isActive ?? true,
+        },
         select: { id: true },
       })
     ).id;
@@ -243,6 +258,10 @@ beforeAll(async () => {
   hamburg = await port('CPEHAM', 'Hamburg');
   rotterdam = await port('CPEROT', 'Rotterdam');
   antwerp = await port('CPEANR', 'Antwerp');
+  // No rate touches these three; only the last is a sea port that may be offered.
+  airportId = await port('CPEDAC', 'Dhaka Airport', { type: 'AIRPORT' });
+  closedId = await port('CPEOLD', 'Closed Port', { isActive: false });
+  quietId = await port('CPEQUI', 'Quiet Harbour');
 
   const carrierType = await owner.carrierType.findFirstOrThrow({ select: { id: true } });
   const carrier = async (code: string, name: string) =>
@@ -412,11 +431,31 @@ describe('who it goes to', () => {
 });
 
 describe('the rates', () => {
-  it('offers only lanes with a published rate today', async () => {
+  it('offers every active port of the mode, rate or no rate — as the Price List does', async () => {
     const res = await get('/options?mode=SEA_FCL').expect(200);
-    const data = res.body.data as { pols: { id: string }[]; pods: { id: string; name: string }[] };
-    expect(data.pols.map((p) => p.id)).toEqual([pol.toString()]);
-    expect(data.pods.map((p) => p.name)).toEqual(['Hamburg (CPEHAM)', 'Rotterdam (CPEROT)']);
+    const data = res.body.data as {
+      pols: { id: string; name: string }[];
+      pods: { id: string }[];
+      carriers: { id: string }[];
+    };
+    const pols = data.pols.map((p) => p.id);
+    // Every sea port, including one no rate touches.
+    for (const id of [pol, hamburg, rotterdam, antwerp, quietId]) expect(pols).toContain(id.toString());
+    expect(data.pols.find((p) => p.id === quietId.toString())?.name).toBe('Quiet Harbour (CPEQUI)');
+    // Not an airport on a sea list, and not a port somebody switched off.
+    expect(pols).not.toContain(airportId.toString());
+    expect(pols).not.toContain(closedId.toString());
+    expect(data.pods.map((p) => p.id)).toEqual(pols);
+    expect(data.carriers.map((c) => c.id)).toEqual(
+      expect.arrayContaining([carrierA.toString(), carrierB.toString()]),
+    );
+  });
+
+  it('offers airports, not sea ports, for Air', async () => {
+    const res = await get('/options?mode=AIR').expect(200);
+    const pols = (res.body.data as { pols: { id: string }[] }).pols.map((p) => p.id);
+    expect(pols).toContain(airportId.toString());
+    expect(pols).not.toContain(pol.toString());
   });
 
   it('reads the Price List’s rows, and never the buying side', async () => {
@@ -452,11 +491,13 @@ describe('the rates', () => {
     expect(JSON.stringify(res.body)).toContain('Sea FCL price list');
   });
 
-  it('names the Price team and signs off as the sender', async () => {
+  it('names the Price team, and signs off with the email signature alone', async () => {
     const res = await get('/context').expect(200);
+    // The sender is employee Rahim Uddin, Pricing Manager — deliberately not
+    // in the sign-off: the signature already says who is writing.
     expect(res.body.data).toEqual({
       priceTeamEmails: ['pricing@cpe.test'],
-      signOff: 'Rahim Uddin\nPricing Manager\nCPE Freight Ltd',
+      signOff: 'CPE Freight Ltd',
       modes: ['SEA_FCL', 'SEA_LCL', 'AIR'],
     });
   });
@@ -495,7 +536,18 @@ describe('sending', () => {
       expect(row.subject).toBe(letter().subject);
       // The text part, for clients that will not show the table.
       expect(row.bodyText).toContain('• 20STD: USD 1,250.00 per container');
-      expect(row.bodyText).toContain('Kind regards,\nRahim Uddin\nPricing Manager\nCPE Freight Ltd');
+      // Opened generically, signed with the email signature alone.
+      expect(row.bodyText.startsWith('Dear Sir/Madam,\n')).toBe(true);
+      expect(row.bodyText.endsWith('\n\nCPE Freight Ltd')).toBe(true);
+      expect(row.bodyText).not.toContain('Kind regards');
+      expect(row.bodyHtml).not.toContain('Kind regards');
+      expect(row.bodyHtml).toContain('>Dear Sir/Madam,</p>');
+      for (const part of [row.bodyText, row.bodyHtml ?? '']) {
+        expect(part).not.toContain('Rahim Uddin');
+        expect(part).not.toContain('Pricing Manager');
+        expect(part).not.toContain('CPE Garments One');
+        expect(part).not.toContain('CPE Leather');
+      }
       // The table, read back from the Price List rather than taken from the screen.
       expect(row.bodyHtml).toContain('<table');
       expect(row.bodyHtml).toContain('Chattogram to Hamburg');
@@ -506,9 +558,9 @@ describe('sending', () => {
       expect(row.bodyHtml).not.toContain('1,100');
       expect(row.relatedType).toBe('customer');
     }
-    expect(rows[0]?.bodyText.startsWith('Dear CPE Garments One,')).toBe(true);
-    expect(rows[0]?.bodyHtml).toContain('Dear CPE Garments One,');
-    expect(rows[1]?.bodyText.startsWith('Dear CPE Leather,')).toBe(true);
+    // The same letter, but each still recorded against its own customer.
+    expect(rows[0]?.bodyHtml).toBe(rows[1]?.bodyHtml);
+    expect(rows.map((r) => r.relatedId)).toEqual([customer.one, customer.leather]);
   });
 
   it('leaves the charges table out when asked', async () => {
