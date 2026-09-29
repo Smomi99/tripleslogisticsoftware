@@ -1076,7 +1076,7 @@ export interface MarginHistoryEntry {
 // including from the export, which matters more because a file gets forwarded.
 // ===========================================================================
 
-const PRICE_LIST_FEATURE_BY_MODE: Record<RateMode, string> = {
+export const PRICE_LIST_FEATURE_BY_MODE: Record<RateMode, string> = {
   SEA_FCL: 'PURCHASE.PRICE_LIST_SEA_FCL',
   SEA_LCL: 'PURCHASE.PRICE_LIST_SEA_LCL',
   AIR: 'PURCHASE.PRICE_LIST_AIR',
@@ -1100,8 +1100,11 @@ function requirePriceListPermission(action: string): RequestHandler {
   };
 }
 
-/** The rows behind both the list and the export, so the two cannot disagree. */
-async function priceListRows(
+/**
+ * The rows behind the list, the export and CRM's Email prices, so the three
+ * cannot disagree about what is on offer.
+ */
+export async function priceListRows(
   auth: NonNullable<Parameters<RequestHandler>[0]['auth']>,
   query: ReturnType<typeof freightRateListQuerySchema.parse>,
   limit: number,
@@ -1141,6 +1144,40 @@ async function priceListRows(
     ),
     total,
   };
+}
+
+/**
+ * Particular rates, by id, on the terms the Price List offers them: this mode,
+ * published, still valid, not deleted — and selling side only, whoever asks.
+ *
+ * For CRM's Email prices, which sends the rates the sender ticked. A rate that
+ * lapsed or was withdrawn between the tick and the send is simply not among
+ * what comes back, and the caller refuses rather than sending a stale price.
+ */
+export async function offeredRatesById(
+  auth: NonNullable<Parameters<RequestHandler>[0]['auth']>,
+  mode: RateMode,
+  ids: bigint[],
+): Promise<FreightRateDto[]> {
+  const today = startOfToday();
+  const rows = await withTenant(auth.tenantId, (db) =>
+    db.freightRate.findMany({
+      where: {
+        id: { in: ids },
+        deletedAt: null,
+        mode,
+        status: 'PUBLISHED',
+        validTo: { gte: today },
+      },
+      include: rateInclude,
+      // The Price List's own order, so the email reads like the screen.
+      orderBy: [{ pol: { name: 'asc' } }, { pod: { name: 'asc' } }, { code: 'asc' }],
+    }),
+  );
+  return visibleRates(
+    rows.map((r) => toDto(r, today)),
+    false,
+  );
 }
 
 freightRateRouter.get(

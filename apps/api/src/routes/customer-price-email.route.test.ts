@@ -1,0 +1,604 @@
+import { PrismaPg } from '@prisma/adapter-pg';
+import request from 'supertest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+
+import { createApp } from '../app';
+import { env } from '../config/env';
+import { PrismaClient } from '../generated/prisma/client';
+import { signAccessToken } from '../lib/jwt';
+
+/**
+ * CRM → Customer → Email prices, through HTTP (2026-09-29).
+ *
+ * The properties worth a test each: it writes to exactly the customers the
+ * list's filters select; it reads exactly what the Price List offers, selling
+ * side only; every customer gets their own letter with replies to the Price
+ * team; and nothing crosses into another workspace.
+ *
+ * DNS is replaced — `nowhere.test` does not exist, every other domain takes
+ * mail — so the suite does not depend on the public internet.
+ */
+
+vi.mock('../lib/email-domain', () => ({
+  domainVerdict: (domain: string) =>
+    Promise.resolve(domain === 'nowhere.test' ? 'no-such-domain' : 'accepts-mail'),
+}));
+
+const owner = new PrismaClient({
+  adapter: new PrismaPg({ connectionString: env.DATABASE_URL }),
+});
+const app = createApp();
+
+const SLUG = 'cpe-alpha';
+const OTHER = 'cpe-beta';
+const BASE = '/api/tenant/crm/customer-price-email';
+
+let tenantId: bigint;
+let token: string;
+/** Customer VIEW and PRICE_EMAIL, but no Price List at all. */
+let tokenNoPriceList: string;
+/** Customer VIEW only. */
+let tokenNoEmail: string;
+
+let garments: bigint;
+const customer: Record<'one' | 'two' | 'leather' | 'inactive' | 'bare', bigint> = {
+  one: 0n,
+  two: 0n,
+  leather: 0n,
+  inactive: 0n,
+  bare: 0n,
+};
+let pol: bigint;
+let hamburg: bigint;
+let rotterdam: bigint;
+let antwerp: bigint;
+let carrierA: bigint;
+let carrierB: bigint;
+const rateId = { hamburg: '', rotterdam: '', lapsed: '', draft: '' };
+
+async function cleanup(): Promise<void> {
+  const scope = `(SELECT id FROM tenant WHERE slug IN ('${SLUG}', '${OTHER}'))`;
+  await owner.$executeRawUnsafe(
+    `UPDATE tenant SET currency_id = NULL WHERE slug IN ('${SLUG}', '${OTHER}')`,
+  );
+  for (const table of [
+    'email_log',
+    'notification_setting',
+    'customer_pic',
+    'customer',
+    'industry_sector',
+    'rate_local_charge',
+    'freight_rate_line',
+    'freight_rate',
+    'cost_head',
+    'audit_log',
+    '"user"',
+    'employee',
+    'goods_type',
+    'currency',
+    'carrier',
+    'port',
+  ]) {
+    await owner.$executeRawUnsafe(`DELETE FROM ${table} WHERE tenant_id IN ${scope}`);
+  }
+  await owner.$executeRawUnsafe(`DELETE FROM tenant WHERE slug IN ('${SLUG}', '${OTHER}')`);
+}
+
+const get = (path: string, bearer = token) =>
+  request(app).get(`${BASE}${path}`).set('Authorization', `Bearer ${bearer}`).set('X-Tenant-Slug', SLUG);
+const post = (path: string, body: object, bearer = token) =>
+  request(app)
+    .post(`${BASE}${path}`)
+    .set('Authorization', `Bearer ${bearer}`)
+    .set('X-Tenant-Slug', SLUG)
+    .send(body);
+
+async function makeCustomer(
+  t: bigint,
+  code: string,
+  name: string,
+  sector: bigint,
+  over: { customerType?: 'EXPORTER' | 'IMPORTER'; isActive?: boolean } = {},
+): Promise<bigint> {
+  return (
+    await owner.customer.create({
+      data: {
+        tenantId: t,
+        code,
+        name,
+        country: 'Bangladesh',
+        customerType: over.customerType ?? 'EXPORTER',
+        businessArea: 'BOTH',
+        industrySectorId: sector,
+        isActive: over.isActive ?? true,
+      },
+      select: { id: true },
+    })
+  ).id;
+}
+
+async function pic(
+  t: bigint,
+  customerId: bigint,
+  code: string,
+  email: string,
+  over: { isActive?: boolean; deletedAt?: Date } = {},
+): Promise<void> {
+  await owner.customerPic.create({
+    data: { tenantId: t, customerId, code, name: `PIC ${code}`, email, ...over },
+  });
+}
+
+beforeAll(async () => {
+  await cleanup();
+  tenantId = (
+    await owner.tenant.create({
+      data: { name: 'CPE Alpha', slug: SLUG, country: 'Bangladesh' },
+      select: { id: true },
+    })
+  ).id;
+
+  const employee = await owner.employee.create({
+    data: {
+      tenantId,
+      code: 'EMP-CPE',
+      name: 'Rahim Uddin',
+      country: 'Bangladesh',
+      designation: 'Pricing Manager',
+    },
+    select: { id: true },
+  });
+  const admin = await owner.user.create({
+    data: {
+      tenantId,
+      code: 'USR-cpe',
+      username: 'admin-cpe',
+      email: 'a@cpe.test',
+      passwordHash: 'x',
+      isSuperadmin: true,
+      employeeId: employee.id,
+    },
+    select: { id: true },
+  });
+  token = await signAccessToken({
+    sub: admin.id.toString(),
+    tenantId: tenantId.toString(),
+    isSuperadmin: true,
+    permissions: [],
+    tokenVersion: 0,
+  });
+  const limited = await owner.user.create({
+    data: {
+      tenantId,
+      code: 'USR-cpe-2',
+      username: 'limited-cpe',
+      email: 'l@cpe.test',
+      passwordHash: 'x',
+      isSuperadmin: false,
+    },
+    select: { id: true },
+  });
+  const limitedToken = (permissions: string[]) =>
+    signAccessToken({
+      sub: limited.id.toString(),
+      tenantId: tenantId.toString(),
+      isSuperadmin: false,
+      permissions,
+      tokenVersion: 0,
+    });
+  tokenNoPriceList = await limitedToken(['CRM.CUSTOMER.VIEW', 'CRM.CUSTOMER.PRICE_EMAIL']);
+  tokenNoEmail = await limitedToken(['CRM.CUSTOMER.VIEW']);
+
+  await owner.notificationSetting.create({
+    data: { tenantId, priceTeamEmails: 'pricing@cpe.test', signatureBlock: 'CPE Freight Ltd' },
+  });
+
+  // -------------------------------------------------------------- customers
+  garments = (
+    await owner.industrySector.create({
+      data: { tenantId, code: 'CPE-G', name: 'Garments' },
+      select: { id: true },
+    })
+  ).id;
+  const leather = (
+    await owner.industrySector.create({
+      data: { tenantId, code: 'CPE-L', name: 'Leather' },
+      select: { id: true },
+    })
+  ).id;
+
+  customer.one = await makeCustomer(tenantId, 'CPE-1', 'CPE Garments One', garments);
+  // Two addresses in one field, a repeat in another case, one malformed, and
+  // two contacts that must not be read at all.
+  await pic(tenantId, customer.one, 'P1', 'ops@one.test; md@one.test');
+  await pic(tenantId, customer.one, 'P2', 'OPS@one.test');
+  await pic(tenantId, customer.one, 'P3', 'bad-address');
+  await pic(tenantId, customer.one, 'P4', 'hidden@one.test', { isActive: false });
+  await pic(tenantId, customer.one, 'P5', 'gone@one.test', { deletedAt: new Date() });
+
+  customer.two = await makeCustomer(tenantId, 'CPE-2', 'CPE Garments Two', garments);
+  await pic(tenantId, customer.two, 'P6', 'x@nowhere.test');
+
+  customer.leather = await makeCustomer(tenantId, 'CPE-3', 'CPE Leather', leather, {
+    customerType: 'IMPORTER',
+  });
+  await pic(tenantId, customer.leather, 'P7', 'c@three.test');
+
+  customer.inactive = await makeCustomer(tenantId, 'CPE-4', 'CPE Inactive', garments, {
+    isActive: false,
+  });
+  await pic(tenantId, customer.inactive, 'P8', 'd@four.test');
+
+  customer.bare = await makeCustomer(tenantId, 'CPE-5', 'CPE No Contact', garments);
+
+  // ------------------------------------------------------------------ rates
+  const port = async (code: string, name: string) =>
+    (
+      await owner.port.create({
+        data: { tenantId, code, name, portCode: code, country: 'X', type: 'SEAPORT' },
+        select: { id: true },
+      })
+    ).id;
+  pol = await port('CPEPOL', 'Chattogram');
+  hamburg = await port('CPEHAM', 'Hamburg');
+  rotterdam = await port('CPEROT', 'Rotterdam');
+  antwerp = await port('CPEANR', 'Antwerp');
+
+  const carrierType = await owner.carrierType.findFirstOrThrow({ select: { id: true } });
+  const carrier = async (code: string, name: string) =>
+    (
+      await owner.carrier.create({
+        data: { tenantId, code, name, typeId: carrierType.id },
+        select: { id: true },
+      })
+    ).id;
+  carrierA = await carrier('CPE-CA', 'Alpha Lines');
+  carrierB = await carrier('CPE-CB', 'Beta Lines');
+
+  const goods = (
+    await owner.goodsType.create({
+      data: { tenantId, code: 'CPE-GD', name: 'General' },
+      select: { id: true },
+    })
+  ).id;
+  const usd = (
+    await owner.currency.create({
+      data: { tenantId, code: 'CPE-USD', currency: 'USD — US Dollar', conversion: '1.0000' },
+      select: { id: true },
+    })
+  ).id;
+  const tier = await owner.rateTier.findFirstOrThrow({
+    where: { code: 'FCL-20STD' },
+    select: { id: true },
+  });
+
+  const day = 86_400_000;
+  const rate = async (
+    code: string,
+    podId: bigint,
+    carrierId: bigint,
+    over: { status?: 'PUBLISHED' | 'DRAFT'; validFrom?: Date; validTo?: Date } = {},
+  ) => {
+    const made = await owner.freightRate.create({
+      data: {
+        tenantId,
+        code,
+        mode: 'SEA_FCL',
+        polId: pol,
+        podId,
+        carrierId,
+        goodsTypeId: goods,
+        currencyId: usd,
+        validFrom: over.validFrom ?? new Date(Date.now() - day),
+        validTo: over.validTo ?? new Date(Date.now() + 30 * day),
+        status: over.status ?? 'PUBLISHED',
+        purchaseSourceType: 'CARRIER',
+        purchaseCarrierId: carrierId,
+      },
+      select: { id: true },
+    });
+    // sell_price is GENERATED from buy + profit: 1100 + 150 = 1250.
+    await owner.freightRateLine.create({
+      data: {
+        tenantId,
+        rateId: made.id,
+        tierId: tier.id,
+        buyPrice: '1100.0000',
+        profitType: 'FLAT',
+        profitValue: '150.0000',
+      },
+    });
+    return made.id.toString();
+  };
+  rateId.hamburg = await rate('CPE-R1', hamburg, carrierA);
+  rateId.rotterdam = await rate('CPE-R2', rotterdam, carrierB);
+  // Lapsed, and never published: neither is on offer.
+  rateId.lapsed = await rate('CPE-R3', hamburg, carrierA, {
+    validFrom: new Date(Date.now() - 60 * day),
+    validTo: new Date(Date.now() - 3 * day),
+  });
+  rateId.draft = await rate('CPE-R4', antwerp, carrierA, { status: 'DRAFT' });
+  // Charges on the Hamburg rate, for the second table in the email.
+  const unit = await owner.costUnit.findFirstOrThrow({ select: { id: true } });
+  const thc = await owner.costHead.create({
+    data: { tenantId, code: 'CPE-CH', name: 'Terminal Handling', category: 'SERVICE', unitId: unit.id },
+    select: { id: true },
+  });
+  await owner.rateLocalCharge.create({
+    data: {
+      tenantId,
+      rateId: BigInt(rateId.hamburg),
+      costHeadId: thc.id,
+      side: 'POL',
+      amount: '85.0000',
+      currencyId: usd,
+    },
+  });
+
+  // ------------------------------------------- another workspace, alike
+  const other = (
+    await owner.tenant.create({
+      data: { name: 'CPE Beta', slug: OTHER, country: 'Bangladesh' },
+      select: { id: true },
+    })
+  ).id;
+  const otherSector = (
+    await owner.industrySector.create({
+      data: { tenantId: other, code: 'CPE-G', name: 'Garments' },
+      select: { id: true },
+    })
+  ).id;
+  const stranger = await makeCustomer(other, 'CPE-9', 'CPE Garments Stranger', otherSector);
+  await pic(other, stranger, 'P9', 'stranger@beta.test');
+});
+
+afterAll(async () => {
+  await cleanup();
+  await owner.$disconnect();
+});
+
+type Recipient = {
+  customerId: string;
+  customerName: string;
+  emails: { address: string; valid: boolean; reason: string | null }[];
+};
+const recipientsOf = (res: request.Response) =>
+  (res.body as { data: { customers: Recipient[] } }).data.customers;
+
+describe('who it goes to', () => {
+  it('selects what the Customer list filters select, active customers only', async () => {
+    const res = await get(`/recipients?customerType=EXPORTER&industrySectorId=${garments}`).expect(
+      200,
+    );
+    expect(recipientsOf(res).map((c) => c.customerName)).toEqual([
+      'CPE Garments One',
+      'CPE Garments Two',
+      'CPE No Contact',
+    ]);
+  });
+
+  it('reaches the same fields with the search box', async () => {
+    const res = await get('/recipients?search=leather').expect(200);
+    expect(recipientsOf(res).map((c) => c.customerName)).toEqual(['CPE Leather']);
+  });
+
+  it('splits, de-duplicates and checks every address on the active contacts', async () => {
+    const res = await get('/recipients?search=CPE%20Garments').expect(200);
+    const [one, two] = recipientsOf(res);
+
+    expect(one?.emails.map((e) => [e.address, e.valid])).toEqual([
+      ['ops@one.test', true],
+      ['md@one.test', true],
+      ['bad-address', false],
+    ]);
+    expect(one?.emails[2]?.reason).toMatch(/Missing the @/);
+    expect(two?.emails[0]?.valid).toBe(false);
+    expect(two?.emails[0]?.reason).toMatch(/nowhere\.test does not exist/);
+  });
+
+  it('never lists another workspace’s customer', async () => {
+    const res = await get('/recipients?search=Stranger').expect(200);
+    expect(recipientsOf(res)).toEqual([]);
+  });
+
+  it('checks a corrected address the same way', async () => {
+    const res = await post('/check', { addresses: ['x@nowhere.test', 'ok@one.test'] }).expect(200);
+    expect((res.body.data as { valid: boolean }[]).map((r) => r.valid)).toEqual([false, true]);
+  });
+
+  it('needs PRICE_EMAIL', async () => {
+    await get('/recipients', tokenNoEmail).expect(403);
+  });
+});
+
+describe('the rates', () => {
+  it('offers only lanes with a published rate today', async () => {
+    const res = await get('/options?mode=SEA_FCL').expect(200);
+    const data = res.body.data as { pols: { id: string }[]; pods: { id: string; name: string }[] };
+    expect(data.pols.map((p) => p.id)).toEqual([pol.toString()]);
+    expect(data.pods.map((p) => p.name)).toEqual(['Hamburg (CPEHAM)', 'Rotterdam (CPEROT)']);
+  });
+
+  it('reads the Price List’s rows, and never the buying side', async () => {
+    const res = await get(`/rates?mode=SEA_FCL&polIds=${pol}&podIds=${hamburg},${rotterdam}`).expect(
+      200,
+    );
+    const rates = res.body.data.rates as { code: string; lines: { sellPrice: string }[] }[];
+    expect(rates.map((r) => r.code).sort()).toEqual(['CPE-R1', 'CPE-R2']);
+    expect(rates[0]?.lines[0]?.sellPrice).toBe('1250.0000');
+    // Even for a superadmin, who may see cost on the Price List screen itself.
+    const raw = JSON.stringify(res.body);
+    expect(raw).not.toContain('buyPrice');
+    expect(raw).not.toContain('profitType');
+    expect(raw).not.toContain('profitValue');
+  });
+
+  it('narrows to a carrier when one is picked', async () => {
+    const res = await get(
+      `/rates?mode=SEA_FCL&polIds=${pol}&podIds=${hamburg},${rotterdam}&carrierId=${carrierB}`,
+    ).expect(200);
+    expect((res.body.data.rates as { code: string }[]).map((r) => r.code)).toEqual(['CPE-R2']);
+  });
+
+  it('refuses a list at both ends', async () => {
+    await get(
+      `/rates?mode=SEA_FCL&polIds=${pol},${antwerp}&podIds=${hamburg},${rotterdam}`,
+    ).expect(400);
+  });
+
+  it('needs the Price List as well — nobody emails prices they may not see', async () => {
+    const res = await get(`/rates?mode=SEA_FCL&polIds=${pol}&podIds=${hamburg}`, tokenNoPriceList);
+    expect(res.status).toBe(403);
+    expect(JSON.stringify(res.body)).toContain('Sea FCL price list');
+  });
+
+  it('names the Price team and signs off as the sender', async () => {
+    const res = await get('/context').expect(200);
+    expect(res.body.data).toEqual({
+      priceTeamEmails: ['pricing@cpe.test'],
+      signOff: 'Rahim Uddin\nPricing Manager\nCPE Freight Ltd',
+      modes: ['SEA_FCL', 'SEA_LCL', 'AIR'],
+    });
+  });
+});
+
+describe('sending', () => {
+  // A function: the rate ids exist only once beforeAll has run.
+  const letter = (rateIds = [rateId.hamburg]) => ({
+    subject: 'Sea FCL rates: Chattogram to Hamburg',
+    message: 'Please find our latest rates.',
+    mode: 'SEA_FCL',
+    rateIds,
+    includeLocalCharges: true,
+  });
+
+  it('writes one letter per customer, to their own addresses, replies to the Price team', async () => {
+    const res = await post('/send', {
+      ...letter(),
+      recipients: [
+        { customerId: customer.one.toString(), emails: ['ops@one.test', 'md@one.test'] },
+        { customerId: customer.leather.toString(), emails: ['c@three.test'] },
+      ],
+    }).expect(200);
+    expect(res.body.data).toEqual({ queued: 2 });
+
+    const rows = await owner.emailLog.findMany({
+      where: { tenantId, templateKey: 'CUSTOMER_PRICE_OFFER' },
+      orderBy: { id: 'asc' },
+    });
+    expect(rows.map((r) => r.toAddresses)).toEqual([
+      ['ops@one.test', 'md@one.test'],
+      ['c@three.test'],
+    ]);
+    for (const row of rows) {
+      expect(row.replyToAddresses).toEqual(['pricing@cpe.test']);
+      expect(row.subject).toBe(letter().subject);
+      // The text part, for clients that will not show the table.
+      expect(row.bodyText).toContain('• 20STD: USD 1,250.00 per container');
+      expect(row.bodyText).toContain('Kind regards,\nRahim Uddin\nPricing Manager\nCPE Freight Ltd');
+      // The table, read back from the Price List rather than taken from the screen.
+      expect(row.bodyHtml).toContain('<table');
+      expect(row.bodyHtml).toContain('Chattogram to Hamburg');
+      expect(row.bodyHtml).toContain('prices in USD per container');
+      expect(row.bodyHtml).toContain('>1,250.00</td>');
+      expect(row.bodyHtml).toContain('Origin and destination charges');
+      expect(row.bodyHtml).toContain('Terminal Handling');
+      expect(row.bodyHtml).not.toContain('1,100');
+      expect(row.relatedType).toBe('customer');
+    }
+    expect(rows[0]?.bodyText.startsWith('Dear CPE Garments One,')).toBe(true);
+    expect(rows[0]?.bodyHtml).toContain('Dear CPE Garments One,');
+    expect(rows[1]?.bodyText.startsWith('Dear CPE Leather,')).toBe(true);
+  });
+
+  it('leaves the charges table out when asked', async () => {
+    await post('/send', {
+      ...letter(),
+      includeLocalCharges: false,
+      recipients: [{ customerId: customer.leather.toString(), emails: ['c@three.test'] }],
+    }).expect(200);
+    const row = await owner.emailLog.findFirstOrThrow({
+      where: { tenantId, templateKey: 'CUSTOMER_PRICE_OFFER' },
+      orderBy: { id: 'desc' },
+    });
+    expect(row.bodyHtml).toContain('>1,250.00</td>');
+    expect(row.bodyHtml).not.toContain('Terminal Handling');
+  });
+
+  it('refuses a rate that is not on offer — lapsed or never published — and sends nothing', async () => {
+    const before = await owner.emailLog.count({ where: { tenantId } });
+    for (const stale of [rateId.lapsed, rateId.draft]) {
+      const res = await post('/send', {
+        ...letter([rateId.hamburg, stale]),
+        recipients: [{ customerId: customer.leather.toString(), emails: ['c@three.test'] }],
+      }).expect(409);
+      expect(JSON.stringify(res.body)).toContain('no longer on offer');
+    }
+    expect(await owner.emailLog.count({ where: { tenantId } })).toBe(before);
+  });
+
+  it('needs the Price List for the mode it sends', async () => {
+    await post(
+      '/send',
+      {
+        ...letter(),
+        recipients: [{ customerId: customer.leather.toString(), emails: ['c@three.test'] }],
+      },
+      tokenNoPriceList,
+    ).expect(403);
+  });
+
+  it('refuses a malformed address, naming it, and sends nothing', async () => {
+    const before = await owner.emailLog.count({ where: { tenantId } });
+    const res = await post('/send', {
+      ...letter(),
+      recipients: [{ customerId: customer.one.toString(), emails: ['ops@one.test', 'bad-address'] }],
+    }).expect(400);
+    expect(JSON.stringify(res.body)).toContain('bad-address');
+    expect(await owner.emailLog.count({ where: { tenantId } })).toBe(before);
+  });
+
+  it('refuses an inactive customer, and another workspace’s', async () => {
+    await post('/send', {
+      ...letter(),
+      recipients: [{ customerId: customer.inactive.toString(), emails: ['d@four.test'] }],
+    }).expect(400);
+
+    const stranger = await owner.customer.findFirstOrThrow({
+      where: { name: 'CPE Garments Stranger' },
+      select: { id: true },
+    });
+    await post('/send', {
+      ...letter(),
+      recipients: [{ customerId: stranger.id.toString(), emails: ['stranger@beta.test'] }],
+    }).expect(400);
+    expect(await owner.emailLog.count({ where: { toAddresses: { has: 'stranger@beta.test' } } })).toBe(0);
+  });
+
+  it('refuses to send while no Price team is set', async () => {
+    await owner.notificationSetting.updateMany({ where: { tenantId }, data: { priceTeamEmails: null } });
+    try {
+      const res = await post('/send', {
+        ...letter(),
+        recipients: [{ customerId: customer.leather.toString(), emails: ['c@three.test'] }],
+      }).expect(409);
+      expect(JSON.stringify(res.body)).toContain('Price team');
+    } finally {
+      await owner.notificationSetting.updateMany({
+        where: { tenantId },
+        data: { priceTeamEmails: 'pricing@cpe.test' },
+      });
+    }
+  });
+
+  it('needs PRICE_EMAIL', async () => {
+    await post(
+      '/send',
+      {
+        ...letter(),
+        recipients: [{ customerId: customer.leather.toString(), emails: ['c@three.test'] }],
+      },
+      tokenNoEmail,
+    ).expect(403);
+  });
+});

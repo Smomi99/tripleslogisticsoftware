@@ -16,6 +16,7 @@ import { carrierRouter } from './carrier.route';
 import { commodityRouter } from './commodity.route';
 import { costHeadRouter } from './cost-head.route';
 import { customerRouter } from './customer.route';
+import { customerPriceEmailRouter } from './customer-price-email.route';
 import { employeeRouter } from './employee.route';
 import { currencyRouter } from './currency.route';
 import { freightRateRouter } from './freight-rate.route';
@@ -109,6 +110,9 @@ tenantRouter.use('/sales', salesLeadRouter);
 
 // CRM.
 tenantRouter.use('/crm/customers', customerRouter);
+// CRM → Customer → Email prices. Its own path, so no route here can be read
+// as a customer id by /crm/customers/:id.
+tenantRouter.use('/crm/customer-price-email', customerPriceEmailRouter);
 tenantRouter.use('/crm/agents', agentRouter);
 tenantRouter.use('/crm/employees', employeeRouter);
 tenantRouter.use('/crm/users', userRouter);

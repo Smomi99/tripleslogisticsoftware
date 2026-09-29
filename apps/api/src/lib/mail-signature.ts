@@ -39,7 +39,12 @@ export interface SignatureLogo {
  * and does not want a letterhead, and deciding that by string-matching a body
  * would break the first time somebody edited their template.
  */
-export const OUTWARD_TEMPLATES = new Set(['INQUIRY_AGENT_RFQ', 'INQUIRY_CARRIER_RFQ']);
+export const OUTWARD_TEMPLATES = new Set([
+  'INQUIRY_AGENT_RFQ',
+  'INQUIRY_CARRIER_RFQ',
+  // CRM → Customer → Email prices: a letter to a customer, under letterhead.
+  'CUSTOMER_PRICE_OFFER',
+]);
 
 /** A cid must be unique within the message and stable within it. */
 const cidFor = (id: bigint): string => `sig-${id.toString()}@ff-erp`;
@@ -111,25 +116,40 @@ function escapeHtml(value: string): string {
  * row at the foot. A rate request is a letter, and dressing it as a newsletter
  * is how it ends up in a promotions tab.
  */
+/** The logos in a row, referenced by cid. Empty when there are none. */
+function signatureMarks(logos: SignatureLogo[]): string {
+  return logos.length === 0
+    ? ''
+    : [
+        '<div style="margin-top:16px">',
+        ...logos.map(
+          (logo) =>
+            `<img src="cid:${logo.cid}" alt="${escapeHtml(logo.altText)}" ` +
+            `height="${logo.heightPx}" ` +
+            `style="height:${logo.heightPx}px;width:auto;vertical-align:middle;margin-right:14px" />`,
+        ),
+        '</div>',
+      ].join('\n');
+}
+
+/**
+ * The logos under a letter that already has its own HTML — the customer price
+ * email, whose rates are a table the text version cannot draw. Without this
+ * the logos would still travel as inline parts that nothing references, and
+ * most clients list those as stray attachments.
+ */
+export function appendSignatureMarks(html: string, logos: SignatureLogo[]): string {
+  const marks = signatureMarks(logos);
+  return marks === '' ? html : `${html}\n${marks}`;
+}
+
 export function renderSignedHtml(bodyText: string, logos: SignatureLogo[]): string {
   const body = escapeHtml(bodyText)
     .split('\n')
     .map((line) => (line.trim() === '' ? '<br>' : `${line}<br>`))
     .join('\n');
 
-  const marks =
-    logos.length === 0
-      ? ''
-      : [
-          '<div style="margin-top:16px">',
-          ...logos.map(
-            (logo) =>
-              `<img src="cid:${logo.cid}" alt="${escapeHtml(logo.altText)}" ` +
-              `height="${logo.heightPx}" ` +
-              `style="height:${logo.heightPx}px;width:auto;vertical-align:middle;margin-right:14px" />`,
-          ),
-          '</div>',
-        ].join('\n');
+  const marks = signatureMarks(logos);
 
   return [
     '<div style="font-family:Segoe UI,Helvetica,Arial,sans-serif;font-size:14px;line-height:1.5;color:#10243A">',

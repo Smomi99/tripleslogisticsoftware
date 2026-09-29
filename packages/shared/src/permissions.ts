@@ -140,6 +140,13 @@ export const ACTIONS = [
    * has been paid.
    */
   'RECEIVE',
+  /*
+   * CRM → Customer's Email prices (2026-09-29). Writing to every customer on a
+   * filtered list at once is not editing a customer: one click puts the
+   * company's prices in front of hundreds of people, so it is granted
+   * deliberately rather than riding along with EDIT.
+   */
+  'PRICE_EMAIL',
 ] as const;
 
 export type Action = (typeof ACTIONS)[number];
@@ -670,7 +677,12 @@ export const FEATURES: readonly FeatureDefinition[] = [
   { module: 'SETTING', feature: 'SETTING.INQUIRY_SOURCE', label: 'Inquiry Source', actions: MASTER_DELETABLE },
 
   // -- 8. CRM ----------------------------------------------------------------
-  { module: 'CRM', feature: 'CRM.CUSTOMER', label: 'Customer', actions: MASTER_DELETABLE },
+  {
+    module: 'CRM',
+    feature: 'CRM.CUSTOMER',
+    label: 'Customer',
+    actions: [...MASTER_DELETABLE, 'PRICE_EMAIL'],
+  },
   { module: 'CRM', feature: 'CRM.AGENT', label: 'Agent', actions: MASTER_DELETABLE },
   // Moved from Setting at the client's request: a vendor is a party you keep
   // a ledger against, like a customer or an agent, not a configuration value.
