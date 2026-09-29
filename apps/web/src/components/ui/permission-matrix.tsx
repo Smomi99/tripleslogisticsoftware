@@ -87,6 +87,7 @@ const ACTION_LABEL: Record<Action, string> = {
   BUILD: 'Re-pull',
   // MODULE_ACCOUNTS §6: recording money in against a debit invoice.
   RECEIVE: 'Receive payment',
+  PRICE_EMAIL: 'Email prices',
 };
 
 export function PermissionMatrix({

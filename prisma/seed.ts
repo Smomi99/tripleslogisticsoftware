@@ -710,6 +710,28 @@ const EMAIL_TEMPLATES = [
       'validityDate',
     ],
   },
+  {
+    /*
+     * CRM → Customer → Email prices (2026-09-29). The subject, the message and
+     * the price list are written on the screen, so the template only lays
+     * them out. Same shape as composePriceEmailBody in @ff/shared, which the
+     * screen previews from — keep the two in step.
+     */
+    key: 'CUSTOMER_PRICE_OFFER',
+    name: 'Customer — latest freight rates',
+    subject: '{{subject}}',
+    bodyText: [
+      'Dear {{customerName}},',
+      '',
+      '{{message}}',
+      '',
+      '{{rates}}',
+      '',
+      'Kind regards,',
+      '{{signOff}}',
+    ].join('\n'),
+    variables: ['customerName', 'subject', 'message', 'rates', 'signOff'],
+  },
 ] as const;
 
 /**

@@ -2125,6 +2125,9 @@ model EmailLog {
   /// Who was blind-copied. Recorded because the outbox is the evidence that a
   /// message went, and a copy invisible in the record proves nothing.
   bccAddresses  String[]    @default([]) @map("bcc_addresses")
+  /// Where the recipient's reply goes, when it should not be the sending
+  /// account. The customer price email sets the Price team here (2026-09-29).
+  replyToAddresses String[] @default([]) @map("reply_to_addresses")
   /// Rendered when queued, not when sent: what went out has to be what the
   /// record shows, even if the template is edited an hour later.
   subject       String      @db.Text

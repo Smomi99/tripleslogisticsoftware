@@ -60,6 +60,13 @@ export interface Mail {
    * watching, and a carrier should not learn the agent exists.
    */
   bcc?: string[];
+  /**
+   * Where a reply goes, when it should not be the sending account — the
+   * customer price email sends replies to the Price team. The From stays the
+   * account SMTP can actually sign for; claiming another mailbox there is what
+   * spam filters are built to catch.
+   */
+  replyTo?: string[];
   /** Optional richer part. The quotation needs it; a notification does not. */
   html?: string;
   /**
@@ -99,6 +106,7 @@ export async function sendMail(mail: Mail): Promise<MailResult> {
     // Same rule, and it matters more here: a blind copy of a message somebody
     // already has, arriving invisibly, reads as a fault rather than a feature.
     .filter((a) => !recipients.includes(a) && !copies.includes(a));
+  const replyTo = [...new Set((mail.replyTo ?? []).map((a) => a.trim()).filter((a) => a !== ''))];
   if (recipients.length === 0) {
     logger.info({ subject: mail.subject }, 'mail skipped: no recipients');
     return { sent: false, reason: 'no-recipients' };
@@ -119,6 +127,7 @@ export async function sendMail(mail: Mail): Promise<MailResult> {
       to: recipients.join(', '),
       ...(copies.length > 0 ? { cc: copies.join(', ') } : {}),
       ...(blind.length > 0 ? { bcc: blind.join(', ') } : {}),
+      ...(replyTo.length > 0 ? { replyTo: replyTo.join(', ') } : {}),
       subject: mail.subject,
       text: mail.text,
       ...(mail.html === undefined || mail.html === '' ? {} : { html: mail.html }),

@@ -124,6 +124,14 @@ export default function CustomerPage() {
     [],
   );
 
+  /** The list's search and filters, for Email prices to select the same customers. */
+  const emailQuery: Record<string, string> = {};
+  if (list.searchInput.trim() !== '') emailQuery['search'] = list.searchInput.trim();
+  for (const name of ['customerType', 'businessArea', 'industrySectorId'] as const) {
+    const value = list.filters[name];
+    if (value !== undefined && value !== '') emailQuery[name] = value;
+  }
+
   async function confirmToggle(): Promise<void> {
     if (toToggle === null) return;
     setToggling(true);
@@ -162,11 +170,25 @@ export default function CustomerPage() {
         title="Customer"
         description="The shippers and consignees this workspace books for."
         action={
-          can('CRM.CUSTOMER.CREATE') ? (
-            <Button asChild>
-              <Link href="/crm/customer/new">+ Add customer</Link>
-            </Button>
-          ) : null
+          <div className="flex flex-wrap items-center gap-2">
+            {/*
+              Email prices writes to the customers this list is filtered to, so
+              it carries the filters with it — what the operator is looking at
+              is who gets the letter.
+            */}
+            {can('CRM.CUSTOMER.PRICE_EMAIL') && (
+              <Button variant="secondary" asChild>
+                <Link href={{ pathname: '/crm/customer/price-email', query: emailQuery }}>
+                  Email prices
+                </Link>
+              </Button>
+            )}
+            {can('CRM.CUSTOMER.CREATE') && (
+              <Button asChild>
+                <Link href="/crm/customer/new">+ Add customer</Link>
+              </Button>
+            )}
+          </div>
         }
       />
 

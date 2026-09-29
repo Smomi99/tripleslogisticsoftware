@@ -22,6 +22,7 @@ const sent: {
   to: string[];
   cc?: string[];
   bcc?: string[];
+  replyTo?: string[];
   subject: string;
   text: string;
   html?: string;
@@ -278,6 +279,42 @@ describe('the standing blind copy', () => {
     const rows = await outbox(tenantB);
     expect(rows[0]?.bccAddresses).toEqual([]);
     await setBcc(tenantA, null);
+  });
+});
+
+describe('reply-to', () => {
+  /*
+   * CRM → Customer → Email prices (2026-09-29): customers' replies go to the
+   * Price team, not to the account the mail is sent from. Recorded on the row
+   * like the blind copy is, because where a reply goes is part of what was sent.
+   */
+  it('records it on the outbox row and hands it to SMTP', async () => {
+    await queueOne(tenantA, {
+      to: ['customer@x.test'],
+      replyTo: ['pricing@example.test', ' pricing@example.test'],
+    });
+
+    const rows = await outbox(tenantA);
+    expect(rows[0]?.replyToAddresses).toEqual(['pricing@example.test']);
+
+    await drainMine(tenantA);
+    const message = sent.find((m) => m.to.includes('customer@x.test'));
+    expect(message?.replyTo).toEqual(['pricing@example.test']);
+  });
+
+  it('keeps an HTML part the caller built, beside the template text', async () => {
+    await queueOne(tenantA, { to: ['customer@x.test'], html: '<table><tr><td>1,250.00 USD</td></tr></table>' });
+    const rows = await outbox(tenantA);
+    expect(rows[0]?.bodyHtml).toBe('<table><tr><td>1,250.00 USD</td></tr></table>');
+    expect(rows[0]?.bodyText).toBe('Fallback body');
+  });
+
+  it('leaves replies with the sender when none is given', async () => {
+    await queueOne(tenantA, { to: ['agent@x.test'] });
+    expect((await outbox(tenantA))[0]?.replyToAddresses).toEqual([]);
+
+    await drainMine(tenantA);
+    expect(sent.find((m) => m.to.includes('agent@x.test'))?.replyTo).toBeUndefined();
   });
 });
 

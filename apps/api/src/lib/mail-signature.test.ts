@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { OUTWARD_TEMPLATES, renderSignedHtml, type SignatureLogo } from './mail-signature';
+import {
+  appendSignatureMarks,
+  OUTWARD_TEMPLATES,
+  renderSignedHtml,
+  type SignatureLogo,
+} from './mail-signature';
 
 /**
  * The letterhead on an outgoing rate request.
@@ -89,10 +94,26 @@ describe('the signed HTML part', () => {
   });
 });
 
+describe('the letterhead under a letter that has its own HTML', () => {
+  // The customer price email: its rates are a table the text cannot draw.
+  it('keeps the letter and sets the logos underneath', () => {
+    const html = appendSignatureMarks('<div><table><tr><td>1,250.00 USD</td></tr></table></div>', [
+      logo(),
+    ]);
+    expect(html.startsWith('<div><table>')).toBe(true);
+    expect(html.indexOf('</table>')).toBeLessThan(html.indexOf('cid:sig-1@ff-erp'));
+  });
+
+  it('changes nothing when there are no logos', () => {
+    expect(appendSignatureMarks('<p>x</p>', [])).toBe('<p>x</p>');
+  });
+});
+
 describe('which letters carry a letterhead', () => {
   it('the ones that leave the building', () => {
     expect(OUTWARD_TEMPLATES.has('INQUIRY_AGENT_RFQ')).toBe(true);
     expect(OUTWARD_TEMPLATES.has('INQUIRY_CARRIER_RFQ')).toBe(true);
+    expect(OUTWARD_TEMPLATES.has('CUSTOMER_PRICE_OFFER')).toBe(true);
   });
 
   it('not the note between colleagues', () => {

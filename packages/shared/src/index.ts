@@ -17,6 +17,7 @@ export * from './cost-head';
 export * from './currency';
 export * from './documentation';
 export * from './customer';
+export * from './customer-price-email';
 export * from './employee';
 export * from './freight-rate';
 export * from './inquiry';

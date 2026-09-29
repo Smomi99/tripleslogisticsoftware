@@ -1,6 +1,7 @@
 import { logger } from './logger';
 import { render, resolveTemplate } from './email-template';
 import {
+  appendSignatureMarks,
   loadSignatureLogos,
   OUTWARD_TEMPLATES,
   renderSignedHtml,
@@ -51,6 +52,8 @@ export interface QueueMailInput {
    * on top of these, so a caller never has to remember it.
    */
   bcc?: string[];
+  /** Where replies go instead of the sending account (the Price team, say). */
+  replyTo?: string[];
   /** Substituted into the template. */
   variables: Record<string, string | number | null | undefined>;
   /** What the message is about, for the record it will appear on. */
@@ -58,6 +61,13 @@ export interface QueueMailInput {
   relatedId?: bigint;
   /** Used when no template row exists — see resolveTemplate. */
   fallback: { subject: string; bodyText: string };
+  /**
+   * An HTML part the caller built itself, used in place of the template's —
+   * for a letter whose content is a table, which a text template cannot draw.
+   * The caller escapes what goes in it; the plain-text part still comes from
+   * the template, so a client that will not show HTML still gets the letter.
+   */
+  html?: string;
   /**
    * Documents to travel with the letter, by storage key rather than by bytes
    * (MODULE_DOCUMENTATION §9). The worker reads them at send time; the outbox
@@ -136,9 +146,12 @@ export async function queueMail(input: QueueMailInput): Promise<QueueMailResult>
         toAddresses: to,
         ccAddresses: cc,
         bccAddresses: bcc,
+        replyToAddresses: [
+          ...new Set((input.replyTo ?? []).map((a) => a.trim()).filter((a) => a !== '')),
+        ],
         subject: rendered.subject,
         bodyText: rendered.bodyText,
-        bodyHtml: rendered.bodyHtml,
+        bodyHtml: input.html ?? rendered.bodyHtml,
         relatedType: input.relatedType ?? null,
         relatedId: input.relatedId ?? null,
         attachments: (input.attachments ?? []) as unknown as Prisma.InputJsonValue,
@@ -172,6 +185,7 @@ interface ClaimedRow {
   to_addresses: string[];
   cc_addresses: string[];
   bcc_addresses: string[];
+  reply_to_addresses: string[];
   subject: string;
   body_text: string;
   body_html: string | null;
@@ -225,8 +239,10 @@ async function deliver(row: ClaimedRow): Promise<'sent' | 'retry' | 'failed'> {
       // A letterhead that cannot be read is not a reason to hold the letter.
       logger.warn({ err: error, emailLogId: row.id.toString() }, 'signature logos unavailable');
     }
-    if (logos.length > 0 && html === null) {
-      html = renderSignedHtml(row.body_text, logos);
+    if (logos.length > 0) {
+      // A letter with its own HTML (the customer price table) keeps it and has
+      // the marks set underneath; the rest are drawn from their text.
+      html = html === null ? renderSignedHtml(row.body_text, logos) : appendSignatureMarks(html, logos);
     }
   }
 
@@ -275,6 +291,7 @@ async function deliver(row: ClaimedRow): Promise<'sent' | 'retry' | 'failed'> {
     ...(files.length > 0 ? { attachments: files } : {}),
     ...(row.cc_addresses.length > 0 ? { cc: row.cc_addresses } : {}),
     ...(row.bcc_addresses.length > 0 ? { bcc: row.bcc_addresses } : {}),
+    ...(row.reply_to_addresses.length > 0 ? { replyTo: row.reply_to_addresses } : {}),
   });
 
   if (result.sent) {
