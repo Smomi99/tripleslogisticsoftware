@@ -16,9 +16,12 @@ export interface ShipmentAdvisePdfInput {
   companyAddress: string | null;
 
   adviseNo: string;
+  /** CR-005: every booking the advise covers, comma-separated. */
   bookingNo: string;
   soNo: string | null;
   issueDate: string;
+  /** CR-005: more than one booking, so each PO row says which it is on. */
+  showBooking?: boolean;
 
   customerName: string;
   exporterName: string | null;
@@ -37,6 +40,7 @@ export interface ShipmentAdvisePdfInput {
   mblNo: string | null;
 
   lines: {
+    bookingNo?: string;
     poNo: string;
     itemCode: string;
     sku: string | null;
@@ -164,14 +168,22 @@ export function renderShipmentAdvisePdf(input: ShipmentAdvisePdfInput): Promise<
     doc.moveTo(left, y).lineTo(right, y).strokeColor(LINE).stroke();
     y += 8;
 
-    const headers = input.isAir
-      ? ['PO', 'Item', 'SKU', 'CTN', 'PCS', 'N.WT', 'G.WT', 'CBM', 'Chg WT', 'Rcvd', 'Stuffed', 'EFR']
-      : ['PO', 'Item', 'SKU', 'CTN', 'PCS', 'N.WT', 'G.WT', 'CBM', 'Rcvd', 'Stuffed', 'EFR', 'Container'];
-    const widths = input.isAir
-      ? [78, 72, 60, 38, 42, 50, 50, 48, 50, 56, 56, 70]
-      : [78, 72, 60, 38, 42, 50, 50, 48, 56, 56, 60, 80];
+    const showBooking = input.showBooking === true;
+    const headers = [
+      // CR-005: one advise for several bookings says which booking each PO is on.
+      ...(showBooking ? ['Booking'] : []),
+      ...(input.isAir
+        ? ['PO', 'Item', 'SKU', 'CTN', 'PCS', 'N.WT', 'G.WT', 'CBM', 'Chg WT', 'Rcvd', 'Stuffed', 'EFR']
+        : ['PO', 'Item', 'SKU', 'CTN', 'PCS', 'N.WT', 'G.WT', 'CBM', 'Rcvd', 'Stuffed', 'EFR', 'Container']),
+    ];
+    const widths = [
+      ...(showBooking ? [70] : []),
+      ...(input.isAir
+        ? [78, 72, 60, 38, 42, 50, 50, 48, 50, 56, 56, 70]
+        : [78, 72, 60, 38, 42, 50, 50, 48, 56, 56, 60, 80]),
+    ];
     const isText = (h: string): boolean =>
-      ['PO', 'Item', 'SKU', 'Rcvd', 'Stuffed', 'EFR', 'Container'].includes(h);
+      ['Booking', 'PO', 'Item', 'SKU', 'Rcvd', 'Stuffed', 'EFR', 'Container'].includes(h);
 
     const row = (cells: (string | number)[], bold: boolean): void => {
       let x = left;
@@ -201,6 +213,7 @@ export function renderShipmentAdvisePdf(input: ShipmentAdvisePdfInput): Promise<
         row(headers, true);
       }
       const cells: (string | number)[] = [
+        ...(showBooking ? [line.bookingNo ?? '—'] : []),
         line.poNo,
         line.itemCode,
         line.sku ?? '—',
@@ -222,6 +235,7 @@ export function renderShipmentAdvisePdf(input: ShipmentAdvisePdfInput): Promise<
 
     // Row 21 of the sheet, in the client's own shape: "3 PO", then the sums.
     const totalCells: (string | number)[] = [
+      ...(showBooking ? [''] : []),
       `${input.totals.poCount} PO`,
       '',
       '',

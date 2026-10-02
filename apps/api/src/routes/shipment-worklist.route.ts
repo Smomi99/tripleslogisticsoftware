@@ -14,6 +14,7 @@ import {
 } from '@ff/shared';
 
 import { Prisma } from '../generated/prisma/client';
+import { LIVE_ADVISE, LIVE_MEMBERSHIP } from '../lib/advise-group';
 import { HttpError } from '../lib/http-error';
 import { renderRequiredContainer } from '../lib/render-volumes';
 import { tenantDayOf } from '../lib/tenant-day';
@@ -54,6 +55,21 @@ function dateOut(value: Date | null): string | null {
 /** Plural that reads like English rather than like a template. */
 function count(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
+}
+
+/**
+ * CR-005: the other bookings on the same advise, so a row says its document is
+ * shared — "…, with BKG-2" — or nothing when the booking has it to itself.
+ */
+function sharedWith(
+  shipmentId: bigint,
+  bookings: { shipmentId: bigint; shipment: { code: string } }[],
+): string {
+  const others = bookings
+    .filter((b) => b.shipmentId !== shipmentId)
+    .map((b) => b.shipment.code)
+    .sort();
+  return others.length === 0 ? '' : `, with ${others.join(', ')}`;
 }
 
 /**
@@ -136,12 +152,26 @@ async function detailsFor(
      * because that is where the PO grid, the stuffing date and the container
      * come from. So the detail column answers the operator's real question —
      * is this one ready to advise, or still waiting on the warehouse?
+     *
+     * CR-005: an advise may cover several bookings of one EFR, so a booking
+     * finds its advise through shipment_advise_booking and says who it shares
+     * it with.
      */
-    const [advises, plans] = await Promise.all([
-      db.shipmentAdvise.findMany({
-        where: { shipmentId: { in: ids }, deletedAt: null, status: { not: 'CANCELLED' } },
-        orderBy: { id: 'desc' },
-        select: { shipmentId: true, code: true, status: true, houseBlNo: true, sentAt: true },
+    const [memberships, plans] = await Promise.all([
+      db.shipmentAdviseBooking.findMany({
+        where: { shipmentId: { in: ids }, ...LIVE_MEMBERSHIP, advise: LIVE_ADVISE },
+        select: {
+          shipmentId: true,
+          advise: {
+            select: {
+              code: true,
+              status: true,
+              houseBlNo: true,
+              sentAt: true,
+              bookings: { where: LIVE_MEMBERSHIP, select: { shipmentId: true, shipment: { select: { code: true } } } },
+            },
+          },
+        },
       }),
       db.clp.findMany({
         where: { shipmentId: { in: ids }, deletedAt: null, status: 'FINAL' },
@@ -150,14 +180,15 @@ async function detailsFor(
       }),
     ]);
 
-    for (const advise of advises) {
-      const key = advise.shipmentId.toString();
+    for (const { shipmentId, advise } of memberships) {
+      const key = shipmentId.toString();
       if (out.has(key)) continue;
+      const shared = sharedWith(shipmentId, advise.bookings);
       out.set(
         key,
         advise.status === 'SENT'
-          ? `${advise.code} sent ${dateOut(advise.sentAt) ?? ''} — HBL ${advise.houseBlNo}`.trim()
-          : `${advise.code} drafted — HBL ${advise.houseBlNo}, not sent`,
+          ? `${advise.code} sent ${dateOut(advise.sentAt) ?? ''} — HBL ${advise.houseBlNo}`.trim() + shared
+          : `${advise.code} drafted — HBL ${advise.houseBlNo}, not sent${shared}`,
       );
     }
 
@@ -188,29 +219,50 @@ async function detailsFor(
   }
 
   if (worklist === 'BL_DRAFT') {
-    const [drafts, advises] = await Promise.all([
-      db.blDraft.findMany({
-        where: { shipmentId: { in: ids }, deletedAt: null, status: { not: 'CANCELLED' } },
-        orderBy: { id: 'desc' },
-        select: {
-          shipmentId: true,
-          code: true,
-          status: true,
-          origin: true,
-          blNo: true,
-          issuedAt: true,
+    // CR-005: one bill per advise, reached from every booking on it.
+    const memberships = await db.shipmentAdviseBooking.findMany({
+      where: { shipmentId: { in: ids }, ...LIVE_MEMBERSHIP, advise: { deletedAt: null, status: 'SENT' } },
+      select: {
+        shipmentId: true,
+        adviseId: true,
+        advise: {
+          select: {
+            houseBlNo: true,
+            mblNo: true,
+            bookings: { where: LIVE_MEMBERSHIP, select: { shipmentId: true, shipment: { select: { code: true } } } },
+          },
         },
-      }),
-      db.shipmentAdvise.findMany({
-        where: { shipmentId: { in: ids }, deletedAt: null, status: 'SENT' },
-        orderBy: { id: 'desc' },
-        select: { shipmentId: true, houseBlNo: true, mblNo: true },
-      }),
-    ]);
+      },
+    });
+    const drafts = await db.blDraft.findMany({
+      where: {
+        adviseId: { in: memberships.map((m) => m.adviseId) },
+        deletedAt: null,
+        status: { not: 'CANCELLED' },
+      },
+      orderBy: { id: 'desc' },
+      select: {
+        adviseId: true,
+        code: true,
+        status: true,
+        origin: true,
+        blNo: true,
+        issuedAt: true,
+      },
+    });
 
-    for (const draft of drafts) {
-      const key = draft.shipmentId.toString();
+    for (const m of memberships) {
+      const key = m.shipmentId.toString();
       if (out.has(key)) continue;
+      const shared = sharedWith(m.shipmentId, m.advise.bookings);
+      const draft = drafts.find((d) => d.adviseId === m.adviseId);
+      if (draft === undefined) {
+        out.set(
+          key,
+          `HBL ${m.advise.houseBlNo}${m.advise.mblNo === null ? '' : `, MBL ${m.advise.mblNo}`} — no draft yet${shared}`,
+        );
+        continue;
+      }
       /*
        * §2.4: a draft the customer submitted is the one somebody has to act
        * on, and saying who wrote it is the difference between the two sheets.
@@ -223,17 +275,9 @@ async function detailsFor(
         draft.issuedAt === null ? BL_DRAFT_STATUS_LABEL[draft.status].toLowerCase() : 'BL issued';
       out.set(
         key,
-        draft.origin === 'CUSTOMER'
+        (draft.origin === 'CUSTOMER'
           ? `${draft.code} ${state}`
-          : `${draft.code} drafted in house — ${state}`,
-      );
-    }
-    for (const advise of advises) {
-      const key = advise.shipmentId.toString();
-      if (out.has(key)) continue;
-      out.set(
-        key,
-        `HBL ${advise.houseBlNo}${advise.mblNo === null ? '' : `, MBL ${advise.mblNo}`} — no draft yet`,
+          : `${draft.code} drafted in house — ${state}`) + shared,
       );
     }
     return out;
@@ -245,39 +289,49 @@ async function detailsFor(
      * before loading stationery: which bill, and how many originals — or that
      * the draft left the count empty, which Issue BL will ask for.
      */
-    const [drafts, dayOf] = await Promise.all([
-      db.blDraft.findMany({
-        where: {
-          shipmentId: { in: ids },
-          deletedAt: null,
-          status: { not: 'CANCELLED' },
-          approvedAt: { not: null },
-        },
-        orderBy: { id: 'desc' },
+    const [memberships, dayOf] = await Promise.all([
+      db.shipmentAdviseBooking.findMany({
+        where: { shipmentId: { in: ids }, ...LIVE_MEMBERSHIP, advise: { deletedAt: null, status: 'SENT' } },
         select: {
           shipmentId: true,
-          blNo: true,
-          originalBlCount: true,
-          issuedAt: true,
-          advise: { select: { mblNo: true } },
+          adviseId: true,
+          advise: {
+            select: {
+              mblNo: true,
+              bookings: { where: LIVE_MEMBERSHIP, select: { shipmentId: true, shipment: { select: { code: true } } } },
+            },
+          },
         },
       }),
       tenantDayOf(db, tenantId),
     ]);
+    const drafts = await db.blDraft.findMany({
+      where: {
+        adviseId: { in: memberships.map((m) => m.adviseId) },
+        deletedAt: null,
+        status: { not: 'CANCELLED' },
+        approvedAt: { not: null },
+      },
+      orderBy: { id: 'desc' },
+      select: { adviseId: true, blNo: true, originalBlCount: true, issuedAt: true },
+    });
 
-    for (const draft of drafts) {
-      const key = draft.shipmentId.toString();
+    for (const m of memberships) {
+      const key = m.shipmentId.toString();
       if (out.has(key)) continue;
-      const bill = `HBL ${draft.blNo}${draft.advise.mblNo === null ? '' : `, MBL ${draft.advise.mblNo}`}`;
+      const draft = drafts.find((d) => d.adviseId === m.adviseId);
+      if (draft === undefined) continue;
+      const bill = `HBL ${draft.blNo}${m.advise.mblNo === null ? '' : `, MBL ${m.advise.mblNo}`}`;
       const originals =
         draft.originalBlCount === null
           ? 'number of originals not set'
           : count(draft.originalBlCount, 'original');
       out.set(
         key,
-        draft.issuedAt === null
+        (draft.issuedAt === null
           ? `${bill} — ${originals}, not issued`
-          : `${bill} — issued ${dayOf(draft.issuedAt)}, ${originals}`,
+          : `${bill} — issued ${dayOf(draft.issuedAt)}, ${originals}`) +
+          sharedWith(m.shipmentId, m.advise.bookings),
       );
     }
     return out;

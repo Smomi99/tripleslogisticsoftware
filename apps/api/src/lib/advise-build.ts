@@ -62,7 +62,9 @@ function sum(values: (Prisma.Decimal | null)[]): Prisma.Decimal | null {
 export function totalsOf(lines: AdviseLineDraft[]): AdviseTotals {
   const pcs = lines.map((l) => l.pcsQty).filter((v): v is number => v !== null);
   return {
-    poCount: new Set(lines.map((l) => l.poNo)).size,
+    // By the PO itself, not its number: two bookings on one advise (CR-005)
+    // may well reuse a PO number, and they are still two POs.
+    poCount: new Set(lines.map((l) => l.shipmentPoId.toString())).size,
     ctnQty: lines.reduce((acc, l) => acc + l.ctnQty, 0),
     pcsQty: pcs.length === 0 ? null : pcs.reduce((acc, v) => acc + v, 0),
     netWeightKg: sum(lines.map((l) => l.netWeightKg)),

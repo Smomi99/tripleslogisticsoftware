@@ -140,7 +140,8 @@ async function booking(label: string): Promise<{ id: bigint; code: string }> {
       status: 'CONFIRMED',
       confirmedAt: new Date(),
       receivedBy: superadminId,
-      efrNo: `EFR-${RUN}`,
+      // Its own EFR: bookings sharing one are advised together (CR-005).
+      efrNo: `EFR-${RUN}-${label}`,
     },
     select: { id: true },
   });
@@ -329,7 +330,7 @@ describe('the advise is built from what the operation actually did', () => {
     // The three columns the client merges down the grid, each from its own
     // source: the receipt, the container plan, and the receipt again.
     for (const line of draft.lines) {
-      expect(line.efrNo).toBe(`EFR-${RUN}`);
+      expect(line.efrNo).toBe(`EFR-${RUN}-full`);
       expect(line.stuffingDate).toBe('2026-09-18');
       expect(line.cargoReceiptDate).toBe('2026-09-15');
       expect(line.containerNo).toBe(containerNo);

@@ -1,9 +1,9 @@
 # CR-005 — One Shipment Advise and one BL per EFR
 
-> **Status, 2026-10-02: phases A and B done.** The schema and migration were approved and are
-> applied. The existing advise code writes the lead booking's `shipment_advise_booking` row and
-> each line's `shipment_id`, so behaviour is unchanged: every advise still covers exactly one
-> booking. **Nothing groups yet.** That is phase C (§7).
+> **Status, 2026-10-02: phases A–C done.** The schema and migration are applied, and the API
+> groups bookings by EFR as §2 says (`lib/advise-group.ts`). Advise, BL draft, BL Print, the
+> worklists and the customer portal all go through `shipment_advise_booking`.
+> `routes/advise-group.route.test.ts` covers it end to end. The screens are phase D (§8).
 
 ---
 
@@ -230,5 +230,5 @@ In order:
 |---|---|---|
 | A | This document, `schema.prisma`, the migration. Verified on a copy. | **Done** — approved 2026-10-02 |
 | B | Apply the migration, `tenancy.ts`, and the existing write paths set `shipment_id` on lines. Nothing groups yet. | **Done** — full suite green, behaviour unchanged |
-| C | The API of §7 | Phase-seam tests green |
+| C | The API of §7 | **Done** — phase-seam tests green |
 | D | The screens of §8, the PDF and the e-mail | One grouped advise sent and one grouped BL issued, end to end |

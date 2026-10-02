@@ -93,9 +93,15 @@ customerPortalRouter.get(
                v.exporter_name, v.importer_name,
                pol.name AS pol_name, pod.name AS pod_name,
                v.etd, v.eta,
+               -- CR-005: one bill per advise, so a booking finds it through
+               -- the advise it is on, whichever booking the bill hangs off.
                (SELECT d.status::text
                   FROM bl_draft d
-                 WHERE d.shipment_id = v.id
+                  JOIN shipment_advise_booking b
+                    ON b.advise_id = d.advise_id AND b.tenant_id = d.tenant_id
+                 WHERE b.shipment_id = v.id
+                   AND b.released_at IS NULL
+                   AND b.deleted_at IS NULL
                    AND d.deleted_at IS NULL
                    AND d.status <> 'CANCELLED'
                  ORDER BY d.id DESC

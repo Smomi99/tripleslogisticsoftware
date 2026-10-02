@@ -52,6 +52,54 @@ export interface ShipmentAdviseLineDto {
   /** Which container these cartons went into. Null on air (§3.7). */
   clpCode: string | null;
   containerNo: string | null;
+  /** CR-005: the booking this PO is on — an advise may cover several. */
+  bookingNo: string;
+}
+
+// ------------------------------------------------- CR-005: one advise per EFR
+
+/**
+ * How a booking stands against the one an advise is made from (CR-005 §2).
+ *
+ * LEAD is that booking. FULL shares the quotation, the EFR, the sailing, the
+ * shipper and the consignee, and is on the advise whenever it is ready —
+ * the client's rule is one advise per EFR. WARN differs only in shipper or
+ * consignee, and the user decides. REFUSED cannot share a bill of lading: a
+ * different sailing, or a booking received under more than one EFR.
+ */
+export const ADVISE_GROUP_MATCHES = ['LEAD', 'FULL', 'WARN', 'REFUSED'] as const;
+export type AdviseGroupMatch = (typeof ADVISE_GROUP_MATCHES)[number];
+
+export const ADVISE_GROUP_MATCH_LABEL: Record<AdviseGroupMatch, string> = {
+  LEAD: 'This booking',
+  FULL: 'Same EFR',
+  WARN: 'Same EFR — check',
+  REFUSED: 'Kept apart',
+};
+
+export interface AdviseGroupBookingDto {
+  shipmentId: string;
+  bookingNo: string;
+  match: AdviseGroupMatch;
+  /** Why it is WARN or REFUSED. Null for LEAD and FULL. */
+  reason: string | null;
+  /** As typed on its confirmed cargo receipts. */
+  efrNos: string[];
+  /** Null when it can be advised now; otherwise what it is waiting for. */
+  blockedReason: string | null;
+  /** The live advise it is on, if any — this one or another. */
+  adviseId: string | null;
+  adviseCode: string | null;
+  /** On this advise (or, on the prefill, on the advise about to be made). */
+  included: boolean;
+}
+
+export interface AdviseGroupDto {
+  /** The EFR the bookings share, as typed. Null when there is no group to form. */
+  efrNo: string | null;
+  /** Why the booking is not grouped, when it is not — no EFR, or several. */
+  note: string | null;
+  bookings: AdviseGroupBookingDto[];
 }
 
 /** Row 21 of the sheet — the totals line. */
@@ -99,6 +147,10 @@ export interface ShipmentAdviseDto {
   totals: ShipmentAdviseTotalsDto;
   /** The customer's contacts, prefilled into the send form (sheet B24). */
   recipients: { name: string | null; email: string }[];
+  /** CR-005: every booking the advise covers, the one it was made from first. */
+  bookingNos: string[];
+  /** CR-005: the bookings sharing the EFR, on this advise or not. */
+  group: AdviseGroupDto;
 }
 
 /**
@@ -109,6 +161,12 @@ export interface ShipmentAdvisePrefillDto
   extends Omit<ShipmentAdviseDto, 'id' | 'code' | 'status' | 'houseBlNo' | 'sentAt' | 'sentByName' | 'cancelReason'> {
   /** Why it cannot be created yet, when it cannot. */
   blockedReason: string | null;
+  /**
+   * CR-005: a live advise already carries this booking's EFR, so this booking
+   * joins that one instead of starting another — "Add to SA-…" while it is a
+   * draft, cancel and reissue once it has been sent.
+   */
+  existingAdvise: { id: string; code: string; status: AdviseStatus } | null;
 }
 
 const optionalText = (max: number, message = 'That is too long.') =>
@@ -142,6 +200,24 @@ export const shipmentAdviseHeaderSchema = z.object({
 });
 
 export type ShipmentAdviseHeaderInput = z.infer<typeof shipmentAdviseHeaderSchema>;
+
+/**
+ * `Make Shipment Advise`. CR-005: `shipmentIds` are the warned bookings the
+ * user ticked in. Bookings that fully match are added by the API whatever is
+ * sent — the client's rule is one advise per EFR — so they are not listed here.
+ */
+export const shipmentAdviseCreateSchema = shipmentAdviseHeaderSchema.extend({
+  shipmentIds: z.array(idString).max(50, 'That is too many bookings.').optional(),
+});
+
+export type ShipmentAdviseCreateInput = z.infer<typeof shipmentAdviseCreateSchema>;
+
+/** CR-005 `Add to SA-…`: one more booking of the EFR onto a draft advise. */
+export const shipmentAdviseAddBookingSchema = z.object({
+  shipmentId: idString,
+});
+
+export type ShipmentAdviseAddBookingInput = z.infer<typeof shipmentAdviseAddBookingSchema>;
 
 const emailList = z
   .array(
@@ -214,6 +290,8 @@ export interface BlDraftDto {
   origin: BlDraftOrigin;
   shipmentId: string;
   bookingNo: string;
+  /** CR-005: every booking the bill covers — its advise's bookings. */
+  bookingNos: string[];
   customerName: string;
   blNo: string;
   mblNo: string | null;
@@ -381,6 +459,8 @@ export type BlIssueInput = z.infer<typeof blIssueSchema>;
 export interface BlPrintDto {
   shipmentId: string;
   bookingNo: string;
+  /** CR-005: every booking the bill covers. */
+  bookingNos: string[];
   customerName: string;
   draftId: string;
   draftCode: string;

@@ -213,6 +213,12 @@ for LCL. So:
 
 `shipment_advise` therefore hangs off `shipment`, and the container is a detail inside it.
 
+> **Amended by CR-005 (2026-10-02).** Bookings of one quotation received under the **same EFR**
+> share **one** advise, **one** House BL and **one** BL draft. An advise now covers a set of
+> bookings (`shipment_advise_booking`); `shipment_advise.shipment_id` is the booking it was made
+> from. A booking with no EFR, or with more than one, still gets an advise of its own, as above.
+> See [CR-005-one-advise-per-efr.md](CR-005-one-advise-per-efr.md).
+
 ### 3.2 The advise is a snapshot, not a live view of the CLP
 
 The advise is a letter that went to a customer at a moment in time. If a CLP is cancelled and

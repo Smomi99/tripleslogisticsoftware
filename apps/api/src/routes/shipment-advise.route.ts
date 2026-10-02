@@ -1,17 +1,36 @@
 import { Router } from 'express';
 
 import {
+  type AdviseGroupDto,
   type ApiSuccess,
   type ShipmentAdviseDto,
   type ShipmentAdviseLineDto,
   type ShipmentAdvisePrefillDto,
   type ShipmentAdviseTotalsDto,
+  shipmentAdviseAddBookingSchema,
   shipmentAdviseCancelSchema,
+  shipmentAdviseCreateSchema,
   shipmentAdviseHeaderSchema,
   shipmentAdviseSendSchema,
 } from '@ff/shared';
 
-import { type AdviseLineDraft, buildAdviseLines, adviseBlockedReason, totalsOf } from '../lib/advise-build';
+import { type AdviseLineDraft, adviseBlockedReason, totalsOf } from '../lib/advise-build';
+import {
+  addMembership,
+  adviseGroupFor,
+  adviseMembers,
+  adviseToJoin,
+  assertCanJoin,
+  bookingsToInclude,
+  buildGroupLines,
+  type GroupCandidate,
+  groupDto,
+  joinInsteadMessage,
+  leadFirst,
+  LIVE_ADVISE,
+  LIVE_MEMBERSHIP,
+  liveAdviseOf,
+} from '../lib/advise-group';
 import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
 import { queueMail } from '../lib/email-queue';
 import { Prisma } from '../generated/prisma/client';
@@ -67,16 +86,48 @@ const adviseArgs = {
     lines: {
       where: { deletedAt: null },
       orderBy: [{ poNo: 'asc' }, { id: 'asc' }],
-      include: { clp: { select: { code: true, containerNo: true } } },
+      include: {
+        clp: { select: { code: true, containerNo: true } },
+        booking: { select: { shipment: { select: { code: true } } } },
+      },
+    },
+    // CR-005: the bookings it covers. Released rows included, so a cancelled
+    // advise can still say what it was for.
+    bookings: {
+      where: { deletedAt: null },
+      orderBy: { id: 'asc' },
+      select: { releasedAt: true, shipment: { select: { id: true, code: true } } },
     },
   },
 } satisfies { include: Prisma.ShipmentAdviseInclude };
 
 type AdviseRow = Prisma.ShipmentAdviseGetPayload<typeof adviseArgs>;
 
+/**
+ * The bookings an advise covers, the one it was made from first. A live advise
+ * answers with the bookings it holds; a cancelled one has released them all,
+ * and answers with the bookings it held.
+ */
+function coveredBookings(row: AdviseRow): { id: bigint; code: string }[] {
+  const live = row.bookings.filter((b) => b.releasedAt === null);
+  return leadFirst(row.shipmentId, (live.length > 0 ? live : row.bookings).map((b) => b.shipment));
+}
+
+/** The grid in booking order — the lead's POs first — then PO order within each. */
+function orderedLines(row: AdviseRow): AdviseRow['lines'] {
+  const rank = new Map(coveredBookings(row).map((b, i) => [b.code, i]));
+  return [...row.lines].sort(
+    (a, b) =>
+      (rank.get(a.booking.shipment.code) ?? 0) - (rank.get(b.booking.shipment.code) ?? 0) ||
+      a.poNo.localeCompare(b.poNo) ||
+      (a.id < b.id ? -1 : 1),
+  );
+}
+
 function lineDto(row: AdviseRow['lines'][number]): ShipmentAdviseLineDto {
   return {
     id: row.id.toString(),
+    bookingNo: row.booking.shipment.code,
     poNo: row.poNo,
     itemCode: row.itemCode,
     sku: row.sku,
@@ -124,7 +175,11 @@ function totalsDto(row: AdviseRow): ShipmentAdviseTotalsDto {
   };
 }
 
-function toDto(row: AdviseRow, recipients: { name: string | null; email: string }[]): ShipmentAdviseDto {
+function toDto(
+  row: AdviseRow,
+  recipients: { name: string | null; email: string }[],
+  group: AdviseGroupDto,
+): ShipmentAdviseDto {
   return {
     id: row.id.toString(),
     code: row.code,
@@ -153,20 +208,65 @@ function toDto(row: AdviseRow, recipients: { name: string | null; email: string 
     sentAt: stamp(row.sentAt),
     sentByName: row.sentByUser?.username ?? null,
     cancelReason: row.cancelReason,
-    lines: row.lines.map(lineDto),
+    lines: orderedLines(row).map(lineDto),
     totals: totalsDto(row),
     recipients,
+    bookingNos: coveredBookings(row).map((b) => b.code),
+    group,
   };
 }
 
+/**
+ * The live advise a booking is on — CR-005: as the booking it was made from,
+ * or as one of the others sharing its EFR.
+ */
 async function loadLive(db: TenantDb, shipmentId: bigint): Promise<ShipmentAdviseDto | null> {
   const row = await db.shipmentAdvise.findFirst({
-    where: { shipmentId, deletedAt: null, status: { not: 'CANCELLED' } },
+    where: { ...LIVE_ADVISE, bookings: { some: { shipmentId, ...LIVE_MEMBERSHIP } } },
     orderBy: { id: 'desc' },
     ...adviseArgs,
   });
   if (row === null) return null;
-  return toDto(row, await recipientsOf(db, row.shipment.customer.id));
+  const group = await adviseGroupFor(db, row.shipmentId);
+  const included = new Set(
+    row.bookings.filter((b) => b.releasedAt === null).map((b) => b.shipment.id.toString()),
+  );
+  return toDto(row, await recipientsOf(db, row.shipment.customer.id), groupDto(group, included));
+}
+
+/**
+ * Puts every ready booking that fully matches the EFR on a draft advise
+ * (CR-005 rule 8) — the client's rule is one advise per EFR, so these are not
+ * left for someone to remember.
+ */
+async function growGroup(
+  db: TenantDb,
+  args: { tenantId: bigint; userId: bigint; adviseId: bigint; leadId: bigint },
+): Promise<void> {
+  const group = await adviseGroupFor(db, args.leadId);
+  for (const c of group.candidates.slice(1)) {
+    if (c.match === 'FULL' && c.blockedReason === null && c.liveAdvise === null) {
+      await addMembership(db, {
+        tenantId: args.tenantId,
+        adviseId: args.adviseId,
+        shipmentId: c.shipmentId,
+        code: c.code,
+        userId: args.userId,
+      });
+    }
+  }
+}
+
+const member = (c: GroupCandidate) => ({ id: c.shipmentId, code: c.code, shipmentType: c.shipmentType });
+
+/** Re-pulls the PO grid of every booking on the advise. */
+async function rebuild(
+  db: TenantDb,
+  args: { tenantId: bigint; userId: bigint; adviseId: bigint },
+): Promise<void> {
+  const members = await adviseMembers(db, args.adviseId);
+  const lines = await buildGroupLines(db, members);
+  await writeLines(db, args.tenantId, args.adviseId, args.userId, lines);
 }
 
 async function loadById(db: TenantDb, id: bigint): Promise<AdviseRow> {
@@ -335,16 +435,37 @@ shipmentAdviseRouter.get(
     const auth = req.auth!;
     const shipmentId = parseId(req.params.id, 'booking');
 
+    // CR-005: the warned bookings the user has ticked so far, so the grid
+    // below shows what the advise will actually hold.
+    const requested = String(req.query['include'] ?? '')
+      .split(',')
+      .map((v) => v.trim())
+      .filter((v) => /^\d+$/.test(v));
+
     const data = await withTenant<ShipmentAdvisePrefillDto>(auth.tenantId, async (db) => {
       const shipment = await gather(db, shipmentId);
       const schedule = await approvedSchedule(db, shipmentId);
       const first = schedule?.legs[0];
       const last = schedule?.legs[schedule.legs.length - 1];
-      const blocked = await adviseBlockedReason(db, shipmentId, shipment.shipmentType);
+      const ownBlock = await adviseBlockedReason(db, shipmentId, shipment.shipmentType);
 
-      const lines = blocked === null
-        ? await buildAdviseLines(db, shipmentId, shipment.shipmentType, shipment.code)
-        : [];
+      const group = await adviseGroupFor(db, shipmentId);
+      const join = adviseToJoin(group);
+      const blocked = ownBlock ?? (join === null ? null : joinInsteadMessage(group, join));
+      const eligible = requested.filter((id) => {
+        const c = group.candidates.find((x) => x.shipmentId.toString() === id);
+        return (
+          c !== undefined &&
+          (c.match === 'FULL' || c.match === 'WARN') &&
+          c.blockedReason === null &&
+          c.liveAdvise === null
+        );
+      });
+      const included: GroupCandidate[] =
+        blocked === null ? bookingsToInclude(group, eligible) : group.candidates.slice(0, 1);
+      const codeOf = new Map(included.map((c) => [c.shipmentId.toString(), c.code]));
+
+      const lines = blocked === null ? await buildGroupLines(db, included.map(member)) : [];
       const totals = totalsOf(lines);
 
       const polId = first?.originPortId ?? shipment.polId;
@@ -391,6 +512,7 @@ shipmentAdviseRouter.get(
         mblNo: null,
         lines: lines.map((line, index) => ({
           id: `draft-${index}`,
+          bookingNo: codeOf.get(line.shipmentId.toString()) ?? shipment.code,
           poNo: line.poNo,
           itemCode: line.itemCode,
           sku: line.sku,
@@ -421,6 +543,10 @@ shipmentAdviseRouter.get(
         },
         recipients: await recipientsOf(db, shipment.customer.id),
         blockedReason: blocked,
+        existingAdvise:
+          join === null ? null : { id: join.id.toString(), code: join.code, status: join.status },
+        bookingNos: included.map((c) => c.code),
+        group: groupDto(group, new Set(included.map((c) => c.shipmentId.toString()))),
       };
     });
 
@@ -441,15 +567,13 @@ shipmentAdviseRouter.post(
   async (req, res) => {
     const auth = req.auth!;
     const shipmentId = parseId(req.params.id, 'booking');
-    const input = shipmentAdviseHeaderSchema.parse(req.body);
+    const input = shipmentAdviseCreateSchema.parse(req.body);
 
     const data = await withTenant(auth.tenantId, async (db) => {
       const shipment = await gather(db, shipmentId);
 
-      const existing = await db.shipmentAdvise.findFirst({
-        where: { shipmentId, deletedAt: null, status: { not: 'CANCELLED' } },
-        select: { code: true },
-      });
+      // CR-005: on any live advise, not only one made from this booking.
+      const existing = await liveAdviseOf(db, shipmentId);
       if (existing !== null) {
         throw new HttpError(
           409,
@@ -458,7 +582,16 @@ shipmentAdviseRouter.post(
         );
       }
 
-      const lines = await buildAdviseLines(db, shipmentId, shipment.shipmentType, shipment.code);
+      // One advise per EFR: if another booking of it is already advised, this
+      // one joins that advise rather than starting a second.
+      const group = await adviseGroupFor(db, shipmentId);
+      const join = adviseToJoin(group);
+      if (join !== null) {
+        throw new HttpError(409, 'EFR_ALREADY_ADVISED', joinInsteadMessage(group, join));
+      }
+      const members = bookingsToInclude(group, input.shipmentIds ?? []);
+
+      const lines = await buildGroupLines(db, members.map(member));
       const schedule = await approvedSchedule(db, shipmentId);
       const seriesYear = seriesYearOf(new Date());
       const tenant = await db.tenant.findFirst({
@@ -509,15 +642,15 @@ shipmentAdviseRouter.post(
 
       // CR-005: the booking an advise is made from is always one of the
       // bookings it covers, and every line must be one of those bookings'.
-      await db.shipmentAdviseBooking.create({
-        data: {
+      for (const m of members) {
+        await addMembership(db, {
           tenantId: auth.tenantId,
           adviseId: created.id,
-          shipmentId,
-          createdBy: auth.userId,
-          updatedBy: auth.userId,
-        },
-      });
+          shipmentId: m.shipmentId,
+          code: m.code,
+          userId: auth.userId,
+        });
+      }
       await writeLines(db, auth.tenantId, created.id, auth.userId, lines);
       return loadLive(db, shipmentId);
     });
@@ -581,13 +714,65 @@ shipmentAdviseRouter.post(
     const data = await withTenant(auth.tenantId, async (db) => {
       const row = await loadById(db, id);
       assertDraft(row);
-      const lines = await buildAdviseLines(
-        db,
-        row.shipmentId,
-        row.shipment.shipmentType,
-        row.shipment.code,
-      );
-      await writeLines(db, auth.tenantId, id, auth.userId, lines);
+      // CR-005 rule 8: a booking of the EFR that has become ready since joins
+      // now, and every booking's grid is pulled again.
+      const scope = { tenantId: auth.tenantId, userId: auth.userId, adviseId: id };
+      await growGroup(db, { ...scope, leadId: row.shipmentId });
+      await rebuild(db, scope);
+      return loadLive(db, row.shipmentId);
+    });
+
+    const payload: ApiSuccess<ShipmentAdviseDto | null> = { success: true, data };
+    res.json(payload);
+  },
+);
+
+/**
+ * POST /shipment-advise/:id/bookings — CR-005's `Add to SA-…`.
+ *
+ * One more booking of the EFR onto a draft advise: a warned booking the user
+ * has decided belongs, or one that was not ready when the advise was made.
+ * BUILD, not EDIT, because it re-pulls the whole grid as Build does.
+ */
+shipmentAdviseRouter.post(
+  '/shipment-advise/:id/bookings',
+  requirePermission(`${FEATURE}.BUILD`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'advise');
+    const input = shipmentAdviseAddBookingSchema.parse(req.body);
+
+    const data = await withTenant(auth.tenantId, async (db) => {
+      const row = await loadById(db, id);
+      if (row.status === 'SENT') {
+        throw new HttpError(
+          409,
+          'ADVISE_SENT',
+          `${row.code} has already gone to the customer, so no booking can be added to it. ` +
+            `Cancel it and make the advise again — it will get a new House BL number.`,
+        );
+      }
+      assertDraft(row);
+
+      const group = await adviseGroupFor(db, row.shipmentId);
+      const candidate = group.candidates
+        .slice(1)
+        .find((c) => c.shipmentId.toString() === input.shipmentId);
+      if (candidate === undefined) {
+        throw new HttpError(
+          409,
+          'NOT_IN_GROUP',
+          group.efrNo === null
+            ? `${row.code} covers ${group.leadCode} on its own; no other booking can join it.`
+            : `Only bookings of the same quotation received under ${group.efrNo} can join ${row.code}.`,
+        );
+      }
+      assertCanJoin(candidate);
+
+      const scope = { tenantId: auth.tenantId, userId: auth.userId, adviseId: id };
+      await addMembership(db, { ...scope, shipmentId: candidate.shipmentId, code: candidate.code });
+      await growGroup(db, { ...scope, leadId: row.shipmentId });
+      await rebuild(db, scope);
       return loadLive(db, row.shipmentId);
     });
 
@@ -625,13 +810,14 @@ shipmentAdviseRouter.post(
         where: { id },
         data: { status: 'SENT', sentAt: new Date(), sentBy: auth.userId, updatedBy: auth.userId },
       });
-      await transitionShipment(db, {
-        shipmentId: row.shipmentId,
-        to: 'ADVISED',
-        userId: auth.userId,
-      });
+      // CR-005 §3: every booking on the advise moves, in this transaction —
+      // one that cannot refuses the whole send, and the error names it.
+      for (const m of await adviseMembers(db, id)) {
+        await transitionShipment(db, { shipmentId: m.id, to: 'ADVISED', userId: auth.userId });
+      }
       return loadById(db, id);
     });
+    const bookingNos = coveredBookings(sent).map((b) => b.code).join(', ');
 
     /*
      * The document, rendered once and stored, so the copy the customer receives
@@ -676,7 +862,7 @@ shipmentAdviseRouter.post(
       to: input.to.map((r) => r.email),
       cc: (input.cc ?? []).map((r) => r.email),
       variables: {
-        bookingNo: sent.shipment.code,
+        bookingNo: bookingNos,
         adviseNo: sent.code,
         customerName: sent.shipment.customer.name,
         houseBlNo: sent.houseBlNo,
@@ -694,10 +880,10 @@ shipmentAdviseRouter.post(
       relatedId: id,
       actorId: auth.userId,
       fallback: {
-        // B29, verbatim.
-        subject: `Shipment Advise of Booking no : ${sent.shipment.code}`,
+        // B29, verbatim — with every booking the advise covers (CR-005).
+        subject: `Shipment Advise of Booking no : ${bookingNos}`,
         bodyText:
-          `Your shipment under booking ${sent.shipment.code} is on ` +
+          `Your shipment under booking ${bookingNos} is on ` +
           `${sent.firstVessel?.name ?? sent.firstFlightNo ?? 'the carrier'} from ${sent.pol.name} ` +
           `to ${sent.pod.name}. House BL ${sent.houseBlNo}.`,
       },
@@ -741,6 +927,9 @@ shipmentAdviseRouter.post(
         );
       }
 
+      // Read before cancelling: the cancel releases them (a trigger does it).
+      const members = await adviseMembers(db, id);
+
       await db.shipmentAdvise.update({
         where: { id },
         data: {
@@ -753,13 +942,12 @@ shipmentAdviseRouter.post(
       });
 
       // Back to where it was: a booking with no live advise is one waiting for
-      // one. Only from ADVISED — a draft never moved the booking.
+      // one. Only from ADVISED — a draft never moved the booking. CR-005: every
+      // booking the advise covered.
       if (row.status === 'SENT') {
-        await transitionShipment(db, {
-          shipmentId: row.shipmentId,
-          to: 'CARGO_RECEIVED',
-          userId: auth.userId,
-        });
+        for (const m of members) {
+          await transitionShipment(db, { shipmentId: m.id, to: 'CARGO_RECEIVED', userId: auth.userId });
+        }
       }
       return loadLive(db, row.shipmentId);
     });
@@ -782,18 +970,24 @@ export async function adviseDocument(
   row: AdviseRow,
 ): Promise<{ filename: string; pdf: Buffer }> {
   const head = await letterheadOf(db, tenantId);
-  const so = await db.shippingOrder.findFirst({
-    where: { shipmentId: row.shipmentId, deletedAt: null, status: 'ISSUED' },
+  const covered = coveredBookings(row);
+  // Each booking's latest issued shipping order, in booking order.
+  const orders = await db.shippingOrder.findMany({
+    where: { shipmentId: { in: covered.map((b) => b.id) }, deletedAt: null, status: 'ISSUED' },
     orderBy: { id: 'desc' },
-    select: { code: true },
+    select: { shipmentId: true, code: true },
   });
+  const soNos = covered
+    .map((b) => orders.find((o) => o.shipmentId === b.id)?.code)
+    .filter((code): code is string => code !== undefined);
   const isAir = row.shipment.shipmentType === 'AIR';
 
   const pdf = await renderShipmentAdvisePdf({
     ...head,
     adviseNo: row.code,
-    bookingNo: row.shipment.code,
-    soNo: so?.code ?? null,
+    bookingNo: covered.map((b) => b.code).join(', '),
+    soNo: soNos.length === 0 ? null : soNos.join(', '),
+    showBooking: covered.length > 1,
     issueDate: day(row.sentAt ?? row.createdAt) ?? '',
     customerName: row.shipment.customer.name,
     exporterName: row.shipment.exporterName,
@@ -808,7 +1002,8 @@ export async function adviseDocument(
     eta: isAir ? stamp(row.eta) : day(row.eta),
     houseBlNo: row.houseBlNo,
     mblNo: row.mblNo,
-    lines: row.lines.map((line) => ({
+    lines: orderedLines(row).map((line) => ({
+      bookingNo: line.booking.shipment.code,
       poNo: line.poNo,
       itemCode: line.itemCode,
       sku: line.sku,
