@@ -1,9 +1,11 @@
 # CR-005 — One Shipment Advise and one BL per EFR
 
-> **Status, 2026-10-02: phases A–C done.** The schema and migration are applied, and the API
-> groups bookings by EFR as §2 says (`lib/advise-group.ts`). Advise, BL draft, BL Print, the
-> worklists and the customer portal all go through `shipment_advise_booking`.
-> `routes/advise-group.route.test.ts` covers it end to end. The screens are phase D (§8).
+> **Status, 2026-10-02: built — phases A–D done.** The schema and migration are applied, the
+> API groups bookings by EFR as §2 says (`lib/advise-group.ts`), and the screens show it (§8).
+> Advise, BL draft, BL Print, the worklists and the customer portal all go through
+> `shipment_advise_booking`. `routes/advise-group.route.test.ts` covers it end to end, and the
+> screens were checked in a browser against the demo workspace (§12). The client questions in
+> §10 are still open; the working defaults are what is built.
 
 ---
 
@@ -196,6 +198,16 @@ In order:
 - **Make Shipment Advise** gets a "Bookings on this advise" panel above the PO grid. Full matches
   are ticked and locked, warned bookings are unticked with their reason, refused bookings are
   listed with why, and bookings not ready yet are shown with what they are waiting for.
+  Ticking a warned booking re-pulls the preview, so the grid shows what will be saved.
+  (`components/doc/advise-group-panel.tsx`)
+- **A booking whose EFR is already on a draft** opens to "Shares an advise with SA-…" and an
+  `Add <booking> to SA-…` button. If the advise has been sent, it says to cancel and reissue
+  instead.
+- **On a saved draft**, the panel offers `Add to this advise` for bookings that have become
+  ready. `Save & Send` warns when a booking of the EFR is still missing, because adding it after
+  the send means a new House BL number.
+- The BL tab, BL Print's issue dialog and the customer's BL screen name every booking the bill
+  covers.
 - **Advise, BL Draft and BL Print lists** keep one row per booking (they are booking worklists),
   and the row shows the shared document number. Opening any of them opens the one document.
 - **BL Draft**: gross weight, measurement and the container block total the whole group.
@@ -231,4 +243,34 @@ In order:
 | A | This document, `schema.prisma`, the migration. Verified on a copy. | **Done** — approved 2026-10-02 |
 | B | Apply the migration, `tenancy.ts`, and the existing write paths set `shipment_id` on lines. Nothing groups yet. | **Done** — full suite green, behaviour unchanged |
 | C | The API of §7 | **Done** — phase-seam tests green |
-| D | The screens of §8, the PDF and the e-mail | One grouped advise sent and one grouped BL issued, end to end |
+| D | The screens of §8, the PDF and the e-mail | **Done** — browser check of §12 passes |
+
+## 12. Trying it, and how it was checked
+
+**To see it on the demo workspace:** the loading-type sheet's LCL bookings DEMO-SHEET-BKG-3, -4
+and -5 are on one quotation (DEMO-SHEET-QTN-3) and one sailing. Their receipts are EFR-003,
+-004 and -005.
+
+1. On DEMO-SHEET-BKG-4's Cargo Receipt tab, change the EFR No to `EFR-003`.
+2. Plan their container on Container Load Plan, and finalise it.
+3. Open DEMO-SHEET-BKG-3 → Shipment Advise. The panel lists DEMO-SHEET-BKG-4 as *Same EFR —
+   check*, because the exporters differ. Tick it, and the PO grid gains a Booking column with
+   both bookings' POs.
+4. Save. One advise and one House BL cover both, and DEMO-SHEET-BKG-4's tab opens the same
+   advise.
+
+`pnpm db:demo` and `pnpm db:demo:sheet` clear advises and BLs made on demo bookings. They stop,
+naming the advise, if it also covers a booking that is not demo data.
+
+**Checked in a browser, 2026-10-02.** Headless Chrome against the running dev servers, with the
+scenario above, plus DEMO-SHEET-BKG-5 given BKG-3's parties so it fully matches:
+
+- the panel offers BKG-4, unticked, as *Same EFR — check*;
+- ticking it adds the Booking column, with "Covers BKG-3, BKG-4";
+- saving makes one advise covering both, and BKG-4 opens it;
+- the send dialog's subject lists both bookings;
+- the worklist rows say "…, with DEMO-SHEET-BKG-4" and "…, with DEMO-SHEET-BKG-3";
+- BKG-5, once received under EFR-003, offers "Add DEMO-SHEET-BKG-5 to SA-…", and joins;
+- no console errors.
+
+The demo data was put back afterwards.

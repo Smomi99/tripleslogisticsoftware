@@ -155,9 +155,18 @@ export function BlDraftTab({
    */
   const approvable = draft !== null && draft.status !== 'CANCELLED' && draft.approvedAt === null;
   const blNo = draft?.blNo ?? prefill?.blNo ?? '';
+  // CR-005: one bill for every booking on the advise that numbers it.
+  const bookingNos = draft?.bookingNos ?? prefill?.bookingNos ?? [booking.code];
 
   return (
     <div className="flex flex-col gap-4">
+      {bookingNos.length > 1 && (
+        <p className="text-cell text-steel">
+          One BL for{' '}
+          <span className="font-mono tabular-nums text-hull">{bookingNos.join(', ')}</span> — they
+          share an EFR and a shipment advise. The containers below are all of theirs.
+        </p>
+      )}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <h2 className="text-section text-hull">

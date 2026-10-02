@@ -146,6 +146,28 @@ async function clear(tenantId: bigint, prefix: string = P): Promise<void> {
   );
 
   /*
+   * Shipment advises on demo bookings, and the BLs drawn from them — making one
+   * is the next step of trying the product on a received demo booking. CR-005:
+   * an advise covers every booking of an EFR, so one that also covers a booking
+   * somebody really made is as much theirs as ours, like a shared plan above.
+   */
+  const advises = await prisma.shipmentAdvise.findMany({
+    where: {
+      ...t,
+      OR: [
+        { shipmentId: { in: shipmentIds } },
+        { bookings: { some: { shipmentId: { in: shipmentIds } } } },
+      ],
+    },
+    select: { id: true, code: true, shipmentId: true, bookings: { select: { shipmentId: true } } },
+  });
+  const heldAdvises = advises.filter((advise) =>
+    [advise.shipmentId, ...advise.bookings.map((b) => b.shipmentId)].some(
+      (id) => !demoShipment.has(id.toString()),
+    ),
+  );
+
+  /*
    * Anything of the user's OWN hanging off demo data stops the clear.
    *
    * Raising a quotation on a demo inquiry, or an inquiry for a demo customer,
@@ -181,6 +203,7 @@ async function clear(tenantId: bigint, prefix: string = P): Promise<void> {
     ...heldQuotations.map((q) => `  ${q.code} — quotation on ${q.inquiry.code}`),
     ...heldInquiries.map((i) => `  ${i.code} — inquiry for ${i.customer?.code ?? "a demo customer"}`),
     ...heldPlans.map((p) => `  ${p.code} — container plan that also holds a booking which is not demo data`),
+    ...heldAdvises.map((a) => `  ${a.code} — shipment advise that also covers a booking which is not demo data`),
   ];
   if (blocking.length > 0) {
     throw new Error(
@@ -189,6 +212,17 @@ async function clear(tenantId: bigint, prefix: string = P): Promise<void> {
         'Delete those records first, or leave the demo data in place. Nothing has been changed.',
     );
   }
+
+  // The documents first: an advise line points at the plan its cartons left on.
+  const adviseIds = advises.map((a) => a.id);
+  const blDraftIds = (
+    await prisma.blDraft.findMany({ where: { ...t, adviseId: { in: adviseIds } }, select: { id: true } })
+  ).map((d) => d.id);
+  await prisma.blDraftContainer.deleteMany({ where: { ...t, blDraftId: { in: blDraftIds } } });
+  await prisma.blDraft.deleteMany({ where: { ...t, id: { in: blDraftIds } } });
+  await prisma.shipmentAdviseLine.deleteMany({ where: { ...t, adviseId: { in: adviseIds } } });
+  await prisma.shipmentAdviseBooking.deleteMany({ where: { ...t, adviseId: { in: adviseIds } } });
+  await prisma.shipmentAdvise.deleteMany({ where: { ...t, id: { in: adviseIds } } });
 
   const planIds = plans.map((p) => p.id);
   await prisma.clpLine.deleteMany({ where: { ...t, clpId: { in: planIds } } });

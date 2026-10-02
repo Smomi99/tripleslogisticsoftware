@@ -395,7 +395,7 @@ export async function adviseGroupFor(db: TenantDb, leadId: bigint): Promise<Advi
       }
       if (differs.length > 0) {
         match = 'WARN';
-        reason = `Different ${differs.join(' and ')}. The BL prints one of each — check before adding it.`;
+        reason = `Different ${differs.join(' and ')}. The BL prints one shipper and one consignee.`;
       }
     }
 
