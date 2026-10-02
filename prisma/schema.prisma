@@ -957,6 +957,7 @@ model Vendor {
   @@index([vendorTypeId])
   @@index([name])
   @@index([country])
+  @@index([openingCurrencyId])
   @@map("vendor")
 }
 
@@ -1052,7 +1053,7 @@ model CommodityBusinessPort {
 
   isActive  Boolean   @default(true) @map("is_active")
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedAt DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy BigInt?   @map("created_by")
   updatedBy BigInt?   @map("updated_by")
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
@@ -1161,7 +1162,7 @@ model Customer {
   openingCurrency Currency?      @relation("CustomerOpeningCurrency", fields: [openingCurrencyId], references: [id], onDelete: Restrict)
   industrySector  IndustrySector @relation(fields: [tenantId, industrySectorId], references: [tenantId, id], onDelete: Restrict)
   /// §4 rule 10: an employee of this same workspace, so the key is composite.
-  salesman        Employee?      @relation("CustomerSalesman", fields: [tenantId, salesmanId], references: [tenantId, id], onDelete: Restrict)
+  salesman        Employee?      @relation("CustomerSalesman", fields: [tenantId, salesmanId], references: [tenantId, id], onDelete: Restrict, map: "customer_salesman_id_fkey")
 
   pics CustomerPic[]
 
@@ -1189,6 +1190,8 @@ model Customer {
   @@index([country])
   @@index([customerType])
   @@index([businessArea])
+  @@index([openingCurrencyId])
+  @@index([salesmanId])
   @@map("customer")
 }
 
@@ -1346,6 +1349,7 @@ model Agent {
   @@index([name])
   @@index([country])
   @@index([agentType])
+  @@index([openingCurrencyId])
   @@map("agent")
 }
 
@@ -1698,9 +1702,9 @@ model User {
   tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   employee Employee? @relation(fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
   role     Role?     @relation(fields: [tenantId, roleId], references: [tenantId, id], onDelete: Restrict)
-  agent    Agent?    @relation("AgentUsers", fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
-  customer Customer? @relation("CustomerUsers", fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict)
-  vendor   Vendor?   @relation("VendorUsers", fields: [tenantId, vendorId], references: [tenantId, id], onDelete: Restrict)
+  agent    Agent?    @relation("AgentUsers", fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict, map: "user_agent_id_fkey")
+  customer Customer? @relation("CustomerUsers", fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict, map: "user_customer_id_fkey")
+  vendor   Vendor?   @relation("VendorUsers", fields: [tenantId, vendorId], references: [tenantId, id], onDelete: Restrict, map: "user_vendor_id_fkey")
 
   createdGoodsTypes         GoodsType[]        @relation("GoodsTypeCreatedBy")
   updatedGoodsTypes         GoodsType[]        @relation("GoodsTypeUpdatedBy")
@@ -2092,7 +2096,7 @@ model EmailTemplate {
   variables Json      @default("[]")
   isActive  Boolean   @default(true) @map("is_active")
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedAt DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy BigInt?   @map("created_by")
   updatedBy BigInt?   @map("updated_by")
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
@@ -2157,7 +2161,7 @@ model EmailLog {
   lockedAt      DateTime?   @map("locked_at") @db.Timestamptz(6)
   sentAt        DateTime?   @map("sent_at") @db.Timestamptz(6)
   createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt     DateTime    @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedAt     DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy     BigInt?     @map("created_by")
   updatedBy     BigInt?     @map("updated_by")
   deletedAt     DateTime?   @map("deleted_at") @db.Timestamptz(6)
@@ -2169,7 +2173,7 @@ model EmailLog {
 
   @@unique([tenantId, id])
   @@index([tenantId])
-  @@index([tenantId, relatedType, relatedId])
+  @@index([tenantId, relatedType, relatedId], map: "email_log_related_idx")
   @@map("email_log")
 }
 
@@ -2194,7 +2198,7 @@ model ContainerType {
   sortOrder Int       @default(0) @map("sort_order")
   isActive  Boolean   @default(true) @map("is_active")
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedAt DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy BigInt?   @map("created_by")
   updatedBy BigInt?   @map("updated_by")
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
@@ -2626,13 +2630,14 @@ model RateLocalCharge {
   /// legitimate lines on one rate, not a duplicate. NULL means "any size", and
   /// Postgres treats NULLs as distinct — so a partial index in the migration
   /// keeps a second "any size" line for the same head and side out.
-  @@unique([tenantId, rateId, costHeadId, side, containerSizeId])
+  @@unique([tenantId, rateId, costHeadId, side, containerSizeId], map: "rate_local_charge_tenant_id_rate_id_cost_head_id_side_containe_")
   /// Composite target so quotation_line can reference a charge without
   /// leaving the tenant (§4 rule 10).
   @@unique([tenantId, id])
   @@index([tenantId])
   @@index([rateId])
   @@index([costHeadId])
+  @@index([containerSizeId])
   @@map("rate_local_charge")
 }
 
@@ -2702,14 +2707,14 @@ model InquiryCommodity {
   hsCode          String?   @map("hs_code") @db.VarChar(50)
   isActive        Boolean   @default(true) @map("is_active")
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy       BigInt?   @map("created_by")
   updatedBy       BigInt?   @map("updated_by")
   deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  inquiry       Inquiry       @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict)
-  commodityItem CommodityItem @relation(fields: [tenantId, commodityItemId], references: [tenantId, id], onDelete: Restrict)
+  inquiry       Inquiry       @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict, map: "inquiry_commodity_inquiry_id_fkey")
+  commodityItem CommodityItem @relation(fields: [tenantId, commodityItemId], references: [tenantId, id], onDelete: Restrict, map: "inquiry_commodity_commodity_item_id_fkey")
   createdByUser User?         @relation("InquiryCommodityCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User?         @relation("InquiryCommodityUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
@@ -2908,7 +2913,7 @@ model Inquiry {
   tos       Tos?          @relation(fields: [tosId], references: [id], onDelete: Restrict)
   mode      Mode?         @relation(fields: [modeId], references: [id], onDelete: Restrict)
   goodsType GoodsType?    @relation(fields: [goodsTypeId], references: [id], onDelete: Restrict)
-  wonAgent  Agent?        @relation("InquiryWonAgent", fields: [tenantId, wonAgentId], references: [tenantId, id], onDelete: Restrict)
+  wonAgent  Agent?        @relation("InquiryWonAgent", fields: [tenantId, wonAgentId], references: [tenantId, id], onDelete: Restrict, map: "inquiry_won_agent_id_fkey")
   currency  Currency?     @relation(fields: [currencyId], references: [id], onDelete: Restrict)
 
   // Tenant-owned targets take the composite tenant-safe FK (§4 rule 10).
@@ -2941,6 +2946,10 @@ model Inquiry {
   @@index([customerId])
   @@index([polId])
   @@index([podId])
+  @@index([goodsTypeId])
+  @@index([tosId])
+  @@index([modeId])
+  @@index([wonAgentId])
   @@map("inquiry")
 }
 
@@ -3011,18 +3020,21 @@ model InquiryParty {
   createdBy BigInt?  @map("created_by")
 
   tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  inquiry  Inquiry   @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict)
-  agent    Agent?    @relation(fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
+  inquiry  Inquiry   @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict, map: "inquiry_party_inquiry_fkey")
+  agent    Agent?    @relation(fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict, map: "inquiry_party_agent_fkey")
   /// carrier is system-capable, so its tenant_id may be NULL and a composite
   /// key is impossible. The §4 rule 10 trigger guards it instead.
-  carrier  Carrier?  @relation(fields: [carrierId], references: [id], onDelete: Restrict)
-  emailLog EmailLog? @relation(fields: [tenantId, emailLogId], references: [tenantId, id], onDelete: Restrict)
+  carrier  Carrier?  @relation(fields: [carrierId], references: [id], onDelete: Restrict, map: "inquiry_party_carrier_fkey")
+  emailLog EmailLog? @relation(fields: [tenantId, emailLogId], references: [tenantId, id], onDelete: Restrict, map: "inquiry_party_email_log_id_fkey")
 
   createdByUser User? @relation("InquiryPartyCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
 
-  @@unique([tenantId, inquiryId, agentId, carrierId])
+  @@unique([tenantId, inquiryId, agentId, carrierId], map: "inquiry_party_key")
   @@index([tenantId])
   @@index([inquiryId])
+  @@index([carrierId])
+  @@index([emailLogId])
+  @@index([tenantId, status], map: "inquiry_party_status_idx")
   @@map("inquiry_party")
 }
 
@@ -3040,13 +3052,13 @@ model InquiryPartyContact {
   createdBy BigInt?  @map("created_by")
 
   tenant     Tenant      @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  inquiry    Inquiry     @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict)
-  agentPic   AgentPic?   @relation(fields: [tenantId, agentPicId], references: [tenantId, id], onDelete: Restrict)
-  carrierPic CarrierPic? @relation(fields: [tenantId, carrierPicId], references: [tenantId, id], onDelete: Restrict)
+  inquiry    Inquiry     @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict, map: "inquiry_party_contact_inquiry_fkey")
+  agentPic   AgentPic?   @relation(fields: [tenantId, agentPicId], references: [tenantId, id], onDelete: Restrict, map: "inquiry_party_contact_agent_pic_fkey")
+  carrierPic CarrierPic? @relation(fields: [tenantId, carrierPicId], references: [tenantId, id], onDelete: Restrict, map: "inquiry_party_contact_carrier_pic_fkey")
 
   createdByUser User? @relation("InquiryPartyContactCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
 
-  @@unique([tenantId, inquiryId, agentPicId, carrierPicId])
+  @@unique([tenantId, inquiryId, agentPicId, carrierPicId], map: "inquiry_party_contact_key")
   @@index([tenantId])
   @@index([inquiryId])
   @@map("inquiry_party_contact")
@@ -3090,6 +3102,7 @@ model InquiryVolume {
 
   @@index([tenantId])
   @@index([inquiryId])
+  @@index([containerTypeId])
   @@map("inquiry_volume")
 }
 
@@ -3226,8 +3239,8 @@ model AgentQuote {
   deletedAt   DateTime?        @map("deleted_at") @db.Timestamptz(6)
 
   tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  inquiry  Inquiry  @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict)
-  agent    Agent    @relation(fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
+  inquiry  Inquiry  @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict, map: "agent_quote_inquiry_id_fkey")
+  agent    Agent    @relation(fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict, map: "agent_quote_agent_id_fkey")
   /// Plain FK, not composite: currency is system-capable (§7A rule 7) and a
   /// shared row has tenant_id null. The same-tenant guard is the trigger
   /// agent_quote_currency_tenant_guard instead.
@@ -3275,13 +3288,13 @@ model AgentQuoteOption {
   remarks     String?   @db.Text
   isActive    Boolean   @default(true) @map("is_active")
   createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedAt   DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy   BigInt?   @map("created_by")
   updatedBy   BigInt?   @map("updated_by")
   deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   tenant  Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  quote   AgentQuote @relation(fields: [tenantId, quoteId], references: [tenantId, id], onDelete: Restrict)
+  quote   AgentQuote @relation(fields: [tenantId, quoteId], references: [tenantId, id], onDelete: Restrict, map: "agent_quote_option_quote_id_fkey")
   /// Plain FK, not composite: carrier is system-capable (§7A rule 7) and a
   /// shared row has tenant_id null. The same-tenant rule is the trigger
   /// agent_quote_option_carrier_id_tenant_guard instead.
@@ -3321,15 +3334,15 @@ model AgentQuoteLine {
   remarks         String?   @db.Text
   isActive        Boolean   @default(true) @map("is_active")
   createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy       BigInt?   @map("created_by")
   updatedBy       BigInt?   @map("updated_by")
   deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   tenant        Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  option        AgentQuoteOption @relation(fields: [tenantId, optionId], references: [tenantId, id], onDelete: Restrict)
+  option        AgentQuoteOption @relation(fields: [tenantId, optionId], references: [tenantId, id], onDelete: Restrict, map: "agent_quote_line_option_id_fkey")
   /// cost_head is tenant-owned, so this one IS composite.
-  costHead      CostHead         @relation(fields: [tenantId, costHeadId], references: [tenantId, id], onDelete: Restrict)
+  costHead      CostHead         @relation(fields: [tenantId, costHeadId], references: [tenantId, id], onDelete: Restrict, map: "agent_quote_line_cost_head_id_fkey")
   /// The system-capable three, guarded by trigger rather than by key.
   carrier       Carrier?         @relation("AgentQuoteLineCarrier", fields: [carrierId], references: [id], onDelete: Restrict)
   containerSize ContainerSize?   @relation("AgentQuoteLineContainerSize", fields: [containerSizeId], references: [id], onDelete: Restrict)
@@ -3368,12 +3381,12 @@ model AgentQuoteComment {
   createdAt DateTime          @default(now()) @map("created_at") @db.Timestamptz(6)
 
   tenant Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  quote  AgentQuote @relation(fields: [tenantId, quoteId], references: [tenantId, id], onDelete: Restrict)
-  author User       @relation("AgentQuoteCommentAuthor", fields: [tenantId, authorId], references: [tenantId, id], onDelete: Restrict)
+  quote  AgentQuote @relation(fields: [tenantId, quoteId], references: [tenantId, id], onDelete: Restrict, map: "agent_quote_comment_quote_id_fkey")
+  author User       @relation("AgentQuoteCommentAuthor", fields: [tenantId, authorId], references: [tenantId, id], onDelete: Restrict, map: "agent_quote_comment_author_id_fkey")
 
   @@unique([tenantId, id])
   @@index([tenantId])
-  @@index([quoteId, createdAt])
+  @@index([quoteId, createdAt], map: "agent_quote_comment_quote_id_idx")
   @@index([authorId])
   @@map("agent_quote_comment")
 }
@@ -3485,8 +3498,8 @@ model Quotation {
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  inquiry  Inquiry  @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict)
-  customer Customer @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict)
+  inquiry  Inquiry  @relation(fields: [tenantId, inquiryId], references: [tenantId, id], onDelete: Restrict, map: "quotation_inquiry_id_fkey")
+  customer Customer @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict, map: "quotation_customer_id_fkey")
 
   /// Port, carrier, vessel, goods type, TOS, mode and currency are all
   /// system-capable (§7A rule 7), so a shared row carries tenant_id NULL and a
@@ -3501,7 +3514,7 @@ model Quotation {
   firstVessel   Vessel?    @relation(fields: [firstVesselId], references: [id], onDelete: Restrict)
   localCurrency Currency   @relation("QuotationLocalCurrency", fields: [localCurrencyId], references: [id], onDelete: Restrict)
 
-  sourceAgentQuote AgentQuote? @relation(fields: [tenantId, sourceAgentQuoteId], references: [tenantId, id], onDelete: Restrict)
+  sourceAgentQuote AgentQuote? @relation(fields: [tenantId, sourceAgentQuoteId], references: [tenantId, id], onDelete: Restrict, map: "quotation_source_agent_quote_id_fkey")
 
   sentByUser    User? @relation("QuotationSentBy", fields: [sentBy], references: [id], onDelete: Restrict)
   createdByUser User? @relation("QuotationCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
@@ -3595,16 +3608,16 @@ model QuotationLine {
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  quotation Quotation @relation(fields: [tenantId, quotationId], references: [tenantId, id], onDelete: Restrict)
+  quotation Quotation @relation(fields: [tenantId, quotationId], references: [tenantId, id], onDelete: Restrict, map: "quotation_line_quotation_id_fkey")
   /// cost_head is tenant-owned, so this one is composite.
-  costHead  CostHead  @relation(fields: [tenantId, costHeadId], references: [tenantId, id], onDelete: Restrict)
+  costHead  CostHead  @relation(fields: [tenantId, costHeadId], references: [tenantId, id], onDelete: Restrict, map: "quotation_line_cost_head_id_fkey")
 
   containerSize ContainerSize? @relation("QuotationLineContainerSize", fields: [containerSizeId], references: [id], onDelete: Restrict)
   costUnit      CostUnit?      @relation("QuotationLineCostUnit", fields: [costUnitId], references: [id], onDelete: Restrict)
   currency      Currency       @relation("QuotationLineCurrency", fields: [currencyId], references: [id], onDelete: Restrict)
 
-  priceSourceRateLine    FreightRateLine? @relation(fields: [tenantId, priceSourceRateLineId], references: [tenantId, id], onDelete: Restrict)
-  priceSourceLocalCharge RateLocalCharge? @relation(fields: [tenantId, priceSourceLocalChargeId], references: [tenantId, id], onDelete: Restrict)
+  priceSourceRateLine    FreightRateLine? @relation(fields: [tenantId, priceSourceRateLineId], references: [tenantId, id], onDelete: Restrict, map: "quotation_line_price_source_rate_line_id_fkey")
+  priceSourceLocalCharge RateLocalCharge? @relation(fields: [tenantId, priceSourceLocalChargeId], references: [tenantId, id], onDelete: Restrict, map: "quotation_line_price_source_local_charge_id_fkey")
 
   createdByUser User? @relation("QuotationLineCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User? @relation("QuotationLineUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
@@ -3633,10 +3646,10 @@ model QuotationCommodity {
   isActive        Boolean @default(true) @map("is_active")
 
   tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  quotation     Quotation     @relation(fields: [tenantId, quotationId], references: [tenantId, id], onDelete: Restrict)
-  commodityItem CommodityItem @relation(fields: [tenantId, commodityItemId], references: [tenantId, id], onDelete: Restrict)
+  quotation     Quotation     @relation(fields: [tenantId, quotationId], references: [tenantId, id], onDelete: Restrict, map: "quotation_commodity_quotation_id_fkey")
+  commodityItem CommodityItem @relation(fields: [tenantId, commodityItemId], references: [tenantId, id], onDelete: Restrict, map: "quotation_commodity_commodity_item_id_fkey")
 
-  @@unique([tenantId, quotationId, commodityItemId])
+  @@unique([tenantId, quotationId, commodityItemId], map: "quotation_commodity_unique_key")
   @@unique([tenantId, id])
   @@index([tenantId])
   @@index([quotationId])
@@ -3661,11 +3674,11 @@ model QuotationRecipient {
   createdBy   BigInt?         @map("created_by")
 
   tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  quotation Quotation @relation(fields: [tenantId, quotationId], references: [tenantId, id], onDelete: Restrict)
+  quotation Quotation @relation(fields: [tenantId, quotationId], references: [tenantId, id], onDelete: Restrict, map: "quotation_recipient_quotation_id_fkey")
 
   createdByUser User? @relation("QuotationRecipientCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
 
-  @@unique([tenantId, quotationId, email, kind])
+  @@unique([tenantId, quotationId, email, kind], map: "quotation_recipient_unique_key")
   @@unique([tenantId, id])
   @@index([tenantId])
   @@index([quotationId])
@@ -3692,7 +3705,7 @@ model QuotationFollowup {
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  quotation Quotation @relation(fields: [tenantId, quotationId], references: [tenantId, id], onDelete: Restrict)
+  quotation Quotation @relation(fields: [tenantId, quotationId], references: [tenantId, id], onDelete: Restrict, map: "quotation_followup_quotation_id_fkey")
 
   createdByUser User? @relation("QuotationFollowupCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User? @relation("QuotationFollowupUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
@@ -3926,8 +3939,8 @@ model Shipment {
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  quotation Quotation @relation(fields: [tenantId, quotationId], references: [tenantId, id], onDelete: Restrict)
-  customer  Customer  @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict)
+  quotation Quotation @relation(fields: [tenantId, quotationId], references: [tenantId, id], onDelete: Restrict, map: "shipment_quotation_id_fkey")
+  customer  Customer  @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict, map: "shipment_customer_id_fkey")
 
   /// Port, carrier, goods type, TOS and mode are system-capable (§7A rule 7),
   /// so a shared row carries tenant_id NULL and a composite tenant FK cannot
@@ -3981,10 +3994,10 @@ model ShipmentCommodity {
   isActive        Boolean @default(true) @map("is_active")
 
   tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  shipment      Shipment      @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict)
-  commodityItem CommodityItem @relation(fields: [tenantId, commodityItemId], references: [tenantId, id], onDelete: Restrict)
+  shipment      Shipment      @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict, map: "shipment_commodity_shipment_id_fkey")
+  commodityItem CommodityItem @relation(fields: [tenantId, commodityItemId], references: [tenantId, id], onDelete: Restrict, map: "shipment_commodity_commodity_item_id_fkey")
 
-  @@unique([tenantId, shipmentId, commodityItemId])
+  @@unique([tenantId, shipmentId, commodityItemId], map: "shipment_commodity_unique_key")
   @@unique([tenantId, id])
   @@index([tenantId])
   @@index([shipmentId])
@@ -4021,7 +4034,7 @@ model ShipmentPo {
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  shipment Shipment @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict)
+  shipment Shipment @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict, map: "shipment_po_shipment_id_fkey")
 
   approvedByUser User? @relation("ShipmentPoApprovedBy", fields: [approvedBy], references: [id], onDelete: Restrict)
   createdByUser  User? @relation("ShipmentPoCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
@@ -4133,8 +4146,8 @@ model ShipmentCargoLine {
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   tenant     Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  shipment   Shipment   @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict)
-  shipmentPo ShipmentPo @relation(fields: [tenantId, shipmentPoId], references: [tenantId, id], onDelete: Restrict)
+  shipment   Shipment   @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict, map: "shipment_cargo_line_shipment_id_fkey")
+  shipmentPo ShipmentPo @relation(fields: [tenantId, shipmentPoId], references: [tenantId, id], onDelete: Restrict, map: "shipment_cargo_line_shipment_po_id_fkey")
 
   createdByUser     User?              @relation("ShipmentCargoLineCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser     User?              @relation("ShipmentCargoLineUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
@@ -4204,7 +4217,7 @@ model ShipmentSchedule {
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  shipment Shipment @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict)
+  shipment Shipment @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict, map: "shipment_schedule_shipment_id_fkey")
   /// Carrier is system-capable (§7A rule 7): single column plus the guard.
   carrier  Carrier  @relation("ShipmentScheduleCarrier", fields: [carrierId], references: [id], onDelete: Restrict)
 
@@ -4255,7 +4268,7 @@ model ShipmentScheduleLeg {
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   tenant   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  schedule ShipmentSchedule @relation(fields: [tenantId, scheduleId], references: [tenantId, id], onDelete: Restrict)
+  schedule ShipmentSchedule @relation(fields: [tenantId, scheduleId], references: [tenantId, id], onDelete: Restrict, map: "shipment_schedule_leg_schedule_id_fkey")
 
   vessel          Vessel? @relation("ShipmentScheduleLegVessel", fields: [vesselId], references: [id], onDelete: Restrict)
   originPort      Port    @relation("ShipmentScheduleLegOrigin", fields: [originPortId], references: [id], onDelete: Restrict)
@@ -4328,8 +4341,8 @@ model ShippingOrder {
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   tenant      Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  shipment    Shipment          @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict)
-  schedule    ShipmentSchedule? @relation(fields: [tenantId, scheduleId], references: [tenantId, id], onDelete: Restrict)
+  shipment    Shipment          @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict, map: "shipping_order_shipment_id_fkey")
+  schedule    ShipmentSchedule? @relation(fields: [tenantId, scheduleId], references: [tenantId, id], onDelete: Restrict, map: "shipping_order_schedule_id_fkey")
   clps Clp[]
   /// Vessel is system-capable (§7A rule 7): single column plus the guard.
   firstVessel Vessel?           @relation("ShippingOrderFirstVessel", fields: [firstVesselId], references: [id], onDelete: Restrict)
@@ -4404,8 +4417,8 @@ model CargoReceipt {
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  shipment      Shipment       @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict)
-  shippingOrder ShippingOrder? @relation(fields: [tenantId, shippingOrderId], references: [tenantId, id], onDelete: Restrict)
+  shipment      Shipment       @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict, map: "cargo_receipt_shipment_id_fkey")
+  shippingOrder ShippingOrder? @relation(fields: [tenantId, shippingOrderId], references: [tenantId, id], onDelete: Restrict, map: "cargo_receipt_shipping_order_id_fkey")
 
   receivedByUser  User? @relation("CargoReceiptReceivedBy", fields: [receivedBy], references: [id], onDelete: Restrict)
   correctedByUser User? @relation("CargoReceiptCorrectedBy", fields: [correctedBy], references: [id], onDelete: Restrict)
@@ -4463,16 +4476,16 @@ model CargoReceiptLine {
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   tenant    Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  receipt   CargoReceipt      @relation(fields: [tenantId, cargoReceiptId], references: [tenantId, id], onDelete: Restrict)
-  cargoLine ShipmentCargoLine @relation(fields: [tenantId, shipmentCargoLineId], references: [tenantId, id], onDelete: Restrict)
+  receipt   CargoReceipt      @relation(fields: [tenantId, cargoReceiptId], references: [tenantId, id], onDelete: Restrict, map: "cargo_receipt_line_cargo_receipt_id_fkey")
+  cargoLine ShipmentCargoLine @relation(fields: [tenantId, shipmentCargoLineId], references: [tenantId, id], onDelete: Restrict, map: "cargo_receipt_line_shipment_cargo_line_id_fkey")
 
   createdByUser User? @relation("CargoReceiptLineCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User? @relation("CargoReceiptLineUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   @@unique([tenantId, id])
   @@index([tenantId])
-  @@index([cargoReceiptId])
-  @@index([shipmentCargoLineId])
+  @@index([cargoReceiptId], map: "cargo_receipt_line_receipt_id_idx")
+  @@index([shipmentCargoLineId], map: "cargo_receipt_line_cargo_line_id_idx")
   @@map("cargo_receipt_line")
 }
 
@@ -4613,7 +4626,7 @@ model Clp {
   /// authoritative, and no screen offers a toggle for this.
   isActive  Boolean   @default(true) @map("is_active")
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedAt DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy BigInt?   @map("created_by")
   updatedBy BigInt?   @map("updated_by")
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
@@ -4672,7 +4685,7 @@ model ClpBooking {
 
   isActive  Boolean   @default(true) @map("is_active")
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedAt DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy BigInt?   @map("created_by")
   updatedBy BigInt?   @map("updated_by")
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
@@ -4734,14 +4747,14 @@ model ClpLine {
 
   isActive  Boolean   @default(true) @map("is_active")
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  updatedAt DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy BigInt?   @map("created_by")
   updatedBy BigInt?   @map("updated_by")
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   clp               Clp               @relation(fields: [tenantId, clpId], references: [tenantId, id], onDelete: Restrict)
-  shipmentCargoLine ShipmentCargoLine @relation(fields: [tenantId, shipmentCargoLineId], references: [tenantId, id], onDelete: Restrict)
+  shipmentCargoLine ShipmentCargoLine @relation(fields: [tenantId, shipmentCargoLineId], references: [tenantId, id], onDelete: Restrict, map: "clp_line_tenant_id_cargo_line_fkey")
   shipmentPo        ShipmentPo        @relation(fields: [tenantId, shipmentPoId], references: [tenantId, id], onDelete: Restrict)
 
   createdByUser User? @relation("ClpLineCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
@@ -4751,7 +4764,7 @@ model ClpLine {
   /// Among live rows only — the migration scopes it WHERE deleted_at IS NULL.
   /// A released allocation must not go on holding the slot, or a line taken
   /// out of a container could never be put back into it.
-  @@unique([tenantId, clpId, shipmentCargoLineId])
+  @@unique([tenantId, clpId, shipmentCargoLineId], map: "clp_line_tenant_id_clp_id_cargo_line_key")
   @@index([tenantId])
   @@index([clpId])
   @@index([shipmentCargoLineId])

@@ -20,9 +20,17 @@ pnpm db:migrate           # create the schema and RLS policies
 pnpm db:app-role          # grant the ff_app role a local login (once)
 pnpm db:generate          # generate the Prisma client
 pnpm db:seed              # permissions, system lookups, demo workspace
+pnpm db:demo              # demo customers, bookings and a CLP sheet
 pnpm dev                  # web on :3000, API on :4000
 pnpm test                 # tenancy + RBAC suites
 ```
+
+`pnpm test` needs `pnpm db:demo` first: the CLP, Shipment Advise and RLS suites read existing
+bookings and fail with "No record was found" on an empty workspace.
+
+`pnpm db:migrate` should finish with "Already in sync". If it generates a new migration that you
+did not ask for, the schema has drifted from the committed migrations. Delete that migration and
+fix `schema.prisma` instead (see "Prisma must own every database object" below).
 
 Sign in against the demo workspace with `superadmin` / `ChangeMe!2026`. Locally the workspace is
 addressed with an `X-Tenant-Slug: demo` header, since `demo.localhost` needs wildcard DNS; in

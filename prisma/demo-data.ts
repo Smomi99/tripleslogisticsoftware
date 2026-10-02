@@ -248,6 +248,18 @@ async function clear(tenantId: bigint, prefix: string = P): Promise<void> {
   });
   await prisma.industrySector.deleteMany({ where: { ...t, ...demoCode } });
   await prisma.costHead.deleteMany({ where: { ...t, ...demoCode } });
+  // The sheet's vessel, when it had to bring one — unless somebody has since
+  // put it on work of their own, which a demo clear must not break.
+  await prisma.vessel.deleteMany({
+    where: {
+      ...t,
+      ...demoCode,
+      quotations: { none: {} },
+      scheduleLegs: { none: {} },
+      shippingOrders: { none: {} },
+      advises: { none: {} },
+    },
+  });
 
   await prisma.user.deleteMany({ where: { ...t, employeeId: { in: employeeIds } } });
   await prisma.employee.deleteMany({ where: { ...t, id: { in: employeeIds } } });
@@ -1103,15 +1115,19 @@ async function seedLoadingTypeSheet(tenantId: bigint): Promise<void> {
     where: { code: '40HC', ...shared },
     select: { id: true, name: true },
   });
-  // Vessels are the workspace's own — there is no shared vessel master.
-  const vessel = await prisma.vessel.findFirst({
-    where: { ...t, deletedAt: null },
-    orderBy: { id: 'asc' },
-    select: { id: true, name: true },
-  });
-  if (vessel === null) {
-    throw new Error('The loading-type sheet needs a vessel. Add one under Setting → Vessel first.');
-  }
+  // Vessels are the workspace's own — there is no shared vessel master. A fresh
+  // workspace has none, so the sheet brings its own, coded like every other row
+  // here so that clearing takes it out again.
+  const vessel =
+    (await prisma.vessel.findFirst({
+      where: { ...t, deletedAt: null },
+      orderBy: { id: 'asc' },
+      select: { id: true, name: true },
+    })) ??
+    (await prisma.vessel.create({
+      data: { ...t, code: `${SHEET}VSL-1`, name: 'Demo Mariner', carrierId: carrier.id },
+      select: { id: true, name: true },
+    }));
 
   const sailing = { voyageNo: 'V2609E', cutOff: day(daysAgo(-7)), etd: day(daysAgo(-9)), eta: day(daysAgo(-40)) };
   const cfs = 'Pangaon Inland Container Terminal';
