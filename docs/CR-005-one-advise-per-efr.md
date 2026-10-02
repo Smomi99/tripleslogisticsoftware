@@ -247,20 +247,32 @@ In order:
 
 ## 12. Trying it, and how it was checked
 
-**To see it on the demo workspace:** the loading-type sheet's LCL bookings DEMO-SHEET-BKG-3, -4
-and -5 are on one quotation (DEMO-SHEET-QTN-3) and one sailing. Their receipts are EFR-003,
--004 and -005.
+**To see it: `pnpm db:demo:efr`.** It builds a ready-made scenario for customer Rahman Garments
+Ltd (it is also part of `pnpm db:demo`). Run it again to start over after trying things, and
+`pnpm db:demo:efr:clear` removes it. Every booking is received, with an approved schedule and an
+issued S/O, and has a finalised load plan unless it says otherwise.
 
-1. On DEMO-SHEET-BKG-4's Cargo Receipt tab, change the EFR No to `EFR-003`.
-2. Plan their container on Container Load Plan, and finalise it.
-3. Open DEMO-SHEET-BKG-3 → Shipment Advise. The panel lists DEMO-SHEET-BKG-4 as *Same EFR —
-   check*, because the exporters differ. Tick it, and the PO grid gains a Booking column with
-   both bookings' POs.
-4. Save. One advise and one House BL cover both, and DEMO-SHEET-BKG-4's tab opens the same
-   advise.
+Quotation DEMO-EFR-QTN-1, nothing advised yet. Open **DEMO-EFR-BKG-1 → Shipment Advise**:
 
-`pnpm db:demo` and `pnpm db:demo:sheet` clear advises and BLs made on demo bookings. They stop,
-naming the advise, if it also covers a booking that is not demo data.
+| Booking | Receipt EFR | What the panel shows |
+|---|---|---|
+| DEMO-EFR-BKG-1 | EFR-501 | the booking you opened |
+| DEMO-EFR-BKG-2 | ` efr-501 ` | *Same EFR*, already on the advise (case and spaces ignored) |
+| DEMO-EFR-BKG-3 | EFR-501 | *Same EFR — check*, unticked: exporter Rahman Knit Ltd |
+| DEMO-EFR-BKG-4 | EFR-501 | *Kept apart*: voyage V2614W, not V2610W |
+| DEMO-EFR-BKG-5 | EFR-501 | *Same EFR*, waiting: no load plan. Plan it, then *Add to this advise* or Build |
+| DEMO-EFR-BKG-6 | EFR-501 + EFR-502 | *Kept apart*: two EFRs |
+| DEMO-EFR-BKG-7 | EFR-503 | not listed; it gets an advise of its own |
+
+Quotation DEMO-EFR-QTN-2, already advised and sent:
+
+| Booking | Receipt EFR | What to try |
+|---|---|---|
+| DEMO-EFR-BKG-8, -9 | EFR-601 | DEMO-EFR-SA-1, sent, one House BL. Open either one's **BL** tab and make one BL for both |
+| DEMO-EFR-BKG-10 | EFR-601 | planned after the send: its advise tab says to cancel and reissue SA-1 |
+
+`pnpm db:demo`, `pnpm db:demo:sheet` and `pnpm db:demo:efr` clear advises and BLs made on demo
+bookings. They stop, naming the advise, if it also covers a booking that is not demo data.
 
 **Checked in a browser, 2026-10-02.** Headless Chrome against the running dev servers, with the
 scenario above, plus DEMO-SHEET-BKG-5 given BKG-3's parties so it fully matches:

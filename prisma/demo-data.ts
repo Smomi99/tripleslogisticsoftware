@@ -4,7 +4,7 @@ import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { hash } from '@node-rs/argon2';
 
-import { PrismaClient } from '../apps/api/src/generated/prisma/client';
+import { Prisma, PrismaClient } from '../apps/api/src/generated/prisma/client';
 
 /**
  * Demo data — a workspace with enough in it to try the product on.
@@ -996,6 +996,7 @@ async function seed(tenantId: bigint): Promise<void> {
   }
 
   await seedLoadingTypeSheet(tenantId);
+  await seedEfrGroups(tenantId);
 }
 
 // ------------------------------------------- the loading-type sheet (CLP)
@@ -1577,12 +1578,620 @@ function printSheet(): void {
   console.log(`    Consol box  ${SHEET}BKG-8  Bengal Leather Works        PO-4551            EFR-009`);
 }
 
+// ------------------------------------- CR-005: one advise and one BL per EFR
+
+/** The CR-005 scenario's rows carry this, so it can be rebuilt on its own. */
+const EFRG = `${P}EFR-`;
+
+/** ISO 6346 — the Container Load Plan screen checks a container number's last digit. */
+function containerNo(owner: string, serial: number): string {
+  const body = `${owner}U${String(serial).padStart(6, '0')}`;
+  const value: Record<string, number> = {};
+  let n = 10;
+  for (const c of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') {
+    if (n % 11 === 0) n += 1;
+    value[c] = n;
+    n += 1;
+  }
+  let sum = 0;
+  for (let i = 0; i < 10; i += 1) {
+    const ch = body[i]!;
+    sum += (/\d/.test(ch) ? Number(ch) : value[ch]!) * 2 ** i;
+  }
+  return `${body}${(sum % 11) % 10}`;
+}
+
+/**
+ * docs/CR-005-one-advise-per-efr.md, ready to click through.
+ *
+ * Quotation DEMO-EFR-QTN-1 — nothing advised yet. Open DEMO-EFR-BKG-1's
+ * Shipment Advise tab and every kind of booking is there:
+ *
+ *   BKG-1  the lead                                   EFR-501
+ *   BKG-2  same parties and sailing — goes on it      efr-501 (case and spaces don't matter)
+ *   BKG-3  another exporter — offered, unticked       EFR-501
+ *   BKG-4  a later voyage — kept apart                EFR-501
+ *   BKG-5  received, no load plan yet — waiting       EFR-501
+ *   BKG-6  received under two EFRs — kept apart       EFR-501 + EFR-502
+ *   BKG-7  another EFR — not in the group at all      EFR-503
+ *
+ * Quotation DEMO-EFR-QTN-2 — already advised and sent, for the BL side:
+ *
+ *   BKG-8 + BKG-9  one sent advise, one House BL      EFR-601
+ *   BKG-10         same EFR, planned after the send   EFR-601
+ *
+ * Everything else a real advise needs is real: approved schedules, issued
+ * shipping orders, confirmed receipts and finalised load plans. Only the sent
+ * advise is written directly rather than through the screen.
+ */
+async function seedEfrGroups(tenantId: bigint): Promise<void> {
+  const t = { tenantId };
+  const shared = { OR: [{ tenantId }, { tenantId: null }], deletedAt: null };
+  const demo = async <T>(what: string, find: Promise<T | null>): Promise<T> => {
+    const found = await find;
+    if (found === null) {
+      throw new Error(`The EFR demo needs the demo ${what}. Run \`pnpm db:demo\` once first.`);
+    }
+    return found;
+  };
+
+  const [salesman, csUser, garments, item, freight] = await Promise.all([
+    demo('salesman DEMO-EMP-1', prisma.employee.findFirst({ where: { ...t, code: `${P}EMP-1` }, select: { id: true } })),
+    demo('CS officer login DEMO-USR-3', prisma.user.findFirst({ where: { ...t, code: `${P}USR-3` }, select: { id: true } })),
+    demo('sector DEMO-IS1', prisma.industrySector.findFirst({ where: { ...t, code: `${P}IS1` }, select: { id: true } })),
+    demo(
+      'commodity DEMO-CI1',
+      prisma.commodityItem.findFirst({
+        where: { ...t, code: `${P}CI1` },
+        select: { id: true, code: true, name: true, hsCode: true },
+      }),
+    ),
+    demo('cost head DEMO-CH1', prisma.costHead.findFirst({ where: { ...t, code: `${P}CH1` }, select: { id: true, name: true } })),
+  ]);
+
+  const port = (portCode: string) =>
+    prisma.port.findFirstOrThrow({ where: { portCode, OR: [{ tenantId }, { tenantId: null }] }, select: { id: true } });
+  const [cgp, ham] = [await port('BDCGP'), await port('DEHAM')];
+  const carrier = await prisma.carrier.findFirstOrThrow({
+    where: { ...shared, type: { name: { not: 'Airline' } } },
+    orderBy: { name: 'asc' },
+    select: { id: true },
+  });
+  const currency = await prisma.currency.findFirstOrThrow({
+    where: { currency: { startsWith: 'BDT' } },
+    select: { id: true, conversion: true },
+  });
+  const goodsType = await prisma.goodsType.findFirstOrThrow({ where: shared, select: { id: true } });
+  const source = await prisma.inquirySource.findFirstOrThrow({ where: shared, select: { id: true } });
+  const hc40 = await prisma.containerSize.findFirstOrThrow({
+    where: { code: '40HC', ...shared },
+    select: { id: true, name: true },
+  });
+  const vessel =
+    (await prisma.vessel.findFirst({
+      where: { ...t, deletedAt: null },
+      orderBy: { id: 'asc' },
+      select: { id: true, name: true },
+    })) ??
+    (await prisma.vessel.create({
+      data: { ...t, code: `${EFRG}VSL-1`, name: 'Demo Mariner', carrierId: carrier.id },
+      select: { id: true, name: true },
+    }));
+
+  const cfs = 'Pangaon Inland Container Terminal';
+  const sailing = { voyageNo: 'V2610W', cutOff: day(daysAgo(-5)), etd: day(daysAgo(-7)), eta: day(daysAgo(-38)) };
+  const laterSailing = { voyageNo: 'V2614W', cutOff: day(daysAgo(-12)), etd: day(daysAgo(-14)), eta: day(daysAgo(-45)) };
+
+  const customer = await prisma.customer.create({
+    data: {
+      ...t,
+      code: `${EFRG}CUS-1`,
+      name: 'Rahman Garments Ltd',
+      country: 'Bangladesh',
+      address: 'Plot 7, Chattogram EPZ',
+      customerType: 'EXPORTER',
+      businessArea: 'OUTBOUND',
+      industrySectorId: garments.id,
+      salesmanId: salesman.id,
+      createdAt: daysAgo(60),
+    },
+    select: { id: true, name: true },
+  });
+  await prisma.customerPic.create({
+    data: {
+      ...t,
+      code: `${EFRG}PIC-1`,
+      customerId: customer.id,
+      name: 'Rahman Shipping Desk',
+      designation: 'Export Manager',
+      email: 'shipping@rahman-garments.test',
+      mobile: '+8801711000501',
+    },
+  });
+
+  const rahman = { exporter: 'Rahman Garments Ltd', exporterAddress: 'Plot 7, Chattogram EPZ' };
+  const rahmanKnit = { exporter: 'Rahman Knit Ltd', exporterAddress: 'Kalurghat I/A, Chattogram' };
+  const consignee = { importer: 'Hamburg Mode GmbH', importerAddress: 'Mönckebergstrasse 5, 20095 Hamburg' };
+
+  /** An LCL inquiry, won, and its accepted quotation. */
+  async function quotationFor(n: number, cbm: number, gwt: number): Promise<bigint> {
+    const asked = daysAgo(20);
+    const inquiry = await prisma.inquiry.create({
+      data: {
+        ...t,
+        code: `${EFRG}INQ-${n}`,
+        seriesYear: asked.getUTCFullYear(),
+        inquiryDate: day(asked),
+        sourceId: source.id,
+        shipmentType: 'SEA',
+        customerId: customer.id,
+        movementType: 'OUTBOUND',
+        loadingType: 'LCL',
+        polId: cgp.id,
+        podId: ham.id,
+        goodsTypeId: goodsType.id,
+        salesmanId: salesman.id,
+        status: 'WON',
+        weightKg: String(gwt),
+        validTo: day(daysAgo(-20)),
+        remarks: 'Demo data (CR-005, one advise per EFR) — safe to delete with pnpm db:demo:efr:clear.',
+        createdAt: asked,
+      },
+      select: { id: true },
+    });
+    await prisma.inquiryVolume.create({
+      data: { ...t, inquiryId: inquiry.id, volumeKind: 'LCL', cbm: String(cbm), weightKg: String(gwt) },
+    });
+    await prisma.inquiryCommodity.create({
+      data: { ...t, inquiryId: inquiry.id, commodityItemId: item.id, hsCode: item.hsCode },
+    });
+
+    const quoted = daysAgo(19);
+    const quotation = await prisma.quotation.create({
+      data: {
+        ...t,
+        code: `${EFRG}QTN-${n}`,
+        seriesYear: quoted.getUTCFullYear(),
+        inquiryId: inquiry.id,
+        quotationDate: day(quoted),
+        validityDate: day(daysAgo(-30)),
+        customerId: customer.id,
+        shipmentType: 'SEA',
+        movementType: 'OUTBOUND',
+        loadingType: 'LCL',
+        polId: cgp.id,
+        podId: ham.id,
+        carrierId: carrier.id,
+        localCurrencyId: currency.id,
+        conversionRate: currency.conversion,
+        status: 'ACCEPTED',
+        sentAt: quoted,
+        createdAt: quoted,
+      },
+      select: { id: true },
+    });
+    await prisma.quotationLine.create({
+      data: {
+        ...t,
+        quotationId: quotation.id,
+        lineGroup: 'STANDARD',
+        sortOrder: 1,
+        costHeadId: freight.id,
+        costHeadName: freight.name,
+        quantity: String(cbm),
+        sellingPrice: '85.0000',
+        currencyId: currency.id,
+        currencyCode: 'BDT',
+        conversionRate: currency.conversion,
+        source: 'MANUAL',
+      },
+    });
+    await prisma.quotationCommodity.create({
+      data: { ...t, quotationId: quotation.id, commodityItemId: item.id, commodityName: item.name, hsCode: item.hsCode },
+    });
+    return quotation.id;
+  }
+
+  interface Po {
+    poNo: string;
+    ctn: number;
+    cbm: number;
+    nwt: number;
+    gwt: number;
+  }
+  interface Booking {
+    id: bigint;
+    code: string;
+    soId: bigint;
+    scheduleId: bigint;
+    voyageNo: string;
+    receivedOn: Date;
+    efrs: string[];
+    lines: {
+      id: bigint;
+      shipmentPoId: bigint;
+      poNo: string;
+      itemCode: string;
+      sku: string | null;
+      ctnQty: number;
+      pcsQty: number | null;
+      netWeightKg: Prisma.Decimal | null;
+      grossWeightKg: Prisma.Decimal | null;
+      cartonLengthCm: Prisma.Decimal | null;
+      cartonWidthCm: Prisma.Decimal | null;
+      cartonHeightCm: Prisma.Decimal | null;
+      volumeCbm: Prisma.Decimal | null;
+    }[];
+  }
+
+  /**
+   * A booking received at CFS on an approved sailing. One confirmed receipt
+   * per EFR given; with two, the second carries the second PO — which is how
+   * a booking comes to have two EFRs.
+   */
+  async function booking(spec: {
+    no: number;
+    quotationId: bigint;
+    parties: { exporter: string; exporterAddress: string };
+    later?: boolean;
+    efrs: string[];
+    pos: Po[];
+  }): Promise<Booking> {
+    const code = `${EFRG}BKG-${spec.no}`;
+    const run = spec.later === true ? laterSailing : sailing;
+    const booked = daysAgo(15);
+    const shipment = await prisma.shipment.create({
+      data: {
+        ...t,
+        code,
+        seriesYear: booked.getUTCFullYear(),
+        quotationId: spec.quotationId,
+        shipmentType: 'SEA',
+        customerId: customer.id,
+        exporterName: spec.parties.exporter,
+        exporterAddress: spec.parties.exporterAddress,
+        importerName: consignee.importer,
+        importerAddress: consignee.importerAddress,
+        carrierId: carrier.id,
+        polId: cgp.id,
+        podId: ham.id,
+        loadingType: 'LCL',
+        transitType: 'DIRECT',
+        warehouseCfs: cfs,
+        etd: run.etd,
+        eta: run.eta,
+        goodsHandoverDate: day(daysAgo(4)),
+        status: 'CARGO_RECEIVED',
+        createdAt: booked,
+      },
+      select: { id: true },
+    });
+    await prisma.shipmentCommodity.create({
+      data: { ...t, shipmentId: shipment.id, commodityItemId: item.id, hsCode: item.hsCode },
+    });
+
+    const lines: Booking['lines'] = [];
+    for (const [k, po] of spec.pos.entries()) {
+      const created = await prisma.shipmentPo.create({
+        data: {
+          ...t,
+          shipmentId: shipment.id,
+          poNo: po.poNo,
+          approvalStatus: 'APPROVED',
+          approvedBy: csUser.id,
+          approvedAt: daysAgo(13),
+          approvedOnBehalf: true,
+        },
+        select: { id: true },
+      });
+      // Sized to give the PO's CBM back exactly — volume_cbm is generated.
+      lines.push(
+        await prisma.shipmentCargoLine.create({
+          data: {
+            ...t,
+            shipmentId: shipment.id,
+            shipmentPoId: created.id,
+            itemCode: `${item.code.replace(P, '')}-${k + 1}`,
+            sku: `${po.poNo}-S1`,
+            ctnQty: po.ctn,
+            pcsQty: po.ctn * 24,
+            netWeightKg: String(po.nwt),
+            grossWeightKg: String(po.gwt),
+            cartonLengthCm: '100',
+            cartonWidthCm: '100',
+            cartonHeightCm: String(Math.round((po.cbm / po.ctn) * 10000) / 100),
+          },
+          select: {
+            id: true,
+            shipmentPoId: true,
+            itemCode: true,
+            sku: true,
+            ctnQty: true,
+            pcsQty: true,
+            netWeightKg: true,
+            grossWeightKg: true,
+            cartonLengthCm: true,
+            cartonWidthCm: true,
+            cartonHeightCm: true,
+            volumeCbm: true,
+          },
+        }).then((l) => ({ ...l, poNo: po.poNo })),
+      );
+    }
+
+    const schedule = await prisma.shipmentSchedule.create({
+      data: {
+        ...t,
+        code: `${EFRG}SCH-${spec.no}`,
+        shipmentId: shipment.id,
+        carrierId: carrier.id,
+        transitType: 'DIRECT',
+        cutOffDate: run.cutOff,
+        vgmDate: day(daysAgo(-4)),
+        siDate: day(daysAgo(-3)),
+        status: 'APPROVED',
+        proposedBy: csUser.id,
+        proposedAt: daysAgo(13),
+        decidedBy: csUser.id,
+        decidedAt: daysAgo(12),
+      },
+      select: { id: true },
+    });
+    await prisma.shipmentScheduleLeg.create({
+      data: {
+        ...t,
+        scheduleId: schedule.id,
+        legNo: 1,
+        vesselId: vessel.id,
+        voyageNo: run.voyageNo,
+        originPortId: cgp.id,
+        destinationPortId: ham.id,
+        etd: run.etd,
+        eta: run.eta,
+      },
+    });
+    const so = await prisma.shippingOrder.create({
+      data: {
+        ...t,
+        code: `${EFRG}SO-${spec.no}`,
+        seriesYear: booked.getUTCFullYear(),
+        shipmentId: shipment.id,
+        scheduleId: schedule.id,
+        issueDate: day(daysAgo(10)),
+        issuedBy: csUser.id,
+        firstVesselId: vessel.id,
+        firstVesselName: vessel.name,
+        cutOff: run.cutOff,
+        etd: run.etd,
+        eta: run.eta,
+        warehouseCfs: cfs,
+        status: 'ISSUED',
+        qrPayload: `SO:${EFRG}SO-${spec.no}\nBKG:${code}`,
+      },
+      select: { id: true },
+    });
+
+    const receivedOn = daysAgo(3);
+    const receipts =
+      spec.efrs.length > 1
+        ? spec.efrs.map((efr, k) => ({ efr, lines: lines.slice(k, k + 1) }))
+        : [{ efr: spec.efrs[0]!, lines }];
+    for (const [k, r] of receipts.entries()) {
+      await receive(tenantId, csUser.id, {
+        code: `${EFRG}CR-${spec.no}-${k + 1}`,
+        shipmentId: shipment.id,
+        shippingOrderId: so.id,
+        seq: k + 1,
+        efrNo: r.efr,
+        when: receivedOn,
+        lines: r.lines,
+      });
+    }
+
+    return {
+      id: shipment.id,
+      code,
+      soId: so.id,
+      scheduleId: schedule.id,
+      voyageNo: run.voyageNo,
+      receivedOn,
+      efrs: spec.efrs,
+      lines,
+    };
+  }
+
+  /** A finalised 40HC load plan holding every carton of the bookings given. */
+  async function plan(no: number, bookings: Booking[]): Promise<{ id: bigint; loaded: Date }> {
+    const lines = bookings.flatMap((b) => b.lines);
+    const sum = (pick: (l: Booking['lines'][number]) => Prisma.Decimal | null) =>
+      lines.reduce((acc, l) => acc.add(pick(l) ?? 0), new Prisma.Decimal(0));
+    const loaded = daysAgo(1);
+    const clp = await prisma.clp.create({
+      data: {
+        ...t,
+        code: `${EFRG}CLP-${no}`,
+        seriesYear: loaded.getUTCFullYear(),
+        shipmentId: bookings.length === 1 ? bookings[0]!.id : null,
+        consolidationType: bookings.length === 1 ? 'SINGLE' : 'LCL_CONSOLIDATION',
+        containerSizeId: hc40.id,
+        carrierId: carrier.id,
+        finalCfsLocation: cfs,
+        containerNo: containerNo('TGH', 501000 + no),
+        sealNo: `SL-${501000 + no}`,
+        loadDatetime: loaded,
+        loadedBy: 'Demo stuffing crew',
+        status: 'FINAL',
+        finalisedBy: csUser.id,
+        finalisedAt: loaded,
+        totalCtnQty: lines.reduce((acc, l) => acc + l.ctnQty, 0),
+        totalPcsQty: lines.reduce((acc, l) => acc + (l.pcsQty ?? 0), 0),
+        totalNetWeightKg: sum((l) => l.netWeightKg),
+        totalGrossWeightKg: sum((l) => l.grossWeightKg),
+        totalVolumeCbm: sum((l) => l.volumeCbm),
+        createdAt: daysAgo(2),
+      },
+      select: { id: true },
+    });
+    await prisma.clpBooking.createMany({
+      data: bookings.map((b) => ({ ...t, clpId: clp.id, shipmentId: b.id, shippingOrderId: b.soId })),
+    });
+    for (const l of lines) {
+      await prisma.clpLine.create({
+        data: {
+          ...t,
+          clpId: clp.id,
+          shipmentCargoLineId: l.id,
+          shipmentPoId: l.shipmentPoId,
+          poNo: l.poNo,
+          itemCode: l.itemCode,
+          sku: l.sku,
+          cartonLengthCm: l.cartonLengthCm,
+          cartonWidthCm: l.cartonWidthCm,
+          cartonHeightCm: l.cartonHeightCm,
+          ctnQty: l.ctnQty,
+          pcsQty: l.pcsQty,
+          netWeightKg: l.netWeightKg,
+          grossWeightKg: l.grossWeightKg,
+          volumeCbm: l.volumeCbm,
+          isFinalAllocation: true,
+        },
+      });
+    }
+    return { id: clp.id, loaded };
+  }
+
+  // ----------------------------------------- QTN-1: nothing advised yet
+  const po = (poNo: string, ctn: number, cbm: number, nwt: number, gwt: number): Po => ({ poNo, ctn, cbm, nwt, gwt });
+  const q1 = await quotationFor(1, 26, 640);
+  const b1 = await booking({ no: 1, quotationId: q1, parties: rahman, efrs: ['EFR-501'], pos: [po('PO-5011', 40, 6, 180, 200), po('PO-5012', 25, 4, 110, 125)] });
+  const b2 = await booking({ no: 2, quotationId: q1, parties: rahman, efrs: [' efr-501 '], pos: [po('PO-5021', 30, 5, 140, 155)] });
+  const b3 = await booking({ no: 3, quotationId: q1, parties: rahmanKnit, efrs: ['EFR-501'], pos: [po('PO-5031', 20, 3, 90, 100)] });
+  const b4 = await booking({ no: 4, quotationId: q1, parties: rahman, later: true, efrs: ['EFR-501'], pos: [po('PO-5041', 15, 2, 60, 70)] });
+  await booking({ no: 5, quotationId: q1, parties: rahman, efrs: ['EFR-501'], pos: [po('PO-5051', 12, 2, 50, 58)] });
+  const b6 = await booking({ no: 6, quotationId: q1, parties: rahman, efrs: ['EFR-501', 'EFR-502'], pos: [po('PO-5061', 10, 2, 40, 46), po('PO-5062', 8, 1, 32, 36)] });
+  const b7 = await booking({ no: 7, quotationId: q1, parties: rahman, efrs: ['EFR-503'], pos: [po('PO-5071', 18, 3, 75, 84)] });
+  // BKG-1, -2 and -3 share an LCL box; the others each have their own. BKG-5
+  // has none yet — plan it, then use Build or "Add to this advise".
+  await plan(1, [b1, b2, b3]);
+  await plan(2, [b4]);
+  await plan(3, [b6]);
+  await plan(4, [b7]);
+
+  // ------------------------------- QTN-2: advised and sent, for the BL side
+  const q2 = await quotationFor(2, 12, 300);
+  const b8 = await booking({ no: 8, quotationId: q2, parties: rahman, efrs: ['EFR-601'], pos: [po('PO-6081', 22, 4, 95, 105)] });
+  const b9 = await booking({ no: 9, quotationId: q2, parties: rahman, efrs: ['EFR-601'], pos: [po('PO-6091', 18, 3, 80, 88)] });
+  const b10 = await booking({ no: 10, quotationId: q2, parties: rahman, efrs: ['EFR-601'], pos: [po('PO-6101', 9, 1, 40, 44)] });
+  const box = await plan(5, [b8, b9]);
+  await plan(6, [b10]);
+
+  /*
+    The sent advise, written as the screen writes one: a draft, the bookings it
+    covers, its PO grid, then sent. The database lets a booking join a draft
+    only, so the order matters.
+  */
+  const members = [b8, b9];
+  const sentOn = daysAgo(0);
+  const advise = await prisma.shipmentAdvise.create({
+    data: {
+      ...t,
+      code: `${EFRG}SA-1`,
+      seriesYear: sentOn.getUTCFullYear(),
+      shipmentId: b8.id,
+      scheduleId: b8.scheduleId,
+      carrierId: carrier.id,
+      transitType: 'DIRECT',
+      firstVesselId: vessel.id,
+      voyageNo: sailing.voyageNo,
+      polId: cgp.id,
+      podId: ham.id,
+      etd: sailing.etd,
+      eta: sailing.eta,
+      houseBlNo: `${EFRG}HBL-1`,
+      status: 'DRAFT',
+      createdBy: csUser.id,
+      createdAt: sentOn,
+    },
+    select: { id: true },
+  });
+  for (const m of members) {
+    await prisma.shipmentAdviseBooking.create({
+      data: { ...t, adviseId: advise.id, shipmentId: m.id, createdBy: csUser.id },
+    });
+  }
+  const gridLines = members.flatMap((m) => m.lines.map((l) => ({ m, l })));
+  for (const { m, l } of gridLines) {
+    await prisma.shipmentAdviseLine.create({
+      data: {
+        ...t,
+        adviseId: advise.id,
+        shipmentId: m.id,
+        shipmentPoId: l.shipmentPoId,
+        shipmentCargoLineId: l.id,
+        clpId: box.id,
+        poNo: l.poNo,
+        itemCode: l.itemCode,
+        sku: l.sku,
+        ctnQty: l.ctnQty,
+        pcsQty: l.pcsQty,
+        netWeightKg: l.netWeightKg,
+        grossWeightKg: l.grossWeightKg,
+        cartonLengthCm: l.cartonLengthCm,
+        cartonWidthCm: l.cartonWidthCm,
+        cartonHeightCm: l.cartonHeightCm,
+        volumeCbm: l.volumeCbm,
+        cargoReceiptDate: day(m.receivedOn),
+        stuffingDate: day(box.loaded),
+        efrNo: m.efrs.join(', '),
+      },
+    });
+  }
+  const total = (pick: (l: Booking['lines'][number]) => Prisma.Decimal | null) =>
+    gridLines.reduce((acc, { l }) => acc.add(pick(l) ?? 0), new Prisma.Decimal(0));
+  await prisma.shipmentAdvise.update({
+    where: { id: advise.id },
+    data: {
+      status: 'SENT',
+      sentAt: sentOn,
+      sentBy: csUser.id,
+      totalPoCount: gridLines.length,
+      totalCtnQty: gridLines.reduce((acc, { l }) => acc + l.ctnQty, 0),
+      totalPcsQty: gridLines.reduce((acc, { l }) => acc + (l.pcsQty ?? 0), 0),
+      totalNetWeightKg: total((l) => l.netWeightKg),
+      totalGrossWeightKg: total((l) => l.grossWeightKg),
+      totalVolumeCbm: total((l) => l.volumeCbm),
+    },
+  });
+  await prisma.shipment.updateMany({
+    where: { ...t, id: { in: members.map((m) => m.id) } },
+    data: { status: 'ADVISED' },
+  });
+}
+
+/** What the CR-005 scenario made, and where to look. */
+function printEfrGroups(): void {
+  console.log('\n  One advise and one BL per EFR (CR-005) — open the bookings below:');
+  console.log(`    ${EFRG}QTN-1, nothing advised yet — start at ${EFRG}BKG-1 → Shipment Advise`);
+  console.log(`      BKG-1   the lead                                EFR-501`);
+  console.log(`      BKG-2   same parties and sailing — goes on it   " efr-501 " (case and spaces ignored)`);
+  console.log(`      BKG-3   another exporter — offered, unticked    EFR-501`);
+  console.log(`      BKG-4   a later voyage — kept apart             EFR-501`);
+  console.log(`      BKG-5   no load plan yet — waiting              EFR-501`);
+  console.log(`      BKG-6   received under two EFRs — kept apart    EFR-501 + EFR-502`);
+  console.log(`      BKG-7   another EFR — not in the group          EFR-503`);
+  console.log(`    ${EFRG}QTN-2, advised and sent — try the BL from ${EFRG}BKG-8 or -9`);
+  console.log(`      BKG-8 + BKG-9   ${EFRG}SA-1, sent, one House BL  EFR-601`);
+  console.log(`      BKG-10          same EFR, planned after the send — cancel and reissue to add it`);
+}
+
 // --------------------------------------------------------------------- main
 
 async function main(): Promise<void> {
   const clearOnly = process.argv.includes('--clear');
   // Only the loading-type sheet's rows (DEMO-SHEET-), leaving the rest alone.
   const sheetOnly = process.argv.includes('--sheet');
+  // Only the CR-005 scenario (DEMO-EFR-) — rebuild it after trying it out.
+  const efrOnly = process.argv.includes('--efr');
 
   const tenant = await prisma.tenant.findFirst({
     where: { slug: SLUG },
@@ -1595,13 +2204,22 @@ async function main(): Promise<void> {
     );
   }
 
-  const prefix = sheetOnly ? SHEET : P;
+  const prefix = sheetOnly ? SHEET : efrOnly ? EFRG : P;
   console.log(`Workspace: ${tenant.name} (${tenant.slug})`);
   console.log(`Only rows whose code starts with "${prefix}" are touched.\n`);
 
   await clear(tenant.id, prefix);
   if (clearOnly) {
-    console.log(sheetOnly ? 'Loading-type sheet demo removed.' : 'Demo data removed.');
+    console.log(
+      sheetOnly ? 'Loading-type sheet demo removed.' : efrOnly ? 'EFR demo removed.' : 'Demo data removed.',
+    );
+    return;
+  }
+
+  if (efrOnly) {
+    await seedEfrGroups(tenant.id);
+    printEfrGroups();
+    console.log('\nDone. Rebuild it after trying it with: pnpm db:demo:efr');
     return;
   }
 
@@ -1632,6 +2250,7 @@ async function main(): Promise<void> {
   console.log(`  quotations : ${counts[5]}`);
   console.log(`  bookings   : ${counts[6]}  (one in each state, so every worklist has rows)`);
   printSheet();
+  printEfrGroups();
   console.log('\nDone. Remove it again with: pnpm db:demo:clear');
 }
 

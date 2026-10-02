@@ -155,8 +155,10 @@ export function AdviseGroupPanel({
                       )}
                     </td>
                   )}
-                  <td className="px-3 py-2 font-mono tabular-nums text-hull">{b.bookingNo}</td>
-                  <td className="px-3 py-2 font-mono tabular-nums">
+                  <td className="whitespace-nowrap px-3 py-2 font-mono tabular-nums text-hull">
+                    {b.bookingNo}
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 font-mono tabular-nums">
                     {b.efrNos.length === 0 ? '—' : b.efrNos.join(', ')}
                   </td>
                   <td className="whitespace-nowrap px-3 py-2">

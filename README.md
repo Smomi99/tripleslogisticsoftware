@@ -60,6 +60,8 @@ Check it came up: <http://localhost:3000> should report the API reachable and th
 | `pnpm db:generate` | Regenerate the Prisma client |
 | `pnpm db:seed` | Permissions, system lookups, and the demo workspace |
 | `pnpm db:app-role` | Grant the non-owner `ff_app` role a local login (once) |
+| `pnpm db:demo` | Demo customers, bookings, the CLP loading-type sheet and the EFR scenario |
+| `pnpm db:demo:efr` | Rebuild only the one-advise-per-EFR scenario (CR-005 §12) — rerun to start over |
 | `pnpm db:studio` | Prisma Studio |
 | `pnpm db:reset` | Drop, re-migrate and re-seed — **destroys all data** |
 | `pnpm test` | Tenancy isolation and RBAC suites |
