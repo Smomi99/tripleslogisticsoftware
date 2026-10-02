@@ -108,6 +108,7 @@ export const TENANT_OWNED_MODELS = [
   // Documentation (docs/MODULE_DOCUMENTATION.md)
   'ShipmentAdvise',
   'ShipmentAdviseLine',
+  'ShipmentAdviseBooking', // CR-005: the bookings one advise covers
   'BlDraft',
   'BlDraftContainer',
   'BlTemplate',

@@ -271,6 +271,8 @@ afterAll(async () => {
     await owner.$executeRawUnsafe(`DELETE FROM bl_draft WHERE shipment_id = ${id}`);
     await owner.$executeRawUnsafe(`DELETE FROM shipment_advise_line WHERE advise_id IN
       (SELECT id FROM shipment_advise WHERE shipment_id = ${id})`);
+    await owner.$executeRawUnsafe(`DELETE FROM shipment_advise_booking WHERE advise_id IN
+      (SELECT id FROM shipment_advise WHERE shipment_id = ${id})`);
     await owner.$executeRawUnsafe(`DELETE FROM shipment_advise WHERE shipment_id = ${id}`);
   }
   for (const id of madeClps) {
@@ -535,6 +537,57 @@ describe('the advise is built from what the operation actually did', () => {
         podId: blPre.body.data.podId,
       });
     expect(late.status).toBe(409);
+  });
+
+  it('covers its own booking, and lets it go when cancelled (CR-005)', async () => {
+    const bk = await booking('lead');
+    await finalisedClp(bk.id, 'MSCU7654329');
+    const pre = await as(token).get(`/api/tenant/documentation/bookings/${bk.id}/advise/prefill`);
+    expect(pre.status, JSON.stringify(pre.body)).toBe(200);
+    const header = {
+      carrierId: pre.body.data.carrierId,
+      transitType: pre.body.data.transitType,
+      polId: pre.body.data.polId,
+      podId: pre.body.data.podId,
+    };
+
+    const first = await as(token)
+      .post(`/api/tenant/documentation/bookings/${bk.id}/advise`)
+      .send(header);
+    expect(first.status, JSON.stringify(first.body)).toBe(201);
+    const firstId = BigInt(first.body.data.id as string);
+
+    // The booking an advise is made from is always one of the bookings it
+    // covers, and every line of the grid is held to that booking.
+    expect(
+      await owner.shipmentAdviseBooking.findMany({
+        where: { adviseId: firstId },
+        select: { shipmentId: true, releasedAt: true },
+      }),
+    ).toEqual([{ shipmentId: bk.id, releasedAt: null }]);
+    const lines = await owner.shipmentAdviseLine.findMany({
+      where: { adviseId: firstId, deletedAt: null },
+      select: { shipmentId: true },
+    });
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines.every((l) => l.shipmentId === bk.id)).toBe(true);
+
+    // Cancelling releases the booking — the database does it, so no cancel
+    // path can forget — and the booking can be advised again.
+    const cancelled = await as(token)
+      .post(`/api/tenant/documentation/shipment-advise/${firstId}/cancel`)
+      .send({ reason: 'Wrong vessel on the header' });
+    expect(cancelled.status, JSON.stringify(cancelled.body)).toBe(200);
+    const released = await owner.shipmentAdviseBooking.findFirstOrThrow({
+      where: { adviseId: firstId },
+      select: { releasedAt: true },
+    });
+    expect(released.releasedAt).not.toBeNull();
+
+    const second = await as(token)
+      .post(`/api/tenant/documentation/bookings/${bk.id}/advise`)
+      .send(header);
+    expect(second.status, JSON.stringify(second.body)).toBe(201);
   });
 });
 

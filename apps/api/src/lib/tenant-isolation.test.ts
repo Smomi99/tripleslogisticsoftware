@@ -208,8 +208,9 @@ describe('model tier registry', () => {
     // cargo receipt tables + commodity_business_port + the two CLP tables
     // + clp_booking (CR-002) + the five documentation tables
     // (MODULE_DOCUMENTATION §4) + the five accounts tables (MODULE_ACCOUNTS §4)
-    // + the seven tables of the books (MODULE_ACCOUNTS §14).
-    expect(known.length).toBe(100);
+    // + the seven tables of the books (MODULE_ACCOUNTS §14)
+    // + shipment_advise_booking (CR-005).
+    expect(known.length).toBe(101);
   });
 
   it('applies the caller row level security to every view', async () => {

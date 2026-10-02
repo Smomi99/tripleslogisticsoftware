@@ -258,6 +258,7 @@ async function writeLines(
     data: lines.map((line) => ({
       tenantId,
       adviseId,
+      shipmentId: line.shipmentId,
       shipmentPoId: line.shipmentPoId,
       shipmentCargoLineId: line.shipmentCargoLineId,
       clpId: line.clpId,
@@ -506,6 +507,17 @@ shipmentAdviseRouter.post(
         throw new HttpError(500, 'CODE_EXHAUSTED', 'Could not allocate an advise number.');
       }
 
+      // CR-005: the booking an advise is made from is always one of the
+      // bookings it covers, and every line must be one of those bookings'.
+      await db.shipmentAdviseBooking.create({
+        data: {
+          tenantId: auth.tenantId,
+          adviseId: created.id,
+          shipmentId,
+          createdBy: auth.userId,
+          updatedBy: auth.userId,
+        },
+      });
       await writeLines(db, auth.tenantId, created.id, auth.userId, lines);
       return loadLive(db, shipmentId);
     });

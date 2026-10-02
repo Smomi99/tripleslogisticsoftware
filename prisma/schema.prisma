@@ -293,6 +293,7 @@ model Tenant {
 
   shipmentAdvises     ShipmentAdvise[]
   shipmentAdviseLines ShipmentAdviseLine[]
+  shipmentAdviseBookings ShipmentAdviseBooking[]
   blDrafts            BlDraft[]
   blDraftContainers   BlDraftContainer[]
   blTemplates         BlTemplate[]
@@ -1889,6 +1890,8 @@ model User {
   shipmentAdvisesUpdated   ShipmentAdvise[]     @relation("ShipmentAdviseUpdatedBy")
   adviseLinesCreated       ShipmentAdviseLine[] @relation("ShipmentAdviseLineCreatedBy")
   adviseLinesUpdated       ShipmentAdviseLine[] @relation("ShipmentAdviseLineUpdatedBy")
+  adviseBookingsCreated    ShipmentAdviseBooking[] @relation("ShipmentAdviseBookingCreatedBy")
+  adviseBookingsUpdated    ShipmentAdviseBooking[] @relation("ShipmentAdviseBookingUpdatedBy")
   blDraftsSubmitted        BlDraft[]            @relation("BlDraftSubmittedBy")
   blDraftsApproved         BlDraft[]            @relation("BlDraftApprovedBy")
   blDraftsSent             BlDraft[]            @relation("BlDraftSentBy")
@@ -3967,6 +3970,8 @@ model Shipment {
   cargoReceipts  CargoReceipt[]
   clps           Clp[]
   advises        ShipmentAdvise[]
+  /// CR-005: the advises this booking is on, as the lead or as one of the others.
+  adviseBookings ShipmentAdviseBooking[]
   blDrafts       BlDraft[]
   debitInvoices  DebitInvoice[]
 
@@ -4049,6 +4054,9 @@ model ShipmentPo {
   /// delete a plain unique lets a removed PO block its own replacement, which
   /// is the bug 20260830090000_local_charge_ignores_retired had to undo.
   @@unique([tenantId, id])
+  /// CR-005: the target shipment_advise_line points at, so an advise line's PO
+  /// belongs to the booking the line says it does.
+  @@unique([tenantId, id, shipmentId])
   @@index([tenantId])
   @@index([shipmentId])
   @@index([approvalStatus])
@@ -4156,6 +4164,9 @@ model ShipmentCargoLine {
   adviseLines       ShipmentAdviseLine[]
 
   @@unique([tenantId, id])
+  /// CR-005: the target shipment_advise_line points at, so an advise line's cargo line
+  /// belongs to the booking the line says it does.
+  @@unique([tenantId, id, shipmentId])
   @@index([tenantId])
   @@index([shipmentId])
   @@index([shipmentPoId])
@@ -4903,10 +4914,16 @@ model ShipmentAdvise {
 
   lines    ShipmentAdviseLine[]
   blDrafts BlDraft[]
+  /// CR-005: every booking this advise covers, the one it was made from
+  /// included.
+  bookings ShipmentAdviseBooking[]
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
   @@unique([tenantId, houseBlNo])
+  /// CR-005: the target bl_draft points at, so a BL draft's booking is always
+  /// the booking its advise was made from.
+  @@unique([tenantId, id, shipmentId])
   @@index([tenantId])
   @@index([tenantId, shipmentId])
   @@index([tenantId, status])
@@ -4920,6 +4937,53 @@ model ShipmentAdvise {
   @@map("shipment_advise")
 }
 
+/// CR-005: the bookings one advise covers.
+///
+/// The client, 2026-10-02: bookings of one quotation whose cargo arrived under
+/// the same EFR No get one Shipment Advise and one BL between them. So an
+/// advise covers a set of bookings, and this is the set. shipment_advise.
+/// shipment_id stays as the booking the advise was made from, and that booking
+/// always has a row here too.
+///
+/// "One live advise per booking" moves here, as a partial unique index in the
+/// migration (released_at IS NULL). The index on shipment_advise alone would
+/// let a booking sit in a second advise as one of its other bookings.
+model ShipmentAdviseBooking {
+  tenantId   BigInt    @map("tenant_id")
+  id         BigInt    @id @default(autoincrement())
+  adviseId   BigInt    @map("advise_id")
+  shipmentId BigInt    @map("shipment_id")
+  /// Set when the advise is cancelled, by a trigger on shipment_advise, which
+  /// frees the booking to be advised again. The row stays as the record of
+  /// what the cancelled advise covered.
+  releasedAt DateTime? @map("released_at") @db.Timestamptz(6)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant   Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  advise   ShipmentAdvise @relation(fields: [tenantId, adviseId], references: [tenantId, id], onDelete: Restrict)
+  shipment Shipment       @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict)
+
+  createdByUser User? @relation("ShipmentAdviseBookingCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("ShipmentAdviseBookingUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  lines ShipmentAdviseLine[]
+
+  /// The target shipment_advise_line points at: a line can only carry a PO of
+  /// one of the advise's own bookings.
+  @@unique([tenantId, adviseId, shipmentId])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([adviseId])
+  @@index([shipmentId])
+  @@map("shipment_advise_booking")
+}
+
 /// client: the PO grid, row 17 of both advise sheets.
 ///
 /// A snapshot, not a view (§3.2). The values are copied from the CLP and the
@@ -4929,6 +4993,11 @@ model ShipmentAdviseLine {
   tenantId BigInt @map("tenant_id")
   id       BigInt @id @default(autoincrement())
   adviseId BigInt @map("advise_id")
+  /// CR-005: the booking this PO belongs to. An advise can now cover several
+  /// bookings, and the composite keys below hold every line to one of them —
+  /// its PO and its cargo line must be that booking's, and that booking must
+  /// be one of the advise's.
+  shipmentId BigInt @map("shipment_id")
 
   shipmentPoId        BigInt  @map("shipment_po_id")
   shipmentCargoLineId BigInt  @map("shipment_cargo_line_id")
@@ -4966,10 +5035,11 @@ model ShipmentAdviseLine {
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
   tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  advise            ShipmentAdvise    @relation(fields: [tenantId, adviseId], references: [tenantId, id], onDelete: Restrict)
-  shipmentPo        ShipmentPo        @relation(fields: [tenantId, shipmentPoId], references: [tenantId, id], onDelete: Restrict)
-  shipmentCargoLine ShipmentCargoLine @relation(fields: [tenantId, shipmentCargoLineId], references: [tenantId, id], onDelete: Restrict)
-  clp               Clp?              @relation(fields: [tenantId, clpId], references: [tenantId, id], onDelete: Restrict)
+  advise            ShipmentAdvise        @relation(fields: [tenantId, adviseId], references: [tenantId, id], onDelete: Restrict)
+  booking           ShipmentAdviseBooking @relation(fields: [tenantId, adviseId, shipmentId], references: [tenantId, adviseId, shipmentId], onDelete: Restrict)
+  shipmentPo        ShipmentPo            @relation(fields: [tenantId, shipmentPoId, shipmentId], references: [tenantId, id, shipmentId], onDelete: Restrict)
+  shipmentCargoLine ShipmentCargoLine     @relation(fields: [tenantId, shipmentCargoLineId, shipmentId], references: [tenantId, id, shipmentId], onDelete: Restrict)
+  clp               Clp?                  @relation(fields: [tenantId, clpId], references: [tenantId, id], onDelete: Restrict)
 
   createdByUser User? @relation("ShipmentAdviseLineCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User? @relation("ShipmentAdviseLineUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
@@ -4977,6 +5047,7 @@ model ShipmentAdviseLine {
   @@unique([tenantId, id])
   @@index([tenantId])
   @@index([adviseId])
+  @@index([shipmentId])
   @@index([shipmentPoId])
   @@index([shipmentCargoLineId])
   @@index([clpId])
@@ -4995,6 +5066,10 @@ model BlDraft {
   code       String @db.VarChar(32)
   seriesYear Int    @map("series_year")
 
+  /// The booking the advise was made from. CR-005: one BL covers every booking
+  /// on its advise, and the composite key to shipment_advise holds this to the
+  /// advise's own booking, so there is one live draft per advise rather than
+  /// one per booking in it.
   shipmentId BigInt @map("shipment_id")
   /// Where the BL number came from (§3.3). Required: the client's list shows
   /// House BL No as a column of the BL Draft screen, so a draft cannot exist
@@ -5073,7 +5148,7 @@ model BlDraft {
 
   tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   shipment      Shipment       @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict)
-  advise        ShipmentAdvise @relation(fields: [tenantId, adviseId], references: [tenantId, id], onDelete: Restrict)
+  advise        ShipmentAdvise @relation(fields: [tenantId, adviseId, shipmentId], references: [tenantId, id, shipmentId], onDelete: Restrict)
   preCarriage   Mode           @relation("BlDraftPreCarriageMode", fields: [preCarriageByModeId], references: [id], onDelete: Restrict)
   deliveryAgent Agent?         @relation("BlDraftDeliveryAgent", fields: [tenantId, deliveryAgentId], references: [tenantId, id], onDelete: Restrict)
   pol           Port           @relation("BlDraftPol", fields: [polId], references: [id], onDelete: Restrict)
