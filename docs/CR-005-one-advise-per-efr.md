@@ -247,29 +247,24 @@ In order:
 
 ## 12. Trying it, and how it was checked
 
-**To see it: `pnpm db:demo:efr`.** It builds a ready-made scenario for customer Rahman Garments
-Ltd (it is also part of `pnpm db:demo`). Run it again to start over after trying things, and
-`pnpm db:demo:efr:clear` removes it. Every booking is received, with an approved schedule and an
-issued S/O, and has a finalised load plan unless it says otherwise.
+**To see it: `pnpm db:demo:efr`.** It loads three small examples for customer Rahman Garments Ltd
+(also part of `pnpm db:demo`). Booking codes read as example and booking: DEMO-EFR-1A is
+example 1, booking A. Run it again to start over; `pnpm db:demo:efr:clear` removes it. Every
+booking is received, with an approved schedule, an issued S/O and a finalised load plan, unless
+the table says otherwise.
 
-Quotation DEMO-EFR-QTN-1, nothing advised yet. Open **DEMO-EFR-BKG-1 → Shipment Advise**:
+| Example | Bookings | What to do | What you see |
+|---|---|---|---|
+| 1 — the rule | DEMO-EFR-1A, -1B (EFR-501) | Shipment Advise - Sea → search `DEMO-EFR-1` → Open 1A → Save | One advise and one House BL covering both. Both list rows show it |
+| 2 — the BL | DEMO-EFR-2A, -2B (EFR-601), advise already sent | BL Draft → search `DEMO-EFR-2` → Open 2A → Draft | One BL draft for both |
+| 2 — extra | DEMO-EFR-2C (EFR-601) | Open it on Shipment Advise - Sea | Arrived after the send: cancel and reissue the advise to include it |
+| 3 — special cases | DEMO-EFR-3A to -3G (EFR-701) | Open 3A on Shipment Advise - Sea | 3B *Same EFR* (typed ` efr-701 `) · 3C *Same EFR — check* (other exporter) · 3D *Kept apart* (later voyage) · 3E *Waiting* (no load plan) · 3F *Kept apart* (two EFRs) · 3G not listed (EFR-703) |
 
-| Booking | Receipt EFR | What the panel shows |
-|---|---|---|
-| DEMO-EFR-BKG-1 | EFR-501 | the booking you opened |
-| DEMO-EFR-BKG-2 | ` efr-501 ` | *Same EFR*, already on the advise (case and spaces ignored) |
-| DEMO-EFR-BKG-3 | EFR-501 | *Same EFR — check*, unticked: exporter Rahman Knit Ltd |
-| DEMO-EFR-BKG-4 | EFR-501 | *Kept apart*: voyage V2614W, not V2610W |
-| DEMO-EFR-BKG-5 | EFR-501 | *Same EFR*, waiting: no load plan. Plan it, then *Add to this advise* or Build |
-| DEMO-EFR-BKG-6 | EFR-501 + EFR-502 | *Kept apart*: two EFRs |
-| DEMO-EFR-BKG-7 | EFR-503 | not listed; it gets an advise of its own |
+The Shipment Advise - Sea list says which bookings share an EFR before anything is opened:
+*"Shares EFR-501 with DEMO-EFR-1B — one advise for all."*
 
-Quotation DEMO-EFR-QTN-2, already advised and sent:
-
-| Booking | Receipt EFR | What to try |
-|---|---|---|
-| DEMO-EFR-BKG-8, -9 | EFR-601 | DEMO-EFR-SA-1, sent, one House BL. Open either one's **BL** tab and make one BL for both |
-| DEMO-EFR-BKG-10 | EFR-601 | planned after the send: its advise tab says to cancel and reissue SA-1 |
+A picture-by-picture version of this walkthrough was published as a separate guide page,
+*Same EFR, One Advise*.
 
 `pnpm db:demo`, `pnpm db:demo:sheet` and `pnpm db:demo:efr` clear advises and BLs made on demo
 bookings. They stop, naming the advise, if it also covers a booking that is not demo data.

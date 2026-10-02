@@ -195,17 +195,20 @@ async function booking(label: string, opts: BookingOpts): Promise<{ id: bigint; 
   return { id: shipment.id, code };
 }
 
-/** Consolidate, load every line, finalise — the advise pulls its grid from this. */
-async function finalisedClp(shipmentId: bigint): Promise<void> {
+/**
+ * Consolidate, load every line, finalise — the advise pulls its grid from this.
+ * Several bookings make one shared LCL box.
+ */
+async function finalisedClp(...shipmentIds: bigint[]): Promise<void> {
   const made = await as(token)
     .post('/api/tenant/ops/clps/consolidate')
-    .send({ shipmentIds: [shipmentId.toString()], containerSizeId: size20.toString() });
+    .send({ shipmentIds: shipmentIds.map(String), containerSizeId: size20.toString() });
   expect(made.status, JSON.stringify(made.body)).toBe(201);
   const clpId = BigInt(made.body.data.id as string);
   madeClps.push(clpId);
 
   const lines = await owner.shipmentCargoLine.findMany({
-    where: { shipmentId, deletedAt: null },
+    where: { shipmentId: { in: shipmentIds }, deletedAt: null },
     select: { id: true, ctnQty: true },
   });
   for (const line of lines) {
@@ -568,6 +571,23 @@ describe('one EFR, one advise, one BL (CR-005)', () => {
       (await owner.shipmentAdvise.findFirstOrThrow({ where: { id: BigInt(advise.id) }, select: { status: true } }))
         .status,
     ).toBe('DRAFT');
+  });
+
+  it('says on the To advise list which bookings share an EFR, and counts a shared box as planned', async () => {
+    const efr = `EFR-G4-${RUN}`;
+    const x = await booking('x', { efrs: [efr] });
+    const y = await booking('y', { efrs: [efr] });
+    // One consolidated LCL box: clp.shipment_id is empty, the bookings are in
+    // clp_booking. The list once read the column and called both unplanned.
+    await finalisedClp(x.id, y.id);
+
+    for (const [me, other] of [[x, y], [y, x]] as const) {
+      const list = await as(token).get(`${API}/shipment-advise?search=${me.code}`);
+      expect(list.status, JSON.stringify(list.body)).toBe(200);
+      const row = list.body.data.find((r: { code: string }) => r.code === me.code);
+      expect(row.detail).toMatch(/1 container planned/);
+      expect(row.detail).toContain(`Shares ${efr} with ${other.code}`);
+    }
   });
 
   it('advises a booking without an EFR, or with two, on its own', async () => {

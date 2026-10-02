@@ -14,7 +14,7 @@ import {
 } from '@ff/shared';
 
 import { Prisma } from '../generated/prisma/client';
-import { LIVE_ADVISE, LIVE_MEMBERSHIP } from '../lib/advise-group';
+import { LIVE_ADVISE, LIVE_MEMBERSHIP, sharedEfrNotes } from '../lib/advise-group';
 import { HttpError } from '../lib/http-error';
 import { renderRequiredContainer } from '../lib/render-volumes';
 import { tenantDayOf } from '../lib/tenant-day';
@@ -173,10 +173,23 @@ async function detailsFor(
           },
         },
       }),
+      /*
+        Through clp_booking, not clp.shipment_id: a consolidated box leaves
+        that column empty (CR-002) and lists its bookings in clp_booking, so
+        reading the column called every booking in a shared LCL box unplanned.
+      */
       db.clp.findMany({
-        where: { shipmentId: { in: ids }, deletedAt: null, status: 'FINAL' },
+        where: {
+          deletedAt: null,
+          status: 'FINAL',
+          bookings: { some: { shipmentId: { in: ids }, deletedAt: null } },
+        },
         orderBy: { id: 'asc' },
-        select: { shipmentId: true, code: true, loadDatetime: true },
+        select: {
+          code: true,
+          loadDatetime: true,
+          bookings: { where: { shipmentId: { in: ids }, deletedAt: null }, select: { shipmentId: true } },
+        },
       }),
     ]);
 
@@ -194,26 +207,42 @@ async function detailsFor(
 
     const planned = new Map<string, { codes: string[]; stuffed: Date | null }>();
     for (const plan of plans) {
-      const key = plan.shipmentId?.toString();
-      if (key === undefined) continue;
-      const seen = planned.get(key) ?? { codes: [], stuffed: null };
-      seen.codes.push(plan.code);
-      if (plan.loadDatetime !== null && (seen.stuffed === null || plan.loadDatetime > seen.stuffed)) {
-        seen.stuffed = plan.loadDatetime;
+      for (const { shipmentId } of plan.bookings) {
+        const key = shipmentId.toString();
+        const seen = planned.get(key) ?? { codes: [], stuffed: null };
+        seen.codes.push(plan.code);
+        if (plan.loadDatetime !== null && (seen.stuffed === null || plan.loadDatetime > seen.stuffed)) {
+          seen.stuffed = plan.loadDatetime;
+        }
+        planned.set(key, seen);
       }
-      planned.set(key, seen);
     }
+
+    // CR-005: not advised yet, but sharing an EFR — say so before anyone
+    // opens it, because the advise will be one for all of them.
+    const notAdvised = ids.filter((id) => !out.has(id.toString()));
+    const notes = await sharedEfrNotes(db, notAdvised);
+    const withNote = (key: string, text: string): string => {
+      const note = notes.get(key);
+      return note === undefined ? text : `${text} · ${note}`;
+    };
+
     for (const [key, seen] of planned) {
       if (out.has(key)) continue;
       const stuffed = dateOut(seen.stuffed);
       out.set(
         key,
-        `${count(seen.codes.length, 'container')} planned${stuffed === null ? '' : `, stuffed ${stuffed}`}`,
+        withNote(
+          key,
+          `${count(seen.codes.length, 'container')} planned${stuffed === null ? '' : `, stuffed ${stuffed}`}`,
+        ),
       );
     }
     for (const id of ids) {
       const key = id.toString();
-      if (!out.has(key)) out.set(key, 'No finalised load plan yet — the advise pulls its PO grid from one.');
+      if (!out.has(key)) {
+        out.set(key, withNote(key, 'No finalised load plan yet — the advise pulls its PO grid from one.'));
+      }
     }
     return out;
   }

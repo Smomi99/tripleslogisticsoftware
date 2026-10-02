@@ -1602,23 +1602,15 @@ function containerNo(owner: string, serial: number): string {
 }
 
 /**
- * docs/CR-005-one-advise-per-efr.md, ready to click through.
+ * docs/CR-005-one-advise-per-efr.md, ready to click through — three examples,
+ * each one quotation, each showing one thing. Booking codes read as "example,
+ * booking": DEMO-EFR-1A is example 1, booking A.
  *
- * Quotation DEMO-EFR-QTN-1 — nothing advised yet. Open DEMO-EFR-BKG-1's
- * Shipment Advise tab and every kind of booking is there:
- *
- *   BKG-1  the lead                                   EFR-501
- *   BKG-2  same parties and sailing — goes on it      efr-501 (case and spaces don't matter)
- *   BKG-3  another exporter — offered, unticked       EFR-501
- *   BKG-4  a later voyage — kept apart                EFR-501
- *   BKG-5  received, no load plan yet — waiting       EFR-501
- *   BKG-6  received under two EFRs — kept apart       EFR-501 + EFR-502
- *   BKG-7  another EFR — not in the group at all      EFR-503
- *
- * Quotation DEMO-EFR-QTN-2 — already advised and sent, for the BL side:
- *
- *   BKG-8 + BKG-9  one sent advise, one House BL      EFR-601
- *   BKG-10         same EFR, planned after the send   EFR-601
+ *   Example 1  the rule        1A + 1B, both EFR-501 → one advise for both
+ *   Example 2  the BL          2A + 2B on one sent advise → one BL for both;
+ *                              2C, same EFR, arrived after the send
+ *   Example 3  special cases   3A to 3G under EFR-701 — open 3A and each is
+ *                              listed with why it is in or out
  *
  * Everything else a real advise needs is real: approved schedules, issued
  * shipping orders, confirmed receipts and finalised load plans. Only the sent
@@ -1679,6 +1671,9 @@ async function seedEfrGroups(tenantId: bigint): Promise<void> {
     }));
 
   const cfs = 'Pangaon Inland Container Terminal';
+  // LCL goes through the CFS at both ends. Set on the bookings so the BL form
+  // opens with Pre-Carriage By and Place of Receipt filled, and saves at once.
+  const cfsMode = await prisma.mode.findFirstOrThrow({ where: { code: 'CFS/CFS', ...shared }, select: { id: true } });
   const sailing = { voyageNo: 'V2610W', cutOff: day(daysAgo(-5)), etd: day(daysAgo(-7)), eta: day(daysAgo(-38)) };
   const laterSailing = { voyageNo: 'V2614W', cutOff: day(daysAgo(-12)), etd: day(daysAgo(-14)), eta: day(daysAgo(-45)) };
 
@@ -1830,14 +1825,15 @@ async function seedEfrGroups(tenantId: bigint): Promise<void> {
    * a booking comes to have two EFRs.
    */
   async function booking(spec: {
-    no: number;
+    /** The booking code after DEMO-EFR- — 1A, 1B, … — read as "example 1, booking A". */
+    tag: string;
     quotationId: bigint;
     parties: { exporter: string; exporterAddress: string };
     later?: boolean;
     efrs: string[];
     pos: Po[];
   }): Promise<Booking> {
-    const code = `${EFRG}BKG-${spec.no}`;
+    const code = `${EFRG}${spec.tag}`;
     const run = spec.later === true ? laterSailing : sailing;
     const booked = daysAgo(15);
     const shipment = await prisma.shipment.create({
@@ -1858,6 +1854,8 @@ async function seedEfrGroups(tenantId: bigint): Promise<void> {
         loadingType: 'LCL',
         transitType: 'DIRECT',
         warehouseCfs: cfs,
+        modeId: cfsMode.id,
+        placeOfReceipt: cfs,
         etd: run.etd,
         eta: run.eta,
         goodsHandoverDate: day(daysAgo(4)),
@@ -1922,7 +1920,7 @@ async function seedEfrGroups(tenantId: bigint): Promise<void> {
     const schedule = await prisma.shipmentSchedule.create({
       data: {
         ...t,
-        code: `${EFRG}SCH-${spec.no}`,
+        code: `${EFRG}SCH-${spec.tag}`,
         shipmentId: shipment.id,
         carrierId: carrier.id,
         transitType: 'DIRECT',
@@ -1953,7 +1951,7 @@ async function seedEfrGroups(tenantId: bigint): Promise<void> {
     const so = await prisma.shippingOrder.create({
       data: {
         ...t,
-        code: `${EFRG}SO-${spec.no}`,
+        code: `${EFRG}SO-${spec.tag}`,
         seriesYear: booked.getUTCFullYear(),
         shipmentId: shipment.id,
         scheduleId: schedule.id,
@@ -1966,7 +1964,7 @@ async function seedEfrGroups(tenantId: bigint): Promise<void> {
         eta: run.eta,
         warehouseCfs: cfs,
         status: 'ISSUED',
-        qrPayload: `SO:${EFRG}SO-${spec.no}\nBKG:${code}`,
+        qrPayload: `SO:${EFRG}SO-${spec.tag}\nBKG:${code}`,
       },
       select: { id: true },
     });
@@ -1978,7 +1976,7 @@ async function seedEfrGroups(tenantId: bigint): Promise<void> {
         : [{ efr: spec.efrs[0]!, lines }];
     for (const [k, r] of receipts.entries()) {
       await receive(tenantId, csUser.id, {
-        code: `${EFRG}CR-${spec.no}-${k + 1}`,
+        code: `${EFRG}CR-${spec.tag}-${k + 1}`,
         shipmentId: shipment.id,
         shippingOrderId: so.id,
         seq: k + 1,
@@ -2060,45 +2058,57 @@ async function seedEfrGroups(tenantId: bigint): Promise<void> {
     return { id: clp.id, loaded };
   }
 
-  // ----------------------------------------- QTN-1: nothing advised yet
   const po = (poNo: string, ctn: number, cbm: number, nwt: number, gwt: number): Po => ({ poNo, ctn, cbm, nwt, gwt });
-  const q1 = await quotationFor(1, 26, 640);
-  const b1 = await booking({ no: 1, quotationId: q1, parties: rahman, efrs: ['EFR-501'], pos: [po('PO-5011', 40, 6, 180, 200), po('PO-5012', 25, 4, 110, 125)] });
-  const b2 = await booking({ no: 2, quotationId: q1, parties: rahman, efrs: [' efr-501 '], pos: [po('PO-5021', 30, 5, 140, 155)] });
-  const b3 = await booking({ no: 3, quotationId: q1, parties: rahmanKnit, efrs: ['EFR-501'], pos: [po('PO-5031', 20, 3, 90, 100)] });
-  const b4 = await booking({ no: 4, quotationId: q1, parties: rahman, later: true, efrs: ['EFR-501'], pos: [po('PO-5041', 15, 2, 60, 70)] });
-  await booking({ no: 5, quotationId: q1, parties: rahman, efrs: ['EFR-501'], pos: [po('PO-5051', 12, 2, 50, 58)] });
-  const b6 = await booking({ no: 6, quotationId: q1, parties: rahman, efrs: ['EFR-501', 'EFR-502'], pos: [po('PO-5061', 10, 2, 40, 46), po('PO-5062', 8, 1, 32, 36)] });
-  const b7 = await booking({ no: 7, quotationId: q1, parties: rahman, efrs: ['EFR-503'], pos: [po('PO-5071', 18, 3, 75, 84)] });
-  // BKG-1, -2 and -3 share an LCL box; the others each have their own. BKG-5
-  // has none yet — plan it, then use Build or "Add to this advise".
-  await plan(1, [b1, b2, b3]);
-  await plan(2, [b4]);
-  await plan(3, [b6]);
-  await plan(4, [b7]);
 
-  // ------------------------------- QTN-2: advised and sent, for the BL side
-  const q2 = await quotationFor(2, 12, 300);
-  const b8 = await booking({ no: 8, quotationId: q2, parties: rahman, efrs: ['EFR-601'], pos: [po('PO-6081', 22, 4, 95, 105)] });
-  const b9 = await booking({ no: 9, quotationId: q2, parties: rahman, efrs: ['EFR-601'], pos: [po('PO-6091', 18, 3, 80, 88)] });
-  const b10 = await booking({ no: 10, quotationId: q2, parties: rahman, efrs: ['EFR-601'], pos: [po('PO-6101', 9, 1, 40, 44)] });
-  const box = await plan(5, [b8, b9]);
-  await plan(6, [b10]);
+  // ---------------------------- Example 1: the rule — two bookings, one EFR
+  // Both received under EFR-501 and in one LCL box. Open either one, Shipment
+  // Advise, Save: one advise and one House BL for both.
+  const q1 = await quotationFor(1, 15, 480);
+  const e1a = await booking({ tag: '1A', quotationId: q1, parties: rahman, efrs: ['EFR-501'], pos: [po('PO-5011', 40, 6, 180, 200), po('PO-5012', 25, 4, 110, 125)] });
+  const e1b = await booking({ tag: '1B', quotationId: q1, parties: rahman, efrs: ['EFR-501'], pos: [po('PO-5021', 20, 5, 140, 155)] });
+  await plan(1, [e1a, e1b]);
+
+  // ------------------------- Example 2: already advised — make the one BL
+  // 2A and 2B are on one sent advise. Either one's BL tab makes one BL for both.
+  // 2C arrived under the same EFR after the send: its advise tab explains it
+  // can only join by cancelling and reissuing.
+  const q2 = await quotationFor(2, 8, 240);
+  const e2a = await booking({ tag: '2A', quotationId: q2, parties: rahman, efrs: ['EFR-601'], pos: [po('PO-6011', 20, 4, 95, 105)] });
+  const e2b = await booking({ tag: '2B', quotationId: q2, parties: rahman, efrs: ['EFR-601'], pos: [po('PO-6021', 15, 3, 80, 88)] });
+  const e2c = await booking({ tag: '2C', quotationId: q2, parties: rahman, efrs: ['EFR-601'], pos: [po('PO-6031', 10, 1, 40, 44)] });
+  const box = await plan(2, [e2a, e2b]);
+  await plan(3, [e2c]);
+
+  // --------------------- Example 3: the special cases, all under EFR-701
+  // Open 3A's Shipment Advise and each kind of booking is listed with why.
+  const q3 = await quotationFor(3, 18, 560);
+  const e3a = await booking({ tag: '3A', quotationId: q3, parties: rahman, efrs: ['EFR-701'], pos: [po('PO-7011', 20, 3, 90, 100)] });
+  const e3b = await booking({ tag: '3B', quotationId: q3, parties: rahman, efrs: [' efr-701 '], pos: [po('PO-7021', 16, 3, 70, 78)] });
+  const e3c = await booking({ tag: '3C', quotationId: q3, parties: rahmanKnit, efrs: ['EFR-701'], pos: [po('PO-7031', 10, 2, 60, 66)] });
+  const e3d = await booking({ tag: '3D', quotationId: q3, parties: rahman, later: true, efrs: ['EFR-701'], pos: [po('PO-7041', 20, 2, 60, 70)] });
+  await booking({ tag: '3E', quotationId: q3, parties: rahman, efrs: ['EFR-701'], pos: [po('PO-7051', 10, 2, 50, 58)] });
+  const e3f = await booking({ tag: '3F', quotationId: q3, parties: rahman, efrs: ['EFR-701', 'EFR-702'], pos: [po('PO-7061', 10, 2, 40, 46), po('PO-7062', 8, 1, 32, 36)] });
+  const e3g = await booking({ tag: '3G', quotationId: q3, parties: rahman, efrs: ['EFR-703'], pos: [po('PO-7071', 12, 3, 75, 84)] });
+  // 3E has no load plan on purpose: plan it, then "Add to this advise".
+  await plan(4, [e3a, e3b, e3c]);
+  await plan(5, [e3d]);
+  await plan(6, [e3f]);
+  await plan(7, [e3g]);
 
   /*
     The sent advise, written as the screen writes one: a draft, the bookings it
     covers, its PO grid, then sent. The database lets a booking join a draft
     only, so the order matters.
   */
-  const members = [b8, b9];
+  const members = [e2a, e2b];
   const sentOn = daysAgo(0);
   const advise = await prisma.shipmentAdvise.create({
     data: {
       ...t,
       code: `${EFRG}SA-1`,
       seriesYear: sentOn.getUTCFullYear(),
-      shipmentId: b8.id,
-      scheduleId: b8.scheduleId,
+      shipmentId: e2a.id,
+      scheduleId: e2a.scheduleId,
       carrierId: carrier.id,
       transitType: 'DIRECT',
       firstVesselId: vessel.id,
@@ -2170,18 +2180,14 @@ async function seedEfrGroups(tenantId: bigint): Promise<void> {
 
 /** What the CR-005 scenario made, and where to look. */
 function printEfrGroups(): void {
-  console.log('\n  One advise and one BL per EFR (CR-005) — open the bookings below:');
-  console.log(`    ${EFRG}QTN-1, nothing advised yet — start at ${EFRG}BKG-1 → Shipment Advise`);
-  console.log(`      BKG-1   the lead                                EFR-501`);
-  console.log(`      BKG-2   same parties and sailing — goes on it   " efr-501 " (case and spaces ignored)`);
-  console.log(`      BKG-3   another exporter — offered, unticked    EFR-501`);
-  console.log(`      BKG-4   a later voyage — kept apart             EFR-501`);
-  console.log(`      BKG-5   no load plan yet — waiting              EFR-501`);
-  console.log(`      BKG-6   received under two EFRs — kept apart    EFR-501 + EFR-502`);
-  console.log(`      BKG-7   another EFR — not in the group          EFR-503`);
-  console.log(`    ${EFRG}QTN-2, advised and sent — try the BL from ${EFRG}BKG-8 or -9`);
-  console.log(`      BKG-8 + BKG-9   ${EFRG}SA-1, sent, one House BL  EFR-601`);
-  console.log(`      BKG-10          same EFR, planned after the send — cancel and reissue to add it`);
+  console.log('\n  Same EFR = one Shipment Advise and one BL (CR-005). Three examples:');
+  console.log(`    1. The rule      ${EFRG}1A + ${EFRG}1B, both EFR-501.`);
+  console.log('                     Open either → Shipment Advise → Save. One advise covers both.');
+  console.log(`    2. The BL        ${EFRG}2A + ${EFRG}2B, already advised and sent.`);
+  console.log('                     Open either → BL → Save. One BL covers both.');
+  console.log(`                     (${EFRG}2C has the same EFR but came after the send.)`);
+  console.log(`    3. Special cases ${EFRG}3A to 3G, all EFR-701 except 3G.`);
+  console.log(`                     Open ${EFRG}3A → Shipment Advise: each booking says why it is in or out.`);
 }
 
 // --------------------------------------------------------------------- main

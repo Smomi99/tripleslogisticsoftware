@@ -106,6 +106,53 @@ export async function efrsOfBookings(
   return found;
 }
 
+/**
+ * For a worklist: which bookings share an EFR with others of their quotation,
+ * said before anyone opens one — "Shares EFR-501 with BKG-2 — one advise for
+ * all". Only the shared EFR is checked here; the advise screen says which of
+ * them can actually go on one advise, and why the others cannot.
+ */
+export async function sharedEfrNotes(
+  db: TenantDb,
+  shipmentIds: bigint[],
+): Promise<Map<string, string>> {
+  const notes = new Map<string, string>();
+  if (shipmentIds.length === 0) return notes;
+
+  const own = await db.shipment.findMany({
+    where: { id: { in: shipmentIds } },
+    select: { id: true, quotationId: true },
+  });
+  const siblings = await db.shipment.findMany({
+    where: {
+      quotationId: { in: [...new Set(own.map((s) => s.quotationId))] },
+      deletedAt: null,
+      status: { not: 'CANCELLED' },
+    },
+    orderBy: { code: 'asc' },
+    select: { id: true, code: true, quotationId: true },
+  });
+  const efrs = await efrsOfBookings(db, siblings.map((s) => s.id));
+
+  for (const s of own) {
+    const mine = efrs.get(s.id.toString()) ?? [];
+    if (mine.length !== 1) continue;
+    const key = efrKey(mine[0]!);
+    const others = siblings
+      .filter(
+        (o) =>
+          o.quotationId === s.quotationId &&
+          o.id !== s.id &&
+          (efrs.get(o.id.toString()) ?? []).some((e) => efrKey(e) === key),
+      )
+      .map((o) => o.code);
+    if (others.length > 0) {
+      notes.set(s.id.toString(), `Shares ${mine[0]} with ${others.join(', ')} — one advise for all.`);
+    }
+  }
+  return notes;
+}
+
 /** The live advise each booking is on, by booking id. */
 export async function liveAdvisesOf(
   db: TenantDb,
