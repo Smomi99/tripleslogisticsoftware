@@ -481,6 +481,38 @@ export interface ShipmentListRow {
    * (CR-005).
    */
   efrNos: string[];
+  /**
+   * CR-005, said on the row: which bookings this one will share a Shipment
+   * Advise with. Null when no other booking of its quotation has its EFR.
+   */
+  efrGroup: EfrGroupTag | null;
+}
+
+/**
+ * What happens to a booking that shares its EFR with others of its quotation.
+ *
+ *   SHARED     one advise with `withBookings` (none made yet)
+ *   ON_ADVISE  already on `adviseCode`, with `withBookings`
+ *   JOINS      its group's advise is a draft — it goes on `adviseCode`
+ *   LATE       its group's advise was sent — joining means cancel and reissue
+ *   CHECK      same EFR, but `reason` differs (shipper / consignee): the user decides
+ *   OWN        same EFR, but its own advise: `reason` (other voyage / two EFRs)
+ */
+export const EFR_GROUP_KINDS = ['SHARED', 'ON_ADVISE', 'JOINS', 'LATE', 'CHECK', 'OWN'] as const;
+export type EfrGroupKind = (typeof EFR_GROUP_KINDS)[number];
+
+export interface EfrGroupTag {
+  kind: EfrGroupKind;
+  /** The other bookings on the one advise. */
+  withBookings: string[];
+  adviseCode: string | null;
+  reason: string | null;
+  /**
+   * The same for every booking that ends up on one advise (and for a CHECK
+   * booking, the advise it could join), so the screen can colour them alike.
+   * Null for OWN.
+   */
+  groupKey: string | null;
 }
 
 export const shipmentListQuerySchema = listQuerySchema.extend({

@@ -17,6 +17,7 @@ import {
   shipmentUpdateSchema,
 } from '@ff/shared';
 
+import { efrGroupTags } from '../lib/advise-group';
 import { efrsOfBookings } from '../lib/clp-efr';
 import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
 import { Prisma } from '../generated/prisma/client';
@@ -457,7 +458,7 @@ shipmentRouter.get('/bookings', requirePermission(`${FEATURE}.VIEW`), async (req
   const auth = req.auth!;
   const query = shipmentListQuerySchema.parse(req.query);
 
-  const { rows, total, efrs } = await withTenant(auth.tenantId, async (db) => {
+  const { rows, total, efrs, groups } = await withTenant(auth.tenantId, async (db) => {
     const scope = await scopeFor(db, auth, query.scope);
 
     const where: Prisma.ShipmentWhereInput = {
@@ -544,8 +545,15 @@ shipmentRouter.get('/bookings', requirePermission(`${FEATURE}.VIEW`), async (req
       db.shipment.count({ where }),
     ]);
 
-    // The EFR column: what each booking's confirmed receipts say.
-    return { rows: found, total: count, efrs: await efrsOfBookings(db, found.map((r) => r.id)) };
+    // The EFR column: what each booking's confirmed receipts say, and which
+    // bookings it will share one advise with (CR-005).
+    const ids = found.map((r) => r.id);
+    return {
+      rows: found,
+      total: count,
+      efrs: await efrsOfBookings(db, ids),
+      groups: await efrGroupTags(db, ids),
+    };
   });
 
   const data: ShipmentListRow[] = rows.map((row) => ({
@@ -568,6 +576,7 @@ shipmentRouter.get('/bookings', requirePermission(`${FEATURE}.VIEW`), async (req
     status: row.status,
     cancelReason: row.cancelReason,
     efrNos: efrs.get(row.id.toString()) ?? [],
+    efrGroup: groups.get(row.id.toString()) ?? null,
   }));
 
   const payload: ApiSuccess<ShipmentListRow[]> = {

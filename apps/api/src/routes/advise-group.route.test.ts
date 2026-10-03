@@ -616,6 +616,51 @@ describe('one EFR, one advise, one BL (CR-005)', () => {
     expect(plan.efrNos).toEqual([efr]);
   });
 
+  it('tags each list row with the advise it will share', async () => {
+    const efr = `EFR-G6-${RUN}`;
+    const t1 = await ready('t1', { efrs: [efr] });
+    const t2 = await ready('t2', { efrs: [efr] });
+    const t3 = await ready('t3', { efrs: [efr], exporterName: 'Another Exporter Ltd' });
+    const t4 = await ready('t4', { efrs: [efr], voyage: `V-T4-${RUN}` });
+    const t5 = await ready('t5', { efrs: [efr, `EFR-G6X-${RUN}`] });
+    const t6 = await booking('t6', { efrs: [efr] }); // received, no load plan yet
+
+    const tags = async () => {
+      const list = await as(token).get(`/api/tenant/cs/bookings?search=BKGGR-${RUN}-t&limit=50`);
+      expect(list.status, JSON.stringify(list.body)).toBe(200);
+      const byCode = new Map<string, { kind: string; withBookings: string[]; reason: string | null; adviseCode: string | null; groupKey: string | null }>();
+      for (const row of list.body.data) byCode.set(row.code, row.efrGroup);
+      return byCode;
+    };
+
+    // Before any advise: who will share one, who is offered, who stays apart.
+    const before = await tags();
+    expect(before.get(t1.code)).toMatchObject({ kind: 'SHARED', withBookings: [t2.code, t6.code] });
+    expect(before.get(t2.code)).toMatchObject({ kind: 'SHARED', withBookings: [t1.code, t6.code] });
+    expect(before.get(t3.code)).toMatchObject({ kind: 'CHECK', reason: 'shipper' });
+    expect(before.get(t4.code)).toMatchObject({ kind: 'OWN', reason: 'other voyage', groupKey: null });
+    expect(before.get(t5.code)).toMatchObject({ kind: 'OWN', reason: 'two EFRs' });
+    // One colour for the group, and the offered booking points at the same one.
+    expect(before.get(t2.code)!.groupKey).toBe(before.get(t1.code)!.groupKey);
+    expect(before.get(t3.code)!.groupKey).toBe(before.get(t1.code)!.groupKey);
+
+    // Made: the two ready ones are on it; the unplanned one goes on it later.
+    const made = await makeAdvise(t1.id);
+    expect(made.status, JSON.stringify(made.body)).toBe(201);
+    const code = made.body.data.code as string;
+    const after = await tags();
+    expect(after.get(t1.code)).toMatchObject({ kind: 'ON_ADVISE', adviseCode: code, withBookings: [t2.code] });
+    expect(after.get(t2.code)).toMatchObject({ kind: 'ON_ADVISE', adviseCode: code, withBookings: [t1.code] });
+    expect(after.get(t6.code)).toMatchObject({ kind: 'JOINS', adviseCode: code });
+    expect(after.get(t3.code)).toMatchObject({ kind: 'CHECK', adviseCode: code });
+    expect(after.get(t6.code)!.groupKey).toBe(after.get(t1.code)!.groupKey);
+
+    // Sent: the latecomer can only join by a reissue.
+    const sent = await as(token).post(`${API}/shipment-advise/${made.body.data.id}/send`).send(recipients);
+    expect(sent.status, JSON.stringify(sent.body)).toBe(200);
+    expect((await tags()).get(t6.code)).toMatchObject({ kind: 'LATE', adviseCode: code });
+  });
+
   it('advises a booking without an EFR, or with two, on its own', async () => {
     const none = await ready('n', { efrs: [] });
     const pre = await header(none.id);

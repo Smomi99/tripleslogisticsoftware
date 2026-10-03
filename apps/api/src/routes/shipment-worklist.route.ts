@@ -14,7 +14,7 @@ import {
 } from '@ff/shared';
 
 import { Prisma } from '../generated/prisma/client';
-import { LIVE_ADVISE, LIVE_MEMBERSHIP, sharedEfrNotes } from '../lib/advise-group';
+import { efrGroupTags, LIVE_ADVISE, LIVE_MEMBERSHIP, sharedEfrNotes } from '../lib/advise-group';
 import { efrsOfBookings } from '../lib/clp-efr';
 import { HttpError } from '../lib/http-error';
 import { renderRequiredContainer } from '../lib/render-volumes';
@@ -455,7 +455,7 @@ function handler(worklist: ShipmentWorklistId) {
     const wanted: ShipmentStatus[] =
       query.status !== undefined ? [query.status] : [...view.statuses];
 
-    const { rows, total, details, byStatus, efrs } = await withTenant(auth.tenantId, async (db) => {
+    const { rows, total, details, byStatus, efrs, groups } = await withTenant(auth.tenantId, async (db) => {
       /*
        * No ownership scope here, deliberately — the one place a worklist
        * departs from the Booking List.
@@ -574,9 +574,12 @@ function handler(worklist: ShipmentWorklistId) {
         worklist,
         found.map((r) => r.id),
       );
-      // The EFR column: what each booking's confirmed receipts say.
-      const efrNos = await efrsOfBookings(db, found.map((r) => r.id));
-      return { rows: found, total: counted, details: detail, byStatus, efrs: efrNos };
+      // The EFR column: what each booking's confirmed receipts say, and which
+      // bookings it will share one advise with (CR-005).
+      const ids = found.map((r) => r.id);
+      const efrNos = await efrsOfBookings(db, ids);
+      const groupTags = await efrGroupTags(db, ids);
+      return { rows: found, total: counted, details: detail, byStatus, efrs: efrNos, groups: groupTags };
     });
 
     const awaiting = new Set<string>(config.awaiting);
@@ -599,6 +602,7 @@ function handler(worklist: ShipmentWorklistId) {
       status: row.status,
       cancelReason: row.cancelReason,
       efrNos: efrs.get(row.id.toString()) ?? [],
+      efrGroup: groups.get(row.id.toString()) ?? null,
       awaiting: awaiting.has(row.status),
       detail: details.get(row.id.toString()) ?? '—',
     }));

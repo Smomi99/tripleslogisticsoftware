@@ -3,6 +3,7 @@ import {
   type AdviseGroupMatch,
   type AdviseStatus,
   canTransition,
+  type EfrGroupTag,
   SHIPMENT_STATUS_LABEL,
   type ShipmentStatus,
 } from '@ff/shared';
@@ -553,4 +554,201 @@ export async function addMembership(
     }
     throw error;
   }
+}
+
+// ------------------------------------------------- the tag on a list row
+
+/** A party block as the BL prints it, for "do these share a shipper?". */
+const partyKeyOf = (s: {
+  exporterName: string | null;
+  exporterAddress: string | null;
+  importerName: string | null;
+  importerAddress: string | null;
+}): { shipper: string; consignee: string } => ({
+  shipper: `${textKey(s.exporterName)}|${textKey(s.exporterAddress)}`,
+  consignee: `${textKey(s.importerName)}|${textKey(s.importerAddress)}`,
+});
+
+/**
+ * CR-005, said on a list row: which bookings this one will share a Shipment
+ * Advise with — so the booking, approval, order and receipt tables show the
+ * grouping before anyone opens the advise screen.
+ *
+ * The advise screen's own rules, read for a whole page at once and without a
+ * lead booking: the bookings of one quotation with the same single EFR, on the
+ * same sailing, form a group; within it, the bookings with the most common
+ * shipper and consignee share one advise (SHARED), and the rest are offered
+ * (CHECK). A different voyage, or two EFRs, is an advise of its own (OWN). A
+ * booking already on an advise says which (ON_ADVISE), and a ready booking of
+ * an advised group says whether it can still join (JOINS) or came too late
+ * (LATE). A booking with no other booking of its EFR gets no tag.
+ */
+export async function efrGroupTags(
+  db: TenantDb,
+  shipmentIds: bigint[],
+): Promise<Map<string, EfrGroupTag>> {
+  const tags = new Map<string, EfrGroupTag>();
+  if (shipmentIds.length === 0) return tags;
+
+  const own = await db.shipment.findMany({
+    where: { id: { in: shipmentIds } },
+    select: { quotationId: true },
+  });
+  const siblings = await db.shipment.findMany({
+    where: {
+      quotationId: { in: [...new Set(own.map((s) => s.quotationId))] },
+      deletedAt: null,
+      status: { not: 'CANCELLED' },
+    },
+    orderBy: { code: 'asc' },
+    select: shipmentFields,
+  });
+  const efrs = await efrsOfBookings(db, siblings.map((s) => s.id));
+  const keysOf = (id: bigint): string[] => (efrs.get(id.toString()) ?? []).map(efrKey);
+
+  // Only bookings whose EFR another booking of the quotation also has.
+  const related = siblings.filter((s) => {
+    const mine = keysOf(s.id);
+    return (
+      mine.length > 0 &&
+      siblings.some(
+        (o) => o.id !== s.id && o.quotationId === s.quotationId && keysOf(o.id).some((k) => mine.includes(k)),
+      )
+    );
+  });
+  if (related.length === 0) return tags;
+
+  const [sailings, live] = await Promise.all([
+    sailingsOf(db, related),
+    liveAdvisesOf(db, related.map((s) => s.id)),
+  ]);
+  const adviseIds = [...new Set([...live.values()].map((a) => a.id))];
+  const memberRows =
+    adviseIds.length === 0
+      ? []
+      : await db.shipmentAdviseBooking.findMany({
+          where: { adviseId: { in: adviseIds }, ...LIVE_MEMBERSHIP },
+          select: { adviseId: true, shipment: { select: { id: true, code: true } } },
+        });
+  const membersOf = (adviseId: bigint) =>
+    memberRows.filter((m) => m.adviseId === adviseId).map((m) => m.shipment);
+  const sailingKey = (id: bigint): string => sailings.get(id.toString())?.key ?? '';
+
+  for (const id of shipmentIds) {
+    const s = related.find((r) => r.id === id);
+    if (s === undefined) continue;
+    const key = id.toString();
+
+    const advise = live.get(key);
+    if (advise !== undefined) {
+      tags.set(key, {
+        kind: 'ON_ADVISE',
+        adviseCode: advise.code,
+        withBookings: membersOf(advise.id).filter((m) => m.id !== s.id).map((m) => m.code).sort(),
+        reason: null,
+        groupKey: `A${advise.id}`,
+      });
+      continue;
+    }
+
+    const mine = keysOf(s.id);
+    if (mine.length > 1) {
+      tags.set(key, { kind: 'OWN', adviseCode: null, withBookings: [], reason: 'two EFRs', groupKey: null });
+      continue;
+    }
+
+    // The bookings it could share one bill of lading with.
+    const core = related.filter(
+      (o) =>
+        o.quotationId === s.quotationId &&
+        o.customerId === s.customerId &&
+        o.shipmentType === s.shipmentType &&
+        keysOf(o.id).length === 1 &&
+        keysOf(o.id)[0] === mine[0],
+    );
+    const sameSailing = core.filter((o) => sailingKey(o.id) === sailingKey(s.id));
+    if (sameSailing.length === 1) {
+      // Nobody else of the EFR sails with it. A booking whose only company is
+      // two-EFR bookings needs no tag — they carry the explanation.
+      if (core.length > 1) {
+        tags.set(key, { kind: 'OWN', adviseCode: null, withBookings: [], reason: 'other voyage', groupKey: null });
+      }
+      continue;
+    }
+
+    // The group's advise, if one of the others is already on it.
+    const groupAdvise = sameSailing
+      .map((o) => live.get(o.id.toString()))
+      .find((a): a is LiveAdvise => a !== undefined);
+    const anchorParties = (() => {
+      if (groupAdvise !== undefined) {
+        const lead = related.find((o) => o.id === groupAdvise.shipmentId);
+        if (lead !== undefined) return partyKeyOf(lead);
+      }
+      // The most common shipper and consignee; on a tie, the earliest booking's.
+      const counts = new Map<string, { n: number; first: (typeof sameSailing)[number] }>();
+      for (const o of sameSailing) {
+        const p = partyKeyOf(o);
+        const k = `${p.shipper}#${p.consignee}`;
+        const seen = counts.get(k);
+        counts.set(k, { n: (seen?.n ?? 0) + 1, first: seen?.first ?? o });
+      }
+      const best = [...counts.values()].sort((a, b) => b.n - a.n || a.first.code.localeCompare(b.first.code))[0]!;
+      return partyKeyOf(best.first);
+    })();
+    const groupKey =
+      groupAdvise !== undefined
+        ? `A${groupAdvise.id}`
+        : `G${s.quotationId}|${mine[0]}|${sailingKey(s.id)}|${anchorParties.shipper}#${anchorParties.consignee}`;
+
+    const parties = partyKeyOf(s);
+    const shipperDiffers = parties.shipper !== anchorParties.shipper;
+    const consigneeDiffers = parties.consignee !== anchorParties.consignee;
+    if (shipperDiffers || consigneeDiffers) {
+      tags.set(key, {
+        kind: 'CHECK',
+        adviseCode: groupAdvise?.code ?? null,
+        withBookings: [],
+        reason: shipperDiffers && consigneeDiffers ? 'shipper and consignee' : shipperDiffers ? 'shipper' : 'consignee',
+        groupKey,
+      });
+      continue;
+    }
+
+    if (groupAdvise !== undefined) {
+      tags.set(key, {
+        kind: groupAdvise.status === 'SENT' ? 'LATE' : 'JOINS',
+        adviseCode: groupAdvise.code,
+        withBookings: membersOf(groupAdvise.id).map((m) => m.code).sort(),
+        reason: null,
+        groupKey,
+      });
+      continue;
+    }
+
+    const partners = sameSailing
+      .filter((o) => o.id !== s.id)
+      .filter((o) => {
+        const p = partyKeyOf(o);
+        return p.shipper === anchorParties.shipper && p.consignee === anchorParties.consignee;
+      })
+      .map((o) => o.code);
+    if (partners.length > 0) {
+      tags.set(key, { kind: 'SHARED', adviseCode: null, withBookings: partners, reason: null, groupKey });
+      continue;
+    }
+    // The only one with these parties, while others share the EFR and the
+    // sailing: the advise screen offers them to it, and it to them.
+    const other = partyKeyOf(sameSailing.find((o) => o.id !== s.id)!);
+    const shipper = other.shipper !== parties.shipper;
+    const consignee = other.consignee !== parties.consignee;
+    tags.set(key, {
+      kind: 'CHECK',
+      adviseCode: null,
+      withBookings: [],
+      reason: shipper && consignee ? 'shipper and consignee' : consignee ? 'consignee' : 'shipper',
+      groupKey,
+    });
+  }
+  return tags;
 }

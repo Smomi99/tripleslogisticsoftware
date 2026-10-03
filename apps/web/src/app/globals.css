@@ -48,6 +48,19 @@
   /* Row hover, the one tint §12 names outside the palette. */
   --color-row-hover: #f0f4f4;
 
+  /*
+   * CR-005: one colour per advise group, on the dot beside a booking's EFR, so
+   * the bookings that will share one Shipment Advise read as one down a table.
+   * Categorical, and kept away from the four status hues above so a group dot
+   * is never read as a status.
+   */
+  --color-group-1: #2b59c3;
+  --color-group-2: #8e3fa3;
+  --color-group-3: #6b7f1a;
+  --color-group-4: #1f7fa8;
+  --color-group-5: #8a5a2b;
+  --color-group-6: #5e4fc4;
+
   /* -- Typography. Families are injected by next/font in layout.tsx. */
   --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-plex-mono), ui-monospace, monospace;

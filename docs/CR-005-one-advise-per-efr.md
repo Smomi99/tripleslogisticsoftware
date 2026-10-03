@@ -208,6 +208,16 @@ In order:
   the send means a new House BL number.
 - The BL tab, BL Print's issue dialog and the customer's BL screen name every booking the bill
   covers.
+- **The EFR No column** on Shipment Booking, Approval, Shipping Order, Cargo Receipt and the
+  documentation lists has a line under the EFR saying what will happen to the booking's advise.
+  The dot beside it is coloured by group, so bookings that will share one advise read as one
+  down the table (`components/cs/efr-nos.tsx`, `efrGroupTags` in `lib/advise-group.ts`):
+  - ● *1 advise with 3B, 3E*: will share one advise.
+  - ● *SA-… with 2B*: already on one.
+  - ● *Goes on SA-… (draft)*: its group's advise is a draft.
+  - ◐ *SA-… already sent — reissue to add*: it came after the send.
+  - ◐ *Same EFR — check shipper*: offered, and the user decides.
+  - ○ *Own advise — other voyage / two EFRs*: kept apart.
 - **Advise, BL Draft and BL Print lists** keep one row per booking (they are booking worklists),
   and the row shows the shared document number. Opening any of them opens the one document.
 - **BL Draft**: gross weight, measurement and the container block total the whole group.
