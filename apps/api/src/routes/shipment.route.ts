@@ -17,6 +17,7 @@ import {
   shipmentUpdateSchema,
 } from '@ff/shared';
 
+import { efrsOfBookings } from '../lib/clp-efr';
 import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
 import { Prisma } from '../generated/prisma/client';
 import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
@@ -456,7 +457,7 @@ shipmentRouter.get('/bookings', requirePermission(`${FEATURE}.VIEW`), async (req
   const auth = req.auth!;
   const query = shipmentListQuerySchema.parse(req.query);
 
-  const { rows, total } = await withTenant(auth.tenantId, async (db) => {
+  const { rows, total, efrs } = await withTenant(auth.tenantId, async (db) => {
     const scope = await scopeFor(db, auth, query.scope);
 
     const where: Prisma.ShipmentWhereInput = {
@@ -543,7 +544,8 @@ shipmentRouter.get('/bookings', requirePermission(`${FEATURE}.VIEW`), async (req
       db.shipment.count({ where }),
     ]);
 
-    return { rows: found, total: count };
+    // The EFR column: what each booking's confirmed receipts say.
+    return { rows: found, total: count, efrs: await efrsOfBookings(db, found.map((r) => r.id)) };
   });
 
   const data: ShipmentListRow[] = rows.map((row) => ({
@@ -565,6 +567,7 @@ shipmentRouter.get('/bookings', requirePermission(`${FEATURE}.VIEW`), async (req
     eta: dateOut(row.eta),
     status: row.status,
     cancelReason: row.cancelReason,
+    efrNos: efrs.get(row.id.toString()) ?? [],
   }));
 
   const payload: ApiSuccess<ShipmentListRow[]> = {

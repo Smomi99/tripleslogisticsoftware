@@ -590,6 +590,32 @@ describe('one EFR, one advise, one BL (CR-005)', () => {
     }
   });
 
+  it('shows the EFR No on the booking, cargo receipt and container plan lists', async () => {
+    const efr = `EFR-G5-${RUN}`;
+    const z = await booking('z', { efrs: [efr] });
+    const pending = await booking('w', { efrs: [] });
+    await finalisedClp(z.id);
+
+    // Shipment Booking: the booking list.
+    const bookings = await as(token).get(`/api/tenant/cs/bookings?search=${z.code}`);
+    expect(bookings.status, JSON.stringify(bookings.body)).toBe(200);
+    expect(bookings.body.data.find((r: { code: string }) => r.code === z.code).efrNos).toEqual([efr]);
+    // No EFR typed on the receipt: an empty list, which the screen shows as —.
+    const none = await as(token).get(`/api/tenant/cs/bookings?search=${pending.code}`);
+    expect(none.body.data.find((r: { code: string }) => r.code === pending.code).efrNos).toEqual([]);
+
+    // Cargo Receipt — the same worklist row Approval and Shipping Order use.
+    const receipts = await as(token).get(`/api/tenant/ops/cargo-receipts?view=RECEIVED&search=${z.code}`);
+    expect(receipts.status, JSON.stringify(receipts.body)).toBe(200);
+    expect(receipts.body.data.find((r: { code: string }) => r.code === z.code).efrNos).toEqual([efr]);
+
+    // Container Load Plan: the register, from the cartons loaded in the box.
+    const plans = await as(token).get(`/api/tenant/ops/clps?search=${z.code}`);
+    expect(plans.status, JSON.stringify(plans.body)).toBe(200);
+    const plan = plans.body.data.find((r: { bookingCode: string }) => r.bookingCode === z.code);
+    expect(plan.efrNos).toEqual([efr]);
+  });
+
   it('advises a booking without an EFR, or with two, on its own', async () => {
     const none = await ready('n', { efrs: [] });
     const pre = await header(none.id);

@@ -10,6 +10,7 @@ import {
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 
+import { EfrNos } from '@/components/cs/efr-nos';
 import { Button } from '@/components/ui/button';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -141,7 +142,15 @@ export function ShipmentBookingList({ mode }: { mode: 'SEA' | 'AIR' }) {
         id: 'quotationCode',
         header: 'Quotation No',
         numeric: true,
-        cell: (r) => r.quotationCode,
+        // Whole, like the EFR beside it — a code broken over three lines misreads.
+        cell: (r) => <span className="whitespace-nowrap">{r.quotationCode}</span>,
+      },
+      // From the confirmed cargo receipts, so blank until the cargo is in.
+      {
+        id: 'efr',
+        header: 'EFR No',
+        numeric: true,
+        cell: (r) => <EfrNos values={r.efrNos} />,
       },
       { id: 'customer', header: 'Customer', sortable: true, cell: (r) => r.customerName },
       { id: 'commodity', header: 'Commodity', cell: (r) => r.commodity },

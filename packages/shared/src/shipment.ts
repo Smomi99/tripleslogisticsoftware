@@ -474,6 +474,13 @@ export interface ShipmentListRow {
   status: ShipmentStatus;
   /** Drawn on the list so an operator can see why one stopped (§5.1). */
   cancelReason: string | null;
+  /**
+   * The EFR No the cargo arrived under, as typed on its confirmed cargo
+   * receipts, in delivery order. Empty until the cargo is received — the EFR is
+   * the receipt's (CR-002), and it is what groups bookings onto one advise
+   * (CR-005).
+   */
+  efrNos: string[];
 }
 
 export const shipmentListQuerySchema = listQuerySchema.extend({

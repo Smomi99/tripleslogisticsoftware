@@ -8,6 +8,7 @@ import {
 } from '@ff/shared';
 
 import { type AdviseLineDraft, adviseBlockedReason, buildAdviseLines } from './advise-build';
+import { efrKey, efrsOfBookings } from './clp-efr';
 import { HttpError } from './http-error';
 import type { TenantDb } from './tenant-client';
 
@@ -35,10 +36,7 @@ import type { TenantDb } from './tenant-client';
  * on the cargo receipts and can be corrected after the advise is made.
  */
 
-/** CR-005 rule 2: EFRs compare ignoring case and spaces. */
-export function efrKey(efr: string): string {
-  return efr.replace(/\s+/g, '').toUpperCase();
-}
+export { efrKey, efrsOfBookings };
 
 /** Party text compares ignoring case and how the spaces were typed. */
 const textKey = (v: string | null): string => (v ?? '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -69,42 +67,6 @@ const liveAdviseSelect = {
   mblNo: true,
   sentAt: true,
 } as const;
-
-/**
- * Each booking's EFRs, as typed on its confirmed receipts, in delivery order.
- *
- * The same receipts lib/clp-efr.ts reads for the load plan: CONFIRMED and
- * undeleted, with at least one ACCEPTED line — a declined delivery's EFR is not
- * the EFR of anything shipped. Distinct by efrKey, first spelling kept.
- */
-export async function efrsOfBookings(
-  db: TenantDb,
-  shipmentIds: bigint[],
-): Promise<Map<string, string[]>> {
-  const found = new Map<string, string[]>();
-  if (shipmentIds.length === 0) return found;
-
-  const receipts = await db.cargoReceipt.findMany({
-    where: {
-      shipmentId: { in: shipmentIds },
-      deletedAt: null,
-      status: 'CONFIRMED',
-      lines: { some: { deletedAt: null, lineStatus: 'ACCEPTED' } },
-    },
-    orderBy: [{ receiptSeq: 'asc' }, { id: 'asc' }],
-    select: { shipmentId: true, efrNo: true },
-  });
-
-  for (const receipt of receipts) {
-    const efr = (receipt.efrNo ?? '').trim();
-    if (efr === '') continue;
-    const key = receipt.shipmentId.toString();
-    const list = found.get(key) ?? [];
-    if (!list.some((e) => efrKey(e) === efrKey(efr))) list.push(efr);
-    found.set(key, list);
-  }
-  return found;
-}
 
 /**
  * For a worklist: which bookings share an EFR with others of their quotation,

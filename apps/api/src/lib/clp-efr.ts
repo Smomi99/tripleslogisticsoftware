@@ -43,17 +43,63 @@ export async function efrNosOfCargoLines(
     if (efr === '') continue;
     const key = row.shipmentCargoLineId.toString();
     const list = found.get(key) ?? [];
-    if (!list.includes(efr)) list.push(efr);
+    if (!list.some((e) => efrKey(e) === efrKey(efr))) list.push(efr);
     found.set(key, list);
   }
   return found;
 }
 
-/** Several lines' EFRs as one list, first-seen order, no repeats. */
+/**
+ * Several lines' EFRs as one list, first-seen order, no repeats — "EFR-701"
+ * and "efr-701" are one EFR (CR-005 rule 2), shown as first typed.
+ */
 export function mergeEfrNos(lists: (string[] | undefined)[]): string[] {
   const merged: string[] = [];
   for (const list of lists) {
-    for (const efr of list ?? []) if (!merged.includes(efr)) merged.push(efr);
+    for (const efr of list ?? []) {
+      if (!merged.some((e) => efrKey(e) === efrKey(efr))) merged.push(efr);
+    }
   }
   return merged;
+}
+
+/** CR-005 rule 2: EFRs compare ignoring case and spaces — EFR-501 is efr 501. */
+export function efrKey(efr: string): string {
+  return efr.replace(/\s+/g, '').toUpperCase();
+}
+
+/**
+ * Each booking's EFRs, as typed on its confirmed receipts, in delivery order.
+ *
+ * The same receipts efrNosOfCargoLines reads for the load plan: CONFIRMED and
+ * undeleted, with at least one ACCEPTED line — a declined delivery's EFR is not
+ * the EFR of anything shipped. Distinct by efrKey, first spelling kept.
+ */
+export async function efrsOfBookings(
+  db: TenantDb,
+  shipmentIds: bigint[],
+): Promise<Map<string, string[]>> {
+  const found = new Map<string, string[]>();
+  if (shipmentIds.length === 0) return found;
+
+  const receipts = await db.cargoReceipt.findMany({
+    where: {
+      shipmentId: { in: shipmentIds },
+      deletedAt: null,
+      status: 'CONFIRMED',
+      lines: { some: { deletedAt: null, lineStatus: 'ACCEPTED' } },
+    },
+    orderBy: [{ receiptSeq: 'asc' }, { id: 'asc' }],
+    select: { shipmentId: true, efrNo: true },
+  });
+
+  for (const receipt of receipts) {
+    const efr = (receipt.efrNo ?? '').trim();
+    if (efr === '') continue;
+    const key = receipt.shipmentId.toString();
+    const list = found.get(key) ?? [];
+    if (!list.some((e) => efrKey(e) === efrKey(efr))) list.push(efr);
+    found.set(key, list);
+  }
+  return found;
 }

@@ -120,6 +120,12 @@ export interface ClpListRow {
   totalCtnQty: number;
   totalVolumeCbm: string | null;
   volumeUtilisation: string | null;
+  /**
+   * The EFR No of the cargo in the box — read from the receipts its loaded
+   * cartons came in on, as the printed CLP does. A plan with nothing loaded
+   * yet shows its bookings' EFRs.
+   */
+  efrNos: string[];
 }
 
 export const clpListQuerySchema = listQuerySchema.extend({

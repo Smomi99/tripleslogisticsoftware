@@ -11,6 +11,7 @@ import {
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 
+import { EfrNos } from '@/components/cs/efr-nos';
 import { BlPrintActions } from '@/components/doc/bl-print-actions';
 import { CargoStockTable } from '@/components/ops/cargo-stock-table';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
@@ -210,6 +211,13 @@ export function WorklistScreen({
 
   const columns: DataTableColumn<ShipmentWorklistRow>[] = useMemo(
     () => [
+      // From the confirmed cargo receipts, so blank until the cargo is in.
+      {
+        id: 'efr',
+        header: 'EFR No',
+        numeric: true,
+        cell: (r) => <EfrNos values={r.efrNos} />,
+      },
       { id: 'customer', header: 'Customer', sortable: true, cell: (r) => r.customerName },
       {
         id: 'shipmentType',

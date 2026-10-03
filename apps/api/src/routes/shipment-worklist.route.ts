@@ -15,6 +15,7 @@ import {
 
 import { Prisma } from '../generated/prisma/client';
 import { LIVE_ADVISE, LIVE_MEMBERSHIP, sharedEfrNotes } from '../lib/advise-group';
+import { efrsOfBookings } from '../lib/clp-efr';
 import { HttpError } from '../lib/http-error';
 import { renderRequiredContainer } from '../lib/render-volumes';
 import { tenantDayOf } from '../lib/tenant-day';
@@ -454,7 +455,7 @@ function handler(worklist: ShipmentWorklistId) {
     const wanted: ShipmentStatus[] =
       query.status !== undefined ? [query.status] : [...view.statuses];
 
-    const { rows, total, details, byStatus } = await withTenant(auth.tenantId, async (db) => {
+    const { rows, total, details, byStatus, efrs } = await withTenant(auth.tenantId, async (db) => {
       /*
        * No ownership scope here, deliberately — the one place a worklist
        * departs from the Booking List.
@@ -573,7 +574,9 @@ function handler(worklist: ShipmentWorklistId) {
         worklist,
         found.map((r) => r.id),
       );
-      return { rows: found, total: counted, details: detail, byStatus };
+      // The EFR column: what each booking's confirmed receipts say.
+      const efrNos = await efrsOfBookings(db, found.map((r) => r.id));
+      return { rows: found, total: counted, details: detail, byStatus, efrs: efrNos };
     });
 
     const awaiting = new Set<string>(config.awaiting);
@@ -595,6 +598,7 @@ function handler(worklist: ShipmentWorklistId) {
       eta: dateOut(row.eta),
       status: row.status,
       cancelReason: row.cancelReason,
+      efrNos: efrs.get(row.id.toString()) ?? [],
       awaiting: awaiting.has(row.status),
       detail: details.get(row.id.toString()) ?? '—',
     }));
