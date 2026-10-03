@@ -10,6 +10,7 @@ import {
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 
+import { EfrNos, groupColours } from '@/components/cs/efr-nos';
 import { Button } from '@/components/ui/button';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -135,13 +136,24 @@ export function ShipmentBookingList({ mode }: { mode: 'SEA' | 'AIR' }) {
   const isAir = mode === 'AIR';
   const hasFilters = search !== '' || status !== '';
 
+  // CR-005: one colour per advise group, in the order the groups appear.
+  const colours = useMemo(() => groupColours(rows), [rows]);
+
   const columns: DataTableColumn<ShipmentListRow>[] = useMemo(
     () => [
       {
         id: 'quotationCode',
         header: 'Quotation No',
         numeric: true,
-        cell: (r) => r.quotationCode,
+        // Whole, like the EFR beside it — a code broken over three lines misreads.
+        cell: (r) => <span className="whitespace-nowrap">{r.quotationCode}</span>,
+      },
+      // From the confirmed cargo receipts, so blank until the cargo is in.
+      {
+        id: 'efr',
+        header: 'EFR No',
+        numeric: true,
+        cell: (r) => <EfrNos values={r.efrNos} code={r.code} group={r.efrGroup} colours={colours} />,
       },
       { id: 'customer', header: 'Customer', sortable: true, cell: (r) => r.customerName },
       { id: 'commodity', header: 'Commodity', cell: (r) => r.commodity },
@@ -178,7 +190,7 @@ export function ShipmentBookingList({ mode }: { mode: 'SEA' | 'AIR' }) {
         ),
       },
     ],
-    [isAir],
+    [isAir, colours],
   );
 
   return (

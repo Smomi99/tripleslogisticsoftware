@@ -56,7 +56,7 @@ import {
   suggestGroups,
   unloadablePos,
 } from '../lib/clp-consolidation';
-import { efrNosOfCargoLines } from '../lib/clp-efr';
+import { efrNosOfCargoLines, efrsOfBookings, mergeEfrNos } from '../lib/clp-efr';
 import {
   participantShipmentIds,
   plansOfBooking,
@@ -468,6 +468,32 @@ clpRouter.get('/clps', requirePermission(`${FEATURE}.VIEW`), async (req, res) =>
       }
     }
 
+    /*
+      The EFR column: the receipts the loaded cartons came in on, read the way
+      the printed CLP reads them. A plan with nothing loaded yet shows its
+      bookings' EFRs, so a fresh draft does not look as if it had none.
+    */
+    const loaded = await db.clpLine.findMany({
+      where: { clpId: { in: rows.map((r) => r.id) }, deletedAt: null },
+      select: { clpId: true, shipmentCargoLineId: true },
+    });
+    const bookingsOf = (row: (typeof rows)[number]): bigint[] =>
+      row.bookings.length > 0
+        ? row.bookings.map((b) => b.shipmentId)
+        : row.shipmentId === null
+          ? []
+          : [row.shipmentId];
+    const [lineEfrs, bookingEfrs] = await Promise.all([
+      efrNosOfCargoLines(db, [...new Set(loaded.map((l) => l.shipmentCargoLineId))]),
+      efrsOfBookings(db, [...new Set(rows.flatMap(bookingsOf))]),
+    ]);
+    const efrsOf = (row: (typeof rows)[number]): string[] => {
+      const lines = loaded.filter((l) => l.clpId === row.id);
+      return lines.length > 0
+        ? mergeEfrNos(lines.map((l) => lineEfrs.get(l.shipmentCargoLineId.toString())))
+        : mergeEfrNos(bookingsOf(row).map((id) => bookingEfrs.get(id.toString())));
+    };
+
     return {
       total,
       rows: rows.map((row): ClpListRow => {
@@ -501,6 +527,7 @@ clpRouter.get('/clps', requirePermission(`${FEATURE}.VIEW`), async (req, res) =>
           totalCtnQty: row.totalCtnQty,
           totalVolumeCbm: dec(row.totalVolumeCbm),
           volumeUtilisation: dec(row.volumeUtilisation),
+          efrNos: efrsOf(row),
         };
       }),
     };

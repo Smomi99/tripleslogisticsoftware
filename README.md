@@ -20,9 +20,17 @@ pnpm db:migrate           # create the schema and RLS policies
 pnpm db:app-role          # grant the ff_app role a local login (once)
 pnpm db:generate          # generate the Prisma client
 pnpm db:seed              # permissions, system lookups, demo workspace
+pnpm db:demo              # demo customers, bookings and a CLP sheet
 pnpm dev                  # web on :3000, API on :4000
 pnpm test                 # tenancy + RBAC suites
 ```
+
+`pnpm test` needs `pnpm db:demo` first: the CLP, Shipment Advise and RLS suites read existing
+bookings and fail with "No record was found" on an empty workspace.
+
+`pnpm db:migrate` should finish with "Already in sync". If it generates a new migration that you
+did not ask for, the schema has drifted from the committed migrations. Delete that migration and
+fix `schema.prisma` instead (see "Prisma must own every database object" below).
 
 Sign in against the demo workspace with `superadmin` / `ChangeMe!2026`. Locally the workspace is
 addressed with an `X-Tenant-Slug: demo` header, since `demo.localhost` needs wildcard DNS; in
@@ -52,6 +60,8 @@ Check it came up: <http://localhost:3000> should report the API reachable and th
 | `pnpm db:generate` | Regenerate the Prisma client |
 | `pnpm db:seed` | Permissions, system lookups, and the demo workspace |
 | `pnpm db:app-role` | Grant the non-owner `ff_app` role a local login (once) |
+| `pnpm db:demo` | Demo customers, bookings, the CLP loading-type sheet and the EFR scenario |
+| `pnpm db:demo:efr` | Rebuild only the one-advise-per-EFR scenario (CR-005 §12) — rerun to start over |
 | `pnpm db:studio` | Prisma Studio |
 | `pnpm db:reset` | Drop, re-migrate and re-seed — **destroys all data** |
 | `pnpm test` | Tenancy isolation and RBAC suites |

@@ -20,6 +20,8 @@ import type { TenantDb } from './tenant-client';
  */
 
 export interface AdviseLineDraft {
+  /** CR-005: the booking this line is cargo of — an advise may cover several. */
+  shipmentId: bigint;
   shipmentPoId: bigint;
   shipmentCargoLineId: bigint;
   clpId: bigint | null;
@@ -60,7 +62,9 @@ function sum(values: (Prisma.Decimal | null)[]): Prisma.Decimal | null {
 export function totalsOf(lines: AdviseLineDraft[]): AdviseTotals {
   const pcs = lines.map((l) => l.pcsQty).filter((v): v is number => v !== null);
   return {
-    poCount: new Set(lines.map((l) => l.poNo)).size,
+    // By the PO itself, not its number: two bookings on one advise (CR-005)
+    // may well reuse a PO number, and they are still two POs.
+    poCount: new Set(lines.map((l) => l.shipmentPoId.toString())).size,
     ctnQty: lines.reduce((acc, l) => acc + l.ctnQty, 0),
     pcsQty: pcs.length === 0 ? null : pcs.reduce((acc, v) => acc + v, 0),
     netWeightKg: sum(lines.map((l) => l.netWeightKg)),
@@ -157,6 +161,7 @@ async function buildSeaLines(db: TenantDb, shipmentId: bigint): Promise<AdviseLi
   ]);
 
   return rows.map((row) => ({
+    shipmentId,
     shipmentPoId: row.shipmentPoId,
     shipmentCargoLineId: row.shipmentCargoLineId,
     clpId: row.clpId,
@@ -222,6 +227,7 @@ async function buildAirLines(db: TenantDb, shipmentId: bigint): Promise<AdviseLi
     const existing = merged.get(key);
     if (existing === undefined) {
       merged.set(key, {
+        shipmentId,
         shipmentPoId: row.cargoLine.shipmentPoId,
         shipmentCargoLineId: row.cargoLine.id,
         clpId: null,

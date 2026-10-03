@@ -146,8 +146,11 @@ export function BlPrintActions({
         ) : (
           <div className="flex flex-col gap-4">
             <dl className="grid grid-cols-[9rem_1fr] gap-x-3 gap-y-1.5 text-body">
-              <dt className="label-manifest self-center">Booking</dt>
-              <dd className="font-mono tabular-nums text-hull">{bill.bookingNo}</dd>
+              {/* CR-005: one bill can cover several bookings sharing an EFR. */}
+              <dt className="label-manifest self-center">
+                {bill.bookingNos.length > 1 ? 'Bookings' : 'Booking'}
+              </dt>
+              <dd className="font-mono tabular-nums text-hull">{bill.bookingNos.join(', ')}</dd>
               <dt className="label-manifest self-center">House BL</dt>
               <dd className="font-mono tabular-nums text-hull">{bill.blNo}</dd>
               <dt className="label-manifest self-center">MBL</dt>

@@ -24,6 +24,8 @@
     "db:demo:clear": "tsx prisma/demo-data.ts --clear",
     "db:demo:sheet": "tsx prisma/demo-data.ts --sheet",
     "db:demo:sheet:clear": "tsx prisma/demo-data.ts --sheet --clear",
+    "db:demo:efr": "tsx prisma/demo-data.ts --efr",
+    "db:demo:efr:clear": "tsx prisma/demo-data.ts --efr --clear",
     "demo:docs": "node scripts/demo-documentation.mjs"
   },
   "devDependencies": {

@@ -8,7 +8,8 @@ import {
   blPrintQuerySchema,
 } from '@ff/shared';
 
-import { type BlDraftRow, blDraftArgs } from '../lib/bl-draft-view';
+import { adviseMembers } from '../lib/advise-group';
+import { type BlDraftRow, billBookings, liveBlDraftRow } from '../lib/bl-draft-view';
 import { type BlPrintMark, renderBlDraftPdf } from '../lib/bl-draft-pdf';
 import { HttpError } from '../lib/http-error';
 import { parseId } from '../lib/request';
@@ -53,11 +54,8 @@ async function approvedBill(db: TenantDb, shipmentId: bigint): Promise<BlDraftRo
   });
   if (shipment === null) throw HttpError.notFound('Booking not found.');
 
-  const row = await db.blDraft.findFirst({
-    where: { shipmentId, deletedAt: null, status: { not: 'CANCELLED' } },
-    orderBy: { id: 'desc' },
-    ...blDraftArgs,
-  });
+  // CR-005: the one bill covering this booking, wherever it hangs.
+  const row = await liveBlDraftRow(db, shipmentId);
   if (row === null) {
     throw new HttpError(
       409,
@@ -79,6 +77,7 @@ function printDto(row: BlDraftRow): BlPrintDto {
   return {
     shipmentId: row.shipmentId.toString(),
     bookingNo: row.shipment.code,
+    bookingNos: billBookings(row).map((b) => b.code),
     customerName: row.shipment.customer.name,
     draftId: row.id.toString(),
     draftCode: row.code,
@@ -227,7 +226,10 @@ blPrintRouter.post(
           updatedBy: auth.userId,
         },
       });
-      await transitionShipment(db, { shipmentId, to: 'BL_ISSUED', userId: auth.userId });
+      // CR-005 §3: one bill, issued for every booking it covers.
+      for (const m of await adviseMembers(db, row.adviseId)) {
+        await transitionShipment(db, { shipmentId: m.id, to: 'BL_ISSUED', userId: auth.userId });
+      }
 
       return printDto(await approvedBill(db, shipmentId));
     });

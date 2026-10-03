@@ -106,6 +106,7 @@ async function cleanup(): Promise<void> {
   for (const table of [
     'bl_draft_container',
     'bl_draft',
+    'shipment_advise_booking',
     'shipment_advise',
     'shipment',
     'quotation',
@@ -262,7 +263,9 @@ async function makeWorld(name: string, slug: string, tag: string): Promise<World
       select: { id: true },
     });
     const houseBlNo = `HBL${tag}${YEAR}000${n}`;
-    await owner.shipmentAdvise.create({
+    // Made the way the advise route makes one (CR-005): a draft, the booking
+    // it covers, then sent — the database only lets a booking join a draft.
+    const advise = await owner.shipmentAdvise.create({
       data: {
         tenantId,
         code: `SA-${YEAR}-8${tag}000${n}`,
@@ -274,10 +277,16 @@ async function makeWorld(name: string, slug: string, tag: string): Promise<World
         podId,
         houseBlNo,
         mblNo: `MBL-${tag}-${n}`,
-        status: 'SENT',
-        sentAt: new Date(),
-        sentBy: superUser.id,
+        status: 'DRAFT',
       },
+      select: { id: true },
+    });
+    await owner.shipmentAdviseBooking.create({
+      data: { tenantId, adviseId: advise.id, shipmentId: shipment.id },
+    });
+    await owner.shipmentAdvise.update({
+      where: { id: advise.id },
+      data: { status: 'SENT', sentAt: new Date(), sentBy: superUser.id },
     });
     return { id: shipment.id, code, houseBlNo };
   };

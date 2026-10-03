@@ -189,6 +189,17 @@ export function PortalShipmentScreen() {
           <EmptyState title="Not ready yet" description={prefill.blockedReason} />
         )}
 
+        {/* CR-005: bookings that share an EFR share one bill of lading. */}
+        {(draft?.bookingNos ?? prefill?.bookingNos ?? []).length > 1 && (
+          <p className="text-body text-steel">
+            One bill of lading for your bookings{' '}
+            <span className="font-mono tabular-nums text-hull">
+              {(draft?.bookingNos ?? prefill?.bookingNos ?? []).join(', ')}
+            </span>
+            . They were received under the same EFR, so they travel on one BL.
+          </p>
+        )}
+
         {values !== null && (draft !== null || prefill?.blockedReason == null) && (
           <>
             {draft !== null && draft.status !== 'DRAFT' && (

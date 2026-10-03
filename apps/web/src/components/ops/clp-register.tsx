@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
+import { EfrNos } from '@/components/cs/efr-nos';
 import { Button } from '@/components/ui/button';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -93,6 +94,13 @@ export function ClpRegister({
             <span className="block font-sans text-cell text-steel">{loadingLabel(r.loadingType)}</span>
           </>
         ),
+      },
+      // The EFR of the cargo in the box — every booking's, when it is shared.
+      {
+        id: 'efr',
+        header: 'EFR No',
+        numeric: true,
+        cell: (r) => <EfrNos values={r.efrNos} />,
       },
       { id: 'customer', header: 'Customer', cell: (r) => r.customerName },
       {

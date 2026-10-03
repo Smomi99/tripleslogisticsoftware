@@ -13,10 +13,12 @@ import {
   CODE_PREFIX,
 } from '@ff/shared';
 
+import { adviseMembers, liveAdviseOf } from '../lib/advise-group';
 import {
   type BlDraftRow,
+  billBookings,
   blDraftPrefill,
-  containersForShipment,
+  containersForShipments,
   loadBlDraftById,
   loadLiveBlDraft,
 } from '../lib/bl-draft-view';
@@ -49,15 +51,19 @@ const TEMPLATE_FEATURE = 'DOCUMENTATION.BL_TEMPLATE';
 
 blDraftRouter.use(authenticate);
 
-/** Writes the container block from the booking's finalised plans. */
+/**
+ * Writes the container block from the finalised plans of every booking on the
+ * bill's advise (CR-005).
+ */
 export async function writeContainers(
   db: TenantDb,
   tenantId: bigint,
   blDraftId: bigint,
-  shipmentId: bigint,
+  adviseId: bigint,
   userId: bigint,
 ): Promise<void> {
-  const containers = await containersForShipment(db, shipmentId);
+  const members = await adviseMembers(db, adviseId);
+  const containers = await containersForShipments(db, members.map((m) => m.id));
   await db.blDraftContainer.updateMany({
     where: { blDraftId, deletedAt: null },
     data: { deletedAt: new Date(), updatedBy: userId },
@@ -169,11 +175,9 @@ export async function createBlDraft(
     );
   }
 
-  const advise = await db.shipmentAdvise.findFirst({
-    where: { shipmentId: args.shipmentId, deletedAt: null, status: 'SENT' },
-    orderBy: { id: 'desc' },
-    select: { id: true, houseBlNo: true },
-  });
+  // CR-005: the advise this booking is on, made from it or from another
+  // booking of its EFR. The bill is that advise's, one for all its bookings.
+  const advise = await liveAdviseOf(db, args.shipmentId, 'SENT');
   if (advise === null) {
     throw new HttpError(
       409,
@@ -183,7 +187,7 @@ export async function createBlDraft(
   }
 
   const existing = await db.blDraft.findFirst({
-    where: { shipmentId: args.shipmentId, deletedAt: null, status: { not: 'CANCELLED' } },
+    where: { adviseId: advise.id, deletedAt: null, status: { not: 'CANCELLED' } },
     select: { code: true },
   });
   if (existing !== null) {
@@ -204,7 +208,8 @@ export async function createBlDraft(
           tenantId: args.tenantId,
           code,
           seriesYear,
-          shipmentId: args.shipmentId,
+          // The advise's own booking — the database holds the bill to it.
+          shipmentId: advise.shipmentId,
           adviseId: advise.id,
           origin: args.origin,
           blNo: advise.houseBlNo,
@@ -226,7 +231,7 @@ export async function createBlDraft(
     throw new HttpError(500, 'CODE_EXHAUSTED', 'Could not allocate a BL draft number.');
   }
 
-  await writeContainers(db, args.tenantId, created.id, args.shipmentId, args.userId);
+  await writeContainers(db, args.tenantId, created.id, advise.id, args.userId);
   return created.id;
 }
 
@@ -323,7 +328,7 @@ blDraftRouter.post(
     const data = await withTenant(auth.tenantId, async (db) => {
       const row = await loadBlDraftById(db, id);
       assertBlEditable(row);
-      await writeContainers(db, auth.tenantId, id, row.shipmentId, auth.userId);
+      await writeContainers(db, auth.tenantId, id, row.adviseId, auth.userId);
       return loadLiveBlDraft(db, row.shipmentId);
     });
 
@@ -358,11 +363,10 @@ blDraftRouter.post(
           updatedBy: auth.userId,
         },
       });
-      await transitionShipment(db, {
-        shipmentId: row.shipmentId,
-        to: 'BL_DRAFTED',
-        userId: auth.userId,
-      });
+      // CR-005 §3: every booking the bill covers moves with it.
+      for (const m of await adviseMembers(db, row.adviseId)) {
+        await transitionShipment(db, { shipmentId: m.id, to: 'BL_DRAFTED', userId: auth.userId });
+      }
       return loadLiveBlDraft(db, row.shipmentId);
     });
 
@@ -411,6 +415,7 @@ blDraftRouter.post('/bl-drafts/:id/send', requirePermission(`${FEATURE}.SEND`), 
     }
   });
 
+  const bookingNos = billBookings(sent).map((b) => b.code).join(', ');
   await queueMail({
     attachments,
     tenantId: auth.tenantId,
@@ -418,7 +423,7 @@ blDraftRouter.post('/bl-drafts/:id/send', requirePermission(`${FEATURE}.SEND`), 
     to: input.to.map((r) => r.email),
     cc: (input.cc ?? []).map((r) => r.email),
     variables: {
-      bookingNo: sent.shipment.code,
+      bookingNo: bookingNos,
       blNo: sent.blNo,
       customerName: sent.shipment.customer.name,
       polName: sent.pol.name,
@@ -429,9 +434,9 @@ blDraftRouter.post('/bl-drafts/:id/send', requirePermission(`${FEATURE}.SEND`), 
     relatedId: id,
     actorId: auth.userId,
     fallback: {
-      subject: `BL draft ${sent.blNo} — booking ${sent.shipment.code}`,
+      subject: `BL draft ${sent.blNo} — booking ${bookingNos}`,
       bodyText:
-        `The BL draft for booking ${sent.shipment.code} (${sent.pol.name} to ${sent.pod.name}) ` +
+        `The BL draft for booking ${bookingNos} (${sent.pol.name} to ${sent.pod.name}) ` +
         `is attached to your file under BL number ${sent.blNo}. Please check it and confirm.`,
     },
   });
@@ -477,11 +482,9 @@ blDraftRouter.post(
        * keying this on SENT asked for ADVISED -> ADVISED and refused the cancel.
        */
       if (row.approvedAt !== null) {
-        await transitionShipment(db, {
-          shipmentId: row.shipmentId,
-          to: 'ADVISED',
-          userId: auth.userId,
-        });
+        for (const m of await adviseMembers(db, row.adviseId)) {
+          await transitionShipment(db, { shipmentId: m.id, to: 'ADVISED', userId: auth.userId });
+        }
       }
       return loadLiveBlDraft(db, row.shipmentId);
     });
@@ -697,7 +700,7 @@ export async function blDocumentInput(
     blNo: row.blNo,
     mblNo: row.advise.mblNo,
     manifestNo: row.manifestNo,
-    bookingNo: row.shipment.code,
+    bookingNo: billBookings(row).map((b) => b.code).join(', '),
     shipperText: row.shipperText,
     consigneeText: row.consigneeText,
     notifyText: row.notifyText,

@@ -11,6 +11,7 @@ import {
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 
+import { EfrNos, groupColours } from '@/components/cs/efr-nos';
 import { BlPrintActions } from '@/components/doc/bl-print-actions';
 import { CargoStockTable } from '@/components/ops/cargo-stock-table';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
@@ -208,8 +209,18 @@ export function WorklistScreen({
     };
   }, [authorizedList, isStock, mode, page, reloadKey, search, sortBy, sortOrder, view, worklist]);
 
+  // CR-005: one colour per advise group, in the order the groups appear.
+  const colours = useMemo(() => groupColours(rows), [rows]);
+
   const columns: DataTableColumn<ShipmentWorklistRow>[] = useMemo(
     () => [
+      // From the confirmed cargo receipts, so blank until the cargo is in.
+      {
+        id: 'efr',
+        header: 'EFR No',
+        numeric: true,
+        cell: (r) => <EfrNos values={r.efrNos} code={r.code} group={r.efrGroup} colours={colours} />,
+      },
       { id: 'customer', header: 'Customer', sortable: true, cell: (r) => r.customerName },
       {
         id: 'shipmentType',
@@ -236,7 +247,7 @@ export function WorklistScreen({
         cell: (r) => <Status tone={TONE[r.status]}>{SHIPMENT_STATUS_LABEL[r.status]}</Status>,
       },
     ],
-    [worklist],
+    [worklist, colours],
   );
 
   /*

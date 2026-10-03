@@ -2,6 +2,7 @@ import type { BlDraftContainerDto, BlDraftDto, BlDraftPrefillDto } from '@ff/sha
 
 import { Prisma } from '../generated/prisma/client';
 
+import { adviseMembers, leadFirst, LIVE_MEMBERSHIP, liveAdviseOf } from './advise-group';
 import { HttpError } from './http-error';
 import type { TenantDb } from './tenant-client';
 
@@ -34,7 +35,20 @@ export const blDraftArgs = {
         customer: { select: { id: true, name: true } },
       },
     },
-    advise: { select: { id: true, houseBlNo: true, mblNo: true, status: true } },
+    advise: {
+      select: {
+        id: true,
+        houseBlNo: true,
+        mblNo: true,
+        status: true,
+        // CR-005: one bill for every booking on its advise.
+        bookings: {
+          where: { deletedAt: null },
+          orderBy: { id: 'asc' },
+          select: { releasedAt: true, shipment: { select: { id: true, code: true } } },
+        },
+      },
+    },
     preCarriage: { select: { name: true } },
     deliveryAgent: { select: { name: true } },
     pol: { select: { name: true } },
@@ -49,6 +63,19 @@ export const blDraftArgs = {
 } satisfies { include: Prisma.BlDraftInclude };
 
 export type BlDraftRow = Prisma.BlDraftGetPayload<typeof blDraftArgs>;
+
+/**
+ * The bookings a bill covers, the one its advise was made from first — the
+ * advise's live bookings, or, once it is cancelled, the ones it held.
+ */
+export function billBookings(row: BlDraftRow): { id: bigint; code: string }[] {
+  const all = row.advise.bookings;
+  const live = all.filter((b) => b.releasedAt === null);
+  const rows = (live.length > 0 ? live : all).map((b) => b.shipment);
+  return rows.length === 0
+    ? [{ id: row.shipmentId, code: row.shipment.code }]
+    : leadFirst(row.shipmentId, rows);
+}
 
 function containerDto(row: BlDraftRow['containers'][number]): BlDraftContainerDto {
   return {
@@ -73,6 +100,7 @@ export function blDraftDto(
     origin: row.origin,
     shipmentId: row.shipmentId.toString(),
     bookingNo: row.shipment.code,
+    bookingNos: billBookings(row).map((b) => b.code),
     customerName: row.shipment.customer.name,
     blNo: row.blNo,
     mblNo: row.advise.mblNo,
@@ -127,15 +155,28 @@ export async function recipientsOfCustomer(
     .map((p) => ({ name: p.name, email: p.email }));
 }
 
+/**
+ * The live bill covering a booking. CR-005: the bill hangs off the booking its
+ * advise was made from, so any other booking on that advise finds it through
+ * the advise — one bill, reached from every booking it covers.
+ */
+export async function liveBlDraftRow(db: TenantDb, shipmentId: bigint): Promise<BlDraftRow | null> {
+  return db.blDraft.findFirst({
+    where: {
+      deletedAt: null,
+      status: { not: 'CANCELLED' },
+      advise: { bookings: { some: { shipmentId, ...LIVE_MEMBERSHIP } } },
+    },
+    orderBy: { id: 'desc' },
+    ...blDraftArgs,
+  });
+}
+
 export async function loadLiveBlDraft(
   db: TenantDb,
   shipmentId: bigint,
 ): Promise<BlDraftDto | null> {
-  const row = await db.blDraft.findFirst({
-    where: { shipmentId, deletedAt: null, status: { not: 'CANCELLED' } },
-    orderBy: { id: 'desc' },
-    ...blDraftArgs,
-  });
+  const row = await liveBlDraftRow(db, shipmentId);
   if (row === null) return null;
   return blDraftDto(row, await recipientsOfCustomer(db, row.shipment.customer.id));
 }
@@ -147,17 +188,20 @@ export async function loadBlDraftById(db: TenantDb, id: bigint): Promise<BlDraft
 }
 
 /**
- * The container block (B40), pulled from the booking's finalised plans.
+ * The container block (B40), pulled from the finalised plans of the bookings
+ * on the bill — CR-005: every booking on its advise.
  *
- * Filtered through the load plan's own lines for this booking, so a
- * consolidated box lists the container once and not once per participant.
+ * Filtered through the load plan's own lines for those bookings, so a
+ * consolidated box lists the container once and not once per participant, and
+ * counts only the cartons this bill covers.
  */
-export async function containersForShipment(db: TenantDb, shipmentId: bigint) {
+export async function containersForShipments(db: TenantDb, shipmentIds: bigint[]) {
+  const ours = { deletedAt: null, shipmentPo: { shipmentId: { in: shipmentIds }, deletedAt: null } };
   const clps = await db.clp.findMany({
     where: {
       deletedAt: null,
       status: 'FINAL',
-      lines: { some: { deletedAt: null, shipmentPo: { shipmentId, deletedAt: null } } },
+      lines: { some: ours },
     },
     orderBy: { id: 'asc' },
     select: {
@@ -166,7 +210,7 @@ export async function containersForShipment(db: TenantDb, shipmentId: bigint) {
       sealNo: true,
       containerSize: { select: { name: true } },
       lines: {
-        where: { deletedAt: null, shipmentPo: { shipmentId, deletedAt: null } },
+        where: ours,
         select: { ctnQty: true, grossWeightKg: true, volumeCbm: true },
       },
     },
@@ -204,8 +248,17 @@ export async function blDraftPrefill(
   db: TenantDb,
   shipmentId: bigint,
 ): Promise<BlDraftPrefillDto> {
-  const shipment = await db.shipment.findFirst({
+  const requested = await db.shipment.findFirst({
     where: { id: shipmentId, deletedAt: null },
+    select: { id: true, code: true },
+  });
+  if (requested === null) throw HttpError.notFound('Booking not found.');
+
+  // CR-005: the bill is drawn from the booking its advise was made from, and
+  // covers every booking on that advise — whichever of them it is opened from.
+  const live = await liveAdviseOf(db, shipmentId, 'SENT');
+  const shipment = await db.shipment.findFirst({
+    where: { id: live?.shipmentId ?? shipmentId, deletedAt: null },
     select: {
       id: true,
       code: true,
@@ -226,9 +279,8 @@ export async function blDraftPrefill(
   });
   if (shipment === null) throw HttpError.notFound('Booking not found.');
 
-  const advise = await db.shipmentAdvise.findFirst({
-    where: { shipmentId, deletedAt: null, status: 'SENT' },
-    orderBy: { id: 'desc' },
+  const advise = live === null ? null : await db.shipmentAdvise.findFirst({
+    where: { id: live.id },
     select: {
       id: true,
       houseBlNo: true,
@@ -242,13 +294,15 @@ export async function blDraftPrefill(
     },
   });
 
-  const containers = advise === null ? [] : await containersForShipment(db, shipmentId);
+  const members = advise === null ? [] : await adviseMembers(db, advise.id);
+  const containers =
+    advise === null ? [] : await containersForShipments(db, members.map((m) => m.id));
   const gross = containers.reduce((acc, c) => acc.add(c.grossWeightKg), new Prisma.Decimal(0));
   const cbm = containers.reduce((acc, c) => acc.add(c.measurementCbm), new Prisma.Decimal(0));
 
   const blocked =
     advise === null
-      ? `${shipment.code} has no sent shipment advise yet. The BL number is allocated there.`
+      ? `${requested.code} has no sent shipment advise yet. The BL number is allocated there.`
       : shipment.shipmentType === 'AIR'
         ? 'Both BL Draft sheets say "Only for Outbound shipment-Sea". An air equivalent is open question 8.'
         : null;
@@ -259,6 +313,7 @@ export async function blDraftPrefill(
   return {
     shipmentId: shipment.id.toString(),
     bookingNo: shipment.code,
+    bookingNos: members.length === 0 ? [requested.code] : members.map((m) => m.code),
     customerName: shipment.customer.name,
     blNo: advise?.houseBlNo ?? '',
     mblNo: advise?.mblNo ?? null,

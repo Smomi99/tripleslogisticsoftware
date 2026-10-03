@@ -10,6 +10,7 @@ import {
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
+import { AdviseGroupPanel, type AdvisePanelMode, pendingBookings } from '@/components/doc/advise-group-panel';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Input, Select } from '@/components/ui/field';
@@ -107,6 +108,15 @@ export function ShipmentAdviseTab({
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [vessels, setVessels] = useState<{ id: string; name: string }[]>([]);
+  /** CR-005: the warned bookings ticked onto a new advise. */
+  const [ticked, setTicked] = useState<string[]>([]);
+
+  const prefillUrl = useCallback(
+    (include: string[]) =>
+      `/api/tenant/documentation/bookings/${booking.id}/advise/prefill` +
+      (include.length === 0 ? '' : `?include=${include.join(',')}`),
+    [booking.id],
+  );
 
   const load = useCallback(async () => {
     setLoaded(false);
@@ -120,9 +130,8 @@ export function ShipmentAdviseTab({
         setSendTo(row.recipients.map((r) => r.email).join(', '));
         setPrefill(null);
       } else if (can('DOCUMENTATION.SHIPMENT_ADVISE.CREATE')) {
-        const draft = await authorizedRequest<ShipmentAdvisePrefillDto>(
-          `/api/tenant/documentation/bookings/${booking.id}/advise/prefill`,
-        );
+        setTicked([]);
+        const draft = await authorizedRequest<ShipmentAdvisePrefillDto>(prefillUrl([]));
         setPrefill(draft);
         setHeader(headerFrom(draft));
         setSendTo(draft.recipients.map((r) => r.email).join(', '));
@@ -132,11 +141,44 @@ export function ShipmentAdviseTab({
     } finally {
       setLoaded(true);
     }
-  }, [authorizedRequest, booking.id, can]);
+  }, [authorizedRequest, booking.id, can, prefillUrl]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  /*
+   * CR-005: ticking a warned booking re-pulls the preview, so the grid below
+   * shows what the advise will actually hold before anything is saved. The
+   * header the user has typed is kept.
+   */
+  async function toggle(shipmentId: string): Promise<void> {
+    const next = ticked.includes(shipmentId)
+      ? ticked.filter((id) => id !== shipmentId)
+      : [...ticked, shipmentId];
+    setTicked(next);
+    setError(null);
+    setPending(true);
+    try {
+      setPrefill(await authorizedRequest<ShipmentAdvisePrefillDto>(prefillUrl(next)));
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Could not refresh the advise.');
+    } finally {
+      setPending(false);
+    }
+  }
+
+  /** CR-005's `Add to SA-…`: one more booking of the EFR onto a draft advise. */
+  function addBooking(adviseId: string, shipmentId: string, done: string): void {
+    void run(
+      () =>
+        authorizedRequest(`/api/tenant/documentation/shipment-advise/${adviseId}/bookings`, {
+          method: 'POST',
+          body: { shipmentId },
+        }),
+      done,
+    );
+  }
 
   /*
    * M15: "If required then change the approved vsl schedule". The advise keeps
@@ -186,6 +228,12 @@ export function ShipmentAdviseTab({
   const source = advise ?? prefill;
   const lines = source?.lines ?? [];
   const totals = source?.totals;
+  const bookingNos = source?.bookingNos ?? [booking.code];
+  // CR-005: an advise for several bookings says which booking each PO is on.
+  const showBooking = bookingNos.length > 1;
+  const waiting = source === null ? [] : pendingBookings(source.group);
+  const panelMode: AdvisePanelMode =
+    advise === null ? 'new' : advise.status === 'DRAFT' ? 'draft' : advise.status === 'SENT' ? 'sent' : 'cancelled';
 
   if (!loaded) return <p className="text-body text-steel">Loading…</p>;
 
@@ -195,6 +243,38 @@ export function ShipmentAdviseTab({
         title="No shipment advise yet"
         description="You do not have permission to create one on this booking."
       />
+    );
+  }
+
+  // CR-005: this booking's EFR is already on an advise, so it joins that one.
+  const join = advise === null ? (prefill?.existingAdvise ?? null) : null;
+  if (advise === null && join !== null && prefill?.blockedReason != null) {
+    const canJoin = join.status === 'DRAFT' && can('DOCUMENTATION.SHIPMENT_ADVISE.BUILD');
+    return (
+      <div className="flex flex-col gap-3">
+        {error !== null && (
+          <p
+            role="alert"
+            className="rounded-manifest border border-alert/30 bg-alert/5 px-3 py-2 text-body text-alert"
+          >
+            {error}
+          </p>
+        )}
+        <EmptyState
+          title={`Shares an advise with ${join.code}`}
+          description={prefill.blockedReason}
+          action={
+            canJoin ? (
+              <Button
+                disabled={isPending}
+                onClick={() => addBooking(join.id, booking.id, `${booking.code} added to ${join.code}`)}
+              >
+                {isPending ? 'Adding…' : `Add ${booking.code} to ${join.code}`}
+              </Button>
+            ) : undefined
+          }
+        />
+      </div>
     );
   }
 
@@ -225,6 +305,13 @@ export function ShipmentAdviseTab({
           </p>
         )}
       </div>
+      {showBooking && (
+        <p className="text-cell text-steel">
+          Covers{' '}
+          <span className="font-mono tabular-nums text-hull">{bookingNos.join(', ')}</span> — one
+          advise and one {isAir ? 'HAWB' : 'House BL'} for all of them.
+        </p>
+      )}
 
       {error !== null && (
         <p
@@ -338,11 +425,29 @@ export function ShipmentAdviseTab({
         </Field>
       </div>
 
+      {/* CR-005: the bookings that share this EFR, and how each one stands. */}
+      {source !== null && (
+        <AdviseGroupPanel
+          group={source.group}
+          mode={panelMode}
+          ticked={ticked}
+          onToggle={(id) => void toggle(id)}
+          canAdd={can('DOCUMENTATION.SHIPMENT_ADVISE.BUILD')}
+          onAdd={(id) => {
+            if (advise === null) return;
+            const code = source.group.bookings.find((b) => b.shipmentId === id)?.bookingNo ?? 'Booking';
+            addBooking(advise.id, id, `${code} added to ${advise.code}`);
+          }}
+          pending={isPending}
+        />
+      )}
+
       {/* Row 17's grid, pulled and shown as it came. */}
       <div className="overflow-x-auto rounded-manifest border border-line">
         <table className="w-full border-collapse text-cell">
           <thead>
             <tr className="bg-paper text-left label-manifest">
+              {showBooking && <th className="px-3 py-2">Booking</th>}
               <th className="px-3 py-2">PO</th>
               <th className="px-3 py-2">Item</th>
               <th className="px-3 py-2">SKU</th>
@@ -361,6 +466,9 @@ export function ShipmentAdviseTab({
           <tbody>
             {lines.map((line) => (
               <tr key={line.id} className="border-t border-line">
+                {showBooking && (
+                  <td className="px-3 py-2 font-mono tabular-nums text-hull">{line.bookingNo}</td>
+                )}
                 <td className="px-3 py-2 font-mono tabular-nums">{line.poNo}</td>
                 <td className="px-3 py-2">{line.itemCode}</td>
                 <td className="px-3 py-2">{line.sku ?? '—'}</td>
@@ -397,6 +505,9 @@ export function ShipmentAdviseTab({
             {/* Row 21 — the totals line, as the client drew it. */}
             {totals !== undefined && (
               <tr className="border-t-2 border-line bg-paper font-semibold">
+                {showBooking && (
+                  <td className="px-3 py-2">{bookingNos.length} bookings</td>
+                )}
                 <td className="px-3 py-2">{totals.poCount} PO</td>
                 <td className="px-3 py-2" />
                 <td className="px-3 py-2" />
@@ -434,7 +545,7 @@ export function ShipmentAdviseTab({
                 () =>
                   authorizedRequest(
                     `/api/tenant/documentation/bookings/${booking.id}/advise`,
-                    { method: 'POST', body: headerBody() },
+                    { method: 'POST', body: { ...headerBody(), shipmentIds: ticked } },
                   ),
                 'Shipment advise saved',
               );
@@ -533,8 +644,21 @@ export function ShipmentAdviseTab({
             <Input id="sendNote" value={note} onChange={(e) => setNote(e.target.value)} />
           </Field>
           <p className="text-cell text-steel">
-            Subject: Shipment Advise of Booking no : {booking.code}
+            Subject: Shipment Advise of Booking no : {bookingNos.join(', ')}
           </p>
+          {/* CR-005 rule 7: after sending, the group is closed. */}
+          {waiting.length > 0 && (
+            <p
+              role="status"
+              className="rounded-manifest border border-signal/40 bg-signal/5 px-3 py-2 text-cell text-hull"
+            >
+              {waiting.map((b) => b.bookingNo).join(', ')}{' '}
+              {waiting.length === 1 ? 'shares' : 'share'} EFR {source?.group.efrNo} but{' '}
+              {waiting.length === 1 ? 'is' : 'are'} not on this advise. Send now, and adding{' '}
+              {waiting.length === 1 ? 'it' : 'them'} later means cancelling and reissuing the
+              advise with a new {isAir ? 'HAWB' : 'House BL'} number.
+            </p>
+          )}
           <div className="flex justify-end gap-2">
             <Button variant="secondary" onClick={() => setSendOpen(false)}>
               Back
@@ -575,6 +699,13 @@ export function ShipmentAdviseTab({
             The House BL number stays on the cancelled advise forever. A number the customer has
             already seen is never given to another shipment.
           </p>
+          {showBooking && (
+            <p className="text-body text-steel">
+              It covers{' '}
+              <span className="font-mono tabular-nums text-hull">{bookingNos.join(', ')}</span>.
+              Cancelling frees every one of them to be advised again.
+            </p>
+          )}
           <Field id="adviseCancelReason" label="Reason" required>
             <Input
               id="adviseCancelReason"
