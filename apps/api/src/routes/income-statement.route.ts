@@ -1,7 +1,14 @@
 import ExcelJS from 'exceljs';
 import { Router } from 'express';
 
-import { type ApiSuccess, type IncomeStatementDto, incomeStatementQuerySchema, isoCurrency } from '@ff/shared';
+import {
+  type ApiSuccess,
+  INCOME_STATEMENT_BASIS_LABEL,
+  type IncomeStatementBasis,
+  type IncomeStatementDto,
+  incomeStatementQuerySchema,
+  isoCurrency,
+} from '@ff/shared';
 
 import { baseCurrency } from '../lib/currency-rate';
 import { incomeStatement } from '../lib/income-statement';
@@ -25,7 +32,11 @@ incomeStatementRouter.use(authenticate);
 
 const FEATURE = 'ACCOUNTS.INCOME_STATEMENT';
 
-async function build(db: TenantDb, tenantId: bigint, query: { month: string; yearStartMonth: number }): Promise<IncomeStatementDto> {
+async function build(
+  db: TenantDb,
+  tenantId: bigint,
+  query: { month: string; yearStartMonth: number; basis: IncomeStatementBasis },
+): Promise<IncomeStatementDto> {
   const base = await baseCurrency(db, tenantId);
   return incomeStatement(db, tenantId, { ...query, currencyCode: base === null ? 'Base' : isoCurrency(base.currency) });
 }
@@ -64,7 +75,7 @@ incomeStatementRouter.get('/export', requirePermission(`${FEATURE}.EXPORT`), asy
   sheet.addRow([`YTD: ${sheetDay(ytd.from)} to ${sheetDay(ytd.to)} · Previous Year YTD: ${sheetDay(previousYtd.from)} to ${sheetDay(previousYtd.to)}`]);
   sheet.addRow(['Branch: All']);
   sheet.addRow([`Currency: ${statement.currencyCode}`]);
-  sheet.addRow(['Basis: Accrual']);
+  sheet.addRow([`Basis: ${INCOME_STATEMENT_BASIS_LABEL[statement.basis]}`]);
   sheet.addRow([]);
   const header = sheet.addRow(['Particulars', 'Current Month', 'YTD', 'Previous Year YTD']);
   header.font = { bold: true };
@@ -92,6 +103,6 @@ incomeStatementRouter.get('/export', requirePermission(`${FEATURE}.EXPORT`), asy
 
   const body = Buffer.from(await book.xlsx.writeBuffer());
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-  res.setHeader('Content-Disposition', `attachment; filename="income-statement-${query.month}.xlsx"`);
+  res.setHeader('Content-Disposition', `attachment; filename="income-statement-${query.month}-${query.basis.toLowerCase()}.xlsx"`);
   res.send(body);
 });

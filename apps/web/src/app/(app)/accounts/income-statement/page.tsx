@@ -1,12 +1,19 @@
 'use client';
 
-import type { IncomeStatementDto, IncomeStatementRowDto } from '@ff/shared';
+import {
+  INCOME_STATEMENT_BASES,
+  INCOME_STATEMENT_BASIS_LABEL,
+  type IncomeStatementBasis,
+  type IncomeStatementDto,
+  type IncomeStatementRowDto,
+} from '@ff/shared';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { Input, Select } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/form-layout';
+import { Segmented } from '@/components/ui/segmented';
 import { ApiError } from '@/lib/api-client';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/lib/session';
@@ -47,12 +54,13 @@ export default function IncomeStatementPage() {
   const { authorizedRequest, authorizedDownload, can } = useSession();
   const [month, setMonth] = useState(thisMonth());
   const [yearStartMonth, setYearStartMonth] = useState(1);
+  const [basis, setBasis] = useState<IncomeStatementBasis>('ACCRUAL');
   const [statement, setStatement] = useState<IncomeStatementDto | null>(null);
   const [pending, setPending] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
 
-  const query = `month=${month}&yearStartMonth=${yearStartMonth}`;
+  const query = `month=${month}&yearStartMonth=${yearStartMonth}&basis=${basis}`;
 
   useEffect(() => {
     if (!/^\d{4}-\d{2}$/.test(month)) return;
@@ -78,7 +86,10 @@ export default function IncomeStatementPage() {
   async function exportIt(): Promise<void> {
     setExporting(true);
     try {
-      await authorizedDownload(`/api/tenant/accounts/income-statement/export?${query}`, `income-statement-${month}.xlsx`);
+      await authorizedDownload(
+        `/api/tenant/accounts/income-statement/export?${query}`,
+        `income-statement-${month}-${basis.toLowerCase()}.xlsx`,
+      );
     } catch {
       toast.error('Could not export the statement.');
     } finally {
@@ -92,7 +103,7 @@ export default function IncomeStatementPage() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Income Statement"
-        description="Profit and loss for a month, the year to date, and the same span last year, on an accrual basis."
+        description="Profit and loss for a month, the year to date, and the same span last year."
         action={
           can('ACCOUNTS.INCOME_STATEMENT.EXPORT') ? (
             <Button variant="secondary" onClick={() => void exportIt()} disabled={exporting || statement === null}>
@@ -121,6 +132,15 @@ export default function IncomeStatementPage() {
             ))}
           </Select>
         </div>
+        <div className="flex flex-col gap-1">
+          <span className="label-manifest">Basis</span>
+          <Segmented
+            label="Basis"
+            value={basis}
+            options={INCOME_STATEMENT_BASES.map((b) => [b, INCOME_STATEMENT_BASIS_LABEL[b]] as const)}
+            onChange={setBasis}
+          />
+        </div>
       </div>
 
       {error !== null && (
@@ -147,7 +167,8 @@ export default function IncomeStatementPage() {
               <span className="font-mono">{statement.currencyCode}</span>
             </span>
             <span>
-              <span className="label-manifest mr-2">Basis</span>Accrual
+              <span className="label-manifest mr-2">Basis</span>
+              {INCOME_STATEMENT_BASIS_LABEL[statement.basis]}
             </span>
           </div>
 
@@ -213,18 +234,32 @@ export default function IncomeStatementPage() {
 
           <details className="rounded-manifest border border-line bg-surface px-4 py-3 text-body text-steel">
             <summary className="cursor-pointer text-hull">How these figures are made</summary>
-            <ul className="mt-2 flex list-disc flex-col gap-1 pl-5">
-              <li>
-                Revenue and job costs come from issued debit invoices, on the invoice date, by service (FCL, LCL, Air;
-                anything else is Other). Agent cost blocks are Agent / Overseas Partner Cost.
-              </li>
-              <li>Everything else comes from posted vouchers, on the voucher date, by chart of accounts.</li>
-              <li>
-                Money received or paid against an invoice is not counted a second time. What the bank moved beyond the
-                invoice&apos;s booked amount is the exchange gain or loss.
-              </li>
-              <li>Draft and cancelled invoices and vouchers are left out. Branch is not tracked, so every figure is All.</li>
-            </ul>
+            {statement.basis === 'ACCRUAL' ? (
+              <ul className="mt-2 flex list-disc flex-col gap-1 pl-5">
+                <li>
+                  Accrual: revenue and job costs come from issued debit invoices, on the invoice date, by service (FCL,
+                  LCL, Air; anything else is Other). Agent cost blocks are Agent / Overseas Partner Cost.
+                </li>
+                <li>Everything else comes from posted vouchers, on the voucher date, by chart of accounts.</li>
+                <li>
+                  Money received or paid against an invoice (Transaction → Income / Expense) is not counted a second
+                  time. What the bank moved beyond the invoice&apos;s booked amount is the exchange gain or loss.
+                </li>
+                <li>Draft and cancelled invoices and vouchers are left out. Branch is not tracked, so every figure is All.</li>
+              </ul>
+            ) : (
+              <ul className="mt-2 flex list-disc flex-col gap-1 pl-5">
+                <li>
+                  Cash: every figure comes from the Transaction screens — Income, Expense and Journal vouchers as posted,
+                  on the voucher date, by chart of accounts.
+                </li>
+                <li>
+                  Revenue is what Transaction → Income received; job cost is what Transaction → Expense paid. An invoice
+                  not yet received or paid does not appear.
+                </li>
+                <li>Draft and cancelled vouchers are left out. Branch is not tracked, so every figure is All.</li>
+              </ul>
+            )}
           </details>
         </>
       )}

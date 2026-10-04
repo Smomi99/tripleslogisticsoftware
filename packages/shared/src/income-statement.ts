@@ -4,10 +4,11 @@ import { z } from 'zod';
  * Accounts → Income Statement (docs/DESIGN-UPDATE-2026-10-04.md §9).
  *
  * The client's `Income statement` sheet: sections A–E, their lines in the
- * sheet's order, and three columns — Current Month, YTD, Previous Year YTD —
- * on an accrual basis. How each line is filled is §9.3 of the spec; the short
- * of it is that revenue and job costs come from issued debit invoices on
- * their invoice date, and everything else from posted vouchers.
+ * sheet's order, and three columns — Current Month, YTD, Previous Year YTD.
+ * How each line is filled is §9.3 of the spec; the short of it is that on
+ * accrual, revenue and job costs come from issued debit invoices on their
+ * invoice date and everything else from posted vouchers, and on cash,
+ * everything comes from posted vouchers.
  */
 
 export const INCOME_STATEMENT_SECTIONS = ['REVENUE', 'DIRECT_COST', 'OPEX', 'NONOP_INCOME', 'NONOP_EXPENSE'] as const;
@@ -92,6 +93,20 @@ export type IncomeStatementLineKey =
 
 const month = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Choose a month.');
 
+/**
+ * ACCRUAL is the sheet's own basis (C9): revenue and job cost when the debit
+ * invoice is issued. CASH reads the Transaction screens alone — Income,
+ * Expense and Journal vouchers as posted — so revenue is what Transaction →
+ * Income received (client, 2026-10-04: "both, with a switch").
+ */
+export const INCOME_STATEMENT_BASES = ['ACCRUAL', 'CASH'] as const;
+export type IncomeStatementBasis = (typeof INCOME_STATEMENT_BASES)[number];
+
+export const INCOME_STATEMENT_BASIS_LABEL: Record<IncomeStatementBasis, string> = {
+  ACCRUAL: 'Accrual',
+  CASH: 'Cash',
+};
+
 export const incomeStatementQuerySchema = z.object({
   /** The sheet's "Current Month": the month the statement is for. */
   month,
@@ -100,6 +115,7 @@ export const incomeStatementQuerySchema = z.object({
    * default; July for a Bangladesh tax year (§11 Q29).
    */
   yearStartMonth: z.coerce.number().int().min(1).max(12).default(1),
+  basis: z.enum(INCOME_STATEMENT_BASES).default('ACCRUAL'),
 });
 export type IncomeStatementQuery = z.input<typeof incomeStatementQuerySchema>;
 
@@ -116,7 +132,7 @@ export interface IncomeStatementRowDto {
 
 export interface IncomeStatementDto {
   currencyCode: string;
-  basis: 'ACCRUAL';
+  basis: IncomeStatementBasis;
   /** ISO dates, inclusive. */
   periods: {
     currentMonth: { from: string; to: string };

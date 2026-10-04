@@ -317,6 +317,31 @@ describe('Income Statement', () => {
     expect(n('NET_PROFIT_AFTER_TAX', 2)).toBe(2000);
   });
 
+  it('on a cash basis, reads only the Transaction screens: what was received and paid', async () => {
+    const res = await api(A.viewerToken, A.slug)(`${QUERY}&basis=CASH`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.basis).toBe('CASH');
+    const cash = new Map((res.body.data.rows as Row[]).map((r) => [r.key, r.amounts]));
+    const c = (key: string, column: 0 | 1 | 2) => Number(cash.get(key)![column]);
+    // Transaction → Income banked 10,500 for the FCL job; the Air invoice is unpaid.
+    expect(c('REV_FCL', 0)).toBe(10500);
+    expect(c('REV_AIR', 0)).toBe(0);
+    // Transaction → Expense paid the carrier 6,100; the agent and the airline are unpaid.
+    expect(c('COST_FCL', 0)).toBe(6100);
+    expect(c('COST_AGENT', 0)).toBe(0);
+    expect(c('COST_AIR', 0)).toBe(0);
+    // The exchange difference is inside the cash, not a line of its own.
+    expect(c('FX_GAIN', 0)).toBe(0);
+    expect(c('FX_LOSS', 0)).toBe(0);
+    expect(c('NET_REVENUE', 0)).toBe(10400);
+    expect(c('GROSS_PROFIT', 0)).toBe(4300);
+    expect(c('TOTAL_OPEX', 0)).toBe(2350);
+    expect(c('NET_PROFIT_AFTER_TAX', 0)).toBe(1550);
+    expect(c('NET_PROFIT_AFTER_TAX', 1)).toBe(1750);
+    // Last year's invoice was never received, so on cash it is not revenue.
+    expect(c('NET_REVENUE', 2)).toBe(0);
+  });
+
   it('exports the same statement as a workbook', async () => {
     const res = await api(A.viewerToken, A.slug)(`/export${QUERY}`).buffer(true).parse((r, done) => {
       const chunks: Buffer[] = [];

@@ -1,6 +1,7 @@
 import {
   INCOME_STATEMENT_LINES,
   INCOME_STATEMENT_SECTION_TITLE,
+  type IncomeStatementBasis,
   type IncomeStatementDto,
   type IncomeStatementLineKey,
   type IncomeStatementRowDto,
@@ -214,9 +215,18 @@ function inAnyPeriod(date: Prisma.Sql, periods: [Period, Period, Period]): Prism
 }
 
 type ColumnRow = { c0: Prisma.Decimal; c1: Prisma.Decimal; c2: Prisma.Decimal };
+type RevenueRow = ColumnRow & { shipment_type: string | null; loading_type: string | null };
+type CostRow = RevenueRow & { party_type: string };
+type SettlementRow = { entry_date: Date; pl: Prisma.Decimal; received: Prisma.Decimal; paid: Prisma.Decimal };
 
 /**
  * Every figure the statement prints, by line, before the subtotals.
+ *
+ * ACCRUAL is described at the top of this file. CASH is the Transaction
+ * screens alone: every posted voucher line on an income or expense account,
+ * settlements included — so revenue is what Transaction → Income received —
+ * and no invoice is read. An exchange difference then sits inside the cash,
+ * as it does in the books, rather than on a line of its own.
  *
  * tenant_id is named on every table even though RLS filters them too: the
  * application is the first line (CLAUDE.md §7A rule 2).
@@ -225,8 +235,10 @@ export async function statementLines(
   db: TenantDb,
   tenantId: bigint,
   periods: [Period, Period, Period],
+  basis: IncomeStatementBasis = 'ACCRUAL',
 ): Promise<Ledger> {
   const ledger = new Ledger();
+  const accrual = basis === 'ACCRUAL';
   const invoiceDate = Prisma.sql`i.invoice_date`;
   const entryDate = Prisma.sql`je.entry_date`;
 
@@ -240,7 +252,7 @@ export async function statementLines(
   )`;
 
   const [revenue, costs, posted, settlements] = await Promise.all([
-    db.$queryRaw<(ColumnRow & { shipment_type: string | null; loading_type: string | null })[]>`
+    !accrual ? Promise.resolve<RevenueRow[]>([]) : db.$queryRaw<RevenueRow[]>`
       SELECT s.shipment_type::text AS shipment_type, s.loading_type::text AS loading_type,
              ${columnSums(Prisma.sql`i.total_amount_base`, invoiceDate, periods)}
         FROM debit_invoice i
@@ -251,7 +263,7 @@ export async function statementLines(
          AND ${inAnyPeriod(invoiceDate, periods)}
        GROUP BY s.shipment_type, s.loading_type
     `,
-    db.$queryRaw<(ColumnRow & { party_type: string; shipment_type: string | null; loading_type: string | null })[]>`
+    !accrual ? Promise.resolve<CostRow[]>([]) : db.$queryRaw<CostRow[]>`
       SELECT c.party_type::text AS party_type, s.shipment_type::text AS shipment_type, s.loading_type::text AS loading_type,
              ${columnSums(Prisma.sql`c.total_amount_base`, invoiceDate, periods)}
         FROM debit_invoice_cost c
@@ -277,10 +289,10 @@ export async function statementLines(
          AND je.status = 'POSTED'
          AND la.account_type IN ('INCOME', 'EXPENSE')
          AND ${inAnyPeriod(entryDate, periods)}
-         AND NOT ${settles}
+         ${accrual ? Prisma.sql`AND NOT ${settles}` : Prisma.empty}
        GROUP BY la.account_type, la.system_key, p.system_key
     `,
-    db.$queryRaw<{ entry_date: Date; pl: Prisma.Decimal; received: Prisma.Decimal; paid: Prisma.Decimal }[]>`
+    !accrual ? Promise.resolve<SettlementRow[]>([]) : db.$queryRaw<SettlementRow[]>`
       SELECT je.entry_date,
              (SELECT COALESCE(SUM(jl.credit - jl.debit), 0)
                 FROM journal_line jl
@@ -426,13 +438,13 @@ export function statementRows(ledger: Ledger): IncomeStatementRowDto[] {
 export async function incomeStatement(
   db: TenantDb,
   tenantId: bigint,
-  input: { month: string; yearStartMonth: number; currencyCode: string },
+  input: { month: string; yearStartMonth: number; basis: IncomeStatementBasis; currencyCode: string },
 ): Promise<IncomeStatementDto> {
   const periods = periodsOf(input.month, input.yearStartMonth);
-  const ledger = await statementLines(db, tenantId, periods);
+  const ledger = await statementLines(db, tenantId, periods, input.basis);
   return {
     currencyCode: input.currencyCode,
-    basis: 'ACCRUAL',
+    basis: input.basis,
     periods: { currentMonth: periods[0], ytd: periods[1], previousYtd: periods[2] },
     yearStartMonth: input.yearStartMonth,
     rows: statementRows(ledger),
