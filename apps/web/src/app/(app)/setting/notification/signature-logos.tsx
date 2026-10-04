@@ -163,7 +163,7 @@ export function SignatureLogos({ mayEdit }: { mayEdit: boolean }) {
       )}
 
       {mayEdit && (
-        <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_10rem_auto] sm:items-end">
+        <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_6rem_auto] sm:items-end">
           <Field id="logoAlt" label="What it is">
             <Input
               id="logoAlt"
