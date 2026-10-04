@@ -47,8 +47,40 @@ export function LocalChargePanel({
   const [amount, setAmount] = useState('');
   const [currencyId, setCurrencyId] = useState(defaultCurrencyId);
   const [error, setError] = useState<string | null>(null);
+  /** The line loaded into the form below, by position; null while adding a new one. */
+  const [editing, setEditing] = useState<number | null>(null);
 
-  function add(): void {
+  /** Clears the form for the next line. Side and currency stay: lines come in runs. */
+  function resetForm(): void {
+    setCostHeadId('');
+    setContainerSizeId('');
+    setAmount('');
+    setError(null);
+    setEditing(null);
+  }
+
+  function edit(index: number): void {
+    const charge = charges[index];
+    if (charge === undefined) return;
+    setCostHeadId(charge.costHeadId);
+    setSide(charge.side ?? 'POL');
+    setContainerSizeId(charge.containerSizeId ?? '');
+    // A saved rate comes back as 45.0000; the form shows 45.
+    setAmount(charge.amount.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, ''));
+    setCurrencyId(charge.currencyId);
+    setError(null);
+    setEditing(index);
+  }
+
+  function remove(index: number): void {
+    onChange(charges.filter((_, i) => i !== index));
+    if (editing === index) resetForm();
+    // The line in the form keeps pointing at the same charge.
+    else if (editing !== null && index < editing) setEditing(editing - 1);
+  }
+
+  /** Adds a line, or writes the one being edited back in its place. */
+  function save(): void {
     if (costHeadId === '') {
       setError('Choose a cost head.');
       return;
@@ -58,10 +90,11 @@ export function LocalChargePanel({
       return;
     }
     // Container size is part of the key: THC on a 20ft and THC on a 40ft are
-    // two legitimate lines, not a duplicate.
+    // two legitimate lines, not a duplicate. The line being edited is not its own duplicate.
     if (
       charges.some(
-        (c) =>
+        (c, i) =>
+          i !== editing &&
           c.costHeadId === costHeadId &&
           c.side === side &&
           (c.containerSizeId ?? '') === containerSizeId,
@@ -74,20 +107,20 @@ export function LocalChargePanel({
       );
       return;
     }
-    onChange([
-      ...charges,
-      {
-        costHeadId,
-        side,
-        containerSizeId,
-        amount: amount.trim(),
-        currencyId: currencyId || defaultCurrencyId,
-      },
-    ]);
-    setCostHeadId('');
-    setContainerSizeId('');
-    setAmount('');
-    setError(null);
+    const line = {
+      costHeadId,
+      side,
+      containerSizeId,
+      amount: amount.trim(),
+      currencyId: currencyId || defaultCurrencyId,
+    };
+    onChange(
+      editing === null
+        ? [...charges, line]
+        : // Spread first so what this form does not show (remarks) survives the edit.
+          charges.map((c, i) => (i === editing ? { ...c, ...line } : c)),
+    );
+    resetForm();
   }
 
   const nameOf = (id: string): string => costHeads.find((h) => h.id === id)?.name ?? id;
@@ -98,7 +131,11 @@ export function LocalChargePanel({
   return (
     <Modal
       open={open}
-      onOpenChange={onOpenChange}
+      onOpenChange={(next) => {
+        // An edit left open is dropped on close, not carried to the next rate.
+        if (!next && editing !== null) resetForm();
+        onOpenChange(next);
+      }}
       title="Local charges"
       description="Broken down by cost head. Each line carries its own currency."
     >
@@ -115,14 +152,14 @@ export function LocalChargePanel({
                 <th className="label-manifest py-1.5">Side</th>
                 <th className="label-manifest py-1.5">Container</th>
                 <th className="label-manifest py-1.5 text-right">Amount</th>
-                <th className="sr-only">Remove</th>
+                <th className="sr-only">Actions</th>
               </tr>
             </thead>
             <tbody>
               {charges.map((charge, index) => (
                 <tr
                   key={`${charge.costHeadId}-${charge.side}-${charge.containerSizeId ?? ''}`}
-                  className="border-b border-line"
+                  className={`border-b border-line ${index === editing ? 'bg-harbour/5' : ''}`}
                 >
                   <td className="py-1.5">{nameOf(charge.costHeadId)}</td>
                   <td className="py-1.5 text-steel">{charge.side}</td>
@@ -134,14 +171,19 @@ export function LocalChargePanel({
                   <td className="py-1.5 text-right font-mono tabular-nums">
                     {purchasePrice(charge.amount)} {codeOf(charge.currencyId)}
                   </td>
-                  <td className="py-1.5 text-right">
-                    <Button
-                      variant="destructive"
-                      size="inline"
-                      onClick={() => onChange(charges.filter((_, i) => i !== index))}
-                    >
-                      Remove
-                    </Button>
+                  <td className="py-1.5 pl-3 text-right">
+                    <span className="inline-flex items-center gap-3 whitespace-nowrap">
+                      {index === editing ? (
+                        <span className="text-cell text-steel">Editing</span>
+                      ) : (
+                        <Button variant="text" size="inline" onClick={() => edit(index)}>
+                          Edit
+                        </Button>
+                      )}
+                      <Button variant="destructive" size="inline" onClick={() => remove(index)}>
+                        Remove
+                      </Button>
+                    </span>
                   </td>
                 </tr>
               ))}
@@ -203,7 +245,7 @@ export function LocalChargePanel({
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   e.preventDefault();
-                  add();
+                  save();
                 }
               }}
             />
@@ -230,12 +272,25 @@ export function LocalChargePanel({
         )}
 
         <div className="flex items-center gap-2 border-t border-line pt-4">
-          <Button type="button" onClick={add}>
-            Add charge
-          </Button>
-          <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
-            Done
-          </Button>
+          {editing === null ? (
+            <>
+              <Button type="button" onClick={save}>
+                Add charge
+              </Button>
+              <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
+                Done
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button type="button" onClick={save}>
+                Save charge
+              </Button>
+              <Button type="button" variant="secondary" onClick={resetForm}>
+                Cancel edit
+              </Button>
+            </>
+          )}
         </div>
       </div>
     </Modal>
