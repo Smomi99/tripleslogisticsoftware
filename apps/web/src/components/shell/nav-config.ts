@@ -66,6 +66,8 @@ const ROUTES: Record<string, RouteEntry> = {
   'CUSTOMER_SERVICE.QUOTATION': '/cs/quotation',
   'AGENT.INQUIRY': '/agent/inquiry',
   'SALES.NEW_SALES_LEAD': '/sales/sales-lead',
+  // docs/DESIGN-UPDATE-2026-10-04.md §6, Menu D9.
+  'SALES.LOCAL_SALES': '/sales/local-sales',
   'SETTING.SEA_AIR_PORT': '/setting/port',
   'SETTING.COST_HEAD': '/setting/cost-head',
   'SETTING.CURRENCY': '/setting/currency',

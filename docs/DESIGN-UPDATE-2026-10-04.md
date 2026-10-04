@@ -77,7 +77,7 @@ shipment reaches it through `shipment.quotation_id`.
 | 4 | **§7 Notification** (per-team sender) — **built** (new event letters wait on Q17) | §2, §3 and §4 send mail from named team addresses. | Q16–Q17 |
 | 5 | **§3 Pre-Alert** — **built** | Needs §7's Sales Team sender and documents that partly do not exist. | Q7–Q9 |
 | 6 | **§5 Tariff** — **built** | Master data only until Q14 says what consumes it. | Q14–Q15 |
-| 7 | **§6 Local Sales** | Customer list + activity log. | Q18–Q19 |
+| 7 | **§6 Local Sales** — **built** | Customer list + activity log. | Q18–Q19 |
 | 8 | **§9 Income Statement** | **Blocked** on an accounting decision (Q21) that also decides Balance Sheet and Cash Flow. | Q21–Q25 |
 | 9 | **§10 Reports** | A catalogue of ~70 reports with no layouts. The client has to pick a first set. | Q26 |
 
@@ -365,7 +365,7 @@ The sidebar groups the three price lists and Tariff under **Price List**, as Men
 
 ---
 
-## 6. LOCAL SALES (Sales & Marketing)
+## 6. LOCAL SALES (Sales & Marketing) — **built**
 
 `Local Sales` R7 says *"Table_Customer"*. This is a view over `customer`, not a new party table.
 
@@ -389,6 +389,22 @@ customer_activity    (client: Local Sales → Activity Log)
 This sits close to Sales Lead Follow-up, whose rows are date, contact mode, person, notes and next
 date. It is not the same: a lead is not yet a customer, and this log has competitor and possibility
 columns. Q18 asks whether Local Sales lists every customer or a subset.
+
+### 6.1 As built (branch `feature/local-sales`)
+
+Migration `20261004200000_customer_activity`. Permission `SALES.LOCAL_SALES`: VIEW, and CREATE (the
+sheet's Record).
+
+- **List**: every customer (Q18 default), with the sheet's columns. Opening Balance shows both of the
+  customer's figures, "owes us" and "we owe", in their currency. Activity shows the count, the last
+  date and the next follow-up still ahead. Search covers name, code, country and category, with Customer
+  Type, Business Area and Active filters.
+- **Actions.** *Activity log* opens the log. *Edit* and *PIC* go to CRM → Customer, and appear only to
+  users who hold those CRM permissions. The customer is still edited in one place.
+- **Activity Log** (`customer_activity`): the fields are Date & time · PIC · Meeting Summary · Next
+  Follow up Dt · Competitors Analysis · Business Possibility (free text, Q19), recorded newest first.
+  The PIC must be one of *that* customer's contacts; the API checks this, and so does a trigger.
+- Tests: `local-sales.test.ts`, 4 cases, including two-workspace isolation.
 
 ---
 

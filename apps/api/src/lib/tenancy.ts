@@ -117,6 +117,7 @@ export const TENANT_OWNED_MODELS = [
   'PreAlert', // DESIGN-UPDATE-2026-10-04 §3
   'Tariff', // DESIGN-UPDATE-2026-10-04 §5
   'TariffLine', // DESIGN-UPDATE-2026-10-04 §5
+  'CustomerActivity', // DESIGN-UPDATE-2026-10-04 §6: Local Sales activity log
   'BlDraft',
   'BlDraftContainer',
   'BlTemplate',

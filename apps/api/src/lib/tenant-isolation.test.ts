@@ -214,8 +214,9 @@ describe('model tier registry', () => {
     // + igm_update and delivery_order (§4)
     // + notification_team_setting (§7)
     // + pre_alert_document and pre_alert (§3)
-    // + tariff and tariff_line (§5).
-    expect(known.length).toBe(109);
+    // + tariff and tariff_line (§5)
+    // + customer_activity (§6).
+    expect(known.length).toBe(110);
   });
 
   it('applies the caller row level security to every view', async () => {

@@ -374,6 +374,12 @@ export const FEATURES: readonly FeatureDefinition[] = [
   // list arrives; the screens themselves are unbuilt.
   { module: 'SALES', feature: 'SALES.NEW_SALES_LEAD', label: 'New Sales Lead', actions: MASTER },
   { module: 'SALES', feature: 'SALES.SALES_LEAD_FOLLOWUP', label: 'Sales Lead Follow-up', actions: MASTER },
+  /*
+   * docs/DESIGN-UPDATE-2026-10-04.md §6 (Menu D9): the customer list as the
+   * sales team reads it, and the Activity Log under each customer. CREATE is
+   * the sheet's Record. Editing the customer itself stays CRM.CUSTOMER's.
+   */
+  { module: 'SALES', feature: 'SALES.LOCAL_SALES', label: 'Local Sales', actions: ['VIEW', 'CREATE'] },
 
   // -- 3. Customer Service ---------------------------------------------------
   /*

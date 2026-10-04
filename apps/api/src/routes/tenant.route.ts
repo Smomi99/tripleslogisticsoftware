@@ -40,6 +40,7 @@ import {
 } from './shipment-worklist.route';
 import { inboundRouter } from './inbound.route';
 import { milestoneRouter } from './milestone.route';
+import { localSalesRouter } from './local-sales.route';
 import { preAlertRouter } from './pre-alert.route';
 import { tariffRouter } from './tariff.route';
 import { salesLeadRouter } from './sales-lead.route';
@@ -82,6 +83,8 @@ tenantRouter.use('/purchase/tariffs', tariffRouter);
 tenantRouter.use('/purchase', freightRateRouter);
 
 // Sales — inquiry capture (MODULE_PURCHASE_SALES §5.4).
+// docs/DESIGN-UPDATE-2026-10-04.md §6: before the two routers that own /sales.
+tenantRouter.use('/sales/local-sales', localSalesRouter);
 tenantRouter.use('/sales', inquiryRouter);
 tenantRouter.use('/cs', quotationRouter);
 // Customer Service — the shipment file (MODULE_BOOKING_CARGO.md §6.1).

@@ -23,6 +23,7 @@ export * from './freight-rate';
 export * from './inbound';
 export * from './inquiry';
 export * from './ledger';
+export * from './local-sales';
 export * from './milestone';
 export * from './notification-team';
 export * from './opening-balance';

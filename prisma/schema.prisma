@@ -322,6 +322,8 @@ model Tenant {
   tariffs     Tariff[]
   tariffLines TariffLine[]
 
+  customerActivities CustomerActivity[]
+
   @@index([slug])
   @@index([status])
   @@index([currencyId])
@@ -1202,6 +1204,9 @@ model Customer {
   journalEntries     JournalEntry[]      @relation("JournalEntryCustomer")
   openingSettlements OpeningSettlement[] @relation("OpeningSettlementCustomer")
 
+  /// DESIGN-UPDATE-2026-10-04 §6: Local Sales → Activity Log.
+  activities CustomerActivity[]
+
   @@unique([tenantId, code])
   @@unique([tenantId, id])
   @@index([tenantId])
@@ -1241,6 +1246,8 @@ model CustomerPic {
   // next migrate dev, which is how this was found.
   createdByUser User? @relation("CustomerPicCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User? @relation("CustomerPicUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  activities CustomerActivity[]
 
   @@unique([tenantId, code])
   /// §4 rule 10: a composite foreign key needs this to point at.
@@ -1976,6 +1983,9 @@ model User {
   tariffsUpdated     Tariff[]     @relation("TariffUpdatedBy")
   tariffLinesCreated TariffLine[] @relation("TariffLineCreatedBy")
   tariffLinesUpdated TariffLine[] @relation("TariffLineUpdatedBy")
+
+  customerActivitiesCreated CustomerActivity[] @relation("CustomerActivityCreatedBy")
+  customerActivitiesUpdated CustomerActivity[] @relation("CustomerActivityUpdatedBy")
 
   @@unique([tenantId, username])
   @@unique([tenantId, email])
@@ -5448,6 +5458,50 @@ model TariffLine {
   @@index([costUnitId])
   @@index([currencyId])
   @@map("tariff_line")
+}
+
+/// client: Local Sales → Activity Log (C13–H17, DESIGN-UPDATE-2026-10-04 §6):
+/// "Date & time · PIC · Meeting Summary · Next Follow up Dt · Compititors
+/// Analysis · Business Posibility", and `Record`. A visit or call with a
+/// customer the sales team already has — a lead's follow-ups are Sales Lead's.
+model CustomerActivity {
+  tenantId   BigInt   @map("tenant_id")
+  id         BigInt   @id @default(autoincrement())
+  customerId BigInt   @map("customer_id")
+  /// C14 "Date & time".
+  activityAt DateTime @map("activity_at") @db.Timestamptz(6)
+  /// D14 "PIC": which of the customer's people.
+  customerPicId BigInt? @map("customer_pic_id")
+
+  /// E14 "Meeting Summary".
+  meetingSummary      String    @map("meeting_summary") @db.Text
+  /// F14 "Next Follow up Dt".
+  nextFollowupDate    DateTime? @map("next_followup_date") @db.Date
+  /// G14 "Compititors Analysis".
+  competitorAnalysis  String?   @map("competitor_analysis") @db.Text
+  /// H14 "Business Posibility". Free text until the client names a scale (§11 Q19).
+  businessPossibility String?   @map("business_possibility") @db.Text
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  customer    Customer     @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict, map: "customer_activity_customer_id_fkey")
+  customerPic CustomerPic? @relation(fields: [tenantId, customerPicId], references: [tenantId, id], onDelete: Restrict, map: "customer_activity_customer_pic_id_fkey")
+
+  createdByUser User? @relation("CustomerActivityCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("CustomerActivityUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([customerId])
+  @@index([customerPicId])
+  @@index([tenantId, nextFollowupDate])
+  @@map("customer_activity")
 }
 
 /// client: the PO grid, row 17 of both advise sheets.
