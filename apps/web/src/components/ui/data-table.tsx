@@ -140,12 +140,18 @@ export function DataTable<T extends RowData>({
         <table className="w-full border-collapse text-cell">
           <thead className="sticky top-0 z-20">
             <tr className="bg-paper">
-              {/* §8: SL No, then the client's exact columns, then Action. */}
+              {/*
+                §8: SL No, then the client's exact columns, then Action.
+
+                SL is held at 56px from the inside (w-8 plus px-3 each side):
+                a squeezed table shrinks a cell past its own width, and the
+                code column, stuck at left-14, then slid over the column after it.
+              */}
               <th
                 scope="col"
                 className="label-manifest sticky left-0 z-30 w-14 border-b border-line bg-paper px-3 py-2 text-left"
               >
-                SL
+                <span className="inline-block w-8">SL</span>
               </th>
               <th
                 scope="col"
@@ -212,7 +218,7 @@ export function DataTable<T extends RowData>({
                 className={cn('group border-b border-line last:border-b-0', rowHeight)}
               >
                 <td className="sticky left-0 z-10 w-14 bg-surface px-3 text-steel transition-colors duration-[120ms] group-hover:bg-row-hover">
-                  <span className="font-mono" data-numeric="">
+                  <span className="inline-block w-8 font-mono" data-numeric="">
                     {firstRowNumber + index}
                   </span>
                 </td>
@@ -232,7 +238,9 @@ export function DataTable<T extends RowData>({
                     className={cn(
                       'bg-surface px-3 transition-colors duration-[120ms] group-hover:bg-row-hover',
                       column.align === 'right' ? 'text-right' : 'text-left',
-                      column.numeric === true && 'font-mono',
+                      // Codes, dates and amounts stay whole: a wide table scrolls
+                      // rather than breaking 2026-09-20 or QTN-0012 in two.
+                      column.numeric === true && 'whitespace-nowrap font-mono',
                       column.className,
                     )}
                     {...(column.numeric === true ? { 'data-numeric': '' } : {})}
@@ -242,7 +250,8 @@ export function DataTable<T extends RowData>({
                 ))}
                 {actions !== undefined && (
                   <td className="sticky right-0 z-10 border-l border-line bg-surface px-3 text-right transition-colors duration-[120ms] group-hover:bg-row-hover">
-                    <div className="flex items-center justify-end gap-3">
+                    {/* One line per action: "Make Shipment Advise" read as three rows of one word. */}
+                    <div className="flex items-center justify-end gap-3 whitespace-nowrap">
                       {actions(row.original)}
                     </div>
                   </td>

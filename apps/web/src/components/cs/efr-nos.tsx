@@ -126,7 +126,7 @@ export function EfrNos({
         </span>
       ))}
       {group != null && tag !== null && (
-        <span className="mt-0.5 flex min-w-36 items-start gap-1.5 font-sans text-cell text-steel" title={tag.title}>
+        <span className="mt-0.5 flex min-w-36 items-start gap-1.5 whitespace-normal font-sans text-cell text-steel" title={tag.title}>
           <Marker group={group} colour={group.groupKey === null ? undefined : colours?.get(group.groupKey)} />
           <span>{tag.text}</span>
         </span>
