@@ -603,6 +603,32 @@ Lifting Report, Customer wise Shipment and Country wise shipment.
 
 ---
 
+## 10A. DEPLOYING THIS BATCH
+
+Everything built from this document is on branch `feature/design-update-2026-10-04`, one commit per
+section, in the order of §1. Before the code serves traffic:
+
+1. `prisma migrate deploy`. Six migrations, all additive, and none alters an existing column's
+   meaning:
+   - `20261004100000_shipment_milestone`
+   - `20261004120000_igm_update_and_delivery_order`
+   - `20261004140000_notification_teams`: also adds `email_log.from_address/from_name` and
+     `notification_setting.send_as_team`, and recreates `app_claim_email_batch`
+   - `20261004160000_pre_alert`
+   - `20261004180000_tariff`
+   - `20261004200000_customer_activity`
+2. `pnpm db:seed`. It adds six permission features (Shipment Profitability, Depart-Arrive, Pre-Alert,
+   Tariff, Local Sales; IGM and DO already existed) and four email templates (`SHIPMENT_DEPARTED`,
+   `SHIPMENT_TRANSSHIPPED`, `SHIPMENT_ARRIVED`, `PRE_ALERT_SENT`).
+3. Grant the new features to the roles that should have them (Admin → Roles). The superadmin sees
+   them at once.
+
+**The access token changed** (commit "Access token carries permissions as a bitmap"). The registry
+outgrew the old format: a role holding every permission produced a header over 16 KB, and every request
+was refused with HTTP 431. Tokens issued before the deploy are still read for their 15 minutes. After
+any deploy that adds a permission, each signed-in user's next request silently refreshes once. Nobody
+is signed out.
+
 ## 11. OPEN QUESTIONS — for the client
 
 Nothing here is guessed in the schema. Each has the working default the build would use.
