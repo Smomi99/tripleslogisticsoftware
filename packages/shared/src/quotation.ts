@@ -217,6 +217,8 @@ export interface QuotationListItemDto {
   totalCurrencyCode: string | null;
   /** quotationCanChange: whether the list offers Edit. */
   editable: boolean;
+  /** Bookings raised from this revision that are still live — cancelled ones left out. */
+  bookingCount: number;
 }
 
 /**

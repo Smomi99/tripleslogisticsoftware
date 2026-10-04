@@ -826,6 +826,7 @@ quotationRouter.get('/quotations', requirePermission(`${FEATURE}.VIEW`), async (
       row.status,
       row.shipments.map((b) => b.status),
     ),
+    bookingCount: row.shipments.filter((b) => b.status !== 'CANCELLED').length,
   }));
 
   const payload: ApiSuccess<QuotationListItemDto[]> = {

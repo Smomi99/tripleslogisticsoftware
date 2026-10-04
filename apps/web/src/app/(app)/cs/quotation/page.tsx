@@ -319,9 +319,13 @@ export default function QuotationListPage() {
                 <Link
                   href={{ pathname: '/cs/shipment-booking/new', query: { quotationId: row.id } }}
                   className="text-body text-harbour hover:underline"
-                  title="Start a shipment booking"
+                  title={
+                    row.bookingCount === 0
+                      ? 'Start a shipment booking'
+                      : `${row.bookingCount} live ${row.bookingCount === 1 ? 'booking' : 'bookings'} — start another`
+                  }
                 >
-                  Booking
+                  Booking <span className="font-mono tabular-nums">({row.bookingCount})</span>
                 </Link>
               ) : (
                 <Button
@@ -330,7 +334,7 @@ export default function QuotationListPage() {
                   disabled
                   title="Available once the quotation has been sent"
                 >
-                  Booking
+                  Booking <span className="font-mono tabular-nums">({row.bookingCount})</span>
                 </Button>
               ))}
             {/* §11 Q13 — a draft only; anything sent is history. */}
