@@ -6,6 +6,8 @@ import { hash } from '@node-rs/argon2';
 
 import { Prisma, PrismaClient } from '../apps/api/src/generated/prisma/client';
 
+import { ACC, clearAccounts, seedAccounts } from './demo-accounts';
+
 /**
  * Demo data — a workspace with enough in it to try the product on.
  *
@@ -20,6 +22,8 @@ import { Prisma, PrismaClient } from '../apps/api/src/generated/prisma/client';
  *   pnpm db:demo:clear          take it all out again
  *   pnpm db:demo:sheet          rebuild only the loading-type sheet's bookings
  *   pnpm db:demo:sheet:clear    take only those out
+ *   pnpm db:demo:accounts       rebuild only the accounts demo (demo-accounts.ts)
+ *   pnpm db:demo:accounts:clear take only that out
  *
  * The dataset is built backwards from what there is to look at:
  *
@@ -212,6 +216,9 @@ async function clear(tenantId: bigint, prefix: string = P): Promise<void> {
         'Delete those records first, or leave the demo data in place. Nothing has been changed.',
     );
   }
+
+  // Invoices and vouchers hang off the bookings and parties below, so they go first.
+  await clearAccounts(prisma, tenantId, prefix);
 
   // The documents first: an advise line points at the plan its cartons left on.
   const adviseIds = advises.map((a) => a.id);
@@ -2198,6 +2205,8 @@ async function main(): Promise<void> {
   const sheetOnly = process.argv.includes('--sheet');
   // Only the CR-005 scenario (DEMO-EFR-) — rebuild it after trying it out.
   const efrOnly = process.argv.includes('--efr');
+  // Only the accounts demo (DEMO-ACC-): invoices, vouchers and their bookings.
+  const accountsOnly = process.argv.includes('--accounts');
 
   const tenant = await prisma.tenant.findFirst({
     where: { slug: SLUG },
@@ -2210,15 +2219,28 @@ async function main(): Promise<void> {
     );
   }
 
-  const prefix = sheetOnly ? SHEET : efrOnly ? EFRG : P;
+  const prefix = sheetOnly ? SHEET : efrOnly ? EFRG : accountsOnly ? ACC : P;
   console.log(`Workspace: ${tenant.name} (${tenant.slug})`);
   console.log(`Only rows whose code starts with "${prefix}" are touched.\n`);
 
   await clear(tenant.id, prefix);
   if (clearOnly) {
     console.log(
-      sheetOnly ? 'Loading-type sheet demo removed.' : efrOnly ? 'EFR demo removed.' : 'Demo data removed.',
+      sheetOnly
+        ? 'Loading-type sheet demo removed.'
+        : efrOnly
+          ? 'EFR demo removed.'
+          : accountsOnly
+            ? 'Accounts demo removed.'
+            : 'Demo data removed.',
     );
+    return;
+  }
+
+  if (accountsOnly) {
+    const summary = await seedAccounts(prisma, tenant.id);
+    console.log(summary.join('\n'));
+    console.log('\nDone. Open Accounts → Income Statement and try both bases. Remove it with: pnpm db:demo:accounts:clear');
     return;
   }
 
@@ -2257,6 +2279,8 @@ async function main(): Promise<void> {
   console.log(`  bookings   : ${counts[6]}  (one in each state, so every worklist has rows)`);
   printSheet();
   printEfrGroups();
+  console.log('\nAccounts demo:');
+  console.log((await seedAccounts(prisma, tenant.id)).join('\n'));
   console.log('\nDone. Remove it again with: pnpm db:demo:clear');
 }
 
