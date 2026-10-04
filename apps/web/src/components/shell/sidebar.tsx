@@ -36,7 +36,7 @@ export function Sidebar() {
       buildNav()
         .map((group) => ({
           ...group,
-          items: group.items.filter((item) => can(item.viewPermission)),
+          items: group.items.filter((item) => item.viewPermissions.every((p) => can(p))),
         }))
         .filter((group) => group.items.length > 0),
     [can],

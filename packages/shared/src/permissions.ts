@@ -611,6 +611,23 @@ export const FEATURES: readonly FeatureDefinition[] = [
     actions: ['VIEW', 'CREATE', 'CANCEL'],
   },
   { module: 'ACCOUNTS', feature: 'ACCOUNTS.INCOME_STATEMENT', label: 'Income Statement', actions: READ_ONLY },
+  /*
+   * docs/DESIGN-UPDATE-2026-10-04.md §8 (Menu M14). Every row is a booking's
+   * cost and margin, so VIEW alone does not open it: the route also demands
+   * ACCOUNTS.DEBIT_INVOICE.VIEW_BUY_PRICE, the grant that already decides who
+   * sees what the suppliers charged (MODULE_ACCOUNTS §3.9). Ticking this box
+   * must never be a second, quieter way to reach the same figures.
+   *
+   * VIEW only. EXPORT waits on the client (§11 Q27): the 2026-09-06 decision
+   * keeps buy prices out of every downloaded file, and this screen is nothing
+   * but buy prices.
+   */
+  {
+    module: 'ACCOUNTS',
+    feature: 'ACCOUNTS.SHIPMENT_PROFITABILITY',
+    label: 'Shipment Profitability',
+    actions: ['VIEW'],
+  },
   { module: 'ACCOUNTS', feature: 'ACCOUNTS.BALANCE_SHEET', label: 'Balance Sheet', actions: READ_ONLY },
   { module: 'ACCOUNTS', feature: 'ACCOUNTS.CASH_FLOW_STATEMENT', label: 'Cash Flow Statement', actions: READ_ONLY },
   { module: 'ACCOUNTS', feature: 'ACCOUNTS.TA_DA', label: 'TA/DA', actions: MASTER_APPROVE },

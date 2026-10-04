@@ -4,7 +4,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 import { Toaster } from 'sonner';
 
-import { viewPermissionForPath } from '@/components/shell/nav-config';
+import { viewPermissionsForPath } from '@/components/shell/nav-config';
 import { Sidebar } from '@/components/shell/sidebar';
 import { TopBar } from '@/components/shell/top-bar';
 import { useSession } from '@/lib/session';
@@ -53,8 +53,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
    * than a closed one. That matters most for an agent, whose whole sidebar is
    * one item and who has no way to tell the two apart.
    */
-  const required = viewPermissionForPath(pathname);
-  const permitted = required === null || can(required);
+  const required = viewPermissionsForPath(pathname);
+  const permitted = required.every((p) => can(p));
 
   return (
     <div className="flex h-screen overflow-hidden">

@@ -124,10 +124,28 @@ const ROUTES: Record<string, RouteEntry> = {
   'ACCOUNTS.EXPENSE': '/accounts/expense',
   'ACCOUNTS.INCOME': '/accounts/income',
   'ACCOUNTS.INTERNAL_TRANSFER': '/accounts/internal-transfer',
+  // docs/DESIGN-UPDATE-2026-10-04.md §8, Menu M14.
+  'ACCOUNTS.SHIPMENT_PROFITABILITY': '/accounts/shipment-profitability',
   'ACCOUNTS.BANK_SETUP': '/accounts/bank-setup',
   'ACCOUNTS.ACCOUNT_SETUP': '/accounts/account-setup',
   'CUSTOMER.SHIPMENT': '/portal/shipment',
 };
+
+/**
+ * A grant a screen needs on top of its own VIEW.
+ *
+ * Shipment Profitability is nothing but the cost side of the debit invoices,
+ * and the API refuses it without VIEW_BUY_PRICE (MODULE_ACCOUNTS §3.9). A menu
+ * item that opened onto a refusal would be §7 layer 3 failing, so the sidebar
+ * and the route gate ask for both, exactly as the route does.
+ */
+const ALSO_REQUIRES: Record<string, readonly string[]> = {
+  'ACCOUNTS.SHIPMENT_PROFITABILITY': ['ACCOUNTS.DEBIT_INVOICE.VIEW_BUY_PRICE'],
+};
+
+function viewPermissionsOf(feature: string): string[] {
+  return [`${feature}.VIEW`, ...(ALSO_REQUIRES[feature] ?? [])];
+}
 
 /**
  * Paths a permission guards but the sidebar does not link to.
@@ -166,7 +184,8 @@ export interface NavItem {
   feature: string;
   label: string;
   href: Route | null;
-  viewPermission: string;
+  /** All of these, not any: the feature's VIEW plus whatever ALSO_REQUIRES adds. */
+  viewPermissions: readonly string[];
   section?: string;
 }
 
@@ -191,7 +210,7 @@ export function buildNav(): NavGroup[] {
           feature: f.feature,
           label: entry.label,
           href: entry.href,
-          viewPermission: `${f.feature}.VIEW`,
+          viewPermissions: viewPermissionsOf(f.feature),
         }));
       }
       const section = NAV_SECTION[f.feature];
@@ -200,7 +219,7 @@ export function buildNav(): NavGroup[] {
           feature: f.feature,
           label: f.label,
           href: (route as Route | undefined) ?? null,
-          viewPermission: `${f.feature}.VIEW`,
+          viewPermissions: viewPermissionsOf(f.feature),
           ...(section === undefined ? {} : { section }),
         },
       ];
@@ -209,7 +228,7 @@ export function buildNav(): NavGroup[] {
 }
 
 /**
- * The VIEW permission a path needs, or null when it needs none.
+ * The permissions a path needs — all of them — or none.
  *
  * The same map the sidebar is built from, read backwards. Hiding a menu item is
  * §7 layer 3; this is the other half of layer 4 — typing the URL of a screen
@@ -218,7 +237,7 @@ export function buildNav(): NavGroup[] {
  * Longest prefix wins, so a child screen (/crm/agent/1/pic) inherits the
  * permission of its parent (/crm/agent) without being listed separately.
  */
-export function viewPermissionForPath(pathname: string): string | null {
+export function viewPermissionsForPath(pathname: string): string[] {
   let best: { route: string; feature: string } | null = null;
   const all: [string, string][] = [];
   for (const [feature, route] of Object.entries(ROUTES)) {
@@ -231,5 +250,5 @@ export function viewPermissionForPath(pathname: string): string | null {
     if (pathname !== route && !pathname.startsWith(`${route}/`)) continue;
     if (best === null || route.length > best.route.length) best = { route, feature };
   }
-  return best === null ? null : `${best.feature}.VIEW`;
+  return best === null ? [] : viewPermissionsOf(best.feature);
 }
