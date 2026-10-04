@@ -38,6 +38,12 @@ import {
   opsWorklistRouter,
   shipmentWorklistRouter,
 } from './shipment-worklist.route';
+import { inboundRouter } from './inbound.route';
+import { incomeStatementRouter } from './income-statement.route';
+import { milestoneRouter } from './milestone.route';
+import { localSalesRouter } from './local-sales.route';
+import { preAlertRouter } from './pre-alert.route';
+import { tariffRouter } from './tariff.route';
 import { salesLeadRouter } from './sales-lead.route';
 import { portRouter } from './port.route';
 import { notificationSettingRouter } from './notification-setting.route';
@@ -73,9 +79,13 @@ tenantRouter.use('/setting/notifications', notificationSettingRouter);
 tenantRouter.use('/setting', rateLookupRouter);
 
 // Purchase — rate entry for all three modes (MODULE_PURCHASE_SALES §5.1).
+// docs/DESIGN-UPDATE-2026-10-04.md §5: before the rate router, which owns /purchase.
+tenantRouter.use('/purchase/tariffs', tariffRouter);
 tenantRouter.use('/purchase', freightRateRouter);
 
 // Sales — inquiry capture (MODULE_PURCHASE_SALES §5.4).
+// docs/DESIGN-UPDATE-2026-10-04.md §6: before the two routers that own /sales.
+tenantRouter.use('/sales/local-sales', localSalesRouter);
 tenantRouter.use('/sales', inquiryRouter);
 tenantRouter.use('/cs', quotationRouter);
 // Customer Service — the shipment file (MODULE_BOOKING_CARGO.md §6.1).
@@ -85,10 +95,16 @@ tenantRouter.use('/cs', shippingOrderRouter);
 // The direct list screens (client decision, 2026-09-03) — each behind its
 // own §7 permission, which is why they are not one endpoint.
 tenantRouter.use('/cs', shipmentWorklistRouter);
+// docs/DESIGN-UPDATE-2026-10-04.md §2: Depart-Arrive Confirmation.
+tenantRouter.use('/cs', milestoneRouter);
+// docs/DESIGN-UPDATE-2026-10-04.md §3: Pre-Alert.
+tenantRouter.use('/cs', preAlertRouter);
 // Operation — cargo receipt (MODULE_BOOKING_CARGO.md §6.7).
 tenantRouter.use('/ops', cargoReceiptRouter);
 tenantRouter.use('/ops', clpRouter);
 tenantRouter.use('/ops', opsWorklistRouter);
+// docs/DESIGN-UPDATE-2026-10-04.md §4: IGM Submission and DO Issue, inbound only.
+tenantRouter.use('/ops', inboundRouter);
 
 // Documentation (docs/MODULE_DOCUMENTATION.md).
 tenantRouter.use('/documentation', shipmentAdviseRouter);
@@ -99,6 +115,8 @@ tenantRouter.use('/documentation', docWorklistRouter);
 
 // Accounts (docs/MODULE_ACCOUNTS.md) — Awaiting Freight Inv, Debit Invoice,
 // Credit Invoice, Receivable-Payable list.
+// docs/DESIGN-UPDATE-2026-10-04.md §9: before the routers that own /accounts.
+tenantRouter.use('/accounts/income-statement', incomeStatementRouter);
 tenantRouter.use('/accounts', accountsRouter);
 // The books (§14): Chart of accounts, the four Transaction screens, and the
 // Bank / Account set-ups.

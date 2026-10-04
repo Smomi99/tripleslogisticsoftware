@@ -7,7 +7,7 @@ import { usePathname } from 'next/navigation';
 import { useSession } from '@/lib/session';
 import { cn } from '@/lib/utils';
 
-import { buildNav, MODULE_LABEL } from './nav-config';
+import { buildNav, isOnRoute, MODULE_LABEL } from './nav-config';
 
 /*
  * §12 top bar: 56px, surface, 1px --line beneath.
@@ -21,7 +21,7 @@ function useBreadcrumb(): string[] {
 
   const match = buildNav()
     .flatMap((g) => g.items.map((i) => ({ ...i, module: g.module })))
-    .find((i) => i.href !== null && pathname.startsWith(i.href));
+    .find((i) => i.href !== null && isOnRoute(pathname, i.href));
 
   if (match !== undefined) return [MODULE_LABEL[match.module], match.label];
   return segments.map((s) => s.charAt(0).toUpperCase() + s.slice(1));

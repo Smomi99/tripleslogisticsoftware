@@ -67,6 +67,13 @@ export interface Mail {
    * spam filters are built to catch.
    */
   replyTo?: string[];
+  /**
+   * A team's identity (DESIGN-UPDATE-2026-10-04 §7). The name always applies;
+   * the address only when the workspace has said its mail server may send as
+   * it — otherwise the deployment's own account stays the From, for the
+   * reason replyTo gives above.
+   */
+  from?: { name?: string | null | undefined; address?: string | null | undefined };
   /** Optional richer part. The quotation needs it; a notification does not. */
   html?: string;
   /**
@@ -97,6 +104,11 @@ export interface MailResult {
  * something that has already succeeded, and none of them can do anything
  * useful with an exception.
  */
+/** "Acme <mail@acme.test>" → "mail@acme.test"; a bare address is itself. */
+function addressOf(from: string): string {
+  return /<([^>]+)>/.exec(from)?.[1]?.trim() ?? from.trim();
+}
+
 export async function sendMail(mail: Mail): Promise<MailResult> {
   const recipients = [...new Set(mail.to.map((a) => a.trim()).filter((a) => a !== ''))];
   const copies = [...new Set((mail.cc ?? []).map((a) => a.trim()).filter((a) => a !== ''))]
@@ -122,8 +134,13 @@ export async function sendMail(mail: Mail): Promise<MailResult> {
   }
 
   try {
+    const name = mail.from?.name?.trim() ?? '';
+    const address = mail.from?.address?.trim() ?? '';
     await client.sendMail({
-      from: MAIL_CONFIG.from,
+      from:
+        name === '' && address === ''
+          ? MAIL_CONFIG.from
+          : { name, address: address === '' ? addressOf(MAIL_CONFIG.from) : address },
       to: recipients.join(', '),
       ...(copies.length > 0 ? { cc: copies.join(', ') } : {}),
       ...(blind.length > 0 ? { bcc: blind.join(', ') } : {}),

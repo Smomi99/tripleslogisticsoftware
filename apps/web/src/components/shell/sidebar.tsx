@@ -8,7 +8,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/lib/session';
 
-import { buildNav } from './nav-config';
+import { buildNav, isOnRoute } from './nav-config';
 
 /*
  * §12 sidebar: 240px, --hull, collapsible to 64px, module groups collapsible,
@@ -36,7 +36,7 @@ export function Sidebar() {
       buildNav()
         .map((group) => ({
           ...group,
-          items: group.items.filter((item) => can(item.viewPermission)),
+          items: group.items.filter((item) => item.viewPermissions.every((p) => can(p))),
         }))
         .filter((group) => group.items.length > 0),
     [can],
@@ -45,7 +45,7 @@ export function Sidebar() {
   // Open the group containing the current route on first render.
   useEffect(() => {
     const active = groups.find((g) =>
-      g.items.some((i) => i.href !== null && pathname.startsWith(i.href)),
+      g.items.some((i) => i.href !== null && isOnRoute(pathname, i.href)),
     );
     if (active !== undefined) {
       setOpenModules((prev) => new Set(prev).add(active.module));
@@ -131,7 +131,7 @@ export function Sidebar() {
                 <ul>
                   {group.items.map((item, index) => {
                     const isActive =
-                      item.href !== null && pathname.startsWith(item.href);
+                      item.href !== null && isOnRoute(pathname, item.href);
                     // The client's nested menu headings ("- Transaction"):
                     // drawn once, above the first visible item they cover.
                     const heading =

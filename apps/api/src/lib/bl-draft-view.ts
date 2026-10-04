@@ -297,6 +297,17 @@ export async function blDraftPrefill(
   const members = advise === null ? [] : await adviseMembers(db, advise.id);
   const containers =
     advise === null ? [] : await containersForShipments(db, members.map((m) => m.id));
+  // DESIGN-UPDATE-2026-10-04 §2: a confirmed departure "will finally pull to
+  // BL as on board date". The bill's own booking first, then any on its advise.
+  const departed = await db.shipmentMilestone.findFirst({
+    where: {
+      kind: 'DEPARTED',
+      deletedAt: null,
+      shipmentId: { in: [shipment.id, ...members.map((m) => m.id)] },
+    },
+    orderBy: { confirmedOn: 'asc' },
+    select: { confirmedOn: true },
+  });
   const gross = containers.reduce((acc, c) => acc.add(c.grossWeightKg), new Prisma.Decimal(0));
   const cbm = containers.reduce((acc, c) => acc.add(c.measurementCbm), new Prisma.Decimal(0));
 
@@ -347,7 +358,7 @@ export async function blDraftPrefill(
     measurementCbm: containers.length === 0 ? null : cbm.toString(),
     freightPayableAt: null,
     originalBlCount: null,
-    ladenOnBoardDate: null,
+    ladenOnBoardDate: day(departed?.confirmedOn ?? null),
     containers: containers.map((c, index) => ({
       id: `draft-${index}`,
       containerNo: c.containerNo,

@@ -25,6 +25,8 @@ import {
   READY_TO_INVOICE_STATUSES,
   type ReceivablePayableRow,
   receivablePayableQuerySchema,
+  type ShipmentProfitabilityRow,
+  shipmentProfitabilityQuerySchema,
   type ShipmentStatus,
   type SupplierPartyType,
 } from '@ff/shared';
@@ -76,6 +78,7 @@ import {
 } from '../lib/receivable-payable';
 import { renderRequiredContainer } from '../lib/render-volumes';
 import { parseId } from '../lib/request';
+import { gpPercentOf, profitabilityPage } from '../lib/shipment-profitability';
 import { displayNameFromKey, openFile, putFile, removeFile } from '../lib/storage';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
 import { type AuthContext, authenticate } from '../middleware/authenticate';
@@ -89,6 +92,8 @@ import { uploadSingle } from '../middleware/upload';
  *   Debit Invoice             the invoice itself, from a booking or `Create New`
  *   Credit Invoice            the suppliers' invoices those carry (§14.2)
  *   Receivable-Payable list   who owes whom, and each party's ledger
+ *   Shipment Profitability    each booking's revenue, cost and GP
+ *                             (docs/DESIGN-UPDATE-2026-10-04.md §8)
  *
  * Money in and out is the books' (ledger.route.ts): `Receive` and `Make
  * Payment` open the Income and Expense vouchers, which settle what they name.
@@ -103,6 +108,7 @@ const AWAITING = 'ACCOUNTS.AWAITING_FREIGHT_INV';
 const INVOICE = 'ACCOUNTS.DEBIT_INVOICE';
 const LEDGER = 'ACCOUNTS.RECEIVABLE_PAYABLE';
 const CREDIT = 'ACCOUNTS.NEW_CREDIT_INVOICE';
+const PROFITABILITY = 'ACCOUNTS.SHIPMENT_PROFITABILITY';
 
 type Auth = AuthContext;
 
@@ -1293,6 +1299,109 @@ accountsRouter.delete(
     });
 
     const payload: ApiSuccess<{ deleted: true }> = { success: true, data: { deleted: true } };
+    res.json(payload);
+  },
+);
+
+// ===========================================================================
+// Shipment Profitability (sheet `Shipment Profitabilit`, Menu M14)
+// docs/DESIGN-UPDATE-2026-10-04.md §8
+// ===========================================================================
+
+/**
+ * Read-only. Two guards, both required: the screen's own VIEW, and §3.9's
+ * VIEW_BUY_PRICE — every figure on this list but Revenue is a buy price, so a
+ * user the invoice hides costs from is not shown them here either.
+ *
+ * A booking with no issued invoice is absent: it has billed nothing, so there
+ * is no margin to measure yet. Awaiting Freight Inv is where those wait.
+ */
+accountsRouter.get(
+  '/shipment-profitability',
+  requirePermission(`${PROFITABILITY}.VIEW`),
+  requirePermission(`${INVOICE}.VIEW_BUY_PRICE`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const query = shipmentProfitabilityQuerySchema.parse(req.query);
+
+    const { figures, bookings, currencyCode } = await withTenant(auth.tenantId, async (db) => {
+      const found = await profitabilityPage(
+        db,
+        auth.tenantId,
+        { search: query.search, shipmentType: query.shipmentType, from: query.from, to: query.to },
+        { by: query.sortBy ?? 'code', order: query.sortOrder },
+        { page: query.page, limit: query.limit },
+      );
+      const [details, base] = await Promise.all([
+        db.shipment.findMany({
+          where: { id: { in: found.rows.map((r) => r.shipmentId) } },
+          select: {
+            id: true,
+            code: true,
+            status: true,
+            shipmentType: true,
+            loadingType: true,
+            customer: { select: { name: true } },
+            quotation: { select: { id: true, code: true } },
+            pol: { select: { name: true, portCode: true } },
+            pod: { select: { name: true, portCode: true } },
+            // CR-005: the advise that holds the booking now. Its HBL / HAWB is
+            // the number the BL draft copies, so it is the BL No either way.
+            adviseBookings: {
+              where: { releasedAt: null, deletedAt: null },
+              select: { advise: { select: { houseBlNo: true } } },
+              take: 1,
+            },
+          },
+        }),
+        baseCurrency(db, auth.tenantId),
+      ]);
+      return { figures: found, bookings: details, currencyCode: base === null ? '' : isoOf(base) };
+    });
+
+    const byId = new Map(bookings.map((b) => [b.id.toString(), b]));
+    const data: ShipmentProfitabilityRow[] = figures.rows.flatMap((figure) => {
+      const booking = byId.get(figure.shipmentId.toString());
+      if (booking === undefined) return [];
+      return [
+        {
+          shipmentId: booking.id.toString(),
+          bookingCode: booking.code,
+          bookingStatus: booking.status,
+          quotationId: booking.quotation.id.toString(),
+          quotationCode: booking.quotation.code,
+          blNo: booking.adviseBookings[0]?.advise.houseBlNo ?? null,
+          customerName: booking.customer.name,
+          shipmentType: booking.shipmentType,
+          loadingType: booking.loadingType,
+          polCode: booking.pol.portCode,
+          polName: booking.pol.name,
+          podCode: booking.pod.portCode,
+          podName: booking.pod.name,
+          currencyCode,
+          revenue: money(figure.revenue),
+          cost: money(figure.cost),
+          gp: money(figure.revenue.minus(figure.cost)),
+          gpPercent: gpPercentOf(figure.revenue, figure.cost),
+        },
+      ];
+    });
+
+    const payload: ApiSuccess<ShipmentProfitabilityRow[]> = {
+      success: true,
+      data,
+      meta: {
+        ...buildMeta(query.page, query.limit, figures.total),
+        // The foot row: the whole filtered list, so a period's GP % is its
+        // total GP over its total revenue — not an average of the rows'.
+        totals: {
+          revenue: money(figures.revenue),
+          cost: money(figures.cost),
+          gp: money(figures.revenue.minus(figures.cost)),
+          gpPercent: gpPercentOf(figures.revenue, figures.cost) ?? '',
+        },
+      },
+    };
     res.json(payload);
   },
 );

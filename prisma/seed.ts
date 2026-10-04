@@ -733,6 +733,128 @@ const EMAIL_TEMPLATES = [
     ].join('\n'),
     variables: ['subject', 'message', 'rates', 'signOff'],
   },
+  {
+    // DESIGN-UPDATE-2026-10-04 §2, On board confirmation: "An email will
+    // automatically send to customer email", with the reason when the
+    // sailing moved (M20).
+    key: 'SHIPMENT_DEPARTED',
+    name: 'Shipment — departed (on board confirmation)',
+    subject: 'Booking {{bookingNo}} — departed {{polName}} on {{date}}',
+    bodyText: [
+      'Dear {{customerName}},',
+      '',
+      'Your shipment under booking {{bookingNo}} departed {{polName}} on {{date}},',
+      'on {{modeWord}} {{legLabel}}, bound for {{podName}}.',
+      '{{reasonLine}}',
+      '',
+      'House BL / AWB: {{houseBlNo}}',
+      '{{containers}}',
+    ].join('\n'),
+    variables: [
+      'customerName',
+      'bookingNo',
+      'modeWord',
+      'legLabel',
+      'polName',
+      'podName',
+      'date',
+      'reasonLine',
+      'houseBlNo',
+      'containers',
+    ],
+  },
+  {
+    // DESIGN-UPDATE-2026-10-04 §2, Transshipment confirmation: indirect
+    // routes only, the second leg leaving the hub.
+    key: 'SHIPMENT_TRANSSHIPPED',
+    name: 'Shipment — transshipped (second leg departed)',
+    subject: 'Booking {{bookingNo}} — on its second leg to {{podName}}',
+    bodyText: [
+      'Dear {{customerName}},',
+      '',
+      'Your shipment under booking {{bookingNo}} was transshipped and left on',
+      '{{modeWord}} {{legLabel}} on {{date}}, bound for {{podName}}.',
+      '{{reasonLine}}',
+      '',
+      '{{containers}}',
+    ].join('\n'),
+    variables: [
+      'customerName',
+      'bookingNo',
+      'modeWord',
+      'legLabel',
+      'podName',
+      'date',
+      'reasonLine',
+      'containers',
+    ],
+  },
+  {
+    // DESIGN-UPDATE-2026-10-04 §2, Arrival: the final date of arrival, with
+    // "Container number, Seal, Size and Last leg vessel name" (N21).
+    key: 'SHIPMENT_ARRIVED',
+    name: 'Shipment — arrival confirmation',
+    subject: 'Booking {{bookingNo}} — arriving {{podName}} on {{date}}',
+    bodyText: [
+      'Dear {{customerName}},',
+      '',
+      'Your shipment under booking {{bookingNo}} arrives at {{podName}} on {{date}},',
+      'on {{modeWord}} {{legLabel}}.',
+      '{{reasonLine}}',
+      '',
+      '{{containers}}',
+    ].join('\n'),
+    variables: [
+      'customerName',
+      'bookingNo',
+      'modeWord',
+      'legLabel',
+      'podName',
+      'date',
+      'reasonLine',
+      'containers',
+    ],
+  },
+  {
+    // DESIGN-UPDATE-2026-10-04 §3, Pre-Alert: the destination agent's letter,
+    // sent from the Sales Team (I20) with the ticked documents attached. The
+    // sheet supplies no wording, so this states the shipment and no more.
+    key: 'PRE_ALERT_SENT',
+    name: 'Pre-alert — to the destination agent',
+    subject: 'Pre-alert — {{bookingNo}} — {{polName}} to {{podName}}',
+    bodyText: [
+      'Dear {{agentName}},',
+      '',
+      'Please find attached the pre-alert for the shipment below.',
+      '',
+      'Booking: {{bookingNo}}',
+      'Shipper: {{shipperName}}',
+      'Consignee: {{consigneeName}}',
+      '{{modeWord}}: {{legLabel}}',
+      'From {{polName}} (ETD {{etd}}) to {{podName}} (ETA {{eta}})',
+      'House BL / HAWB: {{houseBlNo}}',
+      'Master BL / MAWB: {{mblNo}}',
+      '{{containers}}',
+      '',
+      'Attached: {{documents}}',
+    ].join('\n'),
+    variables: [
+      'agentName',
+      'bookingNo',
+      'shipperName',
+      'consigneeName',
+      'modeWord',
+      'legLabel',
+      'polName',
+      'podName',
+      'etd',
+      'eta',
+      'houseBlNo',
+      'mblNo',
+      'containers',
+      'documents',
+    ],
+  },
 ] as const;
 
 /**

@@ -269,6 +269,9 @@ model Tenant {
   inquiryPartyContacts InquiryPartyContact[]
 
   notificationSetting  NotificationSetting?
+  notificationTeams    NotificationTeamSetting[]
+  preAlertDocuments    PreAlertDocument[]
+  preAlerts            PreAlert[]
   agentQuotes          AgentQuote[]
   agentQuoteOptions    AgentQuoteOption[]
   agentQuoteLines      AgentQuoteLine[]
@@ -294,6 +297,9 @@ model Tenant {
   shipmentAdvises     ShipmentAdvise[]
   shipmentAdviseLines ShipmentAdviseLine[]
   shipmentAdviseBookings ShipmentAdviseBooking[]
+  shipmentMilestones  ShipmentMilestone[]
+  igmUpdates          IgmUpdate[]
+  deliveryOrders      DeliveryOrder[]
   blDrafts            BlDraft[]
   blDraftContainers   BlDraftContainer[]
   blTemplates         BlTemplate[]
@@ -311,6 +317,12 @@ model Tenant {
   journalLines       JournalLine[]
   supplierPayments   SupplierPayment[]
   openingSettlements OpeningSettlement[]
+
+  /// DESIGN-UPDATE-2026-10-04 §5.
+  tariffs     Tariff[]
+  tariffLines TariffLine[]
+
+  customerActivities CustomerActivity[]
 
   @@index([slug])
   @@index([status])
@@ -445,6 +457,9 @@ model Port {
   blDraftsPol             BlDraft[]             @relation("BlDraftPol")
   blDraftsPod             BlDraft[]             @relation("BlDraftPod")
 
+  /// DESIGN-UPDATE-2026-10-04 §5: the tariffs charged at this POL.
+  tariffs Tariff[] @relation("TariffPol")
+
   @@unique([tenantId, code])
   /// The natural key (tenant_id, port_code) is UNIQUE only over live rows, and
   /// so lives in the migration as a partial index rather than here — Prisma
@@ -510,6 +525,8 @@ model Currency {
   debitInvoiceCosts DebitInvoiceCost[] @relation("DebitInvoiceCostCurrency")
 
   openingSettlements OpeningSettlement[] @relation("OpeningSettlementCurrency")
+  tariffLines TariffLine[] @relation("TariffLineCurrency")
+
   @@unique([tenantId, code])
   @@index([tenantId])
   @@index([currency])
@@ -576,6 +593,8 @@ model CostUnit {
   debitInvoiceLines     DebitInvoiceLine[]     @relation("DebitInvoiceLineCostUnit")
   debitInvoiceCostLines DebitInvoiceCostLine[] @relation("DebitInvoiceCostLineCostUnit")
 
+  tariffLines TariffLine[] @relation("TariffLineUnit")
+
   @@unique([tenantId, code])
   @@index([tenantId])
   @@map("cost_unit")
@@ -610,6 +629,8 @@ model CostHead {
 
   debitInvoiceLines     DebitInvoiceLine[]
   debitInvoiceCostLines DebitInvoiceCostLine[]
+
+  tariffLines TariffLine[]
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -1183,6 +1204,9 @@ model Customer {
   journalEntries     JournalEntry[]      @relation("JournalEntryCustomer")
   openingSettlements OpeningSettlement[] @relation("OpeningSettlementCustomer")
 
+  /// DESIGN-UPDATE-2026-10-04 §6: Local Sales → Activity Log.
+  activities CustomerActivity[]
+
   @@unique([tenantId, code])
   @@unique([tenantId, id])
   @@index([tenantId])
@@ -1222,6 +1246,8 @@ model CustomerPic {
   // next migrate dev, which is how this was found.
   createdByUser User? @relation("CustomerPicCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User? @relation("CustomerPicUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  activities CustomerActivity[]
 
   @@unique([tenantId, code])
   /// §4 rule 10: a composite foreign key needs this to point at.
@@ -1322,6 +1348,8 @@ model Agent {
   openingCurrency Currency? @relation("AgentOpeningCurrency", fields: [openingCurrencyId], references: [id], onDelete: Restrict)
 
   pics           AgentPic[]
+  /// DESIGN-UPDATE-2026-10-04 §3: the pre-alerts sent to this agent.
+  preAlerts      PreAlert[]
   expertAreas    AgentExpertArea[]
   portCoverages  AgentPortCoverage[]
   networkMembers AgentNetworkMember[]
@@ -1833,6 +1861,8 @@ model User {
   createdInquiryContacts InquiryPartyContact[] @relation("InquiryPartyContactCreatedBy")
 
   createdNotificationSettings NotificationSetting[] @relation("NotificationSettingCreatedBy")
+  createdNotificationTeams    NotificationTeamSetting[] @relation("NotificationTeamSettingCreatedBy")
+  updatedNotificationTeams    NotificationTeamSetting[] @relation("NotificationTeamSettingUpdatedBy")
   updatedNotificationSettings NotificationSetting[] @relation("NotificationSettingUpdatedBy")
 
   submittedAgentQuotes        AgentQuote[]          @relation("AgentQuoteSubmittedBy")
@@ -1892,6 +1922,20 @@ model User {
   adviseLinesUpdated       ShipmentAdviseLine[] @relation("ShipmentAdviseLineUpdatedBy")
   adviseBookingsCreated    ShipmentAdviseBooking[] @relation("ShipmentAdviseBookingCreatedBy")
   adviseBookingsUpdated    ShipmentAdviseBooking[] @relation("ShipmentAdviseBookingUpdatedBy")
+  milestonesConfirmed      ShipmentMilestone[]  @relation("ShipmentMilestoneConfirmedBy")
+  milestonesCreated        ShipmentMilestone[]  @relation("ShipmentMilestoneCreatedBy")
+  milestonesUpdated        ShipmentMilestone[]  @relation("ShipmentMilestoneUpdatedBy")
+  igmUpdatesCreated        IgmUpdate[]          @relation("IgmUpdateCreatedBy")
+  igmUpdatesUpdated        IgmUpdate[]          @relation("IgmUpdateUpdatedBy")
+  deliveryOrdersIssued     DeliveryOrder[]      @relation("DeliveryOrderIssuedBy")
+  deliveryOrdersCancelled  DeliveryOrder[]      @relation("DeliveryOrderCancelledBy")
+  deliveryOrdersCreated    DeliveryOrder[]      @relation("DeliveryOrderCreatedBy")
+  deliveryOrdersUpdated    DeliveryOrder[]      @relation("DeliveryOrderUpdatedBy")
+  preAlertDocsCreated      PreAlertDocument[]   @relation("PreAlertDocumentCreatedBy")
+  preAlertDocsUpdated      PreAlertDocument[]   @relation("PreAlertDocumentUpdatedBy")
+  preAlertsSent            PreAlert[]           @relation("PreAlertSentBy")
+  preAlertsCreated         PreAlert[]           @relation("PreAlertCreatedBy")
+  preAlertsUpdated         PreAlert[]           @relation("PreAlertUpdatedBy")
   blDraftsSubmitted        BlDraft[]            @relation("BlDraftSubmittedBy")
   blDraftsApproved         BlDraft[]            @relation("BlDraftApprovedBy")
   blDraftsSent             BlDraft[]            @relation("BlDraftSentBy")
@@ -1935,6 +1979,14 @@ model User {
   supplierPaymentsUpdated    SupplierPayment[]   @relation("SupplierPaymentUpdatedBy")
   openingSettlementsCreated  OpeningSettlement[] @relation("OpeningSettlementCreatedBy")
   openingSettlementsUpdated  OpeningSettlement[] @relation("OpeningSettlementUpdatedBy")
+  tariffsCreated     Tariff[]     @relation("TariffCreatedBy")
+  tariffsUpdated     Tariff[]     @relation("TariffUpdatedBy")
+  tariffLinesCreated TariffLine[] @relation("TariffLineCreatedBy")
+  tariffLinesUpdated TariffLine[] @relation("TariffLineUpdatedBy")
+
+  customerActivitiesCreated CustomerActivity[] @relation("CustomerActivityCreatedBy")
+  customerActivitiesUpdated CustomerActivity[] @relation("CustomerActivityUpdatedBy")
+
   @@unique([tenantId, username])
   @@unique([tenantId, email])
   @@unique([tenantId, code])
@@ -2135,6 +2187,10 @@ model EmailLog {
   /// Where the recipient's reply goes, when it should not be the sending
   /// account. The customer price email sets the Price team here (2026-09-29).
   replyToAddresses String[] @default([]) @map("reply_to_addresses")
+  /// The From this message went with, when a team's identity set one
+  /// (DESIGN-UPDATE-2026-10-04 §7). Null means the deployment's own sender.
+  fromAddress String? @map("from_address") @db.VarChar(320)
+  fromName    String? @map("from_name") @db.VarChar(200)
   /// Rendered when queued, not when sent: what went out has to be what the
   /// record shows, even if the template is edited an hour later.
   subject       String      @db.Text
@@ -2260,6 +2316,8 @@ model ContainerSize {
 
   debitInvoiceLines     DebitInvoiceLine[]     @relation("DebitInvoiceLineContainerSize")
   debitInvoiceCostLines DebitInvoiceCostLine[] @relation("DebitInvoiceCostLineContainerSize")
+
+  tariffLines TariffLine[] @relation("TariffLineContainerSize")
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -2990,6 +3048,11 @@ model NotificationSetting {
   /// workspace that clears them deliberately gets none.
   quotationNotes String? @map("quotation_notes") @db.Text
 
+  /// DESIGN-UPDATE-2026-10-04 §7: "our mail server may send as the team
+  /// addresses". Off, mail leaves from the deployment's own account with the
+  /// team's address as Reply-To — the only claim every SMTP host will sign.
+  sendAsTeam Boolean @default(false) @map("send_as_team")
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy BigInt?  @map("created_by")
@@ -3001,6 +3064,54 @@ model NotificationSetting {
 
   @@unique([tenantId])
   @@map("notification_setting")
+}
+
+/// client: Notification sheet — one block per team (C4–R12): who the team's
+/// letters come from, where replies go, and how they are signed
+/// (DESIGN-UPDATE-2026-10-04 §7). Which letters belong to which team is the
+/// code's (TEMPLATE_TEAM in @ff/shared), from the sheet's "Applicable for".
+enum NotificationTeam {
+  PRICE
+  CS_DOC
+  OPS
+  ACCOUNTS
+  SALES
+
+  @@map("notification_team")
+}
+
+/// One row per team per workspace, written from Settings → Notification.
+/// Every column is optional: a team left blank sends as the workspace always
+/// has. The sample signatures on the sheet name real staff, so nothing here is
+/// seeded.
+model NotificationTeamSetting {
+  tenantId BigInt           @map("tenant_id")
+  id       BigInt           @id @default(autoincrement())
+  team     NotificationTeam
+
+  /// "Sender Email ID". Used as the From only when the workspace says its mail
+  /// server may send as it (notification_setting.send_as_team).
+  senderEmail String? @map("sender_email") @db.VarChar(320)
+  /// "Reply to". Falls back to the sender address when blank.
+  replyTo     String? @map("reply_to") @db.VarChar(320)
+  /// "Email Signature", set under every letter the team sends.
+  signature   String? @db.Text
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdByUser User?  @relation("NotificationTeamSettingCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User?  @relation("NotificationTeamSettingUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, team])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@map("notification_team_setting")
 }
 
 model InquiryParty {
@@ -3973,6 +4084,14 @@ model Shipment {
   /// CR-005: the advises this booking is on, as the lead or as one of the others.
   adviseBookings ShipmentAdviseBooking[]
   blDrafts       BlDraft[]
+  /// docs/DESIGN-UPDATE-2026-10-04.md §2: departed, transshipped, arrived.
+  milestones     ShipmentMilestone[]
+  /// DESIGN-UPDATE-2026-10-04 §4: inbound only.
+  igmUpdates     IgmUpdate[]
+  deliveryOrders DeliveryOrder[]
+  /// DESIGN-UPDATE-2026-10-04 §3.
+  preAlertDocuments PreAlertDocument[]
+  preAlerts         PreAlert[]
   debitInvoices  DebitInvoice[]
 
   clpBookings ClpBooking[] @relation("ClpBookingShipment")
@@ -4982,6 +5101,407 @@ model ShipmentAdviseBooking {
   @@index([adviseId])
   @@index([shipmentId])
   @@map("shipment_advise_booking")
+}
+
+/// docs/DESIGN-UPDATE-2026-10-04.md §2 — the three confirmations on the
+/// `Depart-Arrival Landing page`: On board, Transshipment, Arrival.
+enum MilestoneKind {
+  /// On board confirmation — the first leg sailed or flew.
+  DEPARTED
+  /// Transshipment confirmation — the second leg left the hub. Indirect only.
+  TRANSSHIPPED
+  /// Arrival confirmation — the final date of arrival at the last port.
+  ARRIVED
+
+  @@map("milestone_kind")
+}
+
+/// client: On board / Transshipment / Arrival confirmation (Sea and Air).
+///
+/// One row per booking per kind, written when the operator saves the sheet's
+/// Departed / Arrived. "Awaiting" is the absence of a row, so nothing is
+/// pre-seeded and nothing has to be kept in step with the schedule.
+///
+/// Its own table rather than more shipment_status values, because the
+/// milestones run alongside the document chain, not after it: Departed comes
+/// before BL Print, since it supplies the BL's laden-on-board date, and one
+/// linear status cannot say "BL drafted and departed".
+///
+/// No `code`: like shipment_advise_booking, nobody refers to a confirmation by
+/// a number of its own — it is found by its booking and its kind.
+model ShipmentMilestone {
+  tenantId   BigInt        @map("tenant_id")
+  id         BigInt        @id @default(autoincrement())
+  shipmentId BigInt        @map("shipment_id")
+  kind       MilestoneKind
+
+  /// The date the advise or the schedule held when this was confirmed (sheet:
+  /// "This date pull from shipment advise"). Frozen, so a later change to the
+  /// advise does not rewrite what the operator was correcting.
+  pulledOn     DateTime? @map("pulled_on") @db.Date
+  /// What the operator saved. Departed writes it to the BL draft as the laden
+  /// on board date.
+  confirmedOn  DateTime  @map("confirmed_on") @db.Date
+  /// "A reason of delay / advance sail will write to inform customer."
+  /// Required by the API when confirmedOn differs from pulledOn.
+  changeReason String?   @map("change_reason") @db.Text
+
+  confirmedBy BigInt?  @map("confirmed_by")
+  confirmedAt DateTime @default(now()) @map("confirmed_at") @db.Timestamptz(6)
+  /// The notice that went, as shipment_advise.email_log_id: not a foreign key.
+  emailLogId  BigInt?  @map("email_log_id")
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  shipment Shipment @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict, map: "shipment_milestone_shipment_id_fkey")
+
+  confirmedByUser User? @relation("ShipmentMilestoneConfirmedBy", fields: [confirmedBy], references: [id], onDelete: Restrict)
+  createdByUser   User? @relation("ShipmentMilestoneCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser   User? @relation("ShipmentMilestoneUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  /// "One live confirmation per booking per kind" is a partial unique index in
+  /// the migration (deleted_at IS NULL).
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([tenantId, kind])
+  @@index([shipmentId])
+  @@index([confirmedBy])
+  @@map("shipment_milestone")
+}
+
+/// client: IGM Update ( Inbound shipment only) — DESIGN-UPDATE-2026-10-04 §4.1.
+///
+/// The sheet's detail: HBL NO and "Upload IGM file (pdf.jpg)". The list shows
+/// Awaiting until the file is in, Updated after. An inbound booking has no HBL
+/// in the system (it skips BL Draft & Print), so the number is typed here.
+/// One live row per booking; saving again replaces the number or the file.
+model IgmUpdate {
+  tenantId   BigInt  @map("tenant_id")
+  id         BigInt  @id @default(autoincrement())
+  shipmentId BigInt  @map("shipment_id")
+  /// L14 "HBL NO".
+  hblNo      String? @map("hbl_no") @db.VarChar(64)
+  /// M14 "Upload IGM file". The storage key, never the bytes (CLAUDE.md §2).
+  igmFile    String? @map("igm_file") @db.Text
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  shipment Shipment @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict, map: "igm_update_shipment_id_fkey")
+
+  createdByUser User? @relation("IgmUpdateCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("IgmUpdateUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  /// One live row per booking: a partial unique index in the migration.
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([shipmentId])
+  @@map("igm_update")
+}
+
+/// DESIGN-UPDATE-2026-10-04 §4.2. A delivery order is issued once and stays
+/// issued; a wrong one is cancelled with a reason and issued again, like an
+/// invoice — its number is never reused.
+enum DeliveryOrderStatus {
+  ISSUED
+  CANCELLED
+
+  @@map("delivery_order_status")
+}
+
+/// client: DO ISSUE ( Inbound shipment only ) — the letter releasing the cargo.
+///
+/// The sheet draws the letter's frame — DATE, TO (B15–B18), SUBJECT (B20) and
+/// CONTAINER NO (B30) — and no wording, so the operator writes the subject and
+/// the body, and the containers come from the load plans. The printed letter is
+/// stored when issued, so a reprint is the letter that went.
+model DeliveryOrder {
+  tenantId   BigInt @map("tenant_id")
+  id         BigInt @id @default(autoincrement())
+  /// DO-2026-000001: per workspace per year of the issue date, never reused.
+  code       String @db.VarChar(32)
+  seriesYear Int    @map("series_year")
+  shipmentId BigInt @map("shipment_id")
+
+  /// B14 "DATE".
+  issueDate DateTime @map("issue_date") @db.Date
+  /// B15–B18: "TO / TERMINAL MANAGER / CHITTAGONG PORT AUTHORITY / CHITTAGONG".
+  addressee String   @db.Text
+  /// B20 "SUBJECT :".
+  subject   String   @db.Text
+  /// Rows 21–29, blank on the sheet.
+  body      String?  @db.Text
+
+  status  DeliveryOrderStatus @default(ISSUED)
+  pdfFile String?             @map("pdf_file") @db.Text
+
+  issuedBy     BigInt?   @map("issued_by")
+  issuedAt     DateTime  @default(now()) @map("issued_at") @db.Timestamptz(6)
+  cancelledBy  BigInt?   @map("cancelled_by")
+  cancelledAt  DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  cancelReason String?   @map("cancel_reason") @db.Text
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  shipment Shipment @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict, map: "delivery_order_shipment_id_fkey")
+
+  issuedByUser    User? @relation("DeliveryOrderIssuedBy", fields: [issuedBy], references: [id], onDelete: Restrict)
+  cancelledByUser User? @relation("DeliveryOrderCancelledBy", fields: [cancelledBy], references: [id], onDelete: Restrict)
+  createdByUser   User? @relation("DeliveryOrderCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser   User? @relation("DeliveryOrderUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  /// One ISSUED order per booking: a partial unique index in the migration.
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([shipmentId])
+  @@index([issuedBy])
+  @@index([cancelledBy])
+  @@map("delivery_order")
+}
+
+/// The documents the Pre-Alert sheet offers (C15–D23): "Booking
+/// confirmation · HBL · MBL · HAWB · MAWB · Manifest-Air · Dbite Note".
+enum PreAlertDocumentKind {
+  BOOKING_CONFIRMATION
+  HBL
+  MBL
+  HAWB
+  MAWB
+  MANIFEST_AIR
+  DEBIT_NOTE
+
+  @@map("pre_alert_document_kind")
+}
+
+/// client: Pre Alert — a document uploaded for a booking's pre-alert
+/// (DESIGN-UPDATE-2026-10-04 §3). The carrier's papers (booking confirmation,
+/// MBL, MAWB, the air manifest) and the HAWB are not made by the system, so
+/// they arrive here. One live file per booking per kind; uploading again
+/// replaces it.
+model PreAlertDocument {
+  tenantId   BigInt               @map("tenant_id")
+  id         BigInt               @id @default(autoincrement())
+  shipmentId BigInt               @map("shipment_id")
+  kind       PreAlertDocumentKind
+  /// The storage key, never the bytes (CLAUDE.md §2).
+  fileKey    String               @map("file_key") @db.Text
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  shipment Shipment @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict, map: "pre_alert_document_shipment_id_fkey")
+
+  createdByUser User? @relation("PreAlertDocumentCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("PreAlertDocumentUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  /// One live file per booking per kind: a partial unique index in the migration.
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([shipmentId])
+  @@map("pre_alert_document")
+}
+
+/// client: Pre Alert — one sent pre-alert (DESIGN-UPDATE-2026-10-04 §3):
+/// "Select Agent", "Email ID", the documents ticked, and `Send`. Kept per send,
+/// so a resend after a document changed is on the record beside the first.
+model PreAlert {
+  tenantId   BigInt @map("tenant_id")
+  id         BigInt @id @default(autoincrement())
+  shipmentId BigInt @map("shipment_id")
+  /// C25 "Select Agent".
+  agentId    BigInt @map("agent_id")
+  /// C27 "Email ID": where it went, as sent.
+  toAddresses String[]               @map("to_addresses")
+  /// The ticked documents (C15–D23), in the order the sheet lists them.
+  documents   PreAlertDocumentKind[]
+  /// The letter, as shipment_advise.email_log_id: not a foreign key.
+  emailLogId  BigInt?                @map("email_log_id")
+
+  sentBy BigInt?  @map("sent_by")
+  sentAt DateTime @default(now()) @map("sent_at") @db.Timestamptz(6)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  shipment Shipment @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict, map: "pre_alert_shipment_id_fkey")
+  agent    Agent    @relation(fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict, map: "pre_alert_agent_id_fkey")
+
+  sentByUser    User? @relation("PreAlertSentBy", fields: [sentBy], references: [id], onDelete: Restrict)
+  createdByUser User? @relation("PreAlertCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("PreAlertUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([shipmentId])
+  @@index([agentId])
+  @@index([sentBy])
+  @@map("pre_alert")
+}
+
+/// client: Tarrif — "Port Tarrif , CFS Charge" (H5), read as the two types
+/// (DESIGN-UPDATE-2026-10-04 §5). An enum because the sheet names exactly two;
+/// it becomes a Setting lookup the day the client names a third (§11 Q28).
+enum TariffType {
+  PORT_TARIFF
+  CFS_CHARGE
+
+  @@map("tariff_type")
+}
+
+/// client: Tarrif (Purchase → Price List, Menu B13) — a price book of local
+/// charges at one POL: header row 4 "Country · POL · Movement Type · Tarrif
+/// Type", lines below. Nothing reads it yet (§11 Q14): it is kept and listed.
+model Tariff {
+  tenantId BigInt @map("tenant_id")
+  id       BigInt @id @default(autoincrement())
+  /// TRF-001, per workspace.
+  code     String @db.VarChar(32)
+
+  /// B4 "Country". The POL's own country, copied when saved so the list can
+  /// show and search it; the sheet lists it as a field of its own.
+  country      String       @db.VarChar(100)
+  /// C4 "POL". Port is system-capable: a single-column key plus the guard.
+  polId        BigInt       @map("pol_id")
+  /// D4 "Movement Type", the inquiry's own enum.
+  movementType MovementType @map("movement_type")
+  /// E4 "Tarrif Type".
+  tariffType   TariffType   @map("tariff_type")
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  pol    Port   @relation("TariffPol", fields: [polId], references: [id], onDelete: Restrict)
+
+  createdByUser User? @relation("TariffCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("TariffUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  lines TariffLine[]
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([polId])
+  @@map("tariff")
+}
+
+/// client: Tarrif — one row of the grid (rows 8 and 12): "Cost Head ·
+/// Container Size · Unit · Unit Price · Currency".
+model TariffLine {
+  tenantId  BigInt @map("tenant_id")
+  id        BigInt @id @default(autoincrement())
+  tariffId  BigInt @map("tariff_id")
+  sortOrder Int    @default(0) @map("sort_order")
+
+  costHeadId      BigInt  @map("cost_head_id")
+  /// Optional: a per-CBM or per-document charge has no box (§11 Q15).
+  containerSizeId BigInt? @map("container_size_id")
+  costUnitId      BigInt  @map("cost_unit_id")
+  unitPrice       Decimal @map("unit_price") @db.Decimal(18, 4)
+  currencyId      BigInt  @map("currency_id")
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  tariff        Tariff         @relation(fields: [tenantId, tariffId], references: [tenantId, id], onDelete: Restrict, map: "tariff_line_tariff_id_fkey")
+  costHead      CostHead       @relation(fields: [tenantId, costHeadId], references: [tenantId, id], onDelete: Restrict, map: "tariff_line_cost_head_id_fkey")
+  containerSize ContainerSize? @relation("TariffLineContainerSize", fields: [containerSizeId], references: [id], onDelete: Restrict)
+  costUnit      CostUnit       @relation("TariffLineUnit", fields: [costUnitId], references: [id], onDelete: Restrict)
+  currency      Currency       @relation("TariffLineCurrency", fields: [currencyId], references: [id], onDelete: Restrict)
+
+  createdByUser User? @relation("TariffLineCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("TariffLineUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([tariffId])
+  @@index([costHeadId])
+  @@index([containerSizeId])
+  @@index([costUnitId])
+  @@index([currencyId])
+  @@map("tariff_line")
+}
+
+/// client: Local Sales → Activity Log (C13–H17, DESIGN-UPDATE-2026-10-04 §6):
+/// "Date & time · PIC · Meeting Summary · Next Follow up Dt · Compititors
+/// Analysis · Business Posibility", and `Record`. A visit or call with a
+/// customer the sales team already has — a lead's follow-ups are Sales Lead's.
+model CustomerActivity {
+  tenantId   BigInt   @map("tenant_id")
+  id         BigInt   @id @default(autoincrement())
+  customerId BigInt   @map("customer_id")
+  /// C14 "Date & time".
+  activityAt DateTime @map("activity_at") @db.Timestamptz(6)
+  /// D14 "PIC": which of the customer's people.
+  customerPicId BigInt? @map("customer_pic_id")
+
+  /// E14 "Meeting Summary".
+  meetingSummary      String    @map("meeting_summary") @db.Text
+  /// F14 "Next Follow up Dt".
+  nextFollowupDate    DateTime? @map("next_followup_date") @db.Date
+  /// G14 "Compititors Analysis".
+  competitorAnalysis  String?   @map("competitor_analysis") @db.Text
+  /// H14 "Business Posibility". Free text until the client names a scale (§11 Q19).
+  businessPossibility String?   @map("business_possibility") @db.Text
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant      Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  customer    Customer     @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict, map: "customer_activity_customer_id_fkey")
+  customerPic CustomerPic? @relation(fields: [tenantId, customerPicId], references: [tenantId, id], onDelete: Restrict, map: "customer_activity_customer_pic_id_fkey")
+
+  createdByUser User? @relation("CustomerActivityCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("CustomerActivityUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([customerId])
+  @@index([customerPicId])
+  @@index([tenantId, nextFollowupDate])
+  @@map("customer_activity")
 }
 
 /// client: the PO grid, row 17 of both advise sheets.

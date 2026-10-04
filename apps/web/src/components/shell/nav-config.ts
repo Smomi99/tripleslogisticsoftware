@@ -58,12 +58,16 @@ const ROUTES: Record<string, RouteEntry> = {
   'PURCHASE.PRICE_LIST_SEA_FCL': '/purchase/price-list-fcl',
   'PURCHASE.PRICE_LIST_SEA_LCL': '/purchase/price-list-lcl',
   'PURCHASE.PRICE_LIST_AIR': '/purchase/price-list-air',
+  // docs/DESIGN-UPDATE-2026-10-04.md §5, Menu B13 (under Price List).
+  'PURCHASE.TARIFF': '/purchase/tariff',
   // The list, not the capture form: §8 makes the list the screen a feature
   // opens on, with New reached from its Add button.
   'SALES.INQUIRY': '/sales/inquiry',
   'CUSTOMER_SERVICE.QUOTATION': '/cs/quotation',
   'AGENT.INQUIRY': '/agent/inquiry',
   'SALES.NEW_SALES_LEAD': '/sales/sales-lead',
+  // docs/DESIGN-UPDATE-2026-10-04.md §6, Menu D9.
+  'SALES.LOCAL_SALES': '/sales/local-sales',
   'SETTING.SEA_AIR_PORT': '/setting/port',
   'SETTING.COST_HEAD': '/setting/cost-head',
   'SETTING.CURRENCY': '/setting/currency',
@@ -99,8 +103,15 @@ const ROUTES: Record<string, RouteEntry> = {
    */
   'CUSTOMER_SERVICE.SHIPMENT_APPROVAL': '/cs/shipment-approval',
   'CUSTOMER_SERVICE.SHIPPING_ORDER': '/cs/shipping-order',
+  // docs/DESIGN-UPDATE-2026-10-04.md §2, Menu F10: a landing page and six lists under it.
+  'CUSTOMER_SERVICE.DEPART_ARRIVE': '/cs/depart-arrive',
+  // docs/DESIGN-UPDATE-2026-10-04.md §3, Menu F11.
+  'CUSTOMER_SERVICE.PRE_ALERT': '/cs/pre-alert',
   'OPERATION.CARGO_RECEIPT': '/operation/cargo-receipt',
   'OPERATION.CONTAINER_LOAD_PLAN': '/operation/container-load-plan',
+  // docs/DESIGN-UPDATE-2026-10-04.md §4, Menu I7–I8: inbound bookings only.
+  'OPERATION.IGM_SUBMISSION': '/operation/igm-submission',
+  'OPERATION.DO_ISSUE': '/operation/do-issue',
   /*
    * Documentation (docs/MODULE_DOCUMENTATION.md §2). Two menu items on one
    * screen and one permission, the way Shipment Booking does it: the sheets
@@ -124,10 +135,30 @@ const ROUTES: Record<string, RouteEntry> = {
   'ACCOUNTS.EXPENSE': '/accounts/expense',
   'ACCOUNTS.INCOME': '/accounts/income',
   'ACCOUNTS.INTERNAL_TRANSFER': '/accounts/internal-transfer',
+  // docs/DESIGN-UPDATE-2026-10-04.md §9, Menu M13.
+  'ACCOUNTS.INCOME_STATEMENT': '/accounts/income-statement',
+  // docs/DESIGN-UPDATE-2026-10-04.md §8, Menu M14.
+  'ACCOUNTS.SHIPMENT_PROFITABILITY': '/accounts/shipment-profitability',
   'ACCOUNTS.BANK_SETUP': '/accounts/bank-setup',
   'ACCOUNTS.ACCOUNT_SETUP': '/accounts/account-setup',
   'CUSTOMER.SHIPMENT': '/portal/shipment',
 };
+
+/**
+ * A grant a screen needs on top of its own VIEW.
+ *
+ * Shipment Profitability is nothing but the cost side of the debit invoices,
+ * and the API refuses it without VIEW_BUY_PRICE (MODULE_ACCOUNTS §3.9). A menu
+ * item that opened onto a refusal would be §7 layer 3 failing, so the sidebar
+ * and the route gate ask for both, exactly as the route does.
+ */
+const ALSO_REQUIRES: Record<string, readonly string[]> = {
+  'ACCOUNTS.SHIPMENT_PROFITABILITY': ['ACCOUNTS.DEBIT_INVOICE.VIEW_BUY_PRICE'],
+};
+
+function viewPermissionsOf(feature: string): string[] {
+  return [`${feature}.VIEW`, ...(ALSO_REQUIRES[feature] ?? [])];
+}
 
 /**
  * Paths a permission guards but the sidebar does not link to.
@@ -154,6 +185,12 @@ const UNLISTED_ROUTES: Record<string, string> = {
  * items and their order are still the registry's.
  */
 const NAV_SECTION: Record<string, string> = {
+  // Menu B9–B13: "Price List" heads the three price lists and, since
+  // 2026-10-04, the Tariff.
+  'PURCHASE.PRICE_LIST_SEA_FCL': 'Price List',
+  'PURCHASE.PRICE_LIST_SEA_LCL': 'Price List',
+  'PURCHASE.PRICE_LIST_AIR': 'Price List',
+  'PURCHASE.TARIFF': 'Price List',
   'ACCOUNTS.JOURNAL': 'Transaction',
   'ACCOUNTS.EXPENSE': 'Transaction',
   'ACCOUNTS.INCOME': 'Transaction',
@@ -166,7 +203,8 @@ export interface NavItem {
   feature: string;
   label: string;
   href: Route | null;
-  viewPermission: string;
+  /** All of these, not any: the feature's VIEW plus whatever ALSO_REQUIRES adds. */
+  viewPermissions: readonly string[];
   section?: string;
 }
 
@@ -191,7 +229,7 @@ export function buildNav(): NavGroup[] {
           feature: f.feature,
           label: entry.label,
           href: entry.href,
-          viewPermission: `${f.feature}.VIEW`,
+          viewPermissions: viewPermissionsOf(f.feature),
         }));
       }
       const section = NAV_SECTION[f.feature];
@@ -200,7 +238,7 @@ export function buildNav(): NavGroup[] {
           feature: f.feature,
           label: f.label,
           href: (route as Route | undefined) ?? null,
-          viewPermission: `${f.feature}.VIEW`,
+          viewPermissions: viewPermissionsOf(f.feature),
           ...(section === undefined ? {} : { section }),
         },
       ];
@@ -209,7 +247,7 @@ export function buildNav(): NavGroup[] {
 }
 
 /**
- * The VIEW permission a path needs, or null when it needs none.
+ * The permissions a path needs — all of them — or none.
  *
  * The same map the sidebar is built from, read backwards. Hiding a menu item is
  * §7 layer 3; this is the other half of layer 4 — typing the URL of a screen
@@ -218,7 +256,7 @@ export function buildNav(): NavGroup[] {
  * Longest prefix wins, so a child screen (/crm/agent/1/pic) inherits the
  * permission of its parent (/crm/agent) without being listed separately.
  */
-export function viewPermissionForPath(pathname: string): string | null {
+export function viewPermissionsForPath(pathname: string): string[] {
   let best: { route: string; feature: string } | null = null;
   const all: [string, string][] = [];
   for (const [feature, route] of Object.entries(ROUTES)) {
@@ -231,5 +269,13 @@ export function viewPermissionForPath(pathname: string): string | null {
     if (pathname !== route && !pathname.startsWith(`${route}/`)) continue;
     if (best === null || route.length > best.route.length) best = { route, feature };
   }
-  return best === null ? null : `${best.feature}.VIEW`;
+  return best === null ? [] : viewPermissionsOf(best.feature);
+}
+
+/**
+ * Whether a page sits at or under a menu item's route — on a path-segment
+ * boundary, so /accounts/income-statement is not "under" /accounts/income.
+ */
+export function isOnRoute(pathname: string, href: string): boolean {
+  return pathname === href || pathname.startsWith(`${href}/`);
 }

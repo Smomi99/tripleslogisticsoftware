@@ -23,6 +23,7 @@ const sent: {
   cc?: string[];
   bcc?: string[];
   replyTo?: string[];
+  from?: { name?: string | null; address?: string | null };
   subject: string;
   text: string;
   html?: string;
@@ -56,7 +57,7 @@ let tenantB: bigint;
 async function cleanup(): Promise<void> {
   const scope = `(SELECT id FROM tenant WHERE slug IN ('${SLUG_A}', '${SLUG_B}'))`;
   // notification_setting: the blind-copy tests give these workspaces one.
-  for (const table of ['audit_log', 'email_log', 'email_template', 'notification_setting']) {
+  for (const table of ['audit_log', 'email_log', 'email_template', 'notification_team_setting', 'notification_setting']) {
     await owner.$executeRawUnsafe(`DELETE FROM ${table} WHERE tenant_id IN ${scope}`);
   }
   await owner.$executeRawUnsafe(
@@ -315,6 +316,86 @@ describe('reply-to', () => {
 
     await drainMine(tenantA);
     expect(sent.find((m) => m.to.includes('agent@x.test'))?.replyTo).toBeUndefined();
+  });
+});
+
+describe('team identity (DESIGN-UPDATE-2026-10-04 §7)', () => {
+  const resetTeams = async () => {
+    const scope = `(SELECT id FROM tenant WHERE slug IN ('${SLUG_A}', '${SLUG_B}'))`;
+    await owner.$executeRawUnsafe(`DELETE FROM notification_team_setting WHERE tenant_id IN ${scope}`);
+    await owner.$executeRawUnsafe(`DELETE FROM notification_setting WHERE tenant_id IN ${scope}`);
+  };
+  const csDoc = (over: Record<string, unknown> = {}) =>
+    owner.notificationTeamSetting.create({
+      data: {
+        tenantId: tenantA,
+        team: 'CS_DOC',
+        senderEmail: 'tsl.doc@example.test',
+        replyTo: 'cs.desk@example.test',
+        signature: 'Kind regards\nCustomer Support team',
+        ...over,
+      },
+    });
+  const departed = (over: Record<string, unknown> = {}) =>
+    queueOne(tenantA, { templateKey: 'SHIPMENT_DEPARTED', to: ['customer@x.test'], ...over });
+
+  beforeEach(resetTeams);
+  afterAll(resetTeams);
+
+  it("signs a team's letter, names the company and routes replies to the team", async () => {
+    await csDoc();
+    await departed();
+
+    const [row] = await outbox(tenantA);
+    expect(row?.replyToAddresses).toEqual(['cs.desk@example.test']);
+    expect(row?.fromName).toBe('Mail Alpha');
+    // The workspace has not said its server may send as the team.
+    expect(row?.fromAddress).toBeNull();
+    expect(row?.bodyText.endsWith('Kind regards\nCustomer Support team')).toBe(true);
+
+    await drainMine(tenantA);
+    const message = sent.find((m) => m.to.includes('customer@x.test'));
+    expect(message?.from).toEqual({ name: 'Mail Alpha', address: null });
+    expect(message?.replyTo).toEqual(['cs.desk@example.test']);
+  });
+
+  it('sends as the team only once the workspace says it may', async () => {
+    await csDoc();
+    await owner.notificationSetting.create({ data: { tenantId: tenantA, sendAsTeam: true } });
+    await departed();
+    const [row] = await outbox(tenantA);
+    expect(row?.fromAddress).toBe('tsl.doc@example.test');
+    expect(row?.replyToAddresses).toEqual(['cs.desk@example.test']);
+  });
+
+  it('replies to the sender address when the team names no reply-to', async () => {
+    await csDoc({ replyTo: null });
+    await departed();
+    expect((await outbox(tenantA))[0]?.replyToAddresses).toEqual(['tsl.doc@example.test']);
+  });
+
+  it("leaves a caller's reply-to, a self-signed letter and an internal alert alone", async () => {
+    await owner.notificationTeamSetting.create({
+      data: { tenantId: tenantA, team: 'PRICE', replyTo: 'price@example.test', signature: 'Price desk' },
+    });
+    await queueOne(tenantA, { templateKey: 'CUSTOMER_PRICE_OFFER', to: ['buyer@x.test'], replyTo: ['sales@example.test'] });
+    await queueOne(tenantA, { templateKey: 'INQUIRY_PRICE_TEAM', to: ['price@example.test'] });
+
+    const [offer, alert] = await outbox(tenantA);
+    expect(offer?.replyToAddresses).toEqual(['sales@example.test']);
+    // It carries its own sign-off, so the team's is not added a second time.
+    expect(offer?.bodyText).not.toContain('Price desk');
+    expect(alert?.fromName).toBeNull();
+    expect(alert?.replyToAddresses).toEqual([]);
+  });
+
+  it("does not lend one workspace's team to another", async () => {
+    await csDoc();
+    await queueOne(tenantB, { templateKey: 'SHIPMENT_DEPARTED', to: ['customer@x.test'] });
+    const [row] = await outbox(tenantB);
+    expect(row?.fromName).toBeNull();
+    expect(row?.replyToAddresses).toEqual([]);
+    expect(row?.bodyText).not.toContain('Customer Support team');
   });
 });
 

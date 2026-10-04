@@ -11,6 +11,7 @@ import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 
 import { SignatureLogos } from './signature-logos';
+import { TeamIdentities } from './team-identities';
 
 const ENDPOINT = '/api/tenant/setting/notifications';
 
@@ -83,7 +84,7 @@ export default function NotificationSettingPage() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Notifications"
-        description="Who the software writes to when an inquiry needs a price."
+        description="Who the software writes to, and how each team's letters are sent and signed."
       />
 
       <div className="max-w-2xl rounded-manifest border border-line bg-surface p-4 shadow-manifest">
@@ -202,6 +203,8 @@ export default function NotificationSettingPage() {
           </div>
         )}
       </div>
+
+      <TeamIdentities mayEdit={mayEdit} />
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { listQuerySchema } from './api';
-import { SHIPMENT_TYPES, type ShipmentType } from './inquiry';
+import { type LoadingType, SHIPMENT_TYPES, type ShipmentType } from './inquiry';
 import type { ShipmentStatus } from './shipment';
 
 /**
@@ -290,6 +290,29 @@ export const receivablePayableQuerySchema = listQuerySchema.extend({
     .default(true),
 });
 
+/**
+ * Shipment Profitability (docs/DESIGN-UPDATE-2026-10-04.md §8). The figures
+ * are sortable because "which jobs lost money" is the question the screen is
+ * opened to answer, and that is GP ascending.
+ */
+export const SHIPMENT_PROFITABILITY_SORT_FIELDS = ['code', 'customer', 'revenue', 'cost', 'gp', 'gpPercent'] as const;
+export type ShipmentProfitabilitySortField = (typeof SHIPMENT_PROFITABILITY_SORT_FIELDS)[number];
+
+const profitabilityDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use the date picker.');
+
+export const shipmentProfitabilityQuerySchema = listQuerySchema
+  .extend({
+    shipmentType: z.enum(SHIPMENT_TYPES).optional(),
+    /** The booking's first issued invoice date — when the job was billed. */
+    from: profitabilityDate.optional(),
+    to: profitabilityDate.optional(),
+    sortBy: z.enum(SHIPMENT_PROFITABILITY_SORT_FIELDS).optional(),
+  })
+  .refine((q) => q.from === undefined || q.to === undefined || q.from <= q.to, {
+    message: 'The start date must be on or before the end date.',
+    path: ['to'],
+  });
+
 // ------------------------------------------------------------------- DTOs
 
 /** A subtotal in one currency, e.g. the quotation's "USD 2,121.00". */
@@ -321,6 +344,38 @@ export interface AwaitingFreightInvRow {
   invoiceId: string | null;
   invoiceCode: string | null;
   invoiceState: 'AWAITING' | 'DRAFT';
+}
+
+/**
+ * One row of Shipment Profitability (sheet `Shipment Profitabilit` row 6): a
+ * booking and every issued debit invoice that names it, in base currency.
+ *
+ * Revenue is what the invoices bill; Cost is what their cost blocks say the
+ * suppliers charged — the same two figures the invoice screen derives its GP
+ * from (MODULE_ACCOUNTS §3.4). The sheet's samples fix GP % as GP ÷ Revenue.
+ */
+export interface ShipmentProfitabilityRow {
+  shipmentId: string;
+  bookingCode: string;
+  bookingStatus: ShipmentStatus;
+  quotationId: string;
+  quotationCode: string;
+  /** The live advise's HBL / HAWB. Null until the booking has been advised. */
+  blNo: string | null;
+  customerName: string;
+  shipmentType: ShipmentType;
+  loadingType: LoadingType | null;
+  polCode: string;
+  polName: string;
+  podCode: string;
+  podName: string;
+  /** Base currency, the code the amounts below are in. */
+  currencyCode: string;
+  revenue: string;
+  cost: string;
+  gp: string;
+  /** One decimal place. Null when nothing was billed, since there is nothing to divide by. */
+  gpPercent: string | null;
 }
 
 export interface DebitInvoiceLineDto {

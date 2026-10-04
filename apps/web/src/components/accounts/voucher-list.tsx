@@ -74,7 +74,14 @@ export function VoucherList({ kind }: { kind: JournalEntryKind }) {
 
   const columns: DataTableColumn<JournalEntryListRow>[] = useMemo(
     () => [
-      { id: 'entryDate', header: 'Date', numeric: true, sortable: true, cell: (r) => r.entryDate },
+      // Dates and invoice codes stay whole: the row grows wider, never splits 2026-09-30 in two.
+      {
+        id: 'entryDate',
+        header: 'Date',
+        numeric: true,
+        sortable: true,
+        cell: (r) => <span className="whitespace-nowrap">{r.entryDate}</span>,
+      },
       ...(settles
         ? [
             {
@@ -87,7 +94,7 @@ export function VoucherList({ kind }: { kind: JournalEntryKind }) {
                   <div className="flex flex-col">
                     <span>{r.partyName}</span>
                     {r.settledReference !== null && (
-                      <span className="font-mono text-cell tabular-nums text-steel">{r.settledReference}</span>
+                      <span className="whitespace-nowrap font-mono text-cell tabular-nums text-steel">{r.settledReference}</span>
                     )}
                   </div>
                 ),

@@ -47,7 +47,7 @@ const day = (d: Date | null): string | null => (d === null ? null : d.toISOStrin
  * Approval is the whole precondition (§13.3 rule 1): it is what froze the
  * draft, and what BL Print prints is that frozen page.
  */
-async function approvedBill(db: TenantDb, shipmentId: bigint): Promise<BlDraftRow> {
+export async function approvedBill(db: TenantDb, shipmentId: bigint): Promise<BlDraftRow> {
   const shipment = await db.shipment.findFirst({
     where: { id: shipmentId, deletedAt: null },
     select: { code: true },

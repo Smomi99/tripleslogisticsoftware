@@ -312,6 +312,17 @@ export const FEATURES: readonly FeatureDefinition[] = [
   { module: 'PURCHASE', feature: 'PURCHASE.PRICE_LIST_SEA_FCL', label: 'Price List — Sea FCL', actions: MASTER },
   { module: 'PURCHASE', feature: 'PURCHASE.PRICE_LIST_SEA_LCL', label: 'Price List — Sea LCL', actions: MASTER },
   { module: 'PURCHASE', feature: 'PURCHASE.PRICE_LIST_AIR', label: 'Price List — Air', actions: MASTER },
+  /*
+   * docs/DESIGN-UPDATE-2026-10-04.md §5 (Menu B13, under Price List): local
+   * charges at a POL. No EXPORT and no DELETE: a tariff retires by going
+   * inactive, and nothing prints one yet.
+   */
+  {
+    module: 'PURCHASE',
+    feature: 'PURCHASE.TARIFF',
+    label: 'Tariff',
+    actions: ['VIEW', 'CREATE', 'EDIT', 'TOGGLE_STATUS'],
+  },
   // Not a screen — a pair of column-level gates that cut across all nine
   // purchase screens (MODULE_PURCHASE_SALES §6). It has no route, so the
   // sidebar skips it; the permission matrix still renders it as its own row.
@@ -363,6 +374,12 @@ export const FEATURES: readonly FeatureDefinition[] = [
   // list arrives; the screens themselves are unbuilt.
   { module: 'SALES', feature: 'SALES.NEW_SALES_LEAD', label: 'New Sales Lead', actions: MASTER },
   { module: 'SALES', feature: 'SALES.SALES_LEAD_FOLLOWUP', label: 'Sales Lead Follow-up', actions: MASTER },
+  /*
+   * docs/DESIGN-UPDATE-2026-10-04.md §6 (Menu D9): the customer list as the
+   * sales team reads it, and the Activity Log under each customer. CREATE is
+   * the sheet's Record. Editing the customer itself stays CRM.CUSTOMER's.
+   */
+  { module: 'SALES', feature: 'SALES.LOCAL_SALES', label: 'Local Sales', actions: ['VIEW', 'CREATE'] },
 
   // -- 3. Customer Service ---------------------------------------------------
   /*
@@ -458,6 +475,29 @@ export const FEATURES: readonly FeatureDefinition[] = [
     feature: 'CUSTOMER_SERVICE.SHIPPING_ORDER',
     label: 'Shipping Order',
     actions: [...MASTER, 'ISSUE', 'SKIP', 'CANCEL', 'EXPORT_PDF'],
+  },
+  /*
+   * docs/DESIGN-UPDATE-2026-10-04.md §2 (Menu F10): the landing page and its
+   * six lists — On board, Transshipment and Arrival, sea and air. One feature,
+   * because they are one job on one menu item (§11 Q5). EDIT is the sheets'
+   * Save: confirming Departed or Arrived, and correcting it.
+   */
+  {
+    module: 'CUSTOMER_SERVICE',
+    feature: 'CUSTOMER_SERVICE.DEPART_ARRIVE',
+    label: 'Depart-Arrive Confirmation',
+    actions: ['VIEW', 'EDIT'],
+  },
+  /*
+   * docs/DESIGN-UPDATE-2026-10-04.md §3 (Menu F11). EDIT uploads the papers
+   * the system does not make (booking confirmation, MBL, MAWB, HAWB, the air
+   * manifest); SEND is the sheet's Send, a letter to an overseas agent.
+   */
+  {
+    module: 'CUSTOMER_SERVICE',
+    feature: 'CUSTOMER_SERVICE.PRE_ALERT',
+    label: 'Pre-Alert',
+    actions: ['VIEW', 'EDIT', 'SEND'],
   },
 
   // -- 4. Operation ----------------------------------------------------------
@@ -611,6 +651,23 @@ export const FEATURES: readonly FeatureDefinition[] = [
     actions: ['VIEW', 'CREATE', 'CANCEL'],
   },
   { module: 'ACCOUNTS', feature: 'ACCOUNTS.INCOME_STATEMENT', label: 'Income Statement', actions: READ_ONLY },
+  /*
+   * docs/DESIGN-UPDATE-2026-10-04.md §8 (Menu M14). Every row is a booking's
+   * cost and margin, so VIEW alone does not open it: the route also demands
+   * ACCOUNTS.DEBIT_INVOICE.VIEW_BUY_PRICE, the grant that already decides who
+   * sees what the suppliers charged (MODULE_ACCOUNTS §3.9). Ticking this box
+   * must never be a second, quieter way to reach the same figures.
+   *
+   * VIEW only. EXPORT waits on the client (§11 Q27): the 2026-09-06 decision
+   * keeps buy prices out of every downloaded file, and this screen is nothing
+   * but buy prices.
+   */
+  {
+    module: 'ACCOUNTS',
+    feature: 'ACCOUNTS.SHIPMENT_PROFITABILITY',
+    label: 'Shipment Profitability',
+    actions: ['VIEW'],
+  },
   { module: 'ACCOUNTS', feature: 'ACCOUNTS.BALANCE_SHEET', label: 'Balance Sheet', actions: READ_ONLY },
   { module: 'ACCOUNTS', feature: 'ACCOUNTS.CASH_FLOW_STATEMENT', label: 'Cash Flow Statement', actions: READ_ONLY },
   { module: 'ACCOUNTS', feature: 'ACCOUNTS.TA_DA', label: 'TA/DA', actions: MASTER_APPROVE },

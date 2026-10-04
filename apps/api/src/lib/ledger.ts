@@ -103,6 +103,13 @@ export const DEFAULT_CHART: readonly ChartSeed[] = [
       ['EXPENSE.OPERATING.ADJUSTMENT', 'Adjustment'],
       ['EXPENSE.OPERATING.CASH_SHORT', 'Cash short or less'],
       ['EXPENSE.OPERATING.MEDIA_BUYING', 'Media Buying'],
+      // DESIGN-UPDATE-2026-10-04 §9 (Q25): the Income statement sheet's
+      // operating lines that had no account to post to.
+      ['EXPENSE.OPERATING.INSURANCE', 'Insurance'],
+      ['EXPENSE.OPERATING.DEPRECIATION', 'Depreciation'],
+      ['EXPENSE.OPERATING.BAD_DEBT', 'Bad Debt / Provision for Doubtful Debt'],
+      ['EXPENSE.OPERATING.LEGAL', 'Legal & Compliance'],
+      ['EXPENSE.OPERATING.BUSINESS_DEVELOPMENT', 'Business Development'],
     ],
   },
   {
@@ -119,6 +126,23 @@ export const DEFAULT_CHART: readonly ChartSeed[] = [
     type: 'EXPENSE',
     name: 'Uncategorized Expense',
     subs: [['EXPENSE.UNCATEGORIZED.GENERAL', 'Uncategorized Expense']],
+  },
+  // DESIGN-UPDATE-2026-10-04 §9 (Q25): the sheet's sections E and the line
+  // below profit before tax, which the chart had nowhere to put.
+  {
+    key: 'EXPENSE.NON_OPERATING',
+    type: 'EXPENSE',
+    name: 'Non-Operating Expense',
+    subs: [
+      ['EXPENSE.NON_OPERATING.ASSET_DISPOSAL', 'Loss on Asset Disposal'],
+      ['EXPENSE.NON_OPERATING.OTHER', 'Other Non-Operating Expense'],
+    ],
+  },
+  {
+    key: 'EXPENSE.TAX',
+    type: 'EXPENSE',
+    name: 'Income Tax',
+    subs: [['EXPENSE.TAX.INCOME_TAX', 'Income Tax Expense']],
   },
 
   // -- Income (column H)
