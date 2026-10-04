@@ -22,6 +22,7 @@ export * from './employee';
 export * from './freight-rate';
 export * from './inquiry';
 export * from './ledger';
+export * from './milestone';
 export * from './opening-balance';
 export * from './performance';
 export * from './permissions';

@@ -209,8 +209,9 @@ describe('model tier registry', () => {
     // + clp_booking (CR-002) + the five documentation tables
     // (MODULE_DOCUMENTATION §4) + the five accounts tables (MODULE_ACCOUNTS §4)
     // + the seven tables of the books (MODULE_ACCOUNTS §14)
-    // + shipment_advise_booking (CR-005).
-    expect(known.length).toBe(101);
+    // + shipment_advise_booking (CR-005)
+    // + shipment_milestone (DESIGN-UPDATE-2026-10-04 §2).
+    expect(known.length).toBe(102);
   });
 
   it('applies the caller row level security to every view', async () => {

@@ -459,6 +459,18 @@ export const FEATURES: readonly FeatureDefinition[] = [
     label: 'Shipping Order',
     actions: [...MASTER, 'ISSUE', 'SKIP', 'CANCEL', 'EXPORT_PDF'],
   },
+  /*
+   * docs/DESIGN-UPDATE-2026-10-04.md §2 (Menu F10): the landing page and its
+   * six lists — On board, Transshipment and Arrival, sea and air. One feature,
+   * because they are one job on one menu item (§11 Q5). EDIT is the sheets'
+   * Save: confirming Departed or Arrived, and correcting it.
+   */
+  {
+    module: 'CUSTOMER_SERVICE',
+    feature: 'CUSTOMER_SERVICE.DEPART_ARRIVE',
+    label: 'Depart-Arrive Confirmation',
+    actions: ['VIEW', 'EDIT'],
+  },
 
   // -- 4. Operation ----------------------------------------------------------
   /*

@@ -72,7 +72,7 @@ shipment reaches it through `shipment.quotation_id`.
 | # | Session | Why this position | Blocked by §11? |
 |---|---|---|---|
 | 1 | **§8 Shipment Profitability** — **built** | Reads only data that exists: debit invoice revenue and cost. Smallest, highest value. | Q20 (status column) and Q27 (export) have defaults in place |
-| 2 | **§2 Depart-Arrive Confirmation** | Core workflow. The BL's laden-on-board date and the arrival notice depend on it. | Q1–Q6 |
+| 2 | **§2 Depart-Arrive Confirmation** — **built** | Core workflow. The BL's laden-on-board date and the arrival notice depend on it. | Q1–Q6 |
 | 3 | **§4 IGM Update + DO Issue** | Inbound tail of the same milestone track; reuses §2's list. | Q10–Q13 |
 | 4 | **§7 Notification** (per-team sender) | §2, §3 and §4 send mail from named team addresses. | Q16–Q17 |
 | 5 | **§3 Pre-Alert** | Needs §7's Sales Team sender and documents that partly do not exist. | Q7–Q9 |
@@ -83,7 +83,7 @@ shipment reaches it through `shipment.quotation_id`.
 
 ---
 
-## 2. DEPART-ARRIVE CONFIRMATION (Customer Service)
+## 2. DEPART-ARRIVE CONFIRMATION (Customer Service) — **built**
 
 ### 2.1 Screens
 
@@ -164,6 +164,36 @@ written (laden-on-board date), not altered.
 
 **Permission:** one feature, `CUSTOMER_SERVICE.DEPART_ARRIVE` (VIEW · EDIT), for the landing page and
 all six lists. Three features is the alternative (Q5).
+
+### 2.5 As built (branch `feature/depart-arrive`)
+
+Migration `20261004100000_shipment_milestone`: the table above without `leg_no` (the kind fixes the
+leg) and without `status` (a row exists only once confirmed). Dates are `DATE`, read in the
+workspace's time zone. Template keys: `SHIPMENT_DEPARTED`, `SHIPMENT_TRANSSHIPPED`,
+`SHIPMENT_ARRIVED`, seeded and editable.
+
+- **Who is listed.** Every booking that is not cancelled or rejected and has a live advise or an
+  approved schedule. The legs come from the advise's schedule, or from the approved schedule before an
+  advise exists, which is how inbound bookings reach these screens. Transshipment lists indirect routes
+  with a second leg. Transshipment and Arrival list a booking only once its **departure is
+  confirmed**. The API refuses them before that (`DEPARTURE_FIRST`).
+- **Each list** has Awaiting (the worklist, soonest first), Confirmed and All views, search
+  (booking, quotation, customer, exporter), and sorting by date, booking or customer. The landing tiles
+  show the awaiting count.
+- **Confirming.** The date opens on the pulled date, and saving creates the row. Saving again
+  **corrects** it: the date first pulled stays frozen, and the customer can be told again.
+  - Departure and transshipment need a reason when the date differs from the pulled one, and cannot be
+    a future date. An arrival is confirmed ahead of time and takes an optional note.
+  - The legs stay in order: no arrival before its departure, and no departure moved past a confirmed
+    arrival.
+- **The notice** goes to the customer's contacts that have an email (Q1, Q3 defaults). An
+  "Email the customer" box, ticked by default, lets a correction go without a second letter. The
+  arrival notice lists container, size and seal (N21). It is sent from the workspace's sender until §7
+  gives the CS & Doc Team its own.
+- **BL on-board date.** Departed writes `laden_on_board_date` on every BL draft for the booking that
+  is not cancelled and **not issued**. An issued original is never rewritten. A BL draft started after
+  departure opens with the date. Air has no HAWB document yet, so it has nothing to write.
+- Tests: `milestone.test.ts`, 10 cases, including two-workspace isolation.
 
 ---
 

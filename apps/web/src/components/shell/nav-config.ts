@@ -99,6 +99,8 @@ const ROUTES: Record<string, RouteEntry> = {
    */
   'CUSTOMER_SERVICE.SHIPMENT_APPROVAL': '/cs/shipment-approval',
   'CUSTOMER_SERVICE.SHIPPING_ORDER': '/cs/shipping-order',
+  // docs/DESIGN-UPDATE-2026-10-04.md §2, Menu F10: a landing page and six lists under it.
+  'CUSTOMER_SERVICE.DEPART_ARRIVE': '/cs/depart-arrive',
   'OPERATION.CARGO_RECEIPT': '/operation/cargo-receipt',
   'OPERATION.CONTAINER_LOAD_PLAN': '/operation/container-load-plan',
   /*

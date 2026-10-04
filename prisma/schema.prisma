@@ -294,6 +294,7 @@ model Tenant {
   shipmentAdvises     ShipmentAdvise[]
   shipmentAdviseLines ShipmentAdviseLine[]
   shipmentAdviseBookings ShipmentAdviseBooking[]
+  shipmentMilestones  ShipmentMilestone[]
   blDrafts            BlDraft[]
   blDraftContainers   BlDraftContainer[]
   blTemplates         BlTemplate[]
@@ -1892,6 +1893,9 @@ model User {
   adviseLinesUpdated       ShipmentAdviseLine[] @relation("ShipmentAdviseLineUpdatedBy")
   adviseBookingsCreated    ShipmentAdviseBooking[] @relation("ShipmentAdviseBookingCreatedBy")
   adviseBookingsUpdated    ShipmentAdviseBooking[] @relation("ShipmentAdviseBookingUpdatedBy")
+  milestonesConfirmed      ShipmentMilestone[]  @relation("ShipmentMilestoneConfirmedBy")
+  milestonesCreated        ShipmentMilestone[]  @relation("ShipmentMilestoneCreatedBy")
+  milestonesUpdated        ShipmentMilestone[]  @relation("ShipmentMilestoneUpdatedBy")
   blDraftsSubmitted        BlDraft[]            @relation("BlDraftSubmittedBy")
   blDraftsApproved         BlDraft[]            @relation("BlDraftApprovedBy")
   blDraftsSent             BlDraft[]            @relation("BlDraftSentBy")
@@ -3973,6 +3977,8 @@ model Shipment {
   /// CR-005: the advises this booking is on, as the lead or as one of the others.
   adviseBookings ShipmentAdviseBooking[]
   blDrafts       BlDraft[]
+  /// docs/DESIGN-UPDATE-2026-10-04.md §2: departed, transshipped, arrived.
+  milestones     ShipmentMilestone[]
   debitInvoices  DebitInvoice[]
 
   clpBookings ClpBooking[] @relation("ClpBookingShipment")
@@ -4982,6 +4988,78 @@ model ShipmentAdviseBooking {
   @@index([adviseId])
   @@index([shipmentId])
   @@map("shipment_advise_booking")
+}
+
+/// docs/DESIGN-UPDATE-2026-10-04.md §2 — the three confirmations on the
+/// `Depart-Arrival Landing page`: On board, Transshipment, Arrival.
+enum MilestoneKind {
+  /// On board confirmation — the first leg sailed or flew.
+  DEPARTED
+  /// Transshipment confirmation — the second leg left the hub. Indirect only.
+  TRANSSHIPPED
+  /// Arrival confirmation — the final date of arrival at the last port.
+  ARRIVED
+
+  @@map("milestone_kind")
+}
+
+/// client: On board / Transshipment / Arrival confirmation (Sea and Air).
+///
+/// One row per booking per kind, written when the operator saves the sheet's
+/// Departed / Arrived. "Awaiting" is the absence of a row, so nothing is
+/// pre-seeded and nothing has to be kept in step with the schedule.
+///
+/// Its own table rather than more shipment_status values, because the
+/// milestones run alongside the document chain, not after it: Departed comes
+/// before BL Print, since it supplies the BL's laden-on-board date, and one
+/// linear status cannot say "BL drafted and departed".
+///
+/// No `code`: like shipment_advise_booking, nobody refers to a confirmation by
+/// a number of its own — it is found by its booking and its kind.
+model ShipmentMilestone {
+  tenantId   BigInt        @map("tenant_id")
+  id         BigInt        @id @default(autoincrement())
+  shipmentId BigInt        @map("shipment_id")
+  kind       MilestoneKind
+
+  /// The date the advise or the schedule held when this was confirmed (sheet:
+  /// "This date pull from shipment advise"). Frozen, so a later change to the
+  /// advise does not rewrite what the operator was correcting.
+  pulledOn     DateTime? @map("pulled_on") @db.Date
+  /// What the operator saved. Departed writes it to the BL draft as the laden
+  /// on board date.
+  confirmedOn  DateTime  @map("confirmed_on") @db.Date
+  /// "A reason of delay / advance sail will write to inform customer."
+  /// Required by the API when confirmedOn differs from pulledOn.
+  changeReason String?   @map("change_reason") @db.Text
+
+  confirmedBy BigInt?  @map("confirmed_by")
+  confirmedAt DateTime @default(now()) @map("confirmed_at") @db.Timestamptz(6)
+  /// The notice that went, as shipment_advise.email_log_id: not a foreign key.
+  emailLogId  BigInt?  @map("email_log_id")
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  shipment Shipment @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict, map: "shipment_milestone_shipment_id_fkey")
+
+  confirmedByUser User? @relation("ShipmentMilestoneConfirmedBy", fields: [confirmedBy], references: [id], onDelete: Restrict)
+  createdByUser   User? @relation("ShipmentMilestoneCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser   User? @relation("ShipmentMilestoneUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  /// "One live confirmation per booking per kind" is a partial unique index in
+  /// the migration (deleted_at IS NULL).
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([tenantId, kind])
+  @@index([shipmentId])
+  @@index([confirmedBy])
+  @@map("shipment_milestone")
 }
 
 /// client: the PO grid, row 17 of both advise sheets.

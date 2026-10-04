@@ -83,7 +83,9 @@ export function useMasterList<TRow, TSort extends string>(
     }
 
     try {
-      const response = await authorizedList<TRow[]>(`${endpoint}?${params.toString()}`);
+      // An endpoint may carry fixed parameters of its own (a mode, a kind).
+      const joiner = endpoint.includes('?') ? '&' : '?';
+      const response = await authorizedList<TRow[]>(`${endpoint}${joiner}${params.toString()}`);
       // Typing in the search box fires several requests; a slower earlier one
       // must not overwrite a newer result.
       if (requestId !== requestIdRef.current) return;

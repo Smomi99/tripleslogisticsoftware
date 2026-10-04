@@ -38,6 +38,7 @@ import {
   opsWorklistRouter,
   shipmentWorklistRouter,
 } from './shipment-worklist.route';
+import { milestoneRouter } from './milestone.route';
 import { salesLeadRouter } from './sales-lead.route';
 import { portRouter } from './port.route';
 import { notificationSettingRouter } from './notification-setting.route';
@@ -85,6 +86,8 @@ tenantRouter.use('/cs', shippingOrderRouter);
 // The direct list screens (client decision, 2026-09-03) — each behind its
 // own §7 permission, which is why they are not one endpoint.
 tenantRouter.use('/cs', shipmentWorklistRouter);
+// docs/DESIGN-UPDATE-2026-10-04.md §2: Depart-Arrive Confirmation.
+tenantRouter.use('/cs', milestoneRouter);
 // Operation — cargo receipt (MODULE_BOOKING_CARGO.md §6.7).
 tenantRouter.use('/ops', cargoReceiptRouter);
 tenantRouter.use('/ops', clpRouter);
