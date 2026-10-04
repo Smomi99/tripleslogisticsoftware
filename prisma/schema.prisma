@@ -269,6 +269,7 @@ model Tenant {
   inquiryPartyContacts InquiryPartyContact[]
 
   notificationSetting  NotificationSetting?
+  notificationTeams    NotificationTeamSetting[]
   agentQuotes          AgentQuote[]
   agentQuoteOptions    AgentQuoteOption[]
   agentQuoteLines      AgentQuoteLine[]
@@ -1836,6 +1837,8 @@ model User {
   createdInquiryContacts InquiryPartyContact[] @relation("InquiryPartyContactCreatedBy")
 
   createdNotificationSettings NotificationSetting[] @relation("NotificationSettingCreatedBy")
+  createdNotificationTeams    NotificationTeamSetting[] @relation("NotificationTeamSettingCreatedBy")
+  updatedNotificationTeams    NotificationTeamSetting[] @relation("NotificationTeamSettingUpdatedBy")
   updatedNotificationSettings NotificationSetting[] @relation("NotificationSettingUpdatedBy")
 
   submittedAgentQuotes        AgentQuote[]          @relation("AgentQuoteSubmittedBy")
@@ -2147,6 +2150,10 @@ model EmailLog {
   /// Where the recipient's reply goes, when it should not be the sending
   /// account. The customer price email sets the Price team here (2026-09-29).
   replyToAddresses String[] @default([]) @map("reply_to_addresses")
+  /// The From this message went with, when a team's identity set one
+  /// (DESIGN-UPDATE-2026-10-04 §7). Null means the deployment's own sender.
+  fromAddress String? @map("from_address") @db.VarChar(320)
+  fromName    String? @map("from_name") @db.VarChar(200)
   /// Rendered when queued, not when sent: what went out has to be what the
   /// record shows, even if the template is edited an hour later.
   subject       String      @db.Text
@@ -3002,6 +3009,11 @@ model NotificationSetting {
   /// workspace that clears them deliberately gets none.
   quotationNotes String? @map("quotation_notes") @db.Text
 
+  /// DESIGN-UPDATE-2026-10-04 §7: "our mail server may send as the team
+  /// addresses". Off, mail leaves from the deployment's own account with the
+  /// team's address as Reply-To — the only claim every SMTP host will sign.
+  sendAsTeam Boolean @default(false) @map("send_as_team")
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
   createdBy BigInt?  @map("created_by")
@@ -3013,6 +3025,54 @@ model NotificationSetting {
 
   @@unique([tenantId])
   @@map("notification_setting")
+}
+
+/// client: Notification sheet — one block per team (C4–R12): who the team's
+/// letters come from, where replies go, and how they are signed
+/// (DESIGN-UPDATE-2026-10-04 §7). Which letters belong to which team is the
+/// code's (TEMPLATE_TEAM in @ff/shared), from the sheet's "Applicable for".
+enum NotificationTeam {
+  PRICE
+  CS_DOC
+  OPS
+  ACCOUNTS
+  SALES
+
+  @@map("notification_team")
+}
+
+/// One row per team per workspace, written from Settings → Notification.
+/// Every column is optional: a team left blank sends as the workspace always
+/// has. The sample signatures on the sheet name real staff, so nothing here is
+/// seeded.
+model NotificationTeamSetting {
+  tenantId BigInt           @map("tenant_id")
+  id       BigInt           @id @default(autoincrement())
+  team     NotificationTeam
+
+  /// "Sender Email ID". Used as the From only when the workspace says its mail
+  /// server may send as it (notification_setting.send_as_team).
+  senderEmail String? @map("sender_email") @db.VarChar(320)
+  /// "Reply to". Falls back to the sender address when blank.
+  replyTo     String? @map("reply_to") @db.VarChar(320)
+  /// "Email Signature", set under every letter the team sends.
+  signature   String? @db.Text
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdByUser User?  @relation("NotificationTeamSettingCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User?  @relation("NotificationTeamSettingUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, team])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@map("notification_team_setting")
 }
 
 model InquiryParty {

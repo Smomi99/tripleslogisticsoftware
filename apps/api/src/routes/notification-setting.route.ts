@@ -8,13 +8,16 @@ import {
   type NotificationSettingDto,
   notificationSettingSchema,
   DEFAULT_QUOTATION_NOTES,
+  NOTIFICATION_TEAMS,
+  type NotificationTeamsDto,
+  notificationTeamsSaveSchema,
 } from '@ff/shared';
 
 import { CODE_RETRY_LIMIT, isUniqueViolation, nextCode } from '../lib/codes';
 import { HttpError } from '../lib/http-error';
 import { parseId } from '../lib/request';
 import { displayNameFromKey, openFile, putFile, removeFile } from '../lib/storage';
-import { withTenant } from '../lib/tenant-client';
+import { type TenantDb, withTenant } from '../lib/tenant-client';
 import { authenticate } from '../middleware/authenticate';
 import { requirePermission } from '../middleware/require-permission';
 import { uploadSingle } from '../middleware/upload';
@@ -276,3 +279,76 @@ notificationSettingRouter.delete(
     res.json(payload);
   },
 );
+
+// ===========================================================================
+// Teams (DESIGN-UPDATE-2026-10-04 §7) — the sheet's five blocks
+// ===========================================================================
+
+async function teamsOf(db: TenantDb): Promise<NotificationTeamsDto> {
+  const [setting, rows] = await Promise.all([
+    db.notificationSetting.findFirst({ select: { sendAsTeam: true } }),
+    db.notificationTeamSetting.findMany({
+      where: { deletedAt: null },
+      select: { team: true, senderEmail: true, replyTo: true, signature: true },
+    }),
+  ]);
+  const byTeam = new Map(rows.map((r) => [r.team, r]));
+  return {
+    sendAsTeam: setting?.sendAsTeam ?? false,
+    teams: NOTIFICATION_TEAMS.map((team) => {
+      const row = byTeam.get(team);
+      return {
+        team,
+        senderEmail: row?.senderEmail ?? '',
+        replyTo: row?.replyTo ?? '',
+        signature: row?.signature ?? '',
+      };
+    }),
+  };
+}
+
+notificationSettingRouter.get('/teams', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
+  const auth = req.auth!;
+  const data = await withTenant(auth.tenantId, (db) => teamsOf(db));
+  const payload: ApiSuccess<NotificationTeamsDto> = { success: true, data };
+  res.json(payload);
+});
+
+notificationSettingRouter.put('/teams', requirePermission(`${FEATURE}.EDIT`), async (req, res) => {
+  const auth = req.auth!;
+  const input = notificationTeamsSaveSchema.parse(req.body);
+
+  const data = await withTenant(auth.tenantId, async (db) => {
+    const setting = await db.notificationSetting.findFirst({ select: { id: true } });
+    if (setting === null) {
+      await db.notificationSetting.create({
+        data: { tenantId: auth.tenantId, sendAsTeam: input.sendAsTeam, createdBy: auth.userId, updatedBy: auth.userId },
+      });
+    } else {
+      await db.notificationSetting.update({
+        where: { id: setting.id },
+        data: { sendAsTeam: input.sendAsTeam, updatedBy: auth.userId },
+      });
+    }
+
+    for (const team of input.teams) {
+      // Blank is "not set", stored as NULL: the team then sends as the
+      // workspace always has.
+      const fields = {
+        senderEmail: team.senderEmail === '' ? null : team.senderEmail,
+        replyTo: team.replyTo === '' ? null : team.replyTo,
+        signature: team.signature === '' ? null : team.signature,
+        updatedBy: auth.userId,
+      };
+      await db.notificationTeamSetting.upsert({
+        where: { tenantId_team: { tenantId: auth.tenantId, team: team.team } },
+        create: { tenantId: auth.tenantId, team: team.team, ...fields, createdBy: auth.userId },
+        update: fields,
+      });
+    }
+    return teamsOf(db);
+  });
+
+  const payload: ApiSuccess<NotificationTeamsDto> = { success: true, data };
+  res.json(payload);
+});

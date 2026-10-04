@@ -74,7 +74,7 @@ shipment reaches it through `shipment.quotation_id`.
 | 1 | **§8 Shipment Profitability** — **built** | Reads only data that exists: debit invoice revenue and cost. Smallest, highest value. | Q20 (status column) and Q27 (export) have defaults in place |
 | 2 | **§2 Depart-Arrive Confirmation** — **built** | Core workflow. The BL's laden-on-board date and the arrival notice depend on it. | Q1–Q6 |
 | 3 | **§4 IGM Update + DO Issue** — **built** | Inbound tail of the same milestone track; reuses §2's list. | Q10–Q13 |
-| 4 | **§7 Notification** (per-team sender) | §2, §3 and §4 send mail from named team addresses. | Q16–Q17 |
+| 4 | **§7 Notification** (per-team sender) — **built** (new event letters wait on Q17) | §2, §3 and §4 send mail from named team addresses. | Q16–Q17 |
 | 5 | **§3 Pre-Alert** | Needs §7's Sales Team sender and documents that partly do not exist. | Q7–Q9 |
 | 6 | **§5 Tariff** | Master data only until Q14 says what consumes it. | Q14–Q15 |
 | 7 | **§6 Local Sales** | Customer list + activity log. | Q18–Q19 |
@@ -345,7 +345,7 @@ columns. Q18 asks whether Local Sales lists every customer or a subset.
 
 ---
 
-## 7. NOTIFICATION (Setting)
+## 7. NOTIFICATION (Setting) — **team identities built; new event letters not built**
 
 ### 7.1 What the sheet asks for
 
@@ -395,6 +395,34 @@ Doc Team.
 
 The sample signatures carry real staff names (Tanjila Sathi, Saifuddin Shamim, Jisan). They are typed
 on the screen by the tenant and are never seeded.
+
+### 7.4 As built (branch `feature/notification-teams`)
+
+Migration `20261004140000_notification_teams`.
+
+- **Settings → Notification → Teams.** Five blocks in the sheet's order, each showing what the team
+  sends (the sheet's "Applicable for"), with **Sender email**, **Reply to** and **Email signature**.
+  Above them is one switch, **"Our mail server may send as these addresses"**, off by default.
+  Nothing is seeded; the sheet's sample signatures name real staff.
+- **What a letter does with it** (`TEMPLATE_TEAM` in `@ff/shared`; the outbox resolves the team at
+  queue time and records the result on `email_log`, like Reply-To and BCC):
+  - **Price:** agent/carrier RFQ, quotation, customer price email.
+  - **CS & Doc:** schedule for approval, shipment advise, BL draft, departed/transshipped/arrived.
+  - **Accounts:** debit invoice.
+  - **Sales:** pre-alert.
+  - Internal alerts (price-team note, agent quote, approval decision) keep the workspace sender.
+- **With the switch off** (Q16 default), the From stays the deployment's account, under the
+  workspace's name. Replies go to the team's Reply-to, or to its sender address when that is blank.
+  The team signature is added under the letter. The customer price email already signs itself, so it
+  gets no second signature, and a Reply-To chosen by the caller wins.
+- **With the switch on**, the From becomes the team's sender address.
+- A team left blank changes nothing: every letter goes exactly as before.
+- **Not built (§7.3 gap 2):** the letters the sheet names that the product does not send yet: booking
+  received, shipping order, cargo receipt, stuffing, payment received and payment sent. Each would
+  start emailing customers from an existing screen. Only titles were supplied (Q17), so they wait
+  for the client's wording and a yes per letter. They join their team in `TEMPLATE_TEAM` when built.
+- Tests: 5 cases in `email-queue.test.ts` (signature, reply-to, send-as, a caller's reply-to, a
+  self-signed letter, internal alerts, two workspaces) and 3 in `notification-team.route.test.ts`.
 
 ---
 

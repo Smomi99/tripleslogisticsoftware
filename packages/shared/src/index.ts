@@ -24,6 +24,7 @@ export * from './inbound';
 export * from './inquiry';
 export * from './ledger';
 export * from './milestone';
+export * from './notification-team';
 export * from './opening-balance';
 export * from './performance';
 export * from './permissions';

@@ -112,6 +112,7 @@ export const TENANT_OWNED_MODELS = [
   'ShipmentMilestone', // DESIGN-UPDATE-2026-10-04 §2: departed, transshipped, arrived
   'IgmUpdate', // DESIGN-UPDATE-2026-10-04 §4.1: inbound only
   'DeliveryOrder', // DESIGN-UPDATE-2026-10-04 §4.2: inbound only
+  'NotificationTeamSetting', // DESIGN-UPDATE-2026-10-04 §7: a sender per team
   'BlDraft',
   'BlDraftContainer',
   'BlTemplate',

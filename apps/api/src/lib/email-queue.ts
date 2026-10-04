@@ -1,3 +1,5 @@
+import { SELF_SIGNED_TEMPLATES, TEMPLATE_TEAM } from '@ff/shared';
+
 import { logger } from './logger';
 import { render, resolveTemplate } from './email-template';
 import {
@@ -11,7 +13,7 @@ import { parseAddressList, sendMail } from './mailer';
 import { Prisma } from '../generated/prisma/client';
 import { prisma } from './prisma';
 import { openFile } from './storage';
-import { withTenant } from './tenant-client';
+import { type TenantDb, withTenant } from './tenant-client';
 
 /**
  * The outbox.
@@ -91,6 +93,52 @@ export interface QueueMailResult {
   reason?: 'no-recipients';
 }
 
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+interface TeamIdentity {
+  fromName: string | null;
+  fromAddress: string | null;
+  replyTo: string | null;
+  signature: string | null;
+}
+
+/**
+ * The sender, reply-to and signature of the team a template belongs to, or
+ * null when it belongs to none or the workspace has not filled the team in —
+ * in which case the letter goes exactly as it always has.
+ *
+ * The From address changes only when the workspace has said its mail server
+ * may send as the team (`send_as_team`). Otherwise the team's address becomes
+ * the Reply-To, and the From keeps the deployment's account, under the
+ * workspace's name.
+ */
+async function teamIdentity(
+  db: TenantDb,
+  tenantId: bigint,
+  templateKey: string,
+  sendAsTeam: boolean,
+): Promise<TeamIdentity | null> {
+  const team = TEMPLATE_TEAM[templateKey];
+  if (team === undefined) return null;
+  const row = await db.notificationTeamSetting.findFirst({
+    where: { team, deletedAt: null, isActive: true },
+    select: { senderEmail: true, replyTo: true, signature: true },
+  });
+  if (row === null) return null;
+  const tenant = await db.tenant.findFirst({ where: { id: tenantId }, select: { name: true } });
+  const sendAs = sendAsTeam && row.senderEmail !== null;
+  return {
+    fromName: tenant?.name ?? null,
+    fromAddress: sendAs ? row.senderEmail : null,
+    // Sending as the team, a reply finds the sender by itself; otherwise the
+    // team's address has to be named, or the reply comes back to the account.
+    replyTo: row.replyTo ?? (sendAs ? null : row.senderEmail),
+    signature: SELF_SIGNED_TEMPLATES.has(templateKey) ? null : row.signature,
+  };
+}
+
 /**
  * Writes a message to the outbox. Does not send it.
  *
@@ -124,7 +172,7 @@ export async function queueMail(input: QueueMailInput): Promise<QueueMailResult>
      * is noise, and to a recipient it looks like a mistake.
      */
     const setting = await db.notificationSetting.findFirst({
-      select: { bccAddresses: true },
+      select: { bccAddresses: true, sendAsTeam: true },
     });
     const visible = new Set([...to, ...cc].map((a) => a.toLowerCase()));
     const bcc = [
@@ -139,6 +187,21 @@ export async function queueMail(input: QueueMailInput): Promise<QueueMailResult>
         ? { subject: input.fallback.subject, bodyText: input.fallback.bodyText, bodyHtml: null }
         : render(template, input.variables);
 
+    /*
+     * The team this letter goes out for (DESIGN-UPDATE-2026-10-04 §7), read
+     * now and written onto the row like the blind copies are, so the outbox
+     * shows who it came from and where a reply went.
+     */
+    const identity = await teamIdentity(db, input.tenantId, input.templateKey, setting?.sendAsTeam ?? false);
+    let bodyText = rendered.bodyText;
+    let bodyHtml = input.html ?? rendered.bodyHtml;
+    if (identity?.signature != null) {
+      bodyText = `${bodyText.trimEnd()}\n\n${identity.signature}`;
+      if (bodyHtml !== null) bodyHtml = `${bodyHtml}<p>${escapeHtml(identity.signature).replace(/\n/g, '<br>')}</p>`;
+    }
+    const callerReplyTo = (input.replyTo ?? []).map((a) => a.trim()).filter((a) => a !== '');
+    const replyTo = callerReplyTo.length > 0 ? callerReplyTo : identity?.replyTo == null ? [] : [identity.replyTo];
+
     const created = await db.emailLog.create({
       data: {
         tenantId: input.tenantId,
@@ -146,12 +209,12 @@ export async function queueMail(input: QueueMailInput): Promise<QueueMailResult>
         toAddresses: to,
         ccAddresses: cc,
         bccAddresses: bcc,
-        replyToAddresses: [
-          ...new Set((input.replyTo ?? []).map((a) => a.trim()).filter((a) => a !== '')),
-        ],
+        replyToAddresses: [...new Set(replyTo)],
+        fromAddress: identity?.fromAddress ?? null,
+        fromName: identity?.fromName ?? null,
         subject: rendered.subject,
-        bodyText: rendered.bodyText,
-        bodyHtml: input.html ?? rendered.bodyHtml,
+        bodyText,
+        bodyHtml,
         relatedType: input.relatedType ?? null,
         relatedId: input.relatedId ?? null,
         attachments: (input.attachments ?? []) as unknown as Prisma.InputJsonValue,
@@ -186,6 +249,8 @@ interface ClaimedRow {
   cc_addresses: string[];
   bcc_addresses: string[];
   reply_to_addresses: string[];
+  from_address: string | null;
+  from_name: string | null;
   subject: string;
   body_text: string;
   body_html: string | null;
@@ -292,6 +357,9 @@ async function deliver(row: ClaimedRow): Promise<'sent' | 'retry' | 'failed'> {
     ...(row.cc_addresses.length > 0 ? { cc: row.cc_addresses } : {}),
     ...(row.bcc_addresses.length > 0 ? { bcc: row.bcc_addresses } : {}),
     ...(row.reply_to_addresses.length > 0 ? { replyTo: row.reply_to_addresses } : {}),
+    ...(row.from_address !== null || row.from_name !== null
+      ? { from: { name: row.from_name, address: row.from_address } }
+      : {}),
   });
 
   if (result.sent) {
