@@ -41,6 +41,7 @@ import {
 import { inboundRouter } from './inbound.route';
 import { milestoneRouter } from './milestone.route';
 import { preAlertRouter } from './pre-alert.route';
+import { tariffRouter } from './tariff.route';
 import { salesLeadRouter } from './sales-lead.route';
 import { portRouter } from './port.route';
 import { notificationSettingRouter } from './notification-setting.route';
@@ -76,6 +77,8 @@ tenantRouter.use('/setting/notifications', notificationSettingRouter);
 tenantRouter.use('/setting', rateLookupRouter);
 
 // Purchase — rate entry for all three modes (MODULE_PURCHASE_SALES §5.1).
+// docs/DESIGN-UPDATE-2026-10-04.md §5: before the rate router, which owns /purchase.
+tenantRouter.use('/purchase/tariffs', tariffRouter);
 tenantRouter.use('/purchase', freightRateRouter);
 
 // Sales — inquiry capture (MODULE_PURCHASE_SALES §5.4).

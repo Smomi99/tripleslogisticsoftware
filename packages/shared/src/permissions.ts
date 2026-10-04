@@ -312,6 +312,17 @@ export const FEATURES: readonly FeatureDefinition[] = [
   { module: 'PURCHASE', feature: 'PURCHASE.PRICE_LIST_SEA_FCL', label: 'Price List — Sea FCL', actions: MASTER },
   { module: 'PURCHASE', feature: 'PURCHASE.PRICE_LIST_SEA_LCL', label: 'Price List — Sea LCL', actions: MASTER },
   { module: 'PURCHASE', feature: 'PURCHASE.PRICE_LIST_AIR', label: 'Price List — Air', actions: MASTER },
+  /*
+   * docs/DESIGN-UPDATE-2026-10-04.md §5 (Menu B13, under Price List): local
+   * charges at a POL. No EXPORT and no DELETE: a tariff retires by going
+   * inactive, and nothing prints one yet.
+   */
+  {
+    module: 'PURCHASE',
+    feature: 'PURCHASE.TARIFF',
+    label: 'Tariff',
+    actions: ['VIEW', 'CREATE', 'EDIT', 'TOGGLE_STATUS'],
+  },
   // Not a screen — a pair of column-level gates that cut across all nine
   // purchase screens (MODULE_PURCHASE_SALES §6). It has no route, so the
   // sidebar skips it; the permission matrix still renders it as its own row.

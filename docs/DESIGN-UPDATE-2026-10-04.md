@@ -76,7 +76,7 @@ shipment reaches it through `shipment.quotation_id`.
 | 3 | **§4 IGM Update + DO Issue** — **built** | Inbound tail of the same milestone track; reuses §2's list. | Q10–Q13 |
 | 4 | **§7 Notification** (per-team sender) — **built** (new event letters wait on Q17) | §2, §3 and §4 send mail from named team addresses. | Q16–Q17 |
 | 5 | **§3 Pre-Alert** — **built** | Needs §7's Sales Team sender and documents that partly do not exist. | Q7–Q9 |
-| 6 | **§5 Tariff** | Master data only until Q14 says what consumes it. | Q14–Q15 |
+| 6 | **§5 Tariff** — **built** | Master data only until Q14 says what consumes it. | Q14–Q15 |
 | 7 | **§6 Local Sales** | Customer list + activity log. | Q18–Q19 |
 | 8 | **§9 Income Statement** | **Blocked** on an accounting decision (Q21) that also decides Balance Sheet and Cash Flow. | Q21–Q25 |
 | 9 | **§10 Reports** | A catalogue of ~70 reports with no layouts. The client has to pick a first set. | Q26 |
@@ -321,7 +321,7 @@ operator writes the words.
 
 ---
 
-## 5. TARIFF (Purchase → Price List)
+## 5. TARIFF (Purchase → Price List) — **built**
 
 `Tarrif`, header row 4: **Country · POL · Movement Type · Tarrif Type**. H5 reads
 *"Port Tarrif , CFS Charge"*, taken as the two Tariff Type values. Line grid (rows 8 and 12):
@@ -339,6 +339,29 @@ tariff_line
 `Country` is redundant with the POL's country. It is kept because the sheet lists it, and it is filled
 from the port. The sheet does not say what reads a tariff (Q14). Until that is answered, this is a
 price book with its own list and form, and nothing else consumes it.
+
+### 5.1 As built (branch `feature/tariff`)
+
+Migration `20261004180000_tariff`. Permission `PURCHASE.TARIFF`: VIEW · CREATE · EDIT · TOGGLE_STATUS.
+The sidebar groups the three price lists and Tariff under **Price List**, as Menu B9–B13 does.
+
+- **Tariff type is an enum** (`PORT_TARIFF`, `CFS_CHARGE`), not the lookup proposed above. The sheet
+  names exactly two values, and a Setting lookup with shared rows, overrides and its own screen is a
+  large build for two. When the client names a third, it becomes a lookup with a one-step data
+  migration (Q28).
+- **List.** Code (TRF-001) · Country · POL · Movement Type · Tariff Type · Charges · Status. Search
+  covers code, port name and code, and country, with Movement, Type and Active filters. The actions are
+  Edit and Deactivate/Activate (confirmed).
+- **Form** (a page, per §8: a header and a grid is more than eight fields).
+  - The header is POL, Movement Type and Tariff Type. Country follows the POL and is stored with it.
+  - The grid is Cost Head · Container Size (optional) · Unit · Unit Price · Currency, with add and
+    remove.
+  - Saving **replaces** the charges: the old lines are retired, not edited, so the audit trail keeps
+    them.
+  - Every picked row must be one the workspace can use and has not switched off. The API asks again
+    on save. Prices are non-negative (CHECK).
+- No uniqueness per POL / movement / type, since none was asked for. Nothing reads a tariff yet (Q14).
+- Tests: `tariff.test.ts`, 5 cases, including two-workspace isolation.
 
 ---
 
@@ -607,3 +630,5 @@ Nothing here is guessed in the schema. Each has the working default the build wo
 | 26 | **Which reports first?** About 70 are listed without layouts. | Ask for the first 8. Suggested: Booking Register, Quotation Conversion, Customer Outstanding, AR Aging, AP Aging, Shipment P&L, Customer Profitability, Loss-Making Jobs |
 | **Raised while building §8** | | |
 | 27 | **Export Shipment Profitability to Excel?** The 2026-09-06 decision keeps buy prices out of every downloaded file, and this screen is mostly buy prices. Is a management export of it wanted, and for whom? | No export. The screen is view-only |
+| **Raised while building §5** | | |
+| 28 | **More tariff types?** The sheet names Port Tariff and CFS Charge; they are an enum. | An enum of the two. A Setting lookup the day a third is named |

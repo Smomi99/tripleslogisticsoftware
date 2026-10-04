@@ -37,6 +37,7 @@ export * from './sales-lead';
 export * from './clp';
 export * from './iso6346';
 export * from './shipment';
+export * from './tariff';
 export * from './user';
 export * from './vendor';
 export * from './vessel';

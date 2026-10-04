@@ -58,6 +58,8 @@ const ROUTES: Record<string, RouteEntry> = {
   'PURCHASE.PRICE_LIST_SEA_FCL': '/purchase/price-list-fcl',
   'PURCHASE.PRICE_LIST_SEA_LCL': '/purchase/price-list-lcl',
   'PURCHASE.PRICE_LIST_AIR': '/purchase/price-list-air',
+  // docs/DESIGN-UPDATE-2026-10-04.md §5, Menu B13 (under Price List).
+  'PURCHASE.TARIFF': '/purchase/tariff',
   // The list, not the capture form: §8 makes the list the screen a feature
   // opens on, with New reached from its Add button.
   'SALES.INQUIRY': '/sales/inquiry',
@@ -179,6 +181,12 @@ const UNLISTED_ROUTES: Record<string, string> = {
  * items and their order are still the registry's.
  */
 const NAV_SECTION: Record<string, string> = {
+  // Menu B9–B13: "Price List" heads the three price lists and, since
+  // 2026-10-04, the Tariff.
+  'PURCHASE.PRICE_LIST_SEA_FCL': 'Price List',
+  'PURCHASE.PRICE_LIST_SEA_LCL': 'Price List',
+  'PURCHASE.PRICE_LIST_AIR': 'Price List',
+  'PURCHASE.TARIFF': 'Price List',
   'ACCOUNTS.JOURNAL': 'Transaction',
   'ACCOUNTS.EXPENSE': 'Transaction',
   'ACCOUNTS.INCOME': 'Transaction',

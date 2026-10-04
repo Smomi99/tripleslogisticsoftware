@@ -65,6 +65,8 @@ export const CODE_PREFIX = {
   // for freight_rate; the shared padder produces RATE-001 and grows from there,
   // which keeps one code format across the whole product rather than two.
   freightRate: 'RATE',
+  // DESIGN-UPDATE-2026-10-04 §5: Purchase → Price List → Tariff.
+  tariff: 'TRF',
 
   // Sales
   salesLead: 'LED',

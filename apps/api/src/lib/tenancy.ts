@@ -115,6 +115,8 @@ export const TENANT_OWNED_MODELS = [
   'NotificationTeamSetting', // DESIGN-UPDATE-2026-10-04 §7: a sender per team
   'PreAlertDocument', // DESIGN-UPDATE-2026-10-04 §3
   'PreAlert', // DESIGN-UPDATE-2026-10-04 §3
+  'Tariff', // DESIGN-UPDATE-2026-10-04 §5
+  'TariffLine', // DESIGN-UPDATE-2026-10-04 §5
   'BlDraft',
   'BlDraftContainer',
   'BlTemplate',

@@ -318,6 +318,10 @@ model Tenant {
   supplierPayments   SupplierPayment[]
   openingSettlements OpeningSettlement[]
 
+  /// DESIGN-UPDATE-2026-10-04 §5.
+  tariffs     Tariff[]
+  tariffLines TariffLine[]
+
   @@index([slug])
   @@index([status])
   @@index([currencyId])
@@ -451,6 +455,9 @@ model Port {
   blDraftsPol             BlDraft[]             @relation("BlDraftPol")
   blDraftsPod             BlDraft[]             @relation("BlDraftPod")
 
+  /// DESIGN-UPDATE-2026-10-04 §5: the tariffs charged at this POL.
+  tariffs Tariff[] @relation("TariffPol")
+
   @@unique([tenantId, code])
   /// The natural key (tenant_id, port_code) is UNIQUE only over live rows, and
   /// so lives in the migration as a partial index rather than here — Prisma
@@ -516,6 +523,8 @@ model Currency {
   debitInvoiceCosts DebitInvoiceCost[] @relation("DebitInvoiceCostCurrency")
 
   openingSettlements OpeningSettlement[] @relation("OpeningSettlementCurrency")
+  tariffLines TariffLine[] @relation("TariffLineCurrency")
+
   @@unique([tenantId, code])
   @@index([tenantId])
   @@index([currency])
@@ -582,6 +591,8 @@ model CostUnit {
   debitInvoiceLines     DebitInvoiceLine[]     @relation("DebitInvoiceLineCostUnit")
   debitInvoiceCostLines DebitInvoiceCostLine[] @relation("DebitInvoiceCostLineCostUnit")
 
+  tariffLines TariffLine[] @relation("TariffLineUnit")
+
   @@unique([tenantId, code])
   @@index([tenantId])
   @@map("cost_unit")
@@ -616,6 +627,8 @@ model CostHead {
 
   debitInvoiceLines     DebitInvoiceLine[]
   debitInvoiceCostLines DebitInvoiceCostLine[]
+
+  tariffLines TariffLine[]
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -1959,6 +1972,11 @@ model User {
   supplierPaymentsUpdated    SupplierPayment[]   @relation("SupplierPaymentUpdatedBy")
   openingSettlementsCreated  OpeningSettlement[] @relation("OpeningSettlementCreatedBy")
   openingSettlementsUpdated  OpeningSettlement[] @relation("OpeningSettlementUpdatedBy")
+  tariffsCreated     Tariff[]     @relation("TariffCreatedBy")
+  tariffsUpdated     Tariff[]     @relation("TariffUpdatedBy")
+  tariffLinesCreated TariffLine[] @relation("TariffLineCreatedBy")
+  tariffLinesUpdated TariffLine[] @relation("TariffLineUpdatedBy")
+
   @@unique([tenantId, username])
   @@unique([tenantId, email])
   @@unique([tenantId, code])
@@ -2288,6 +2306,8 @@ model ContainerSize {
 
   debitInvoiceLines     DebitInvoiceLine[]     @relation("DebitInvoiceLineContainerSize")
   debitInvoiceCostLines DebitInvoiceCostLine[] @relation("DebitInvoiceCostLineContainerSize")
+
+  tariffLines TariffLine[] @relation("TariffLineContainerSize")
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -5335,6 +5355,99 @@ model PreAlert {
   @@index([agentId])
   @@index([sentBy])
   @@map("pre_alert")
+}
+
+/// client: Tarrif — "Port Tarrif , CFS Charge" (H5), read as the two types
+/// (DESIGN-UPDATE-2026-10-04 §5). An enum because the sheet names exactly two;
+/// it becomes a Setting lookup the day the client names a third (§11 Q28).
+enum TariffType {
+  PORT_TARIFF
+  CFS_CHARGE
+
+  @@map("tariff_type")
+}
+
+/// client: Tarrif (Purchase → Price List, Menu B13) — a price book of local
+/// charges at one POL: header row 4 "Country · POL · Movement Type · Tarrif
+/// Type", lines below. Nothing reads it yet (§11 Q14): it is kept and listed.
+model Tariff {
+  tenantId BigInt @map("tenant_id")
+  id       BigInt @id @default(autoincrement())
+  /// TRF-001, per workspace.
+  code     String @db.VarChar(32)
+
+  /// B4 "Country". The POL's own country, copied when saved so the list can
+  /// show and search it; the sheet lists it as a field of its own.
+  country      String       @db.VarChar(100)
+  /// C4 "POL". Port is system-capable: a single-column key plus the guard.
+  polId        BigInt       @map("pol_id")
+  /// D4 "Movement Type", the inquiry's own enum.
+  movementType MovementType @map("movement_type")
+  /// E4 "Tarrif Type".
+  tariffType   TariffType   @map("tariff_type")
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  pol    Port   @relation("TariffPol", fields: [polId], references: [id], onDelete: Restrict)
+
+  createdByUser User? @relation("TariffCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("TariffUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  lines TariffLine[]
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([polId])
+  @@map("tariff")
+}
+
+/// client: Tarrif — one row of the grid (rows 8 and 12): "Cost Head ·
+/// Container Size · Unit · Unit Price · Currency".
+model TariffLine {
+  tenantId  BigInt @map("tenant_id")
+  id        BigInt @id @default(autoincrement())
+  tariffId  BigInt @map("tariff_id")
+  sortOrder Int    @default(0) @map("sort_order")
+
+  costHeadId      BigInt  @map("cost_head_id")
+  /// Optional: a per-CBM or per-document charge has no box (§11 Q15).
+  containerSizeId BigInt? @map("container_size_id")
+  costUnitId      BigInt  @map("cost_unit_id")
+  unitPrice       Decimal @map("unit_price") @db.Decimal(18, 4)
+  currencyId      BigInt  @map("currency_id")
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  tariff        Tariff         @relation(fields: [tenantId, tariffId], references: [tenantId, id], onDelete: Restrict, map: "tariff_line_tariff_id_fkey")
+  costHead      CostHead       @relation(fields: [tenantId, costHeadId], references: [tenantId, id], onDelete: Restrict, map: "tariff_line_cost_head_id_fkey")
+  containerSize ContainerSize? @relation("TariffLineContainerSize", fields: [containerSizeId], references: [id], onDelete: Restrict)
+  costUnit      CostUnit       @relation("TariffLineUnit", fields: [costUnitId], references: [id], onDelete: Restrict)
+  currency      Currency       @relation("TariffLineCurrency", fields: [currencyId], references: [id], onDelete: Restrict)
+
+  createdByUser User? @relation("TariffLineCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("TariffLineUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([tariffId])
+  @@index([costHeadId])
+  @@index([containerSizeId])
+  @@index([costUnitId])
+  @@index([currencyId])
+  @@map("tariff_line")
 }
 
 /// client: the PO grid, row 17 of both advise sheets.
