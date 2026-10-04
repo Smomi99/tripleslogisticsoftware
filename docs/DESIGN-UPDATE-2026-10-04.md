@@ -78,7 +78,7 @@ shipment reaches it through `shipment.quotation_id`.
 | 5 | **§3 Pre-Alert** — **built** | Needs §7's Sales Team sender and documents that partly do not exist. | Q7–Q9 |
 | 6 | **§5 Tariff** — **built** | Master data only until Q14 says what consumes it. | Q14–Q15 |
 | 7 | **§6 Local Sales** — **built** | Customer list + activity log. | Q18–Q19 |
-| 8 | **§9 Income Statement** — **built** (accrual as a report, §9.3) | Built on our own answers to Q21–Q25, for the client to confirm. Balance Sheet and Cash Flow still wait on Q21. | Q21–Q25, Q29 |
+| 8 | **§9 Income Statement** — **built** (accrual as a report, with a cash switch, §9.3) | Built on our own answers to Q21–Q25, for the client to confirm. Balance Sheet and Cash Flow still wait on Q21. | Q21–Q25, Q29 |
 | 9 | **§10 Reports** | A catalogue of ~70 reports with no layouts. The client has to pick a first set. | Q26 |
 
 ---
@@ -609,15 +609,31 @@ accounts or cost heads get a statement line.
 
 Every workspace gets them the next time its chart is read.
 
-**The screen** (Accounts → Income Statement): Month, and the month the financial year starts in (Q29:
-January by default; July for a Bangladesh tax year). It shows the sheet's header (Period, Branch,
-Currency, Basis) and its full layout, A–E with every subtotal down to Net Profit Margin %, in the three
-columns. Each column header shows its date span, and losses are in red. **Export to Excel** gives the
-same figures as a workbook. A "How these figures are made" note sits under the table.
+**Basis: Accrual or Cash** (client, 2026-10-04: "both, with a switch"). The client asked for the
+statement to come from Transaction → Income. Accrual stays the default, because it is the sheet's own
+basis (C9). **Cash** reads the Transaction screens alone:
 
-Tests: `income-statement.test.ts`, 8 cases. Every figure is hand arithmetic over the fixtures, including
+| Figure | Accrual | Cash |
+|---|---|---|
+| Revenue and job cost | issued debit invoices, on the invoice date | the Income and Expense vouchers that received or paid them, on the voucher date |
+| Settlement vouchers | left out; only their exchange difference counts | counted in full, on the account they were posted to |
+| Foreign Exchange Gain / Loss | derived from each settlement | only what was posted to an FX account by hand |
+| Everything else | posted voucher lines | the same |
+
+On cash, an invoice nobody has paid yet shows nothing, and a receipt shows in the month the money came
+in. A month's two bases agree only once every invoice in it is settled. The header strip and the export
+both name the basis, and the export file is `income-statement-<month>-<basis>.xlsx`.
+
+**The screen** (Accounts → Income Statement): Month, the month the financial year starts in (Q29:
+January by default; July for a Bangladesh tax year), and Basis. It shows the sheet's header (Period,
+Branch, Currency, Basis) and its full layout, A–E with every subtotal down to Net Profit Margin %, in
+the three columns. Each column header shows its date span, and losses are in red. **Export to Excel**
+gives the same figures as a workbook. Under the table, a "How these figures are made" note explains the
+chosen basis.
+
+Tests: `income-statement.test.ts`, 9 cases. Every figure is hand arithmetic over the fixtures, including
 the 500 gain and 100 loss from settlements, a workspace's own sub ledger, drafts left out, YTD and
-previous YTD, the export, permissions, and an empty second workspace.
+previous YTD, the cash basis, the export, permissions, and an empty second workspace.
 
 ---
 
@@ -715,7 +731,7 @@ Nothing here is guessed in the schema. Each has the working default the build wo
 | **Profitability (§8)** | | |
 | 20 | **Status** column (sample "Completed") — which states? | The booking's own status |
 | **Income Statement (§9)** | | |
-| 21 | **Accrual or cash?** Accrual needs invoices to post to the books (reversing MODULE_ACCOUNTS §14.13 Q2). That is the right foundation for Balance Sheet too, but it changes how Income and Expense vouchers settle invoices. | **Built: accrual as a report (§9.3).** The books are unchanged. Balance Sheet and Cash Flow still need the client's answer |
+| 21 | **Accrual or cash?** Accrual needs invoices to post to the books (reversing MODULE_ACCOUNTS §14.13 Q2). That is the right foundation for Balance Sheet too, but it changes how Income and Expense vouchers settle invoices. | **Built: accrual as a report, with a Cash switch that reads the Transaction vouchers (§9.3, client 2026-10-04).** The books are unchanged. Balance Sheet and Cash Flow still need the client's answer |
 | 22 | **Statement lines vs chart of accounts** — extend the chart to the sheet's lines, or map each account to a line? | **Built:** a code map from the predefined chart, a workspace's own accounts follow their ledger, the rest fall to "Other …" (§9.3) |
 | 23 | **Branch** — a real dimension on bookings, invoices and vouchers? | Not built; no branch filter |
 | 24 | **USD view** — convert at which rate (transaction date, period-end)? | BDT only |
