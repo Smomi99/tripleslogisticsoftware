@@ -184,9 +184,9 @@ export default function LocalSalesPage() {
         isPending={list.isPending}
         actions={(row) => (
           <>
-            <Button variant="text" size="inline" onClick={() => setLogFor(row)}>
+            <button type="button" className="whitespace-nowrap text-body text-harbour hover:underline" onClick={() => setLogFor(row)}>
               Activity log
-            </Button>
+            </button>
             {mayEditCustomer && (
               <Link href={`/crm/customer/${row.id}/edit` as Route} className="text-body text-harbour hover:underline">
                 Edit

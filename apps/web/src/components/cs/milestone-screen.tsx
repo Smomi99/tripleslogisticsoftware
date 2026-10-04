@@ -91,8 +91,9 @@ function Lines({ values }: { values: (string | null)[] }) {
  */
 export function bookingColumns<T extends MilestoneRow>(kind: MilestoneKind, isAir: boolean): DataTableColumn<T>[] {
   const cols: DataTableColumn<T>[] = [
-    { id: 'quotation', header: 'Quotation No', cell: (r) => <span className="font-mono tabular-nums">{r.quotationCode}</span> },
-    { id: 'so', header: 'S/O No', cell: (r) => <span className="font-mono tabular-nums">{r.soCode ?? '—'}</span> },
+    // Codes stay whole: a table this wide scrolls rather than breaking DEMO-QTN-5 in two.
+    { id: 'quotation', header: 'Quotation No', cell: (r) => <span className="whitespace-nowrap font-mono tabular-nums">{r.quotationCode}</span> },
+    { id: 'so', header: 'S/O No', cell: (r) => <span className="whitespace-nowrap font-mono tabular-nums">{r.soCode ?? '—'}</span> },
     { id: 'customer', header: 'Customer', sortable: true, cell: (r) => r.customerName },
     { id: 'exporter', header: 'Exporter', cell: (r) => r.exporterName ?? '—' },
     { id: 'type', header: 'Shipment Type', cell: (r) => (r.shipmentType === 'AIR' ? 'Air' : 'Sea') },
@@ -110,7 +111,7 @@ export function bookingColumns<T extends MilestoneRow>(kind: MilestoneKind, isAi
     {
       id: 'leg',
       header: isAir ? MILESTONE_LEG_LABEL[kind].air : MILESTONE_LEG_LABEL[kind].sea,
-      cell: (r) => <span className="font-mono tabular-nums">{r.legLabel ?? '—'}</span>,
+      cell: (r) => <span className="whitespace-nowrap font-mono tabular-nums">{r.legLabel ?? '—'}</span>,
     },
     {
       id: 'date',
