@@ -30,6 +30,7 @@ export * from './performance';
 export * from './permissions';
 export * from './port';
 export * from './portal';
+export * from './pre-alert';
 export * from './rate-lookups';
 export * from './role';
 export * from './sales-lead';

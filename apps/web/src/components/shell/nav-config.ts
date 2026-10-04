@@ -101,6 +101,8 @@ const ROUTES: Record<string, RouteEntry> = {
   'CUSTOMER_SERVICE.SHIPPING_ORDER': '/cs/shipping-order',
   // docs/DESIGN-UPDATE-2026-10-04.md §2, Menu F10: a landing page and six lists under it.
   'CUSTOMER_SERVICE.DEPART_ARRIVE': '/cs/depart-arrive',
+  // docs/DESIGN-UPDATE-2026-10-04.md §3, Menu F11.
+  'CUSTOMER_SERVICE.PRE_ALERT': '/cs/pre-alert',
   'OPERATION.CARGO_RECEIPT': '/operation/cargo-receipt',
   'OPERATION.CONTAINER_LOAD_PLAN': '/operation/container-load-plan',
   // docs/DESIGN-UPDATE-2026-10-04.md §4, Menu I7–I8: inbound bookings only.

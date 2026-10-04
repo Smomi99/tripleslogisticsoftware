@@ -471,6 +471,17 @@ export const FEATURES: readonly FeatureDefinition[] = [
     label: 'Depart-Arrive Confirmation',
     actions: ['VIEW', 'EDIT'],
   },
+  /*
+   * docs/DESIGN-UPDATE-2026-10-04.md §3 (Menu F11). EDIT uploads the papers
+   * the system does not make (booking confirmation, MBL, MAWB, HAWB, the air
+   * manifest); SEND is the sheet's Send, a letter to an overseas agent.
+   */
+  {
+    module: 'CUSTOMER_SERVICE',
+    feature: 'CUSTOMER_SERVICE.PRE_ALERT',
+    label: 'Pre-Alert',
+    actions: ['VIEW', 'EDIT', 'SEND'],
+  },
 
   // -- 4. Operation ----------------------------------------------------------
   /*

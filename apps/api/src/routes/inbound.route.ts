@@ -94,7 +94,7 @@ async function assertInbound(db: TenantDb, tenantId: bigint, shipmentId: bigint)
   const { picks } = await milestonePicks(
     db,
     tenantId,
-    { kind: 'ARRIVED', view: 'ALL', requireDeparture: false, inboundOnly: true, shipmentId },
+    { kind: 'ARRIVED', view: 'ALL', requireDeparture: false, movementType: 'INBOUND', shipmentId },
     { by: 'date', order: 'asc' },
     { page: 1, limit: 1 },
   );
@@ -138,7 +138,7 @@ inboundRouter.get('/igm', requirePermission(`${IGM}.VIEW`), async (req, res) => 
         kind: 'ARRIVED',
         view: 'ALL',
         requireDeparture: false,
-        inboundOnly: true,
+        movementType: 'INBOUND',
         shipmentType: query.shipmentType,
         search: query.search,
         extra: igmViewConditions(query.view),
@@ -283,7 +283,7 @@ inboundRouter.get('/delivery-orders', requirePermission(`${DO}.VIEW`), async (re
         kind: 'ARRIVED',
         view: 'ALL',
         requireDeparture: false,
-        inboundOnly: true,
+        movementType: 'INBOUND',
         shipmentType: query.shipmentType,
         search: query.search,
         extra: doViewConditions(query.view),

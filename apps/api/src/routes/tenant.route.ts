@@ -40,6 +40,7 @@ import {
 } from './shipment-worklist.route';
 import { inboundRouter } from './inbound.route';
 import { milestoneRouter } from './milestone.route';
+import { preAlertRouter } from './pre-alert.route';
 import { salesLeadRouter } from './sales-lead.route';
 import { portRouter } from './port.route';
 import { notificationSettingRouter } from './notification-setting.route';
@@ -89,6 +90,8 @@ tenantRouter.use('/cs', shippingOrderRouter);
 tenantRouter.use('/cs', shipmentWorklistRouter);
 // docs/DESIGN-UPDATE-2026-10-04.md §2: Depart-Arrive Confirmation.
 tenantRouter.use('/cs', milestoneRouter);
+// docs/DESIGN-UPDATE-2026-10-04.md §3: Pre-Alert.
+tenantRouter.use('/cs', preAlertRouter);
 // Operation — cargo receipt (MODULE_BOOKING_CARGO.md §6.7).
 tenantRouter.use('/ops', cargoReceiptRouter);
 tenantRouter.use('/ops', clpRouter);

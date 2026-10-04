@@ -270,6 +270,8 @@ model Tenant {
 
   notificationSetting  NotificationSetting?
   notificationTeams    NotificationTeamSetting[]
+  preAlertDocuments    PreAlertDocument[]
+  preAlerts            PreAlert[]
   agentQuotes          AgentQuote[]
   agentQuoteOptions    AgentQuoteOption[]
   agentQuoteLines      AgentQuoteLine[]
@@ -1326,6 +1328,8 @@ model Agent {
   openingCurrency Currency? @relation("AgentOpeningCurrency", fields: [openingCurrencyId], references: [id], onDelete: Restrict)
 
   pics           AgentPic[]
+  /// DESIGN-UPDATE-2026-10-04 §3: the pre-alerts sent to this agent.
+  preAlerts      PreAlert[]
   expertAreas    AgentExpertArea[]
   portCoverages  AgentPortCoverage[]
   networkMembers AgentNetworkMember[]
@@ -1907,6 +1911,11 @@ model User {
   deliveryOrdersCancelled  DeliveryOrder[]      @relation("DeliveryOrderCancelledBy")
   deliveryOrdersCreated    DeliveryOrder[]      @relation("DeliveryOrderCreatedBy")
   deliveryOrdersUpdated    DeliveryOrder[]      @relation("DeliveryOrderUpdatedBy")
+  preAlertDocsCreated      PreAlertDocument[]   @relation("PreAlertDocumentCreatedBy")
+  preAlertDocsUpdated      PreAlertDocument[]   @relation("PreAlertDocumentUpdatedBy")
+  preAlertsSent            PreAlert[]           @relation("PreAlertSentBy")
+  preAlertsCreated         PreAlert[]           @relation("PreAlertCreatedBy")
+  preAlertsUpdated         PreAlert[]           @relation("PreAlertUpdatedBy")
   blDraftsSubmitted        BlDraft[]            @relation("BlDraftSubmittedBy")
   blDraftsApproved         BlDraft[]            @relation("BlDraftApprovedBy")
   blDraftsSent             BlDraft[]            @relation("BlDraftSentBy")
@@ -4050,6 +4059,9 @@ model Shipment {
   /// DESIGN-UPDATE-2026-10-04 §4: inbound only.
   igmUpdates     IgmUpdate[]
   deliveryOrders DeliveryOrder[]
+  /// DESIGN-UPDATE-2026-10-04 §3.
+  preAlertDocuments PreAlertDocument[]
+  preAlerts         PreAlert[]
   debitInvoices  DebitInvoice[]
 
   clpBookings ClpBooking[] @relation("ClpBookingShipment")
@@ -5234,6 +5246,95 @@ model DeliveryOrder {
   @@index([issuedBy])
   @@index([cancelledBy])
   @@map("delivery_order")
+}
+
+/// The documents the Pre-Alert sheet offers (C15–D23): "Booking
+/// confirmation · HBL · MBL · HAWB · MAWB · Manifest-Air · Dbite Note".
+enum PreAlertDocumentKind {
+  BOOKING_CONFIRMATION
+  HBL
+  MBL
+  HAWB
+  MAWB
+  MANIFEST_AIR
+  DEBIT_NOTE
+
+  @@map("pre_alert_document_kind")
+}
+
+/// client: Pre Alert — a document uploaded for a booking's pre-alert
+/// (DESIGN-UPDATE-2026-10-04 §3). The carrier's papers (booking confirmation,
+/// MBL, MAWB, the air manifest) and the HAWB are not made by the system, so
+/// they arrive here. One live file per booking per kind; uploading again
+/// replaces it.
+model PreAlertDocument {
+  tenantId   BigInt               @map("tenant_id")
+  id         BigInt               @id @default(autoincrement())
+  shipmentId BigInt               @map("shipment_id")
+  kind       PreAlertDocumentKind
+  /// The storage key, never the bytes (CLAUDE.md §2).
+  fileKey    String               @map("file_key") @db.Text
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  shipment Shipment @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict, map: "pre_alert_document_shipment_id_fkey")
+
+  createdByUser User? @relation("PreAlertDocumentCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("PreAlertDocumentUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  /// One live file per booking per kind: a partial unique index in the migration.
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([shipmentId])
+  @@map("pre_alert_document")
+}
+
+/// client: Pre Alert — one sent pre-alert (DESIGN-UPDATE-2026-10-04 §3):
+/// "Select Agent", "Email ID", the documents ticked, and `Send`. Kept per send,
+/// so a resend after a document changed is on the record beside the first.
+model PreAlert {
+  tenantId   BigInt @map("tenant_id")
+  id         BigInt @id @default(autoincrement())
+  shipmentId BigInt @map("shipment_id")
+  /// C25 "Select Agent".
+  agentId    BigInt @map("agent_id")
+  /// C27 "Email ID": where it went, as sent.
+  toAddresses String[]               @map("to_addresses")
+  /// The ticked documents (C15–D23), in the order the sheet lists them.
+  documents   PreAlertDocumentKind[]
+  /// The letter, as shipment_advise.email_log_id: not a foreign key.
+  emailLogId  BigInt?                @map("email_log_id")
+
+  sentBy BigInt?  @map("sent_by")
+  sentAt DateTime @default(now()) @map("sent_at") @db.Timestamptz(6)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  shipment Shipment @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict, map: "pre_alert_shipment_id_fkey")
+  agent    Agent    @relation(fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict, map: "pre_alert_agent_id_fkey")
+
+  sentByUser    User? @relation("PreAlertSentBy", fields: [sentBy], references: [id], onDelete: Restrict)
+  createdByUser User? @relation("PreAlertCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("PreAlertUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([shipmentId])
+  @@index([agentId])
+  @@index([sentBy])
+  @@map("pre_alert")
 }
 
 /// client: the PO grid, row 17 of both advise sheets.

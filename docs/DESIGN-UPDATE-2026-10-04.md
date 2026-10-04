@@ -75,7 +75,7 @@ shipment reaches it through `shipment.quotation_id`.
 | 2 | **§2 Depart-Arrive Confirmation** — **built** | Core workflow. The BL's laden-on-board date and the arrival notice depend on it. | Q1–Q6 |
 | 3 | **§4 IGM Update + DO Issue** — **built** | Inbound tail of the same milestone track; reuses §2's list. | Q10–Q13 |
 | 4 | **§7 Notification** (per-team sender) — **built** (new event letters wait on Q17) | §2, §3 and §4 send mail from named team addresses. | Q16–Q17 |
-| 5 | **§3 Pre-Alert** | Needs §7's Sales Team sender and documents that partly do not exist. | Q7–Q9 |
+| 5 | **§3 Pre-Alert** — **built** | Needs §7's Sales Team sender and documents that partly do not exist. | Q7–Q9 |
 | 6 | **§5 Tariff** | Master data only until Q14 says what consumes it. | Q14–Q15 |
 | 7 | **§6 Local Sales** | Customer list + activity log. | Q18–Q19 |
 | 8 | **§9 Income Statement** | **Blocked** on an accounting decision (Q21) that also decides Balance Sheet and Cash Flow. | Q21–Q25 |
@@ -197,7 +197,7 @@ workspace's time zone. Template keys: `SHIPMENT_DEPARTED`, `SHIPMENT_TRANSSHIPPE
 
 ---
 
-## 3. PRE-ALERT (Customer Service)
+## 3. PRE-ALERT (Customer Service) — **built**
 
 `Pre Alert-Sea`: the list columns are §2.1's On board-Sea columns, plus **Status** (O7 *"Awiting"*) and
 **Action** `Send`. `Send` opens:
@@ -222,6 +222,30 @@ both modes, and the checklist offers only the documents that fit the mode.
 
 There is no link from a shipment to an agent. The agent is picked from CRM → Agent, and Email ID is
 pre-filled from that agent's PICs and stays editable. New email template: `PRE_ALERT_SENT`.
+
+### 3.1 As built (branch `feature/pre-alert`)
+
+Migration `20261004160000_pre_alert`. Permission `CUSTOMER_SERVICE.PRE_ALERT`: VIEW, EDIT (upload) and
+SEND.
+
+- **List.** OUTBOUND bookings that have a live advise or an approved schedule (Q9 default), with the On
+  board columns, a Sea / Air switch, Awaiting / Sent / All views, and the last send with its agent.
+- **Documents** (`pre_alert_document`, one live file per booking per kind). Each mode is offered its
+  own: sea gets Booking confirmation · HBL · MBL · Debit Note; air gets Booking confirmation · HAWB ·
+  MAWB · Manifest-Air · Debit Note. An upload always wins.
+  - **HBL:** a non-negotiable copy of the approved bill (BL Print's COPY), drawn at send time.
+  - **Debit Note:** the freight invoice's stored PDF, as it was sent to the customer.
+  - **Booking confirmation, MBL, HAWB, MAWB and Manifest-Air:** uploads only. **Q7 changed:** read in
+    freight terms, "Booking confirmation" is the carrier's booking confirmation, which the system does
+    not make, so it is an upload too.
+- **Send.** "Select agent" lists the agents covering the booking's POD first. Email ID fills from that
+  agent's contacts and stays editable. Ticked documents that are not there refuse the send and name
+  themselves.
+  - Each send is kept (`pre_alert`), so a resend sits beside the first.
+  - The letter (`PRE_ALERT_SENT`, seeded) states the booking, shipper, consignee, vessel or flight,
+    ETD/ETA, HBL/MBL and containers, with the documents attached. It goes from the **Sales Team**
+    identity (§7).
+- Tests: `pre-alert.test.ts`, 7 cases, including two-workspace isolation.
 
 ---
 
@@ -554,7 +578,7 @@ Nothing here is guessed in the schema. Each has the working default the build wo
 | 5 | One permission for all six screens, or one per milestone? | One: `CUSTOMER_SERVICE.DEPART_ARRIVE` |
 | 6 | A three-leg indirect route has two transshipments; the sheet shows "2nd Leg" only. | Leg 2 only, as drawn |
 | **Pre-Alert (§3)** | | |
-| 7 | **"Booking confirmation"** — which document? Nothing by that name is generated. | The approved schedule (the Shipment Approval) as a PDF |
+| 7 | **"Booking confirmation"** — which document? Nothing by that name is generated. | The carrier's booking confirmation, uploaded (built that way) |
 | 8 | **MBL, MAWB, Manifest-Air** come from the carrier. Upload them on the Pre-Alert screen, or on Copy Doc Upload (unbuilt)? | Uploaded on the Pre-Alert screen, attached and kept |
 | 9 | **Inbound pre-alerts** — sent or received? | Outbound only; the inbound side is the agent's pre-alert to us |
 | **IGM / DO (§4)** | | |

@@ -815,6 +815,46 @@ const EMAIL_TEMPLATES = [
       'containers',
     ],
   },
+  {
+    // DESIGN-UPDATE-2026-10-04 §3, Pre-Alert: the destination agent's letter,
+    // sent from the Sales Team (I20) with the ticked documents attached. The
+    // sheet supplies no wording, so this states the shipment and no more.
+    key: 'PRE_ALERT_SENT',
+    name: 'Pre-alert — to the destination agent',
+    subject: 'Pre-alert — {{bookingNo}} — {{polName}} to {{podName}}',
+    bodyText: [
+      'Dear {{agentName}},',
+      '',
+      'Please find attached the pre-alert for the shipment below.',
+      '',
+      'Booking: {{bookingNo}}',
+      'Shipper: {{shipperName}}',
+      'Consignee: {{consigneeName}}',
+      '{{modeWord}}: {{legLabel}}',
+      'From {{polName}} (ETD {{etd}}) to {{podName}} (ETA {{eta}})',
+      'House BL / HAWB: {{houseBlNo}}',
+      'Master BL / MAWB: {{mblNo}}',
+      '{{containers}}',
+      '',
+      'Attached: {{documents}}',
+    ].join('\n'),
+    variables: [
+      'agentName',
+      'bookingNo',
+      'shipperName',
+      'consigneeName',
+      'modeWord',
+      'legLabel',
+      'polName',
+      'podName',
+      'etd',
+      'eta',
+      'houseBlNo',
+      'mblNo',
+      'containers',
+      'documents',
+    ],
+  },
 ] as const;
 
 /**

@@ -44,8 +44,11 @@ export interface MilestoneFilter {
    * DEPARTED; the inbound lists (§4) ask for the arrival columns without it.
    */
   requireDeparture?: boolean | undefined;
-  /** Bookings whose quotation is INBOUND — IGM Update and DO Issue (§4). */
-  inboundOnly?: boolean | undefined;
+  /**
+   * One direction only: INBOUND for IGM Update and DO Issue (§4), OUTBOUND
+   * for Pre-Alert (§3).
+   */
+  movementType?: 'INBOUND' | 'OUTBOUND' | undefined;
   /** Further conditions on `s` (the shipment), from a caller with its own views. */
   extra?: Prisma.Sql[] | undefined;
 }
@@ -82,7 +85,9 @@ function candidates(tenantId: bigint, zone: string, filter: MilestoneFilter): Pr
   }
   if (filter.shipmentId !== undefined) conditions.push(Prisma.sql`s.id = ${filter.shipmentId}`);
   if (filter.requireDeparture ?? filter.kind !== 'DEPARTED') conditions.push(Prisma.sql`dep.id IS NOT NULL`);
-  if (filter.inboundOnly === true) conditions.push(Prisma.sql`q.movement_type = 'INBOUND'`);
+  if (filter.movementType !== undefined) {
+    conditions.push(Prisma.sql`q.movement_type = ${filter.movementType}::movement_type`);
+  }
   conditions.push(...(filter.extra ?? []));
   if (filter.kind === 'TRANSSHIPPED') {
     conditions.push(Prisma.sql`COALESCE(adv.transit_type, sch.transit_type) = 'INDIRECT'`);
