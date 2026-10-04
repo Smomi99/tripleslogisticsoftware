@@ -77,8 +77,7 @@ export function TeamIdentities({ mayEdit }: { mayEdit: boolean }) {
 
   return (
     <div className="max-w-5xl rounded-manifest border border-line bg-surface p-4 shadow-manifest">
-      <h2 className="text-section text-hull">Teams</h2>
-      <p className="mt-0.5 text-body text-steel">
+      <p className="text-body text-steel">
         Each team&apos;s letters go out with its reply-to address and its signature. Replies reach the team,
         not the sending account.
       </p>

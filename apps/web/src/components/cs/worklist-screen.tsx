@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button';
 import { Input, Select } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/form-layout';
 import { Status } from '@/components/ui/status';
+import { Tabs } from '@/components/ui/tabs';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 
@@ -281,44 +282,18 @@ export function WorklistScreen({
       {/*
         The client names these screens by their tabs (spec, 2026-09-18) — the
         statuses are the screen, not a filter on it, so they sit above the
-        search box rather than inside a dropdown with it.
+        search box rather than inside a dropdown with it. Each count is across
+        the whole list, not the page.
       */}
-      <div
-        role="tablist"
-        aria-label={`${config.label} views`}
-        className="flex border-b border-line"
-      >
-        {config.views.map((v) => {
-          const selected = v.id === active.id;
-          const n = meta.counts?.[v.id];
-          return (
-            <button
-              key={v.id}
-              type="button"
-              role="tab"
-              aria-selected={selected}
-              onClick={() => {
-                setView(v.id);
-                setPage(1);
-              }}
-              className={`-mb-px border-b-[3px] px-4 py-2 text-body transition-colors duration-120 ease-out ${
-                selected
-                  ? 'border-harbour font-semibold text-hull'
-                  : 'border-transparent text-steel hover:text-hull'
-              }`}
-            >
-              {v.label}
-              {/*
-                Counted across the whole list, not the page. Absent on a tab
-                this endpoint has not counted, where a 0 would be a claim.
-              */}
-              {n !== undefined && (
-                <span className="ml-2 font-mono text-cell tabular-nums">{n}</span>
-              )}
-            </button>
-          );
-        })}
-      </div>
+      <Tabs
+        label={`${config.label} views`}
+        value={active.id}
+        tabs={config.views.map((v) => ({ id: v.id, label: v.label, count: meta.counts?.[v.id] }))}
+        onChange={(id) => {
+          setView(id);
+          setPage(1);
+        }}
+      />
 
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex w-72 flex-col gap-1">
