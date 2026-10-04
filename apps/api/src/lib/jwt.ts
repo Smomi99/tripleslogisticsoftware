@@ -2,6 +2,7 @@ import { jwtVerify, SignJWT } from 'jose';
 
 import { env } from '../config/env';
 import { HttpError } from './http-error';
+import { decodePermissions, encodePermissions, PERMISSION_REGISTRY_FINGERPRINT } from './permission-token';
 
 /**
  * JWT issuing and verification (CLAUDE.md §2): a 15-minute access token and a
@@ -55,7 +56,10 @@ export async function signAccessToken(claims: AccessTokenClaims): Promise<string
   return new SignJWT({
     tenantId: claims.tenantId,
     isSuperadmin: claims.isSuperadmin,
-    permissions: claims.permissions,
+    // As bits over the registry, with the registry's fingerprint: see
+    // permission-token.ts for why the keys themselves no longer fit.
+    perm: encodePermissions(claims.permissions),
+    permReg: PERMISSION_REGISTRY_FINGERPRINT,
     tokenVersion: claims.tokenVersion,
     agentId: claims.agentId ?? null,
     customerId: claims.customerId ?? null,
@@ -98,13 +102,25 @@ export async function verifyAccessToken(token: string): Promise<AccessTokenClaim
       issuer: ISSUER,
       audience: ACCESS_AUDIENCE,
     });
+    let permissions: string[];
+    if (typeof payload['perm'] === 'string') {
+      // Minted under another registry: the bits no longer mean the same keys.
+      // Expired, so the client refreshes and the permissions are resolved anew.
+      if (payload['permReg'] !== PERMISSION_REGISTRY_FINGERPRINT) {
+        throw HttpError.unauthorized('Your session has expired. Sign in again.');
+      }
+      permissions = decodePermissions(payload['perm']);
+    } else {
+      // A token issued before the bitmap, still inside its 15 minutes.
+      permissions = Array.isArray(payload['permissions'])
+        ? payload['permissions'].filter((p): p is string => typeof p === 'string')
+        : [];
+    }
     return {
       sub: asString(payload.sub, 'sub'),
       tenantId: asString(payload['tenantId'], 'tenantId'),
       isSuperadmin: payload['isSuperadmin'] === true,
-      permissions: Array.isArray(payload['permissions'])
-        ? payload['permissions'].filter((p): p is string => typeof p === 'string')
-        : [],
+      permissions,
       tokenVersion: typeof payload['tokenVersion'] === 'number' ? payload['tokenVersion'] : 0,
       agentId: typeof payload['agentId'] === 'string' ? payload['agentId'] : null,
       customerId: typeof payload['customerId'] === 'string' ? payload['customerId'] : null,
