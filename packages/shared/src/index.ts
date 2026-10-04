@@ -21,6 +21,7 @@ export * from './customer-price-email';
 export * from './employee';
 export * from './freight-rate';
 export * from './inbound';
+export * from './income-statement';
 export * from './inquiry';
 export * from './ledger';
 export * from './local-sales';

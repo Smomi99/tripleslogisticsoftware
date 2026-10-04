@@ -39,6 +39,7 @@ import {
   shipmentWorklistRouter,
 } from './shipment-worklist.route';
 import { inboundRouter } from './inbound.route';
+import { incomeStatementRouter } from './income-statement.route';
 import { milestoneRouter } from './milestone.route';
 import { localSalesRouter } from './local-sales.route';
 import { preAlertRouter } from './pre-alert.route';
@@ -114,6 +115,8 @@ tenantRouter.use('/documentation', docWorklistRouter);
 
 // Accounts (docs/MODULE_ACCOUNTS.md) — Awaiting Freight Inv, Debit Invoice,
 // Credit Invoice, Receivable-Payable list.
+// docs/DESIGN-UPDATE-2026-10-04.md §9: before the routers that own /accounts.
+tenantRouter.use('/accounts/income-statement', incomeStatementRouter);
 tenantRouter.use('/accounts', accountsRouter);
 // The books (§14): Chart of accounts, the four Transaction screens, and the
 // Bank / Account set-ups.

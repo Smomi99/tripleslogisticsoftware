@@ -135,6 +135,8 @@ const ROUTES: Record<string, RouteEntry> = {
   'ACCOUNTS.EXPENSE': '/accounts/expense',
   'ACCOUNTS.INCOME': '/accounts/income',
   'ACCOUNTS.INTERNAL_TRANSFER': '/accounts/internal-transfer',
+  // docs/DESIGN-UPDATE-2026-10-04.md §9, Menu M13.
+  'ACCOUNTS.INCOME_STATEMENT': '/accounts/income-statement',
   // docs/DESIGN-UPDATE-2026-10-04.md §8, Menu M14.
   'ACCOUNTS.SHIPMENT_PROFITABILITY': '/accounts/shipment-profitability',
   'ACCOUNTS.BANK_SETUP': '/accounts/bank-setup',
@@ -268,4 +270,12 @@ export function viewPermissionsForPath(pathname: string): string[] {
     if (best === null || route.length > best.route.length) best = { route, feature };
   }
   return best === null ? [] : viewPermissionsOf(best.feature);
+}
+
+/**
+ * Whether a page sits at or under a menu item's route — on a path-segment
+ * boundary, so /accounts/income-statement is not "under" /accounts/income.
+ */
+export function isOnRoute(pathname: string, href: string): boolean {
+  return pathname === href || pathname.startsWith(`${href}/`);
 }

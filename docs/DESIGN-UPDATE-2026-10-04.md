@@ -78,7 +78,7 @@ shipment reaches it through `shipment.quotation_id`.
 | 5 | **§3 Pre-Alert** — **built** | Needs §7's Sales Team sender and documents that partly do not exist. | Q7–Q9 |
 | 6 | **§5 Tariff** — **built** | Master data only until Q14 says what consumes it. | Q14–Q15 |
 | 7 | **§6 Local Sales** — **built** | Customer list + activity log. | Q18–Q19 |
-| 8 | **§9 Income Statement** | **Blocked** on an accounting decision (Q21) that also decides Balance Sheet and Cash Flow. | Q21–Q25 |
+| 8 | **§9 Income Statement** — **built** (accrual as a report, §9.3) | Built on our own answers to Q21–Q25, for the client to confirm. Balance Sheet and Cash Flow still wait on Q21. | Q21–Q25, Q29 |
 | 9 | **§10 Reports** | A catalogue of ~70 reports with no layouts. The client has to pick a first set. | Q26 |
 
 ---
@@ -532,7 +532,7 @@ The sample rows confirm GP = Revenue − Cost and **GP % = GP ÷ Revenue**:
 
 ---
 
-## 9. INCOME STATEMENT (Accounts) — blocked on a decision
+## 9. INCOME STATEMENT (Accounts) — **built**, on our own answers to Q21–Q25
 
 ### 9.1 The sheet
 
@@ -566,6 +566,58 @@ Year YTD**.
    (Q23).
 4. **Currency USD.** The books are kept in base only (MODULE_ACCOUNTS §14.13 Q9), so a USD view means
    choosing a conversion rate (Q24).
+
+### 9.3 As built (branch `feature/income-statement`)
+
+Built on our own answers to Q21–Q25, not the client's. Each answer is below and in §11, for the client to
+confirm or overturn. No migration: the statement is read-only, and the new accounts are created the same
+way as the rest of the chart (`ensureChart`). Permission: the existing `ACCOUNTS.INCOME_STATEMENT`
+(VIEW, EXPORT).
+
+**Q21: accrual, built as a report, with the books left as they are.** Making invoices post to the
+books would rewrite how every Income and Expense voucher settles an invoice. Instead the statement reads
+each figure from where it is earned:
+
+| Figure | Source | Date |
+|---|---|---|
+| Revenue | every **ISSUED** debit invoice's base total, by the booking's service: FCL, LCL, Air; anything else, including an OTHER invoice with no booking, is Other Logistics Service Revenue | invoice date |
+| Job cost | the cost blocks of those invoices. **Carrier and vendor** blocks are freight cost by service; **agent** blocks are Agent / Overseas Partner Cost. This is the matching principle: a job's cost lands with its revenue | invoice date |
+| Everything else | every **POSTED** voucher line on an income or expense account, mapped from the chart (Q22) | voucher date |
+| Settlements | a voucher that receives against an invoice, pays a supplier's cost, or settles an opening balance is cash for revenue or cost already counted (or earned before the system), so **its category lines are left out**. What it moved beyond the document's booked base is the **realised exchange difference**, which becomes Foreign Exchange Gain or Loss | voucher date |
+
+Drafts and cancellations are left out everywhere. An invoice cancelled later drops out of every
+period, including the one it was issued in.
+
+**Q22: a code map from the chart onto the sheet's lines** (`ACCOUNT_LINE` in
+`lib/income-statement.ts`), for example Office Rent → Office Rent, Mobile Bill → Internet & Telephone,
+Sales Incentive → Sales Commission, Interest Expense → Interest / Finance Cost, Fixed Deposit →
+Interest Income. A workspace's own sub ledger follows the ledger it sits under, and an account with
+neither falls to Other Administrative Expenses or Other Income. Some revenue and cost lines have
+nothing in the books that can tell them apart: Trucking, Documentation/BL, Handling/CFS, Packing,
+Cross-Trade, Shipping Line, Port/Terminal, Loading. They show nothing until either the chart gets those
+accounts or cost heads get a statement line.
+
+**Q23: no branch.** The header says Branch: All.
+
+**Q24: base currency only.** No USD view.
+
+**Q25: the missing accounts were added to the predefined chart:**
+- under Operating Expense: Insurance, Depreciation, Bad Debt / Provision for Doubtful Debt, Legal &
+  Compliance and Business Development
+- a new Non-Operating Expense ledger: Loss on Asset Disposal, Other Non-Operating Expense
+- a new Income Tax ledger: Income Tax Expense
+
+Every workspace gets them the next time its chart is read.
+
+**The screen** (Accounts → Income Statement): Month, and the month the financial year starts in (Q29:
+January by default; July for a Bangladesh tax year). It shows the sheet's header (Period, Branch,
+Currency, Basis) and its full layout, A–E with every subtotal down to Net Profit Margin %, in the three
+columns. Each column header shows its date span, and losses are in red. **Export to Excel** gives the
+same figures as a workbook. A "How these figures are made" note sits under the table.
+
+Tests: `income-statement.test.ts`, 8 cases. Every figure is hand arithmetic over the fixtures, including
+the 500 gain and 100 loss from settlements, a workspace's own sub ledger, drafts left out, YTD and
+previous YTD, the export, permissions, and an empty second workspace.
 
 ---
 
@@ -663,14 +715,16 @@ Nothing here is guessed in the schema. Each has the working default the build wo
 | **Profitability (§8)** | | |
 | 20 | **Status** column (sample "Completed") — which states? | The booking's own status |
 | **Income Statement (§9)** | | |
-| 21 | **Accrual or cash?** Accrual needs invoices to post to the books (reversing MODULE_ACCOUNTS §14.13 Q2). That is the right foundation for Balance Sheet too, but it changes how Income and Expense vouchers settle invoices. | **Decision needed. Recommend accrual: invoices post on issue, receipts settle the receivable** |
-| 22 | **Statement lines vs chart of accounts** — extend the chart to the sheet's lines, or map each account to a line? | Map: each ledger account gets a statement line, seeded for the predefined chart; unmapped accounts fall into "Other …" |
+| 21 | **Accrual or cash?** Accrual needs invoices to post to the books (reversing MODULE_ACCOUNTS §14.13 Q2). That is the right foundation for Balance Sheet too, but it changes how Income and Expense vouchers settle invoices. | **Built: accrual as a report (§9.3).** The books are unchanged. Balance Sheet and Cash Flow still need the client's answer |
+| 22 | **Statement lines vs chart of accounts** — extend the chart to the sheet's lines, or map each account to a line? | **Built:** a code map from the predefined chart, a workspace's own accounts follow their ledger, the rest fall to "Other …" (§9.3) |
 | 23 | **Branch** — a real dimension on bookings, invoices and vouchers? | Not built; no branch filter |
 | 24 | **USD view** — convert at which rate (transaction date, period-end)? | BDT only |
-| 25 | Depreciation, Insurance, Bad Debt, Income Tax have no ledger accounts. | Added to the predefined chart when Q22 is built |
+| 25 | Depreciation, Insurance, Bad Debt, Income Tax have no ledger accounts. | **Built:** added to the predefined chart, with Legal, Business Development and two non-operating accounts (§9.3) |
 | **Reports (§10)** | | |
 | 26 | **Which reports first?** About 70 are listed without layouts. | Ask for the first 8. Suggested: Booking Register, Quotation Conversion, Customer Outstanding, AR Aging, AP Aging, Shipment P&L, Customer Profitability, Loss-Making Jobs |
 | **Raised while building §8** | | |
 | 27 | **Export Shipment Profitability to Excel?** The 2026-09-06 decision keeps buy prices out of every downloaded file, and this screen is mostly buy prices. Is a management export of it wanted, and for whom? | No export. The screen is view-only |
 | **Raised while building §5** | | |
 | 28 | **More tariff types?** The sheet names Port Tariff and CFS Charge; they are an enum. | An enum of the two. A Setting lookup the day a third is named |
+| **Raised while building §9** | | |
+| 29 | **When does the financial year start?** YTD needs it. Bangladesh's tax year runs July–June. | Chosen on the screen, January by default |
