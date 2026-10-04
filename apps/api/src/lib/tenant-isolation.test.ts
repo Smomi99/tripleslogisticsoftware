@@ -210,8 +210,9 @@ describe('model tier registry', () => {
     // (MODULE_DOCUMENTATION §4) + the five accounts tables (MODULE_ACCOUNTS §4)
     // + the seven tables of the books (MODULE_ACCOUNTS §14)
     // + shipment_advise_booking (CR-005)
-    // + shipment_milestone (DESIGN-UPDATE-2026-10-04 §2).
-    expect(known.length).toBe(102);
+    // + shipment_milestone (DESIGN-UPDATE-2026-10-04 §2)
+    // + igm_update and delivery_order (§4).
+    expect(known.length).toBe(104);
   });
 
   it('applies the caller row level security to every view', async () => {

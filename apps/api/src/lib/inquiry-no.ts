@@ -328,3 +328,30 @@ export async function nextDebitInvoiceNo(
   `;
   return formatDebitInvoiceNo(year, (rows[0]?.max_seq ?? 0) + 1);
 }
+
+// ---------------------------------------------------------------------------
+// Delivery orders — DESIGN-UPDATE-2026-10-04 §4.2
+// ---------------------------------------------------------------------------
+
+export const DELIVERY_ORDER_PREFIX = 'DO';
+
+export function formatDeliveryOrderNo(year: number, sequence: number): string {
+  return formatDocumentNo(DELIVERY_ORDER_PREFIX, year, sequence);
+}
+
+/**
+ * The next DO number: MAX over every row including cancelled ones, so a
+ * cancelled order's number is never handed out again — the debit invoice's
+ * rule, for the same reason (a port has the cancelled one on file).
+ */
+export async function nextDeliveryOrderNo(db: TenantDb, tenantId: bigint, year: number): Promise<string> {
+  const pattern = `${DELIVERY_ORDER_PREFIX}-${year}-%`;
+  const rows = await db.$queryRaw<{ max_seq: number | null }[]>`
+    SELECT MAX((regexp_replace(code, '^.*-', ''))::int) AS max_seq
+      FROM delivery_order
+     WHERE tenant_id = ${tenantId}
+       AND series_year = ${year}
+       AND code LIKE ${pattern}
+  `;
+  return formatDeliveryOrderNo(year, (rows[0]?.max_seq ?? 0) + 1);
+}

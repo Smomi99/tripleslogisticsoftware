@@ -73,7 +73,7 @@ shipment reaches it through `shipment.quotation_id`.
 |---|---|---|---|
 | 1 | **§8 Shipment Profitability** — **built** | Reads only data that exists: debit invoice revenue and cost. Smallest, highest value. | Q20 (status column) and Q27 (export) have defaults in place |
 | 2 | **§2 Depart-Arrive Confirmation** — **built** | Core workflow. The BL's laden-on-board date and the arrival notice depend on it. | Q1–Q6 |
-| 3 | **§4 IGM Update + DO Issue** | Inbound tail of the same milestone track; reuses §2's list. | Q10–Q13 |
+| 3 | **§4 IGM Update + DO Issue** — **built** | Inbound tail of the same milestone track; reuses §2's list. | Q10–Q13 |
 | 4 | **§7 Notification** (per-team sender) | §2, §3 and §4 send mail from named team addresses. | Q16–Q17 |
 | 5 | **§3 Pre-Alert** | Needs §7's Sales Team sender and documents that partly do not exist. | Q7–Q9 |
 | 6 | **§5 Tariff** | Master data only until Q14 says what consumes it. | Q14–Q15 |
@@ -225,7 +225,7 @@ pre-filled from that agent's PICs and stays editable. New email template: `PRE_A
 
 ---
 
-## 4. OPERATION — INBOUND ONLY
+## 4. OPERATION — INBOUND ONLY — **built**
 
 Both lists show only bookings whose quotation is `INBOUND`. Their columns are §2.1's Arrival-Sea
 columns (Last Leg vsl, ETA).
@@ -239,7 +239,8 @@ Detail L14–M16: **HBL NO** · **Upload IGM file** *"(pdf.jpg )"*.
   typed here (Q10).
 - The file goes to storage like every other upload, and only the key is stored.
 - The menu calls it *IGM submission*; the sheet and the Steps table call it *IGM update*. The existing
-  permission key `OPERATION.IGM_SUBMISSION` stays, and the label becomes "IGM Update".
+  permission key `OPERATION.IGM_SUBMISSION` stays. The sidebar keeps the menu's name, and the screen
+  is titled "IGM Update".
 
 ```
 igm_update        (client: IGM Update)
@@ -265,6 +266,34 @@ CONTAINER NO
 The sheet gives the letter's frame and nothing else. The subject, the body, the DO number and whom it
 releases the cargo to are all missing, and the addressee is fixed to Chittagong (Q11–Q13). The existing
 permission key `OPERATION.DO_ISSUE` stays.
+
+### 4.3 As built (branch `feature/igm-do`)
+
+Migration `20261004120000_igm_update_and_delivery_order`. **Q11 and Q12 were built differently from the
+defaults first written**: rather than leave DO Issue unbuilt, the letter's frame is built and the
+operator writes the words.
+
+- **Lists.** Both screens list INBOUND bookings that are not cancelled or rejected and have an approved
+  schedule or an advise. They have a Sea / Air switch, Awaiting / Updated (or Issued) / All views,
+  search, and the Arrival sheet's columns: last leg, ETA, containers and seals. They do not wait for a
+  confirmed departure; an inbound departure is the overseas agent's to report.
+- **IGM.** `igm_update`: the HBL No and the file's storage key, with no `code` and no status column.
+  The booking reads **Updated** once the file is in. Saving the HBL alone keeps it Awaiting. The first
+  save needs `CREATE`, changing it needs `EDIT`, and a replaced file is removed from storage after the
+  row points at the new one. The file downloads from the list.
+- **DO.** `delivery_order`: numbered **DO-2026-000001** per workspace per year. A cancelled order's
+  number is never reused (the debit invoice's rule). The fields:
+  - **Date** (today by default) and **To**. Sea opens on the sheet's *TERMINAL MANAGER / CHITTAGONG
+    PORT AUTHORITY / CHITTAGONG*, which the operator edits for other ports. Air opens blank.
+  - **Subject** (required) and **Letter** (optional): the operator's own words.
+  - **Container no**, from the finalised load plans.
+- **Rules.** Issuing needs the IGM file (`IGM_FIRST`, the Q13 default). Payment is not checked. There
+  is one issued order per booking: a wrong one is **cancelled with a reason** (`TOGGLE_STATUS`) and
+  issued again.
+- **The printed letter** carries the letterhead, DO No, the sheet's DATE / TO / SUBJECT / CONTAINER NO
+  layout and a "For <company>" signature line. It is stored when issued, so a reprint is the letter
+  that went (`EXPORT`).
+- Tests: `inbound.test.ts`, 8 cases, including two-workspace isolation.
 
 ---
 
@@ -502,8 +531,8 @@ Nothing here is guessed in the schema. Each has the working default the build wo
 | 9 | **Inbound pre-alerts** — sent or received? | Outbound only; the inbound side is the agent's pre-alert to us |
 | **IGM / DO (§4)** | | |
 | 10 | **Inbound HBL No** — typed on IGM Update? | Yes, typed there |
-| 11 | **DO letter body** — subject, wording, whom it releases cargo to (consignee / C&F agent), and a DO number format? | Not built until the text is supplied |
-| 12 | **DO addressee** is fixed to Chittagong Port Authority. Air inbound (Dhaka airport), Mongla, Pangaon? | Addressee taken from the POD: one text block per port, set up in Settings |
+| 11 | **DO letter body** — subject, wording, whom it releases cargo to (consignee / C&F agent), and a DO number format? | Built with the operator writing subject and letter; `DO-YYYY-NNNNNN`. Send a standard wording to pre-fill |
+| 12 | **DO addressee** is fixed to Chittagong Port Authority. Air inbound (Dhaka airport), Mongla, Pangaon? | Sea opens on the sheet's Chittagong addressee, editable; air opens blank. A per-port addressee in Settings if wanted |
 | 13 | **Preconditions for DO** — must the IGM be Updated? Must the debit invoice be paid? | IGM Updated required; payment not checked (not stated) |
 | **Tariff (§5)** | | |
 | 14 | **What uses a tariff?** Pre-filling quotation local charges, the debit invoice, or reference only? | Reference only; nothing reads it yet |

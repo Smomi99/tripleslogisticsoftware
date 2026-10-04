@@ -295,6 +295,8 @@ model Tenant {
   shipmentAdviseLines ShipmentAdviseLine[]
   shipmentAdviseBookings ShipmentAdviseBooking[]
   shipmentMilestones  ShipmentMilestone[]
+  igmUpdates          IgmUpdate[]
+  deliveryOrders      DeliveryOrder[]
   blDrafts            BlDraft[]
   blDraftContainers   BlDraftContainer[]
   blTemplates         BlTemplate[]
@@ -1896,6 +1898,12 @@ model User {
   milestonesConfirmed      ShipmentMilestone[]  @relation("ShipmentMilestoneConfirmedBy")
   milestonesCreated        ShipmentMilestone[]  @relation("ShipmentMilestoneCreatedBy")
   milestonesUpdated        ShipmentMilestone[]  @relation("ShipmentMilestoneUpdatedBy")
+  igmUpdatesCreated        IgmUpdate[]          @relation("IgmUpdateCreatedBy")
+  igmUpdatesUpdated        IgmUpdate[]          @relation("IgmUpdateUpdatedBy")
+  deliveryOrdersIssued     DeliveryOrder[]      @relation("DeliveryOrderIssuedBy")
+  deliveryOrdersCancelled  DeliveryOrder[]      @relation("DeliveryOrderCancelledBy")
+  deliveryOrdersCreated    DeliveryOrder[]      @relation("DeliveryOrderCreatedBy")
+  deliveryOrdersUpdated    DeliveryOrder[]      @relation("DeliveryOrderUpdatedBy")
   blDraftsSubmitted        BlDraft[]            @relation("BlDraftSubmittedBy")
   blDraftsApproved         BlDraft[]            @relation("BlDraftApprovedBy")
   blDraftsSent             BlDraft[]            @relation("BlDraftSentBy")
@@ -3979,6 +3987,9 @@ model Shipment {
   blDrafts       BlDraft[]
   /// docs/DESIGN-UPDATE-2026-10-04.md §2: departed, transshipped, arrived.
   milestones     ShipmentMilestone[]
+  /// DESIGN-UPDATE-2026-10-04 §4: inbound only.
+  igmUpdates     IgmUpdate[]
+  deliveryOrders DeliveryOrder[]
   debitInvoices  DebitInvoice[]
 
   clpBookings ClpBooking[] @relation("ClpBookingShipment")
@@ -5060,6 +5071,109 @@ model ShipmentMilestone {
   @@index([shipmentId])
   @@index([confirmedBy])
   @@map("shipment_milestone")
+}
+
+/// client: IGM Update ( Inbound shipment only) — DESIGN-UPDATE-2026-10-04 §4.1.
+///
+/// The sheet's detail: HBL NO and "Upload IGM file (pdf.jpg)". The list shows
+/// Awaiting until the file is in, Updated after. An inbound booking has no HBL
+/// in the system (it skips BL Draft & Print), so the number is typed here.
+/// One live row per booking; saving again replaces the number or the file.
+model IgmUpdate {
+  tenantId   BigInt  @map("tenant_id")
+  id         BigInt  @id @default(autoincrement())
+  shipmentId BigInt  @map("shipment_id")
+  /// L14 "HBL NO".
+  hblNo      String? @map("hbl_no") @db.VarChar(64)
+  /// M14 "Upload IGM file". The storage key, never the bytes (CLAUDE.md §2).
+  igmFile    String? @map("igm_file") @db.Text
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  shipment Shipment @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict, map: "igm_update_shipment_id_fkey")
+
+  createdByUser User? @relation("IgmUpdateCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("IgmUpdateUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  /// One live row per booking: a partial unique index in the migration.
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([shipmentId])
+  @@map("igm_update")
+}
+
+/// DESIGN-UPDATE-2026-10-04 §4.2. A delivery order is issued once and stays
+/// issued; a wrong one is cancelled with a reason and issued again, like an
+/// invoice — its number is never reused.
+enum DeliveryOrderStatus {
+  ISSUED
+  CANCELLED
+
+  @@map("delivery_order_status")
+}
+
+/// client: DO ISSUE ( Inbound shipment only ) — the letter releasing the cargo.
+///
+/// The sheet draws the letter's frame — DATE, TO (B15–B18), SUBJECT (B20) and
+/// CONTAINER NO (B30) — and no wording, so the operator writes the subject and
+/// the body, and the containers come from the load plans. The printed letter is
+/// stored when issued, so a reprint is the letter that went.
+model DeliveryOrder {
+  tenantId   BigInt @map("tenant_id")
+  id         BigInt @id @default(autoincrement())
+  /// DO-2026-000001: per workspace per year of the issue date, never reused.
+  code       String @db.VarChar(32)
+  seriesYear Int    @map("series_year")
+  shipmentId BigInt @map("shipment_id")
+
+  /// B14 "DATE".
+  issueDate DateTime @map("issue_date") @db.Date
+  /// B15–B18: "TO / TERMINAL MANAGER / CHITTAGONG PORT AUTHORITY / CHITTAGONG".
+  addressee String   @db.Text
+  /// B20 "SUBJECT :".
+  subject   String   @db.Text
+  /// Rows 21–29, blank on the sheet.
+  body      String?  @db.Text
+
+  status  DeliveryOrderStatus @default(ISSUED)
+  pdfFile String?             @map("pdf_file") @db.Text
+
+  issuedBy     BigInt?   @map("issued_by")
+  issuedAt     DateTime  @default(now()) @map("issued_at") @db.Timestamptz(6)
+  cancelledBy  BigInt?   @map("cancelled_by")
+  cancelledAt  DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  cancelReason String?   @map("cancel_reason") @db.Text
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  shipment Shipment @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict, map: "delivery_order_shipment_id_fkey")
+
+  issuedByUser    User? @relation("DeliveryOrderIssuedBy", fields: [issuedBy], references: [id], onDelete: Restrict)
+  cancelledByUser User? @relation("DeliveryOrderCancelledBy", fields: [cancelledBy], references: [id], onDelete: Restrict)
+  createdByUser   User? @relation("DeliveryOrderCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser   User? @relation("DeliveryOrderUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  /// One ISSUED order per booking: a partial unique index in the migration.
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([shipmentId])
+  @@index([issuedBy])
+  @@index([cancelledBy])
+  @@map("delivery_order")
 }
 
 /// client: the PO grid, row 17 of both advise sheets.

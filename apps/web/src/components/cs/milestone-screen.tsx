@@ -84,6 +84,45 @@ function Lines({ values }: { values: (string | null)[] }) {
   );
 }
 
+/**
+ * Row 6 of the On board, Transshipment and Arrival sheets — and of IGM Update
+ * and DO issue, which copy the Arrival sheet's. One definition, so the eight
+ * lists draw a booking the same way.
+ */
+export function bookingColumns<T extends MilestoneRow>(kind: MilestoneKind, isAir: boolean): DataTableColumn<T>[] {
+  const cols: DataTableColumn<T>[] = [
+    { id: 'quotation', header: 'Quotation No', cell: (r) => <span className="font-mono tabular-nums">{r.quotationCode}</span> },
+    { id: 'so', header: 'S/O No', cell: (r) => <span className="font-mono tabular-nums">{r.soCode ?? '—'}</span> },
+    { id: 'customer', header: 'Customer', sortable: true, cell: (r) => r.customerName },
+    { id: 'exporter', header: 'Exporter', cell: (r) => r.exporterName ?? '—' },
+    { id: 'type', header: 'Shipment Type', cell: (r) => (r.shipmentType === 'AIR' ? 'Air' : 'Sea') },
+    { id: 'pol', header: isAir ? 'AOL' : 'POL', cell: (r) => <span title={r.polCode}>{r.polName}</span> },
+    { id: 'pod', header: isAir ? 'AOD' : 'POD', cell: (r) => <span title={r.podCode}>{r.podName}</span> },
+    { id: 'carrier', header: isAir ? 'Airline' : 'Carrier', cell: (r) => r.carrierName },
+  ];
+  if (!isAir) {
+    cols.push(
+      { id: 'container', header: 'Container no', cell: (r) => <Lines values={r.containers.map((c) => c.containerNo)} /> },
+      { id: 'seal', header: 'Seal', cell: (r) => <Lines values={r.containers.map((c) => c.sealNo)} /> },
+    );
+  }
+  cols.push(
+    {
+      id: 'leg',
+      header: isAir ? MILESTONE_LEG_LABEL[kind].air : MILESTONE_LEG_LABEL[kind].sea,
+      cell: (r) => <span className="font-mono tabular-nums">{r.legLabel ?? '—'}</span>,
+    },
+    {
+      id: 'date',
+      header: MILESTONE_DATE_LABEL[kind],
+      numeric: true,
+      sortable: true,
+      cell: (r) => r.plannedOn ?? '—',
+    },
+  );
+  return cols;
+}
+
 export function MilestoneScreen({ screen }: { screen: MilestoneScreenDef }) {
   const { can } = useSession();
   const { kind, shipmentType } = screen;
@@ -96,36 +135,9 @@ export function MilestoneScreen({ screen }: { screen: MilestoneScreenDef }) {
   const canEdit = can('CUSTOMER_SERVICE.DEPART_ARRIVE.EDIT');
   const [confirming, setConfirming] = useState<MilestoneRow | null>(null);
 
-  const columns: DataTableColumn<MilestoneRow>[] = useMemo(() => {
-    const cols: DataTableColumn<MilestoneRow>[] = [
-      { id: 'quotation', header: 'Quotation No', cell: (r) => <span className="font-mono tabular-nums">{r.quotationCode}</span> },
-      { id: 'so', header: 'S/O No', cell: (r) => <span className="font-mono tabular-nums">{r.soCode ?? '—'}</span> },
-      { id: 'customer', header: 'Customer', sortable: true, cell: (r) => r.customerName },
-      { id: 'exporter', header: 'Exporter', cell: (r) => r.exporterName ?? '—' },
-      { id: 'type', header: 'Shipment Type', cell: (r) => (r.shipmentType === 'AIR' ? 'Air' : 'Sea') },
-      { id: 'pol', header: isAir ? 'AOL' : 'POL', cell: (r) => <span title={r.polCode}>{r.polName}</span> },
-      { id: 'pod', header: isAir ? 'AOD' : 'POD', cell: (r) => <span title={r.podCode}>{r.podName}</span> },
-      { id: 'carrier', header: isAir ? 'Airline' : 'Carrier', cell: (r) => r.carrierName },
-    ];
-    if (!isAir) {
-      cols.push(
-        { id: 'container', header: 'Container no', cell: (r) => <Lines values={r.containers.map((c) => c.containerNo)} /> },
-        { id: 'seal', header: 'Seal', cell: (r) => <Lines values={r.containers.map((c) => c.sealNo)} /> },
-      );
-    }
-    cols.push(
-      {
-        id: 'leg',
-        header: isAir ? MILESTONE_LEG_LABEL[kind].air : MILESTONE_LEG_LABEL[kind].sea,
-        cell: (r) => <span className="font-mono tabular-nums">{r.legLabel ?? '—'}</span>,
-      },
-      {
-        id: 'date',
-        header: MILESTONE_DATE_LABEL[kind],
-        numeric: true,
-        sortable: true,
-        cell: (r) => r.plannedOn ?? '—',
-      },
+  const columns: DataTableColumn<MilestoneRow>[] = useMemo(
+    () => [
+      ...bookingColumns<MilestoneRow>(kind, isAir),
       {
         id: 'status',
         header: 'Status',
@@ -146,9 +158,9 @@ export function MilestoneScreen({ screen }: { screen: MilestoneScreenDef }) {
             </div>
           ),
       },
-    );
-    return cols;
-  }, [isAir, kind]);
+    ],
+    [isAir, kind],
+  );
 
   return (
     <div className="flex flex-col gap-4">

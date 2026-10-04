@@ -20,6 +20,7 @@ export * from './customer';
 export * from './customer-price-email';
 export * from './employee';
 export * from './freight-rate';
+export * from './inbound';
 export * from './inquiry';
 export * from './ledger';
 export * from './milestone';

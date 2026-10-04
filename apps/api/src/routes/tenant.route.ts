@@ -38,6 +38,7 @@ import {
   opsWorklistRouter,
   shipmentWorklistRouter,
 } from './shipment-worklist.route';
+import { inboundRouter } from './inbound.route';
 import { milestoneRouter } from './milestone.route';
 import { salesLeadRouter } from './sales-lead.route';
 import { portRouter } from './port.route';
@@ -92,6 +93,8 @@ tenantRouter.use('/cs', milestoneRouter);
 tenantRouter.use('/ops', cargoReceiptRouter);
 tenantRouter.use('/ops', clpRouter);
 tenantRouter.use('/ops', opsWorklistRouter);
+// docs/DESIGN-UPDATE-2026-10-04.md §4: IGM Submission and DO Issue, inbound only.
+tenantRouter.use('/ops', inboundRouter);
 
 // Documentation (docs/MODULE_DOCUMENTATION.md).
 tenantRouter.use('/documentation', shipmentAdviseRouter);

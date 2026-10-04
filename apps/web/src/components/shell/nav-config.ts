@@ -103,6 +103,9 @@ const ROUTES: Record<string, RouteEntry> = {
   'CUSTOMER_SERVICE.DEPART_ARRIVE': '/cs/depart-arrive',
   'OPERATION.CARGO_RECEIPT': '/operation/cargo-receipt',
   'OPERATION.CONTAINER_LOAD_PLAN': '/operation/container-load-plan',
+  // docs/DESIGN-UPDATE-2026-10-04.md §4, Menu I7–I8: inbound bookings only.
+  'OPERATION.IGM_SUBMISSION': '/operation/igm-submission',
+  'OPERATION.DO_ISSUE': '/operation/do-issue',
   /*
    * Documentation (docs/MODULE_DOCUMENTATION.md §2). Two menu items on one
    * screen and one permission, the way Shipment Booking does it: the sheets

@@ -110,6 +110,8 @@ export const TENANT_OWNED_MODELS = [
   'ShipmentAdviseLine',
   'ShipmentAdviseBooking', // CR-005: the bookings one advise covers
   'ShipmentMilestone', // DESIGN-UPDATE-2026-10-04 §2: departed, transshipped, arrived
+  'IgmUpdate', // DESIGN-UPDATE-2026-10-04 §4.1: inbound only
+  'DeliveryOrder', // DESIGN-UPDATE-2026-10-04 §4.2: inbound only
   'BlDraft',
   'BlDraftContainer',
   'BlTemplate',
