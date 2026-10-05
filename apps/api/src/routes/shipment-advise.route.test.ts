@@ -334,6 +334,9 @@ describe('the advise is built from what the operation actually did', () => {
       expect(line.stuffingDate).toBe('2026-09-18');
       expect(line.cargoReceiptDate).toBe('2026-09-15');
       expect(line.containerNo).toBe(containerNo);
+      // The container's seal and size lead the grid beside its number.
+      expect(line.sealNo).toBe(`SL-AD-${RUN}`);
+      expect(line.containerSize).toBe('20STD');
     }
 
     // --- 2. create it. The House BL number is allocated here (§3.3).
@@ -357,6 +360,8 @@ describe('the advise is built from what the operation actually did', () => {
     expect(advise.houseBlNo).toMatch(/^[A-Z]{3}\d{4}\d{3,}$/);
     expect(advise.status).toBe('DRAFT');
     expect(advise.lines).toHaveLength(2);
+    expect(advise.lines[0].sealNo).toBe(`SL-AD-${RUN}`);
+    expect(advise.lines[0].containerSize).toBe('20STD');
 
     // A draft advise does not move the booking — nobody has seen it.
     expect(
@@ -437,6 +442,11 @@ describe('the advise is built from what the operation actually did', () => {
     expect(text).toContain(bk.code);
     // Row 21: the totals line prints as the client draws it.
     expect(text).toContain('2 PO');
+    // Each row carries its container, seal and size, and both bill numbers.
+    expect(text).toContain(containerNo);
+    expect(text).toContain(`SL-AD-${RUN}`);
+    expect(text).toContain('20STD');
+    expect(text).toContain('MBL-999');
 
     const stored = await owner.shipmentAdvise.findFirstOrThrow({
       where: { id: BigInt(advise.id as string) },

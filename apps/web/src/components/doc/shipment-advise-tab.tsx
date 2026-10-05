@@ -442,11 +442,22 @@ export function ShipmentAdviseTab({
         />
       )}
 
-      {/* Row 17's grid, pulled and shown as it came. */}
+      {/*
+        Row 17's grid, pulled and shown as it came. Sea opens on the container
+        the cartons went into (air has none, §3.7); the bill numbers close each
+        row, after the EFR — the same order the printed advise uses.
+      */}
       <div className="overflow-x-auto rounded-manifest border border-line">
         <table className="w-full border-collapse text-cell">
           <thead>
             <tr className="bg-paper text-left label-manifest">
+              {!isAir && (
+                <>
+                  <th className="px-3 py-2">Container no</th>
+                  <th className="px-3 py-2">Seal no</th>
+                  <th className="px-3 py-2">Size</th>
+                </>
+              )}
               {showBooking && <th className="px-3 py-2">Booking</th>}
               <th className="px-3 py-2">PO</th>
               <th className="px-3 py-2">Item</th>
@@ -460,12 +471,24 @@ export function ShipmentAdviseTab({
               <th className="px-3 py-2">Cargo rcvd</th>
               <th className="px-3 py-2">Stuffed</th>
               <th className="px-3 py-2">EFR</th>
-              {!isAir && <th className="px-3 py-2">Container</th>}
+              <th className="px-3 py-2">{isAir ? 'HAWB no' : 'House BL no'}</th>
+              <th className="px-3 py-2">{isAir ? 'MAWB no' : 'MBL no'}</th>
             </tr>
           </thead>
           <tbody>
             {lines.map((line) => (
               <tr key={line.id} className="border-t border-line">
+                {!isAir && (
+                  <>
+                    <td className="px-3 py-2 font-mono tabular-nums">
+                      {line.containerNo ?? line.clpCode ?? '—'}
+                    </td>
+                    <td className="px-3 py-2 font-mono tabular-nums">{line.sealNo ?? '—'}</td>
+                    <td className="px-3 py-2 font-mono tabular-nums">
+                      {line.containerSize ?? '—'}
+                    </td>
+                  </>
+                )}
                 {showBooking && (
                   <td className="px-3 py-2 font-mono tabular-nums text-hull">{line.bookingNo}</td>
                 )}
@@ -495,16 +518,17 @@ export function ShipmentAdviseTab({
                 </td>
                 <td className="px-3 py-2 font-mono tabular-nums">{line.stuffingDate ?? '—'}</td>
                 <td className="px-3 py-2 font-mono tabular-nums">{line.efrNo ?? '—'}</td>
-                {!isAir && (
-                  <td className="px-3 py-2 font-mono tabular-nums">
-                    {line.containerNo ?? line.clpCode ?? '—'}
-                  </td>
-                )}
+                {/* The House BL is allocated when the advise is saved. */}
+                <td className="px-3 py-2 font-mono tabular-nums">{advise?.houseBlNo ?? '—'}</td>
+                <td className="px-3 py-2 font-mono tabular-nums">
+                  {header.mblNo === '' ? '—' : header.mblNo}
+                </td>
               </tr>
             ))}
             {/* Row 21 — the totals line, as the client drew it. */}
             {totals !== undefined && (
               <tr className="border-t-2 border-line bg-paper font-semibold">
+                {!isAir && <td className="px-3 py-2" colSpan={3} />}
                 {showBooking && (
                   <td className="px-3 py-2">{bookingNos.length} bookings</td>
                 )}
@@ -529,7 +553,7 @@ export function ShipmentAdviseTab({
                     {totals.chargeableWtKg ?? '—'}
                   </td>
                 )}
-                <td className="px-3 py-2" colSpan={isAir ? 3 : 4} />
+                <td className="px-3 py-2" colSpan={5} />
               </tr>
             )}
           </tbody>

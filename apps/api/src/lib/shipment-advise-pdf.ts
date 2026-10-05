@@ -7,13 +7,14 @@ import PDFDocument from 'pdfkit';
  * the sheet draws it: the header block the schedule fills, then the PO grid
  * with its totals row, then the numbers the customer will quote back at you.
  *
- * Every word of the letterhead arrives as data, like the shipping order's —
- * nothing about one forwarder is written into this file.
+ * The company name arrives as data, like the shipping order's — nothing about
+ * one forwarder is written into this file. The letterhead stops at the name:
+ * the address line other documents print is the email signature block, and the
+ * client does not want it on the advise.
  */
 
 export interface ShipmentAdvisePdfInput {
   companyName: string;
-  companyAddress: string | null;
 
   adviseNo: string;
   /** CR-005: every booking the advise covers, comma-separated. */
@@ -54,6 +55,8 @@ export interface ShipmentAdvisePdfInput {
     stuffingDate: string | null;
     efrNo: string | null;
     containerNo: string | null;
+    sealNo: string | null;
+    containerSize: string | null;
   }[];
   totals: {
     poCount: number;
@@ -84,9 +87,6 @@ export function renderShipmentAdvisePdf(input: ShipmentAdvisePdfInput): Promise<
 
     // ---------------------------------------------------------- letterhead
     doc.font('Helvetica-Bold').fontSize(15).fillColor(HULL).text(input.companyName, left, 40);
-    if (input.companyAddress !== null && input.companyAddress !== '') {
-      doc.font('Helvetica').fontSize(8).fillColor(STEEL).text(input.companyAddress, { width: 320 });
-    }
 
     // The two numbers this page exists to carry, where the eye lands first.
     doc
@@ -169,34 +169,53 @@ export function renderShipmentAdvisePdf(input: ShipmentAdvisePdfInput): Promise<
     y += 8;
 
     const showBooking = input.showBooking === true;
-    const headers = [
+    const houseLabel = input.isAir ? 'HAWB No' : 'House BL No';
+    const masterLabel = input.isAir ? 'MAWB No' : 'MBL No';
+    // Sea opens on the container the cartons went into; air has none (§3.7).
+    // The bill numbers close every row, after the EFR.
+    const columns: [string, number][] = [
+      ...(input.isAir ? [] : ([['Container No', 66], ['Seal No', 50], ['Size', 32]] as [string, number][])),
       // CR-005: one advise for several bookings says which booking each PO is on.
-      ...(showBooking ? ['Booking'] : []),
-      ...(input.isAir
-        ? ['PO', 'Item', 'SKU', 'CTN', 'PCS', 'N.WT', 'G.WT', 'CBM', 'Chg WT', 'Rcvd', 'Stuffed', 'EFR']
-        : ['PO', 'Item', 'SKU', 'CTN', 'PCS', 'N.WT', 'G.WT', 'CBM', 'Rcvd', 'Stuffed', 'EFR', 'Container']),
+      ...(showBooking ? ([['Booking', 70]] as [string, number][]) : []),
+      ['PO', 58],
+      ['Item', 40],
+      ['SKU', 58],
+      ['CTN', 30],
+      ['PCS', 34],
+      ['N.WT', 40],
+      ['G.WT', 40],
+      ['CBM', 34],
+      ...(input.isAir ? ([['Chg WT', 40]] as [string, number][]) : []),
+      ['Rcvd', 46],
+      ['Stuffed', 46],
+      ['EFR', 50],
+      // Air has the room the three container columns would take.
+      [houseLabel, input.isAir ? 100 : 82],
+      [masterLabel, 60],
     ];
-    const widths = [
-      ...(showBooking ? [70] : []),
-      ...(input.isAir
-        ? [78, 72, 60, 38, 42, 50, 50, 48, 50, 56, 56, 70]
-        : [78, 72, 60, 38, 42, 50, 50, 48, 56, 56, 60, 80]),
-    ];
+    // A wide grid (several bookings) shrinks to the page rather than running off it.
+    const scale = Math.min(1, width / columns.reduce((acc, [, w]) => acc + w, 0));
+    const headers = columns.map(([h]) => h);
+    const widths = columns.map(([, w]) => w * scale);
     const isText = (h: string): boolean =>
-      ['Booking', 'PO', 'Item', 'SKU', 'Rcvd', 'Stuffed', 'EFR', 'Container'].includes(h);
+      ['Container No', 'Seal No', 'Size', 'Booking', 'PO', 'Item', 'SKU', 'Rcvd', 'Stuffed', 'EFR', houseLabel, masterLabel].includes(h);
 
     const row = (cells: (string | number)[], bold: boolean): void => {
       let x = left;
-      doc
-        .font(bold ? 'Helvetica-Bold' : 'Helvetica')
-        .fontSize(7.5)
-        .fillColor(bold ? HULL : '#1A2B3C');
+      doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fillColor(bold ? HULL : '#1A2B3C');
       cells.forEach((cell, i) => {
-        doc.text(String(cell), x, y, {
-          width: (widths[i] ?? 50) - 4,
-          align: isText(headers[i] ?? '') ? 'left' : 'right',
-          lineBreak: false,
-        });
+        const text = isText(headers[i] ?? '');
+        const value = String(cell);
+        // Figures stop short of the next column, so a number never runs into a date.
+        const room = (widths[i] ?? 50) - (text ? 4 : 10);
+        // A long seal, PO or EFR shrinks to its column rather than wrapping into the row below.
+        let size = 7.5 * scale;
+        doc.fontSize(size);
+        while (size > 5 && doc.widthOfString(value) > room) {
+          size -= 0.25;
+          doc.fontSize(size);
+        }
+        doc.text(value, x, y, { width: room, align: text ? 'left' : 'right', lineBreak: false });
         x += widths[i] ?? 50;
       });
       y += bold ? 14 : 12;
@@ -213,6 +232,7 @@ export function renderShipmentAdvisePdf(input: ShipmentAdvisePdfInput): Promise<
         row(headers, true);
       }
       const cells: (string | number)[] = [
+        ...(input.isAir ? [] : [line.containerNo ?? '—', line.sealNo ?? '—', line.containerSize ?? '—']),
         ...(showBooking ? [line.bookingNo ?? '—'] : []),
         line.poNo,
         line.itemCode,
@@ -224,8 +244,13 @@ export function renderShipmentAdvisePdf(input: ShipmentAdvisePdfInput): Promise<
         line.volumeCbm ?? '—',
       ];
       if (input.isAir) cells.push(line.chargeableWtKg ?? '—');
-      cells.push(line.cargoReceiptDate ?? '—', line.stuffingDate ?? '—', line.efrNo ?? '—');
-      if (!input.isAir) cells.push(line.containerNo ?? '—');
+      cells.push(
+        line.cargoReceiptDate ?? '—',
+        line.stuffingDate ?? '—',
+        line.efrNo ?? '—',
+        input.houseBlNo,
+        input.mblNo ?? '—',
+      );
       row(cells, false);
     }
 
@@ -235,6 +260,7 @@ export function renderShipmentAdvisePdf(input: ShipmentAdvisePdfInput): Promise<
 
     // Row 21 of the sheet, in the client's own shape: "3 PO", then the sums.
     const totalCells: (string | number)[] = [
+      ...(input.isAir ? [] : ['', '', '']),
       ...(showBooking ? [''] : []),
       `${input.totals.poCount} PO`,
       '',
