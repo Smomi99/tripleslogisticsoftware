@@ -10,6 +10,7 @@ import {
   blDraftSendSchema,
   blTemplateInputSchema,
   CODE_PREFIX,
+  freightTermsOf,
 } from '@ff/shared';
 
 import { adviseMembers, liveAdviseOf } from '../lib/advise-group';
@@ -690,18 +691,27 @@ export async function blDocumentInput(
   tenantId: bigint,
   row: BlDraftRow,
 ): Promise<Omit<BlDraftPdfInput, 'isDraft'>> {
-  const [head, logo, adviseLines] = await Promise.all([
-    letterheadOf(db, tenantId),
-    logoOf(db, tenantId),
-    // The PO / item column: every line of the bill's advise (CR-005: all its bookings).
-    db.shipmentAdviseLine.findMany({
-      where: { adviseId: row.adviseId, deletedAt: null },
-      orderBy: [{ poNo: 'asc' }, { id: 'asc' }],
-      select: { poNo: true, itemCode: true },
-    }),
-  ]);
+  const [head, logo] = await Promise.all([letterheadOf(db, tenantId), logoOf(db, tenantId)]);
   const dayOf = (d: Date | null): string | null =>
     d === null ? null : d.toISOString().slice(0, 10);
+
+  /*
+   * The client's rules for the printed bill (§13.4, 2026-10-05). Pre-carriage
+   * is the first leg's vessel and voyage, as the advise recorded them; the
+   * place of receipt is the port of loading; and who pays the freight follows
+   * the booking's Incoterms — payable at destination when collect, at the port
+   * of loading when prepaid. A booking with no TOS keeps what the draft typed.
+   */
+  const preCarriage = [row.advise.firstVessel?.name, row.advise.voyageNo]
+    .filter((v) => (v ?? '').trim() !== '')
+    .join(' / ');
+  const freightTerms = freightTermsOf(row.shipment.tos?.code ?? null);
+  const freightPayableAt =
+    freightTerms === null
+      ? row.freightPayableAt
+      : freightTerms === 'COLLECT'
+        ? 'DESTINATION'
+        : row.pol.name.toUpperCase();
 
   return {
     // The name only: the letterhead's second line is the email signature block,
@@ -719,14 +729,13 @@ export async function blDocumentInput(
     exportReferences: row.exportReferences,
     forwardingAgentReferences: row.forwardingAgentReferences,
     pointCountryOfOrigin: row.pointCountryOfOrigin,
-    preCarriageByModeName: row.preCarriage.name,
-    placeOfReceipt: row.placeOfReceipt,
+    preCarriageVesselVoyage: preCarriage === '' ? null : preCarriage,
+    placeOfReceipt: row.pol.name,
     deliveryAgentText: row.deliveryAgentText ?? row.deliveryAgent?.name ?? null,
     oceanVesselVoyage: row.oceanVesselVoyage,
     polName: row.pol.name,
     podName: row.pod.name,
     placeOfDelivery: row.placeOfDelivery,
-    poItems: [...new Set(adviseLines.map((l) => `${l.poNo} / ${l.itemCode}`))],
     packagesDescription: row.packagesDescription,
     marksAndNumbers: row.marksAndNumbers,
     grossWeightKg: row.grossWeightKg?.toString() ?? null,
@@ -739,7 +748,8 @@ export async function blDocumentInput(
       grossWeightKg: c.grossWeightKg?.toString() ?? null,
       measurementCbm: c.measurementCbm?.toString() ?? null,
     })),
-    freightPayableAt: row.freightPayableAt,
+    freightPayableAt,
+    freightTerms,
     originalBlCount: row.originalBlCount,
     ladenOnBoardDate: dayOf(row.ladenOnBoardDate),
   };

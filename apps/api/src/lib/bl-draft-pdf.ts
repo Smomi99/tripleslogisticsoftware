@@ -1,3 +1,4 @@
+import type { FreightTerms } from '@ff/shared';
 import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
 
@@ -8,8 +9,9 @@ import QRCode from 'qrcode';
  * logo, name and serial top left, a QR in the middle, the title top right;
  * then one ruled grid — parties down the left, references down the right, the
  * routing under them, the particulars declared by the merchant with the
- * container list inside the description, and the freight, issue and signature
- * blocks at the foot. Set in a monospace face throughout, as their form is.
+ * container lines under the description, and the freight, issue and signature
+ * blocks at the foot. Solid black Helvetica throughout: their form's blue
+ * Courier printed as broken dots (see INK).
  *
  * The letterhead stops at the name and logo. The address line other documents
  * print is the email signature block, and the client does not want it here.
@@ -45,7 +47,8 @@ export interface BlDraftPdfInput {
   forwardingAgentReferences: string | null;
   pointCountryOfOrigin: string | null;
 
-  preCarriageByModeName: string;
+  /** The first leg's vessel and voyage, which the form's Pre-Carriage By carries. */
+  preCarriageVesselVoyage: string | null;
   placeOfReceipt: string;
   deliveryAgentText: string | null;
 
@@ -54,8 +57,6 @@ export interface BlDraftPdfInput {
   podName: string;
   placeOfDelivery: string | null;
 
-  /** "PO / item" for each line of the bill's advise. */
-  poItems: string[];
   packagesDescription: string | null;
   marksAndNumbers: string | null;
   grossWeightKg: string | null;
@@ -71,8 +72,10 @@ export interface BlDraftPdfInput {
   }[];
 
   freightPayableAt: string | null;
+  /** Which of the Prepaid and Collect columns is marked; null marks neither. */
+  freightTerms: FreightTerms | null;
   originalBlCount: number | null;
-  /** YYYY-MM-DD. */
+  /** YYYY-MM-DD. Also the date of issue the form prints, with the port of loading. */
   ladenOnBoardDate: string | null;
 
   /**
@@ -80,7 +83,7 @@ export interface BlDraftPdfInput {
    * draft, which is a single unmarked page.
    */
   copies?: BlPrintMark[];
-  /** §13: the day the bill was issued (YYYY-MM-DD), in the workspace's calendar. */
+  /** §13: the day the bill was issued (YYYY-MM-DD), in the workspace's calendar — for the QR. */
   issuedOn?: string | null;
 }
 
@@ -94,12 +97,20 @@ export interface BlPrintMark {
   watermark: string | null;
 }
 
-/** The client's form: blue rules and labels, black entries. */
-const BLUE = '#2B3A8E';
-const INK = '#111111';
-const STEEL = '#6B7A88';
-const MONO = 'Courier';
-const MONO_BOLD = 'Courier-Bold';
+/**
+ * Pure black, rules and words alike, in Helvetica (client, 2026-10-05). The
+ * form's blue labels and rules and its Courier printed as broken dots: a black
+ * and white printer halftones any colour, near-black included, and Courier's
+ * hairline strokes break up at this size. Black is one solid pass of toner.
+ */
+const INK = '#000000';
+const FONT = 'Helvetica';
+const FONT_BOLD = 'Helvetica-Bold';
+const RULE_WIDTH = 0.75;
+/** What a party block or a field holds. */
+const ENTRY_SIZE = 8;
+/** A copy's diagonal word — the one thing meant to print faint. */
+const COPY_GREY = '#6B7A88';
 
 const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
 
@@ -228,10 +239,13 @@ export async function renderBlDraftPdf(input: BlDraftPdfInput): Promise<Buffer> 
     const mid = left + 270;
 
     const rule = (x1: number, y1: number, x2: number, y2: number): void => {
-      doc.moveTo(x1, y1).lineTo(x2, y2).strokeColor(BLUE).lineWidth(0.6).stroke();
+      doc.moveTo(x1, y1).lineTo(x2, y2).strokeColor(INK).lineWidth(RULE_WIDTH).stroke();
+    };
+    const box = (x1: number, y1: number, x2: number, y2: number): void => {
+      doc.rect(x1, y1, x2 - x1, y2 - y1).strokeColor(INK).lineWidth(RULE_WIDTH).stroke();
     };
     const label = (text: string, x: number, y: number, w: number, align: 'left' | 'center' = 'left'): void => {
-      doc.font(MONO).fontSize(6.5).fillColor(BLUE).text(text, x, y, { width: w, align });
+      doc.font(FONT).fontSize(6.5).fillColor(INK).text(text, x, y, { width: w, align });
     };
     const entry = (
       text: string | null,
@@ -243,16 +257,34 @@ export async function renderBlDraftPdf(input: BlDraftPdfInput): Promise<Buffer> 
     ): void => {
       if (blank(text)) return;
       doc
-        .font(opts.bold === true ? MONO_BOLD : MONO)
-        .fontSize(opts.size ?? 7)
+        .font(opts.bold === true ? FONT_BOLD : FONT)
+        .fontSize(opts.size ?? ENTRY_SIZE)
         .fillColor(INK)
         .text(text ?? '', x, y, { width: w, height: h, ellipsis: true, align: opts.align ?? 'left', lineGap: 0.5 });
     };
+    /** One line that shrinks to its width rather than losing characters. */
+    const fitted = (text: string, x: number, y: number, w: number, size: number, bold = false): void => {
+      let s = size;
+      doc.font(bold ? FONT_BOLD : FONT).fontSize(s);
+      while (s > 5 && doc.widthOfString(text) > w) {
+        s -= 0.25;
+        doc.fontSize(s);
+      }
+      doc.fillColor(INK).text(text, x, y, { width: w, lineBreak: false });
+    };
     /** A boxed field: the label in its top-left corner, the entry under it. */
-    const cell = (name: string, value: string | null, x1: number, y1: number, x2: number, y2: number): void => {
-      doc.rect(x1, y1, x2 - x1, y2 - y1).strokeColor(BLUE).lineWidth(0.6).stroke();
+    const cell = (
+      name: string,
+      value: string | null,
+      x1: number,
+      y1: number,
+      x2: number,
+      y2: number,
+      opts: { bold?: boolean } = {},
+    ): void => {
+      box(x1, y1, x2, y2);
       label(name, x1 + 3, y1 + 3, x2 - x1 - 6);
-      entry(value, x1 + 3, y1 + 12, x2 - x1 - 6, y2 - y1 - 12);
+      entry(value, x1 + 3, y1 + 12, x2 - x1 - 6, y2 - y1 - 12, opts);
     };
 
     /** Across the page at an angle, faint, and drawn last so nothing covers it. */
@@ -260,13 +292,27 @@ export async function renderBlDraftPdf(input: BlDraftPdfInput): Promise<Buffer> 
       doc.save();
       doc.rotate(-30, { origin: [doc.page.width / 2, doc.page.height / 2] });
       doc
-        .font('Helvetica-Bold')
+        .font(FONT_BOLD)
         .fontSize(96)
         .fillColor(color)
         .opacity(0.1)
         .text(text, 0, doc.page.height / 2 - 60, { width: doc.page.width, align: 'center' });
       doc.opacity(1).restore();
     };
+
+    /** "TEMU1006375/20' Standard/M2604875, 23.73 CBM, 5981.50 KGS" — one container. */
+    const containerLine = (c: BlDraftPdfInput['containers'][number]): string =>
+      [
+        [c.containerNo, c.containerSize, c.sealNo].filter((v) => !blank(v)).join('/'),
+        blank(c.measurementCbm) ? '' : `${c.measurementCbm} CBM`,
+        blank(c.grossWeightKg) ? '' : `${c.grossWeightKg} KGS`,
+      ]
+        .filter((v) => v !== '')
+        .join(', ');
+
+    // The client's rule (2026-10-05): the bill is dated with the day it went on
+    // board, issued at the port of loading.
+    const onBoard = blank(input.ladenOnBoardDate) ? null : dmy(input.ladenOnBoardDate ?? '');
 
     /** One page of the bill: once for a draft, once per copy when printed (§13). */
     const drawPage = (copy: BlPrintMark | null, qr: Buffer): void => {
@@ -283,30 +329,30 @@ export async function renderBlDraftPdf(input: BlDraftPdfInput): Promise<Buffer> 
       // The name shrinks to fit beside the QR rather than running under it.
       const qrX = 318;
       const name = input.companyName.toUpperCase();
-      let size = 13;
-      doc.font(MONO).fontSize(size);
+      let size = 14;
+      doc.font(FONT_BOLD).fontSize(size);
       while (size > 8 && doc.widthOfString(name) > qrX - nameX - 8) {
         size -= 0.5;
         doc.fontSize(size);
       }
-      doc.fillColor(BLUE).text(name, nameX, 40, { lineBreak: false });
-      doc.font(MONO).fontSize(13).fillColor(BLUE).text(`SL.NO. ${input.serialNo}`, nameX, 62, { lineBreak: false });
+      doc.fillColor(INK).text(name, nameX, 40, { lineBreak: false });
+      doc.font(FONT).fontSize(12).fillColor(INK).text(`SL.NO. ${input.serialNo}`, nameX, 62, { lineBreak: false });
 
       doc.image(qr, qrX, 28, { width: 64 });
 
-      doc.font(MONO).fontSize(13).fillColor(BLUE).text('BILL OF LADING', qrX + 70, 52, {
+      doc.font(FONT_BOLD).fontSize(15).fillColor(INK).text('BILL OF LADING', qrX + 70, 50, {
         width: right - qrX - 70,
         align: 'right',
         lineBreak: false,
       });
       if (copy !== null) {
         // §13: what makes a printed bill an original or a copy, under its title.
-        doc.font(MONO_BOLD).fontSize(10).fillColor(INK).text(copy.mark, qrX + 70, 70, {
+        doc.font(FONT_BOLD).fontSize(11).fillColor(INK).text(copy.mark, qrX + 70, 70, {
           width: right - qrX - 70,
           align: 'right',
           lineBreak: false,
         });
-        doc.font(MONO).fontSize(7.5).fillColor(INK).text(copy.note, qrX + 70, 82, {
+        doc.font(FONT).fontSize(8).fillColor(INK).text(copy.note, qrX + 70, 83, {
           width: right - qrX - 70,
           align: 'right',
           lineBreak: false,
@@ -318,110 +364,85 @@ export async function renderBlDraftPdf(input: BlDraftPdfInput): Promise<Buffer> 
       const half = mid + 113;
       cell('Shipper/Exporter(Complete name/Street Address)', input.shipperText, left, top, mid, 152);
       cell('Manifest No', input.manifestNo, mid, top, half, 120);
-      cell('Bill of Lading Number', input.blNo, half, top, right, 120);
+      cell('Bill of Lading Number', input.blNo, half, top, right, 120, { bold: true });
       cell('Export References', input.exportReferences, mid, 120, right, 152);
 
       cell('Consignee(Not Negotiable Unless Consigned "to order")', input.consigneeText, left, 152, mid, 208);
-      cell('Forwarding Agent-References', input.forwardingAgentReferences, mid, 152, right, 208);
+      // Point and Country of origin sits under the agent's references, so the
+      // also-notify block gets the full height beside the notify party.
+      cell('Forwarding Agent-References', input.forwardingAgentReferences, mid, 152, right, 184);
+      cell('Point and Country of origin', input.pointCountryOfOrigin, mid, 184, right, 208);
 
       cell('Notify Party(Complete name/Street Address)', input.notifyText, left, 208, mid, 264);
-      cell('Point and Country of origin', input.pointCountryOfOrigin, mid, 208, right, 232);
-      cell('Also Notify, Routing and instructions', input.alsoNotifyText, mid, 232, right, 264);
+      cell('Also Notify, Routing and instructions', input.alsoNotifyText, mid, 208, right, 264);
 
       // ------------------------------------------------------------ routing
-      const split = left + 115;
-      cell('Pre-Carriage By(mode)*', input.preCarriageByModeName, left, 264, split, 292);
-      cell('Place of Receipt*', input.placeOfReceipt, split, 264, mid, 292);
-      // Two lines for the vessel and voyage, which rarely fit in one.
-      cell('Ocean Vessel/Voyage', input.oceanVesselVoyage, left, 292, split, 322);
-      cell('Port of Loading', input.polName, split, 292, mid, 322);
-      cell('Port of Discharge', input.podName, left, 322, split, 346);
-      cell('Place of Delivery', input.placeOfDelivery, split, 322, mid, 346);
-      cell('For Delivery of Goods Please Apply to:', input.deliveryAgentText, mid, 264, right, 346);
+      // Both vessel rows have room for two lines: a vessel and its voyage rarely fit in one.
+      const split = left + 140;
+      cell('Pre-Carriage By(mode)*', input.preCarriageVesselVoyage, left, 264, split, 296);
+      cell('Place of Receipt*', input.placeOfReceipt, split, 264, mid, 296);
+      cell('Ocean Vessel/Voyage', input.oceanVesselVoyage, left, 296, split, 328);
+      cell('Port of Loading', input.polName, split, 296, mid, 328);
+      cell('Port of Discharge', input.podName, left, 328, split, 354);
+      cell('Place of Delivery', input.placeOfDelivery, split, 328, mid, 354);
+      cell('For Delivery of Goods Please Apply to:', input.deliveryAgentText, mid, 264, right, 354);
 
       // ---------------------------------------------- particulars of cargo
-      doc.rect(left, 346, right - left, 12).strokeColor(BLUE).lineWidth(0.6).stroke();
-      label('Particulars Declared By the Merchant', left, 349, right - left, 'center');
+      box(left, 354, right, 366);
+      label('Particulars Declared By the Merchant', left, 357, right - left, 'center');
 
-      const cols = [left, left + 77, left + 149, left + 414, left + 476, right];
-      const headTop = 358;
+      // The PO / item column is gone (2026-10-05); its width went to Marks and Numbers.
+      const cols = [left, left + 149, left + 414, left + 476, right];
+      const headTop = 366;
       const bodyTop = 392;
       const bodyBottom = 560;
-      doc.rect(left, headTop, right - left, bodyBottom - headTop).strokeColor(BLUE).lineWidth(0.6).stroke();
+      box(left, headTop, right, bodyBottom);
       rule(left, bodyTop, right, bodyTop);
       for (const x of cols.slice(1, -1)) rule(x, headTop, x, bodyBottom);
       const heads = [
         'Marks and Numbers Container and Seal Numbers',
-        'Purchase order number /Item Number',
         'Numbers and Description of Packages and Goods',
         'Gross Weight (KG)',
         'Measurement (cubic meters)',
       ];
       heads.forEach((h, i) => label(h, cols[i]! + 3, headTop + 4, cols[i + 1]! - cols[i]! - 6, 'center'));
 
-      entry(input.marksAndNumbers, cols[0]! + 3, bodyTop + 6, cols[1]! - cols[0]! - 6, bodyBottom - bodyTop - 10, {
-        size: 6.5,
-      });
-      entry(
-        input.poItems.length === 0 ? null : input.poItems.join('\n'),
-        cols[1]! + 3,
-        bodyTop + 6,
-        cols[2]! - cols[1]! - 6,
-        bodyBottom - bodyTop - 10,
-        { bold: true, size: 6.5, align: 'center' },
-      );
-      entry(input.grossWeightKg, cols[3]! + 3, bodyTop + 6, cols[4]! - cols[3]! - 6, 20, { bold: true, align: 'center' });
-      entry(input.measurementCbm, cols[4]! + 3, bodyTop + 6, cols[5]! - cols[4]! - 6, 20, { bold: true, align: 'center' });
+      const textTop = bodyTop + 6;
+      const textBottom = bodyBottom - 4;
+      entry(input.marksAndNumbers, cols[0]! + 3, textTop, cols[1]! - cols[0]! - 6, textBottom - textTop);
+      entry(input.grossWeightKg, cols[2]! + 3, textTop, cols[3]! - cols[2]! - 6, 20, { bold: true, align: 'center' });
+      entry(input.measurementCbm, cols[3]! + 3, textTop, cols[4]! - cols[3]! - 6, 20, { bold: true, align: 'center' });
 
-      // The container list sits at the foot of the description, as on the form.
+      /*
+       * The description, then the containers under it as plain lines — one per
+       * container, since a bill often carries several (2026-10-05). The
+       * description gives up room so a heading and the first three containers
+       * always show; past what fits, the rest are counted.
+       */
+      const descX = cols[1]! + 3;
+      const descW = cols[2]! - cols[1]! - 6;
       const rowH = 10;
-      const fits = Math.floor((bodyBottom - bodyTop - 70 - 12) / rowH);
-      const shown = input.containers.length > fits ? input.containers.slice(0, fits - 1) : input.containers;
-      const more = input.containers.length - shown.length;
-      const listRows = shown.length + (more > 0 ? 1 : 0);
-      const tableX = cols[2]! + 2;
-      const tableW = cols[3]! - cols[2]! - 4;
-      const tableTop = input.containers.length === 0 ? bodyBottom : bodyBottom - 3 - 12 - listRows * rowH;
-
-      entry(input.packagesDescription, cols[2]! + 3, bodyTop + 6, cols[3]! - cols[2]! - 6, tableTop - bodyTop - 10);
+      const reserve = input.containers.length === 0 ? 0 : 8 + rowH * (1 + Math.min(input.containers.length, 3));
+      doc.font(FONT).fontSize(ENTRY_SIZE);
+      const descNeed = blank(input.packagesDescription)
+        ? 0
+        : doc.heightOfString(input.packagesDescription ?? '', { width: descW, lineGap: 0.5 });
+      const descH = Math.max(0, Math.min(descNeed, textBottom - textTop - reserve));
+      entry(input.packagesDescription, descX, textTop, descW, descH);
 
       if (input.containers.length > 0) {
-        const tcols = [0, 70, 126, 182, 216, tableW].map((v) => tableX + v);
-        const tableBottom = tableTop + 12 + listRows * rowH;
-        doc.rect(tableX, tableTop, tableW, tableBottom - tableTop).strokeColor(BLUE).lineWidth(0.6).stroke();
-        rule(tableX, tableTop + 12, tableX + tableW, tableTop + 12);
-        // The column rules stop above the "+ N more" line, which runs the full width.
-        for (const x of tcols.slice(1, -1)) rule(x, tableTop, x, tableTop + 12 + shown.length * rowH);
-        ['Container', 'Size', 'Seal No', 'CBM', 'Gross WT'].forEach((h, i) => {
-          doc.font(MONO_BOLD).fontSize(6.5).fillColor(BLUE).text(h, tcols[i]! + 2, tableTop + 3, {
-            width: tcols[i + 1]! - tcols[i]! - 4,
-            lineBreak: false,
-          });
-        });
-        shown.forEach((c, r) => {
-          const y = tableTop + 12 + r * rowH + 2;
-          [c.containerNo, c.containerSize, c.sealNo, c.measurementCbm, c.grossWeightKg].forEach((v, i) => {
-            const value = v ?? '—';
-            const room = tcols[i + 1]! - tcols[i]! - 4;
-            // A long seal or size shrinks to its column rather than losing characters.
-            let size = 6.5;
-            doc.font(MONO).fontSize(size);
-            while (size > 4.5 && doc.widthOfString(value) > room) {
-              size -= 0.25;
-              doc.fontSize(size);
-            }
-            doc.fillColor(INK).text(value, tcols[i]! + 2, y, { width: room, lineBreak: false });
-          });
-        });
+        let y = descNeed === 0 ? textTop : textTop + descH + 8;
+        const fits = Math.max(Math.floor((textBottom - y) / rowH) - 1, 1);
+        const shown =
+          input.containers.length > fits ? input.containers.slice(0, fits - 1) : input.containers;
+        const more = input.containers.length - shown.length;
+        fitted('CONTAINER/SIZE/SEAL NO, CBM, GROSS WT', descX, y, descW, 7.5, true);
+        for (const c of shown) {
+          y += rowH;
+          fitted(containerLine(c), descX, y, descW, 7.5);
+        }
         if (more > 0) {
-          doc
-            .font(MONO)
-            .fontSize(6.5)
-            .fillColor(INK)
-            .text(`+ ${more} more container${more === 1 ? '' : 's'}`, tcols[0]! + 2, tableTop + 12 + shown.length * rowH + 2, {
-              width: tableW - 4,
-              lineBreak: false,
-            });
+          fitted(`+ ${more} more container${more === 1 ? '' : 's'}`, descX, y + rowH, descW, 7.5);
         }
       }
 
@@ -429,11 +450,12 @@ export async function renderBlDraftPdf(input: BlDraftPdfInput): Promise<Buffer> 
       const c1 = left + 100;
       const c2 = left + 149;
       const c3 = left + 202;
-      doc.rect(left, bodyBottom, c2 - left, 612 - bodyBottom).strokeColor(BLUE).lineWidth(0.6).stroke();
+      box(left, bodyBottom, c2, 612);
       label('FREIGHT/CHARGES. ITEM NO.', left + 3, bodyBottom + 3, c2 - left - 6);
       label('RATE/RATE BASIS', left + 3, bodyBottom + 11, c2 - left - 6);
-      cell('Prepaid', null, c2, bodyBottom, c3, 636);
-      cell('Collect', null, c3, bodyBottom, mid, 636);
+      // §13.10 Q8: the booking's Incoterms mark one column (FreightTerms).
+      cell('Prepaid', input.freightTerms === 'PREPAID' ? 'PREPAID' : null, c2, bodyBottom, c3, 636, { bold: true });
+      cell('Collect', input.freightTerms === 'COLLECT' ? 'COLLECT' : null, c3, bodyBottom, mid, 636, { bold: true });
       cell('Freight Payable at', input.freightPayableAt, left, 612, c1, 636);
       cell('Total Freight', null, c1, 612, c2, 636);
       cell(
@@ -444,45 +466,51 @@ export async function renderBlDraftPdf(input: BlDraftPdfInput): Promise<Buffer> 
         c2,
         660,
       );
-      // The date of issue is BL Print's; a copy printed before then says so.
-      const issued = blank(input.issuedOn) ? (copy === null ? null : 'Not issued') : dmy(input.issuedOn ?? '');
-      cell('Place and date of issue', issued, c2, 636, mid, 660);
       cell(
-        'Laden on Board Date',
-        blank(input.ladenOnBoardDate) ? null : `${input.polName.toUpperCase()}, ${dmy(input.ladenOnBoardDate ?? '')}`,
-        left,
-        660,
+        'Place and date of issue',
+        onBoard === null ? null : `${input.polName.toUpperCase()}, ${onBoard}`,
+        c2,
+        636,
         mid,
-        684,
+        660,
       );
-      doc.rect(left, 684, mid - left, bottom - 684).strokeColor(BLUE).lineWidth(0.6).stroke();
-      doc.font(MONO).fontSize(6.3).fillColor(INK).text(WITNESS_CLAUSE, left + 3, 688, { width: mid - left - 6 });
+      cell('Laden on Board Date', onBoard, left, 660, mid, 684);
+      box(left, 684, mid, bottom);
+      doc.font(FONT).fontSize(6.5).fillColor(INK).text(WITNESS_CLAUSE, left + 3, 688, { width: mid - left - 6 });
 
-      doc.rect(mid, bodyBottom, right - mid, bottom - bodyBottom).strokeColor(BLUE).lineWidth(0.6).stroke();
+      box(mid, bodyBottom, right, bottom);
       label('Excess Value Declaration', mid + 3, bodyBottom + 3, right - mid - 6);
-      doc.font(MONO).fontSize(6.5).fillColor(INK).text(EXCESS_VALUE, mid + 3, bodyBottom + 11, {
+      doc.font(FONT).fontSize(7).fillColor(INK).text(EXCESS_VALUE, mid + 3, bodyBottom + 11, {
         width: right - mid - 6,
         lineBreak: false,
       });
       rule(mid, bodyBottom + 22, right, bodyBottom + 22);
-      doc
-        .font(MONO)
-        .fontSize(6.3)
-        .fillColor(INK)
-        .text(receivedClause(input.originalBlCount), mid + 3, bodyBottom + 26, {
-          width: right - mid - 6,
-          align: 'justify',
-        });
 
+      /*
+       * The clause fills its box (client, 2026-10-05): the largest size whose
+       * text still ends above the signature rule. Measured each time, because
+       * the number of originals changes the wording.
+       */
       const signTop = 730;
+      const clause = receivedClause(input.originalBlCount);
+      const clauseTop = bodyBottom + 28;
+      const clauseOpts = { width: right - mid - 8, align: 'justify' as const, lineGap: 1 };
+      let clauseSize = 10;
+      doc.font(FONT).fontSize(clauseSize);
+      while (clauseSize > 6.5 && doc.heightOfString(clause, clauseOpts) > signTop - 6 - clauseTop) {
+        clauseSize -= 0.1;
+        doc.fontSize(clauseSize);
+      }
+      doc.fillColor(INK).text(clause, mid + 4, clauseTop, clauseOpts);
+
       rule(mid, signTop, right, signTop);
       label('Signed as Agent For the Carrier', mid + 3, signTop + 3, right - mid - 6);
       if (copy !== null) {
         rule(mid + 40, bottom - 22, right - 40, bottom - 22);
         doc
-          .font(MONO)
-          .fontSize(6.5)
-          .fillColor(STEEL)
+          .font(FONT)
+          .fontSize(7)
+          .fillColor(INK)
           .text(`For ${input.companyName} — authorised signatory`, mid + 3, bottom - 17, {
             width: right - mid - 6,
             align: 'center',
@@ -499,7 +527,7 @@ export async function renderBlDraftPdf(input: BlDraftPdfInput): Promise<Buffer> 
         watermark('DRAFT', '#B3403A');
       } else if (copy?.watermark != null) {
         // The same reasoning for a copy: it must never pass for an original.
-        watermark(copy.watermark, STEEL);
+        watermark(copy.watermark, COPY_GREY);
       }
     };
 

@@ -39,6 +39,8 @@ const SLUG_A = 'blp-alpha';
 const SLUG_B = 'blp-beta';
 const YEAR = new Date().getUTCFullYear();
 const TODAY = new Date().toISOString().slice(0, 10);
+/** 2026-09-22 → 22/09/2026, as the bill writes a date. */
+const dmy = (iso: string): string => iso.split('-').reverse().join('/');
 
 interface Booking {
   id: bigint;
@@ -72,6 +74,8 @@ let A: World;
 let B: World;
 let modeId: bigint;
 let bdt: bigint;
+/** Shared Incoterms rows by code. */
+const tosId = new Map<string, bigint>();
 
 function as(token: string, slug: string) {
   const wrap = (r: request.Test) =>
@@ -109,6 +113,7 @@ async function cleanup(): Promise<void> {
     'shipment_advise_booking',
     'shipment_advise',
     'shipment',
+    'vessel',
     'quotation',
     'inquiry',
     'customer_pic',
@@ -200,6 +205,11 @@ async function makeWorld(name: string, slug: string, tag: string): Promise<World
     select: { id: true },
   });
 
+  const vessel = await owner.vessel.create({
+    data: { tenantId, code: `VSL-${tag}`, name: `Mariner ${tag}`, carrierId: carrier.id },
+    select: { id: true },
+  });
+
   const source = await owner.inquirySource.findFirstOrThrow({
     where: { tenantId: null },
     select: { id: true },
@@ -240,7 +250,7 @@ async function makeWorld(name: string, slug: string, tag: string): Promise<World
   });
 
   /** A booking whose advise has gone to the customer — where a BL starts. */
-  const advised = async (n: number): Promise<Booking> => {
+  const advised = async (n: number, tos: string | null): Promise<Booking> => {
     const code = `BKG-${YEAR}-8${tag}000${n}`;
     const shipment = await owner.shipment.create({
       data: {
@@ -254,6 +264,7 @@ async function makeWorld(name: string, slug: string, tag: string): Promise<World
         polId,
         podId,
         loadingType: 'FCL',
+        tosId: tos === null ? null : tosId.get(tos)!,
         exporterName: `Shafidi Exports ${tag}`,
         exporterAddress: '12 Jute Road, Dhaka',
         importerName: `Hamburg Import ${tag}`,
@@ -273,6 +284,8 @@ async function makeWorld(name: string, slug: string, tag: string): Promise<World
         shipmentId: shipment.id,
         carrierId: carrier.id,
         transitType: 'DIRECT',
+        firstVesselId: vessel.id,
+        voyageNo: `V-${tag}${n}`,
         polId,
         podId,
         houseBlNo,
@@ -305,9 +318,10 @@ async function makeWorld(name: string, slug: string, tag: string): Promise<World
     bareToken: await token(bare.id, false, []),
     polId,
     podId,
-    main: await advised(1),
-    sentFirst: await advised(2),
-    withdrawn: await advised(3),
+    // FOB is freight collect, CIF prepaid (§13.10 Q8); the third records no TOS.
+    main: await advised(1, 'FOB'),
+    sentFirst: await advised(2, 'CIF'),
+    withdrawn: await advised(3, null),
   };
 }
 
@@ -324,6 +338,10 @@ beforeAll(async () => {
       select: { id: true },
     })
   ).id;
+
+  for (const row of await owner.tos.findMany({ where: { tenantId: null }, select: { id: true, code: true } })) {
+    tosId.set(row.code, row.id);
+  }
 
   await cleanup();
   A = await makeWorld('BL Print Alpha', SLUG_A, 'A');
@@ -401,7 +419,8 @@ describe('the approved bill on BL Print', () => {
     const text = extractPdfText(copy.body as Buffer);
     expect(text).toContain(A.main.houseBlNo);
     expect(text).toContain('NON-NEGOTIABLE');
-    expect(text).toContain('Not issued');
+    // Issued at the port of loading on the day it went on board (2026-10-05).
+    expect(text).toContain(`CHITTAGONG A, ${dmy(TODAY)}`);
     expect(text).not.toContain('DRAFT');
 
     const original = await asA().get(`/documentation/bookings/${A.main.id}/bl/pdf?kind=ORIGINAL`);
@@ -469,7 +488,15 @@ describe('the approved bill on BL Print', () => {
     expect(text).toContain('2 of 2');
     // The client's form: the date of issue sits in "Place and date of issue".
     expect(text).toContain('Place and date of issue');
-    expect(text).not.toContain('Not issued');
+    expect(text).toContain(`CHITTAGONG A, ${dmy(TODAY)}`);
+    // Their rules (2026-10-05): pre-carriage is the first leg's vessel and
+    // voyage, the place of receipt is the port of loading whatever the draft
+    // typed, and FOB is freight collect, payable at destination.
+    expect(text).toContain('Mariner A / V-A1');
+    expect(text).not.toContain('Dhaka CFS');
+    expect(text).toContain('COLLECT');
+    expect(text).toContain('DESTINATION');
+    expect(text).not.toContain('PREPAID');
     expect(text).not.toContain('DRAFT');
     expect(text).not.toContain('NON-NEGOTIABLE');
     expect(res.headers['content-disposition']).toContain(`${A.main.houseBlNo}-originals.pdf`);
@@ -544,7 +571,13 @@ describe('a draft that went to the customer before it was approved', () => {
     );
     expect(res.status).toBe(200);
     expect(pageCount(res.body as Buffer)).toBe(3);
-    expect(extractPdfText(res.body as Buffer)).toContain('3 of 3');
+    const text = extractPdfText(res.body as Buffer);
+    expect(text).toContain('3 of 3');
+    // CIF: the seller prepaid the freight, payable at the port of loading.
+    expect(text).toContain('PREPAID');
+    expect(text).not.toContain('COLLECT');
+    // Freight Payable at: the port on its own, as a piece of text of its own.
+    expect(text.split('\n')).toContain('CHITTAGONG A');
   });
 
   it('cancelling the issued bill voids the issue and returns the booking to its advise', async () => {

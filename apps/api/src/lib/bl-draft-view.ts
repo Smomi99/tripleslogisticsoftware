@@ -33,6 +33,8 @@ export const blDraftArgs = {
         importerAddress: true,
         placeOfReceipt: true,
         customer: { select: { id: true, name: true } },
+        // The Incoterms decide Prepaid or Collect on the printed bill.
+        tos: { select: { code: true } },
       },
     },
     advise: {
@@ -41,6 +43,9 @@ export const blDraftArgs = {
         houseBlNo: true,
         mblNo: true,
         status: true,
+        // The first leg's vessel and voyage — the printed bill's pre-carriage.
+        firstVessel: { select: { name: true } },
+        voyageNo: true,
         // CR-005: one bill for every booking on its advise.
         bookings: {
           where: { deletedAt: null },
