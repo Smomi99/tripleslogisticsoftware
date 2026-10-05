@@ -32,9 +32,9 @@ import { Prisma } from '../generated/prisma/client';
 import { pullQuotationLines } from '../lib/quotation-pull';
 import { parseId, parseRefId } from '../lib/request';
 import { queueMail } from '../lib/email-queue';
+import { logoOf } from '../lib/letterhead';
 import { renderQuotationPdf } from '../lib/quotation-pdf';
 import { renderRequiredContainer } from '../lib/render-volumes';
-import { openFile } from '../lib/storage';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
 import { type AuthContext, authenticate } from '../middleware/authenticate';
 import { requirePermission } from '../middleware/require-permission';
@@ -1314,14 +1314,16 @@ quotationRouter.get(
       const row = await findScoped(db, auth, id);
       const dto = toDto(row);
 
-      const [settings, tenant, customer, inquiry] = await Promise.all([
+      // §6.6's logo, when the workspace has uploaded one.
+      const [settings, tenant, logo, customer, inquiry] = await Promise.all([
         db.notificationSetting.findFirst({
           select: { signatureBlock: true, quotationNotes: true },
         }),
         db.tenant.findFirst({
           where: { id: auth.tenantId },
-          select: { name: true, logoFile: true },
+          select: { name: true },
         }),
+        logoOf(db, auth.tenantId),
         db.customer.findFirst({
           where: { id: BigInt(dto.customerId) },
           select: { address: true },
@@ -1331,23 +1333,6 @@ quotationRouter.get(
           select: { inquiryDate: true },
         }),
       ]);
-
-      // §6.6's logo. A workspace that has not uploaded one still gets a
-      // letterhead — the name carries it — so a missing or unreadable file is
-      // never a reason to withhold the quotation.
-      let logo: Buffer | null = null;
-      if (tenant?.logoFile != null && tenant.logoFile !== '') {
-        try {
-          const file = await openFile(auth.tenantId, tenant.logoFile);
-          const parts: Buffer[] = [];
-          for await (const chunk of file.stream) {
-            parts.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-          }
-          logo = Buffer.concat(parts);
-        } catch {
-          logo = null;
-        }
-      }
 
       const isAir = dto.shipmentType === 'AIR';
       const pdfBuffer = await renderQuotationPdf({

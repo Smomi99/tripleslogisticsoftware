@@ -664,7 +664,22 @@ originals are printed. Everything below that is not in those cells is a default,
   (in the workspace's time zone) and a signature line *"For {company} — authorised signatory"*.
 - `COPY`: one page stamped **COPY · NON-NEGOTIABLE**, with a faint diagonal *COPY* — the draft's
   *DRAFT* reasoning again: a copy must never pass for an original.
-- Neither carries the *DRAFT* watermark. Header line: *"Booking … · Issued 2026-09-26"*.
+- Neither carries the *DRAFT* watermark.
+- **Layout (2026-10-05):** the client's own bill of lading, answering Q1 below — logo, name and
+  `SL.NO.` top left, a QR in the middle — the bill's particulars as readable lines (B/L no, what the
+  page is: draft, ORIGINAL n of N or copy, issuer, bookings, shipper and consignee names,
+  vessel/voyage, POL, POD, delivery, the first three containers, packages, weight, CBM, on-board and
+  issue dates, originals), one code per page — *BILL OF LADING* top
+  right with the ORIGINAL / COPY mark under it; one ruled grid in a monospace face; the container
+  list at the foot of the description; the clause text on the right of the foot and *Signed as Agent
+  For the Carrier* under it. The letterhead carries no address line — that line was the email
+  signature block, and the client asked for it off the bill. Draft, BL Print and the customer
+  portal all print this one layout.
+- Filled from the record: `SL.NO.` is the draft's own number (`BLD-…`); *Purchase order number /
+  Item Number* lists the advise's PO / item lines; *Place and date of issue* carries the date BL Print
+  issued the bill (*Not issued* on a copy printed before then); *Laden on Board Date* reads
+  `<port of loading>, DD/MM/YYYY`. *Prepaid*, *Collect*, *Total Freight* and *FREIGHT/CHARGES* print
+  empty — nothing records them (Q8–Q10).
 
 ### 13.5 Schema — migration `20260926140000_bl_print`
 
@@ -726,10 +741,14 @@ keys, then grant them on the Roles screen.
 
 | # | Question | Working default |
 |---|---|---|
-| 1 | Is there a BL layout (pre-printed stationery, a carrier's form) the print must fit? | The BL Draft layout, marked ORIGINAL or COPY |
+| 1 | Is there a BL layout (pre-printed stationery, a carrier's form) the print must fit? | **Answered 2026-10-05:** the client's own bill of lading — see §13.4 |
 | 2 | Should non-negotiable copies print with the originals (e.g. 3 + 3)? | Copies print on their own, one at a time |
 | 3 | May originals be reprinted after issue, and should a reprint be logged or marked? | Reprint allowed to `EXPORT_PDF` holders, not logged |
 | 4 | Express release / seaway bill: is `No. of Original BL = 0` how those are recorded? | 0 is accepted; nothing prints as original, copies only |
 | 5 | Must `Laden on Board Date` be set before a bill is issued? | Not required; the Issue dialog warns when it is empty |
 | 6 | Does the customer see the issued bill, and its date, in their portal? | The portal's draft data carries `issuedAt`; nothing new is drawn |
 | 7 | Inbound's *"arrange to upload a file"* (G44) | Belongs to Copy Doc upload (K8), not built |
+| 8 | The client's form has *Prepaid*, *Collect* (their sample: *AS ARRANGED*), *Total Freight* and *FREIGHT/CHARGES · RATE BASIS*. Where do they come from — typed on the BL draft, or from the quotation / Incoterms? | Printed empty |
+| 9 | *Place and date of issue*: is the place the port of loading (as on their sample), the issuing office, or typed? | The issue date only |
+| 10 | The form's *SL.NO.*: the BL draft's own number, or a serial of pre-printed stationery? | The BL draft number (`BLD-…`) |
+| 11 | The clause text (*RECEIVED by the carrier…*, *In witness whereof…*, *Excess Value Declaration*) was transcribed from their sample with obvious typos corrected. Confirm the wording, and whether it varies by workspace. | Fixed text, with the number of originals filled in |

@@ -19,6 +19,7 @@ const SLUG_A = 'tariff-alpha';
 const SLUG_B = 'tariff-beta';
 
 interface World {
+  tenantId: bigint;
   slug: string;
   editorToken: string;
   viewerToken: string;
@@ -33,7 +34,7 @@ let usd: bigint;
 
 async function cleanup(): Promise<void> {
   const scope = `(SELECT id FROM tenant WHERE slug IN ('${SLUG_A}', '${SLUG_B}'))`;
-  for (const table of ['tariff_line', 'tariff', 'cost_head', 'port', 'user']) {
+  for (const table of ['tariff_line', 'tariff', 'tenant_master_override', 'cost_head', 'port', 'user']) {
     await owner.$executeRawUnsafe(`DELETE FROM "${table}" WHERE tenant_id IN ${scope}`);
   }
   await owner.$executeRaw`DELETE FROM tenant WHERE slug IN (${SLUG_A}, ${SLUG_B})`;
@@ -57,6 +58,7 @@ async function makeWorld(name: string, slug: string, tag: string): Promise<World
     select: { id: true },
   });
   return {
+    tenantId,
     slug,
     editorToken: await token(`USR-E${tag}`, ['PURCHASE.TARIFF.VIEW', 'PURCHASE.TARIFF.CREATE', 'PURCHASE.TARIFF.EDIT', 'PURCHASE.TARIFF.TOGGLE_STATUS']),
     viewerToken: await token(`USR-V${tag}`, ['PURCHASE.TARIFF.VIEW']),
@@ -157,5 +159,33 @@ describe('Tariff', () => {
   it("keeps each workspace's tariffs to itself", async () => {
     expect((await api(B.viewerToken, B.slug).get()).body.data).toHaveLength(0);
     expect((await api(B.viewerToken, B.slug).get(`/${tariffId}`)).status).toBe(404);
+  });
+
+  // The id and the switched-off list both filter on `id`. Spread into one
+  // where, the second replaced the first: any switched-off shared container
+  // size made every save fail with "A container size on one of the charges is
+  // not available", and the POL check found whichever port came first.
+  it('still saves once the workspace has switched off a shared container size and port', async () => {
+    const size40 = (await owner.containerSize.findFirstOrThrow({ where: { tenantId: null, code: '40HC' } })).id;
+    const sharedPort = (await owner.port.findFirstOrThrow({ where: { tenantId: null, isActive: true } })).id;
+    await owner.tenantMasterOverride.createMany({
+      data: [
+        { tenantId: A.tenantId, tableName: 'container_size', recordId: size40, isActive: false },
+        { tenantId: A.tenantId, tableName: 'port', recordId: sharedPort, isActive: false },
+      ],
+    });
+
+    const saved = await api(A.editorToken, A.slug).post('', body(A, [line(A), line(A, { containerSizeId: null })]));
+    expect(saved.status).toBe(201);
+    expect(saved.body.data.polCode).toBe('TACGP');
+
+    const switchedOff = await api(A.editorToken, A.slug).post('', body(A, [line(A, { containerSizeId: size40.toString() })]));
+    expect(switchedOff.status).toBe(400);
+    expect(switchedOff.body.error.message).toBe('A container size on one of the charges is not available.');
+
+    const foreignPol = await api(A.editorToken, A.slug).post('', { ...body(A, [line(A)]), polId: B.portId.toString() });
+    expect(foreignPol.status).toBe(400);
+    const hiddenPol = await api(A.editorToken, A.slug).post('', { ...body(A, [line(A)]), polId: sharedPort.toString() });
+    expect(hiddenPol.status).toBe(400);
   });
 });

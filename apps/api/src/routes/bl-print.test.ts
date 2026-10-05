@@ -467,7 +467,8 @@ describe('the approved bill on BL Print', () => {
     const text = extractPdfText(res.body as Buffer);
     expect(text).toContain('1 of 2');
     expect(text).toContain('2 of 2');
-    expect(text).toContain('DATE OF ISSUE');
+    // The client's form: the date of issue sits in "Place and date of issue".
+    expect(text).toContain('Place and date of issue');
     expect(text).not.toContain('Not issued');
     expect(text).not.toContain('DRAFT');
     expect(text).not.toContain('NON-NEGOTIABLE');

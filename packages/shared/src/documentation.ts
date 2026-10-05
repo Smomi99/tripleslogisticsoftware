@@ -52,6 +52,9 @@ export interface ShipmentAdviseLineDto {
   /** Which container these cartons went into. Null on air (§3.7). */
   clpCode: string | null;
   containerNo: string | null;
+  sealNo: string | null;
+  /** The container size's code, e.g. 20STD. */
+  containerSize: string | null;
   /** CR-005: the booking this PO is on — an advise may cover several. */
   bookingNo: string;
 }

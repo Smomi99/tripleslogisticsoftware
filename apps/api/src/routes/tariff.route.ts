@@ -200,13 +200,18 @@ type SaveInput = ReturnType<typeof tariffSaveSchema.parse>;
  * Every id the form sent must be a row this workspace can see and has not
  * switched off — the same narrowing the pickers apply, asked again on the way
  * in, because a request is not a form.
+ *
+ * The id and excludeInactive() both set `id`, so they sit in an AND. Spread
+ * into one object, the `notIn` replaced the `in`: once a workspace had switched
+ * off any shared container size, every save counted all the sizes it had left
+ * and refused the tariff — and the POL lookup returned whichever port came first.
  */
 async function checkReferences(db: TenantDb, input: SaveInput): Promise<{ country: string }> {
   const inactive = await inactiveMasters(db);
   const unique = (ids: (string | null)[]) => [...new Set(ids.filter((v): v is string => v !== null))].map((v) => BigInt(v));
 
   const port = await db.port.findFirst({
-    where: { id: BigInt(input.polId), ...excludeInactive(inactive, 'port'), deletedAt: null, isActive: true },
+    where: { AND: [{ id: BigInt(input.polId) }, excludeInactive(inactive, 'port')], deletedAt: null, isActive: true },
     select: { country: true },
   });
   if (port === null) throw HttpError.badRequest('That POL is not available.');
@@ -218,19 +223,23 @@ async function checkReferences(db: TenantDb, input: SaveInput): Promise<{ countr
   checks.push([
     'container size',
     sizes.length,
-    db.containerSize.count({ where: { id: { in: sizes }, ...excludeInactive(inactive, 'container_size'), deletedAt: null, isActive: true } }),
+    db.containerSize.count({
+      where: { AND: [{ id: { in: sizes } }, excludeInactive(inactive, 'container_size')], deletedAt: null, isActive: true },
+    }),
   ]);
   const units = unique(input.lines.map((l) => l.costUnitId));
   checks.push([
     'unit',
     units.length,
-    db.costUnit.count({ where: { id: { in: units }, ...excludeInactive(inactive, 'cost_unit'), deletedAt: null, isActive: true } }),
+    db.costUnit.count({ where: { AND: [{ id: { in: units } }, excludeInactive(inactive, 'cost_unit')], deletedAt: null, isActive: true } }),
   ]);
   const currencies = unique(input.lines.map((l) => l.currencyId));
   checks.push([
     'currency',
     currencies.length,
-    db.currency.count({ where: { id: { in: currencies }, ...excludeInactive(inactive, 'currency'), deletedAt: null, isActive: true } }),
+    db.currency.count({
+      where: { AND: [{ id: { in: currencies } }, excludeInactive(inactive, 'currency')], deletedAt: null, isActive: true },
+    }),
   ]);
   for (const [what, wanted, found] of checks) {
     if ((await found) !== wanted) throw HttpError.badRequest(`A ${what} on one of the charges is not available.`);

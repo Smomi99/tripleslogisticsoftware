@@ -87,7 +87,7 @@ const adviseArgs = {
       where: { deletedAt: null },
       orderBy: [{ poNo: 'asc' }, { id: 'asc' }],
       include: {
-        clp: { select: { code: true, containerNo: true } },
+        clp: { select: { code: true, containerNo: true, sealNo: true, containerSize: { select: { code: true } } } },
         booking: { select: { shipment: { select: { code: true } } } },
       },
     },
@@ -145,6 +145,8 @@ function lineDto(row: AdviseRow['lines'][number]): ShipmentAdviseLineDto {
     efrNo: row.efrNo,
     clpCode: row.clp?.code ?? null,
     containerNo: row.clp?.containerNo ?? null,
+    sealNo: row.clp?.sealNo ?? null,
+    containerSize: row.clp?.containerSize.code ?? null,
   };
 }
 
@@ -477,17 +479,26 @@ shipmentAdviseRouter.get(
       const portName = (id: bigint): string =>
         ports.find((p) => p.id === id)?.name ?? '—';
 
-      const clpCodes = new Map<string, { code: string; containerNo: string | null }>();
+      const clpCodes = new Map<
+        string,
+        { code: string; containerNo: string | null; sealNo: string | null; containerSize: string }
+      >();
       const clpIds = [...new Set(lines.map((l) => l.clpId).filter((v): v is bigint => v !== null))];
       if (clpIds.length > 0) {
         const clps = await db.clp.findMany({
           where: { id: { in: clpIds } },
-          select: { id: true, code: true, containerNo: true },
+          select: { id: true, code: true, containerNo: true, sealNo: true, containerSize: { select: { code: true } } },
         });
         for (const clp of clps) {
-          clpCodes.set(clp.id.toString(), { code: clp.code, containerNo: clp.containerNo });
+          clpCodes.set(clp.id.toString(), {
+            code: clp.code,
+            containerNo: clp.containerNo,
+            sealNo: clp.sealNo,
+            containerSize: clp.containerSize.code,
+          });
         }
       }
+      const clpOf = (id: bigint | null) => (id === null ? undefined : clpCodes.get(id.toString()));
 
       return {
         shipmentId: shipment.id.toString(),
@@ -528,9 +539,10 @@ shipmentAdviseRouter.get(
           cargoReceiptDate: day(line.cargoReceiptDate),
           stuffingDate: day(line.stuffingDate),
           efrNo: line.efrNo,
-          clpCode: line.clpId === null ? null : clpCodes.get(line.clpId.toString())?.code ?? null,
-          containerNo:
-            line.clpId === null ? null : clpCodes.get(line.clpId.toString())?.containerNo ?? null,
+          clpCode: clpOf(line.clpId)?.code ?? null,
+          containerNo: clpOf(line.clpId)?.containerNo ?? null,
+          sealNo: clpOf(line.clpId)?.sealNo ?? null,
+          containerSize: clpOf(line.clpId)?.containerSize ?? null,
         })),
         totals: {
           poCount: totals.poCount,
@@ -983,7 +995,9 @@ export async function adviseDocument(
   const isAir = row.shipment.shipmentType === 'AIR';
 
   const pdf = await renderShipmentAdvisePdf({
-    ...head,
+    // The name only: the letterhead's second line is the email signature block,
+    // which the client does not want on the advise.
+    companyName: head.companyName,
     adviseNo: row.code,
     bookingNo: covered.map((b) => b.code).join(', '),
     soNo: soNos.length === 0 ? null : soNos.join(', '),
@@ -1017,6 +1031,8 @@ export async function adviseDocument(
       stuffingDate: day(line.stuffingDate),
       efrNo: line.efrNo,
       containerNo: line.clp?.containerNo ?? line.clp?.code ?? null,
+      sealNo: line.clp?.sealNo ?? null,
+      containerSize: line.clp?.containerSize.code ?? null,
     })),
     totals: {
       poCount: row.totalPoCount,
