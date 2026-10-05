@@ -326,19 +326,31 @@ export async function renderBlDraftPdf(input: BlDraftPdfInput): Promise<Buffer> 
           // An unreadable image costs the logo, never the bill.
         }
       }
-      // The name shrinks to fit beside the QR rather than running under it.
-      const qrX = 318;
+      // The QR sits in the middle of the page (client, 2026-10-05); the name and
+      // serial shrink to fit beside it rather than running under it.
+      const qrSize = 64;
+      const qrX = (left + right - qrSize) / 2;
+      const nameW = qrX - nameX - 8;
       const name = input.companyName.toUpperCase();
       let size = 14;
       doc.font(FONT_BOLD).fontSize(size);
-      while (size > 8 && doc.widthOfString(name) > qrX - nameX - 8) {
+      while (size > 10 && doc.widthOfString(name) > nameW) {
         size -= 0.5;
         doc.fontSize(size);
       }
-      doc.fillColor(INK).text(name, nameX, 40, { lineBreak: false });
-      doc.font(FONT).fontSize(12).fillColor(INK).text(`SL.NO. ${input.serialNo}`, nameX, 62, { lineBreak: false });
+      if (doc.widthOfString(name) <= nameW) {
+        doc.fillColor(INK).text(name, nameX, 40, { lineBreak: false });
+      } else {
+        // Too long for one line beside the QR: two lines above the serial, smaller until both fit.
+        while (size > 7 && doc.heightOfString(name, { width: nameW }) > 2 * doc.currentLineHeight(true) + 0.5) {
+          size -= 0.5;
+          doc.fontSize(size);
+        }
+        doc.fillColor(INK).text(name, nameX, 32, { width: nameW, height: 28, ellipsis: true });
+      }
+      fitted(`SL.NO. ${input.serialNo}`, nameX, 62, nameW, 12);
 
-      doc.image(qr, qrX, 28, { width: 64 });
+      doc.image(qr, qrX, 28, { width: qrSize });
 
       doc.font(FONT_BOLD).fontSize(15).fillColor(INK).text('BILL OF LADING', qrX + 70, 50, {
         width: right - qrX - 70,
