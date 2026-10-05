@@ -17,6 +17,14 @@ import type { TenantDb } from '../apps/api/src/lib/tenant-client';
  *   jobs        three FCL exports (USD), two LCL (BDT) and two Air (USD),
  *               each booked, invoiced (Debit Invoice) and costed — carrier,
  *               agent and vendor blocks (Credit Invoice) — for four customers
+ *   operations  every booking taken the whole way the screens would take it
+ *               before it is invoiced: schedule, S/O, cargo receipt, a
+ *               finalised load plan (sea), the sent advise, the BL drafted,
+ *               approved and issued (sea), the departure and the arrival
+ *               confirmed, and a pre-alert to the agent (sea, past months) —
+ *               so the status the Booking List shows is one the records
+ *               behind it bear out. Air ends at the advise, as the BL Draft
+ *               sheets are "Only for Outbound shipment-Sea"
  *   money in    Transaction → Income receives the invoices — FCL at a better
  *               bank rate (exchange gain), Air at a worse one (loss), one Air
  *               invoice only half paid; this month's are still outstanding
@@ -42,6 +50,25 @@ const D = (v: Prisma.Decimal.Value): Prisma.Decimal => new Prisma.Decimal(v);
 const ZERO = D(0);
 /** As lib/debit-invoice toBase: four places, the way the invoice stores it. */
 const toBase = (amount: Prisma.Decimal, rate: Prisma.Decimal): Prisma.Decimal => amount.times(rate).toDecimalPlaces(4);
+const DAY = 86_400_000;
+
+/** ISO 6346 — the Container Load Plan screen checks a container number's last digit. */
+export function containerNo(owner: string, serial: number): string {
+  const body = `${owner}U${String(serial).padStart(6, '0')}`;
+  const value: Record<string, number> = {};
+  let n = 10;
+  for (const c of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') {
+    if (n % 11 === 0) n += 1;
+    value[c] = n;
+    n += 1;
+  }
+  let sum = 0;
+  for (let i = 0; i < 10; i += 1) {
+    const ch = body[i]!;
+    sum += (/\d/.test(ch) ? Number(ch) : value[ch]!) * 2 ** i;
+  }
+  return `${body}${(sum % 11) % 10}`;
+}
 
 // ------------------------------------------------------------------- clear
 
@@ -141,6 +168,25 @@ interface CostBlock {
   lines: Line[];
 }
 
+/** A customer's goods: the commodity, and what one carton measures (cm) and weighs (kg). */
+interface Goods {
+  item: { id: bigint; name: string; hsCode: string | null };
+  style: string;
+  carton: [number, number, number];
+  grossKg: number | string;
+  netKg: number | string;
+  pcs: number;
+}
+
+/** One PO's cartons on a booking — for FCL, one container's worth. */
+interface Cargo {
+  ctn: number;
+  carton: [number, number, number];
+  grossKg: Prisma.Decimal;
+  netKg: Prisma.Decimal;
+  pcs: number;
+}
+
 export async function seedAccounts(prisma: PrismaClient, tenantId: bigint): Promise<string[]> {
   const t = { tenantId };
   const now = new Date();
@@ -159,33 +205,75 @@ export async function seedAccounts(prisma: PrismaClient, tenantId: bigint): Prom
   const [cmaCgm, emirates] = await Promise.all([carrier('CMA CGM'), carrier('Emirates SkyCargo')]);
   const unit = async (name: string) => (await prisma.costUnit.findFirstOrThrow({ where: { tenantId: null, name }, select: { id: true } })).id;
   const [uContainer, uHbl, uCbm, uKg, uTrip] = await Promise.all([unit('Container'), unit('HBL'), unit('CBM'), unit('KG'), unit('Trip')]);
-  const size20 = (await prisma.containerSize.findFirstOrThrow({ where: { tenantId: null, code: '20STD' }, select: { id: true } })).id;
+  const boxSize = (code: string) =>
+    prisma.containerSize.findFirstOrThrow({ where: { tenantId: null, code }, select: { id: true, name: true } });
+  const [std20, hc40] = [await boxSize('20STD'), await boxSize('40HC')];
+  const size20 = std20.id;
+  const mode = async (code: string) => (await prisma.mode.findFirstOrThrow({ where: { tenantId: null, code }, select: { id: true } })).id;
+  const [cyCy, cfsCfs] = [await mode('CY/CY'), await mode('CFS/CFS')];
   const source = (await prisma.inquirySource.findFirstOrThrow({ where: { tenantId: null }, select: { id: true } })).id;
   const vendorType = async (name: string) =>
     (await prisma.vendorType.findFirstOrThrow({ where: { tenantId: null, name }, select: { id: true } })).id;
 
-  const sector = await prisma.industrySector.create({
-    data: { ...t, code: `${ACC}ISC-1`, name: 'Garments & Textiles (accounts demo)' },
-    select: { id: true },
-  });
-  const customer = async (n: number, name: string, type: 'EXPORTER' | 'IMPORTER', email: string) => {
+  // The main demo's CS officer does the operations work; a workspace with only
+  // this part of the demo falls back on its superadmin.
+  const staff = (
+    (await prisma.user.findFirst({ where: { ...t, code: 'DEMO-USR-3', deletedAt: null }, select: { id: true } })) ??
+    (await prisma.user.findFirstOrThrow({ where: { ...t, isSuperadmin: true }, orderBy: { id: 'asc' }, select: { id: true } }))
+  ).id;
+
+  const sector = async (n: number, name: string) =>
+    (await prisma.industrySector.create({ data: { ...t, code: `${ACC}ISC-${n}`, name: `${name} (accounts demo)` }, select: { id: true } })).id;
+  const [garments, leather, pharma] = [
+    await sector(1, 'Garments & Textiles'),
+    await sector(2, 'Leather Goods'),
+    await sector(3, 'Pharmaceuticals'),
+  ];
+  const OFFICE = 'Agrabad C/A, Chattogram';
+  const customer = async (n: number, name: string, type: 'EXPORTER' | 'IMPORTER', email: string, industrySectorId: bigint) => {
     const c = await prisma.customer.create({
-      data: { ...t, code: `${ACC}CUS-${n}`, name, country: 'Bangladesh', address: 'Agrabad C/A, Chattogram', customerType: type, businessArea: 'OUTBOUND', industrySectorId: sector.id },
+      data: { ...t, code: `${ACC}CUS-${n}`, name, country: 'Bangladesh', address: OFFICE, customerType: type, businessArea: 'OUTBOUND', industrySectorId },
       select: { id: true, name: true },
     });
     await prisma.customerPic.create({ data: { ...t, code: `${ACC}CUP-${n}`, customerId: c.id, name: 'Accounts desk', email } });
     return { ...c, email };
   };
-  const meghna = await customer(1, 'Meghna Knitwear Ltd', 'EXPORTER', 'accounts@meghna-knit.demo');
-  const padma = await customer(2, 'Padma Leather Goods', 'EXPORTER', 'finance@padma-leather.demo');
-  const rupsha = await customer(3, 'Rupsha Pharmaceuticals', 'EXPORTER', 'export@rupsha-pharma.demo');
-  const jamuna = await customer(4, 'Jamuna Denim Ltd', 'EXPORTER', 'shipping@jamuna-denim.demo');
+  const meghna = await customer(1, 'Meghna Knitwear Ltd', 'EXPORTER', 'accounts@meghna-knit.demo', garments);
+  const padma = await customer(2, 'Padma Leather Goods', 'EXPORTER', 'finance@padma-leather.demo', leather);
+  const rupsha = await customer(3, 'Rupsha Pharmaceuticals', 'EXPORTER', 'export@rupsha-pharma.demo', pharma);
+  const jamuna = await customer(4, 'Jamuna Denim Ltd', 'EXPORTER', 'shipping@jamuna-denim.demo', garments);
+
+  const item = (n: number, industrySectorId: bigint, name: string, hsCode: string) =>
+    prisma.commodityItem.create({
+      data: { ...t, code: `${ACC}CI-${n}`, industrySectorId, name, hsCode },
+      select: { id: true, name: true, hsCode: true },
+    });
+  const knit: Goods = { item: await item(1, garments, 'Knitted T-Shirts', '6109.10'), style: 'KTS', carton: [50, 40, 30], grossKg: 12, netKg: '10.5', pcs: 24 };
+  const denim: Goods = { item: await item(2, garments, 'Denim Trousers', '6203.42'), style: 'DNT', carton: [60, 40, 30], grossKg: 18, netKg: '16.5', pcs: 20 };
+  const handbags: Goods = { item: await item(3, leather, 'Leather Handbags', '4202.21'), style: 'LHB', carton: [50, 40, 50], grossKg: 14, netKg: '12.5', pcs: 12 };
+  const tablets: Goods = { item: await item(4, pharma, 'Pharmaceutical Tablets', '3004.90'), style: 'TAB', carton: [40, 30, 30], grossKg: 15, netKg: '13.5', pcs: 100 };
+
+  /** The consignee at each destination — the importer, and who the BL notifies. */
+  const consigneeAt = (pod: bigint): { name: string; address: string } =>
+    pod === ham
+      ? { name: 'Nordwind Retail GmbH', address: 'Spitalerstrasse 12, 20095 Hamburg, Germany' }
+      : pod === rtm
+        ? { name: 'Van Dijk Fashion B.V.', address: 'Wilhelminakade 91, 3072 AP Rotterdam, Netherlands' }
+        : { name: 'Gulf Medical Supplies LLC', address: 'Dubai Healthcare City, Dubai, UAE' };
+
+  // Vessels are a workspace's own, so the demo brings CMA CGM's.
+  const vessel = (n: number, name: string) =>
+    prisma.vessel.create({ data: { ...t, code: `${ACC}VSL-${n}`, name, carrierId: cmaCgm }, select: { id: true, name: true } });
+  const vessels = [await vessel(1, 'CMA CGM Karnaphuli'), await vessel(2, 'CMA CGM Sundarbans')];
 
   const agent = await prisma.agent.create({
     data: { ...t, code: `${ACC}AGT-1`, name: 'Hanse Logistics GmbH', country: 'Germany', agentType: 'EXCLUSIVE' },
     select: { id: true },
   });
-  await prisma.agentPic.create({ data: { ...t, code: `${ACC}AGP-1`, agentId: agent.id, name: 'Import desk', email: 'import@hanse-logistics.demo' } });
+  const agentEmail = 'import@hanse-logistics.demo';
+  await prisma.agentPic.create({ data: { ...t, code: `${ACC}AGP-1`, agentId: agent.id, name: 'Import desk', email: agentEmail } });
+  // Both sea destinations, so the Pre-Alert screen offers it for them.
+  await prisma.agentPortCoverage.createMany({ data: [ham, rtm].map((portId) => ({ ...t, agentId: agent.id, portId })) });
   const vendor = async (n: number, name: string, type: string) =>
     (
       await prisma.vendor.create({
@@ -315,10 +403,50 @@ export async function seedAccounts(prisma: PrismaClient, tenantId: bigint): Prom
       ],
     });
 
-  /** Inquiry → accepted quotation → booking, as the earlier screens would have left it. */
+  /** `ctn` cartons of `goods`, in its own carton unless another is given. */
+  const lot = (goods: Goods, ctn: number, carton: [number, number, number] = goods.carton): Cargo => ({
+    ctn,
+    carton,
+    grossKg: D(goods.grossKg).times(ctn),
+    netKg: D(goods.netKg).times(ctn),
+    pcs: goods.pcs * ctn,
+  });
+  /** As many cartons as fill a 20' to about 27 CBM, a few short now and then. */
+  const container = (goods: Goods, k: number): Cargo => {
+    const [l, w, h] = goods.carton;
+    return lot(goods, Math.floor(27_000_000 / (l * w * h)) - 5 * (k % 4));
+  };
+  /** LCL is quoted per CBM, so its cartons give that CBM back exactly: 50 × 40 × 50 is 0.1 CBM. */
+  const lcl = (goods: Goods, cbm: number): Cargo => lot(goods, cbm * 10, [50, 40, 50]);
+  /** Air is quoted per chargeable kg; these cartons are heavier than their volume, so that is the gross weight. */
+  const air = (goods: Goods, kg: number): Cargo => ({
+    ...lot(goods, Math.ceil(kg / Number(goods.grossKg))),
+    grossKg: D(kg),
+    netKg: D(kg).times('0.9'),
+  });
+
+  const CFS = 'Karnaphuli CFS, Chattogram';
+  const AIR_TERMINAL = 'HSIA Cargo Village, Dhaka';
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const sum = <T>(rows: T[], pick: (row: T) => Prisma.Decimal | null) => rows.reduce((acc, r) => acc.plus(pick(r) ?? ZERO), ZERO);
+
+  /**
+   * Inquiry → accepted quotation → booking, then the booking taken the whole
+   * way the screens take one, so its status is true: the schedule approved,
+   * the S/O issued, the cargo received, packed into finalised load plans (sea:
+   * a container each for FCL, one box for LCL), the advise sent and — sea only
+   * — the BL drafted, approved and issued; then the departure and, once it is
+   * due, the arrival confirmed.
+   *
+   * Dated backwards from `date`, the invoice date, so the chain has finished
+   * the day before the Debit Note goes out (Menu F22: "… BL Issue > Debit
+   * Note"). The invoice dates — and so every figure Accounts shows — are the
+   * ones this demo has always had.
+   */
   const booking = async (args: {
     date: Date;
-    customer: { id: bigint };
+    customer: { id: bigint; name: string };
+    goods: Goods;
     type: 'SEA' | 'AIR';
     loading: 'FCL' | 'LCL' | null;
     carrierId: bigint;
@@ -327,23 +455,57 @@ export async function seedAccounts(prisma: PrismaClient, tenantId: bigint): Prom
     currency: 'USD' | 'BDT';
     rate: Prisma.Decimal;
     lines: Line[];
-    status: 'BL_ISSUED' | 'ADVISED';
+    cargo: Cargo[];
   }) => {
     const n = next('job');
-    const year = args.date.getUTCFullYear();
-    const quoted = new Date(args.date.getTime() - 20 * 86_400_000);
+    const sea = args.type === 'SEA';
+    const at = (days: number) => new Date(args.date.getTime() + days * DAY);
+    const yearOf = (d: Date) => d.getUTCFullYear();
+
+    const quoted = at(-20);
+    const booked = at(-16);
+    const decided = at(-14);
+    const soIssued = at(-13);
+    const received = sea ? at(-8) : at(-5);
+    const stuffed = at(-6);
+    const cutOff = sea ? at(-6) : at(-4);
+    const etd = sea ? at(-4) : at(-3);
+    // Thirty days to North Europe; Dhaka to Dubai is the same day.
+    const eta = sea ? at(26) : new Date(etd.getTime() + 6 * 3_600_000);
+    const advised = sea ? at(-3) : at(-2);
+
+    const vessel = vessels[n % vessels.length]!;
+    const voyageNo = sea ? `V${etd.toISOString().slice(2, 10).replace(/-/g, '')}` : null;
+    const flightNo = sea ? null : n % 2 === 0 ? 'EK585' : 'EK583';
+    const consignee = consigneeAt(args.pod);
+    const goods = args.goods.item;
+    const cbmOf = (c: Cargo) => D(c.carton[0] * c.carton[1] * c.carton[2]).times(c.ctn).dividedBy(1_000_000);
+
     const inquiry = await prisma.inquiry.create({
       data: {
-        ...t, code: `${ACC}INQ-${n}`, seriesYear: year, inquiryDate: quoted, sourceId: source, shipmentType: args.type,
-        customerId: args.customer.id, movementType: 'OUTBOUND', polId: args.pol, podId: args.pod,
+        ...t, code: `${ACC}INQ-${n}`, seriesYear: yearOf(quoted), inquiryDate: quoted, sourceId: source, shipmentType: args.type,
+        customerId: args.customer.id, movementType: 'OUTBOUND', loadingType: args.loading, polId: args.pol, podId: args.pod,
+        status: 'WON', createdAt: quoted,
       },
       select: { id: true },
     });
+    await prisma.inquiryVolume.create({
+      data:
+        args.loading === 'FCL'
+          ? { ...t, inquiryId: inquiry.id, volumeKind: 'FCL', containerSizeId: size20, quantity: args.cargo.length }
+          : {
+              ...t, inquiryId: inquiry.id, volumeKind: sea ? 'LCL' : 'AIR',
+              cbm: sum(args.cargo, cbmOf), weightKg: sum(args.cargo, (c) => c.grossKg),
+            },
+    });
+    await prisma.inquiryCommodity.create({ data: { ...t, inquiryId: inquiry.id, commodityItemId: goods.id, hsCode: goods.hsCode } });
+
     const quotation = await prisma.quotation.create({
       data: {
-        ...t, code: `${ACC}QTN-${n}`, seriesYear: year, inquiryId: inquiry.id, quotationDate: quoted, customerId: args.customer.id,
-        shipmentType: args.type, movementType: 'OUTBOUND', polId: args.pol, podId: args.pod, carrierId: args.carrierId,
+        ...t, code: `${ACC}QTN-${n}`, seriesYear: yearOf(quoted), inquiryId: inquiry.id, quotationDate: quoted, customerId: args.customer.id,
+        shipmentType: args.type, movementType: 'OUTBOUND', loadingType: args.loading, polId: args.pol, podId: args.pod, carrierId: args.carrierId,
         localCurrencyId: bdt.id, conversionRate: D(args.currency === 'USD' ? args.rate : 1), status: 'ACCEPTED',
+        sentAt: quoted, createdAt: quoted,
       },
       select: { id: true },
     });
@@ -356,15 +518,216 @@ export async function seedAccounts(prisma: PrismaClient, tenantId: bigint): Prom
         conversionRate: args.currency === 'USD' ? args.rate : D(1),
       })),
     });
+    await prisma.quotationCommodity.create({
+      data: { ...t, quotationId: quotation.id, commodityItemId: goods.id, commodityName: goods.name, hsCode: goods.hsCode },
+    });
+
+    const code = `${ACC}BKG-${n}`;
+    // Sea only: FCL is stuffed and handed over CY to CY, LCL through the CFS.
+    const modeId = args.loading === 'FCL' ? cyCy : cfsCfs;
     const shipment = await prisma.shipment.create({
       data: {
-        ...t, code: `${ACC}BKG-${n}`, seriesYear: year, quotationId: quotation.id, shipmentType: args.type,
-        customerId: args.customer.id, carrierId: args.carrierId, polId: args.pol, podId: args.pod,
-        loadingType: args.loading, status: args.status, exporterName: null,
+        ...t, code, seriesYear: yearOf(booked), quotationId: quotation.id, shipmentType: args.type,
+        customerId: args.customer.id, exporterName: args.customer.name, exporterAddress: OFFICE,
+        importerName: consignee.name, importerAddress: consignee.address,
+        carrierId: args.carrierId, polId: args.pol, podId: args.pod, loadingType: args.loading, transitType: 'DIRECT',
+        modeId: sea ? modeId : null, warehouseCfs: sea ? CFS : null, placeOfReceipt: sea ? CFS : null,
+        etd, eta, goodsHandoverDate: received,
+        // The end of each chain: sea issues the BL, air's ends at the advise.
+        status: sea ? 'BL_ISSUED' : 'ADVISED',
+        createdAt: booked,
       },
-      select: { id: true, code: true },
+      select: { id: true },
     });
-    return { quotationId: quotation.id, shipmentId: shipment.id, code: shipment.code };
+    const shipmentId = shipment.id;
+    await prisma.shipmentCommodity.create({ data: { ...t, shipmentId, commodityItemId: goods.id, hsCode: goods.hsCode } });
+
+    /** A PO for one lot, approved by C/S on the customer's behalf, and its cargo line. */
+    const cargoLine = async (c: Cargo, i: number) => {
+      const poNo = `PO-${String(n).padStart(4, '0')}-${i + 1}`;
+      const po = await prisma.shipmentPo.create({
+        data: { ...t, shipmentId, poNo, approvalStatus: 'APPROVED', approvedBy: staff, approvedAt: at(-15), approvedOnBehalf: true },
+        select: { id: true },
+      });
+      const line = await prisma.shipmentCargoLine.create({
+        data: {
+          ...t, shipmentId, shipmentPoId: po.id, itemCode: `${args.goods.style}-${i + 1}`, sku: `${poNo}-S1`,
+          ctnQty: c.ctn, pcsQty: c.pcs, netWeightKg: c.netKg, grossWeightKg: c.grossKg,
+          cartonLengthCm: D(c.carton[0]), cartonWidthCm: D(c.carton[1]), cartonHeightCm: D(c.carton[2]),
+        },
+        select: {
+          id: true, shipmentPoId: true, itemCode: true, sku: true, ctnQty: true, pcsQty: true, netWeightKg: true, grossWeightKg: true,
+          cartonLengthCm: true, cartonWidthCm: true, cartonHeightCm: true, volumeCbm: true, chargeableWtKg: true,
+        },
+      });
+      return { ...line, poNo };
+    };
+    const lines: Awaited<ReturnType<typeof cargoLine>>[] = [];
+    for (const [i, c] of args.cargo.entries()) lines.push(await cargoLine(c, i));
+
+    const schedule = await prisma.shipmentSchedule.create({
+      data: {
+        ...t, code: `${ACC}SCH-${n}`, shipmentId, carrierId: args.carrierId, transitType: 'DIRECT',
+        cutOffDate: cutOff, vgmDate: sea ? cutOff : null, siDate: sea ? at(-7) : null,
+        status: 'APPROVED', proposedBy: staff, proposedAt: at(-15), decidedBy: staff, decidedAt: decided, createdAt: at(-15),
+      },
+      select: { id: true },
+    });
+    await prisma.shipmentScheduleLeg.create({
+      data: {
+        ...t, scheduleId: schedule.id, legNo: 1, vesselId: sea ? vessel.id : null, voyageNo, flightNo,
+        originPortId: args.pol, destinationPortId: args.pod, etd, eta,
+      },
+    });
+
+    const soCode = `${ACC}SO-${n}`;
+    const so = await prisma.shippingOrder.create({
+      data: {
+        ...t, code: soCode, seriesYear: yearOf(soIssued), shipmentId, scheduleId: schedule.id, issueDate: soIssued, issuedBy: staff,
+        firstVesselId: sea ? vessel.id : null, firstVesselName: sea ? vessel.name : null, firstFlightNo: flightNo,
+        cutOff, etd, eta, warehouseCfs: sea ? CFS : null, status: 'ISSUED', qrPayload: `SO:${soCode}\nBKG:${code}`, createdAt: soIssued,
+      },
+      select: { id: true },
+    });
+
+    // Every carton arrived as booked, at the CFS for sea and the cargo village for air.
+    const efrNo = sea ? `EFR-A${String(n).padStart(4, '0')}` : null;
+    const receipt = await prisma.cargoReceipt.create({
+      data: {
+        ...t, code: `${ACC}CR-${n}`, seriesYear: yearOf(received), shipmentId, shippingOrderId: so.id, receiveDate: received,
+        unloadLocation: sea ? CFS : AIR_TERMINAL, efrNo, receiptSeq: 1, status: 'CONFIRMED', receivedBy: staff,
+        confirmedAt: received, createdAt: received,
+      },
+      select: { id: true },
+    });
+    await prisma.cargoReceiptLine.createMany({
+      data: lines.map((l) => ({
+        ...t, cargoReceiptId: receipt.id, shipmentCargoLineId: l.id, receivedCtnQty: l.ctnQty, receivedPcsQty: l.pcsQty,
+        receivedNetWeightKg: l.netWeightKg, receivedGrossWeightKg: l.grossWeightKg, lineStatus: 'ACCEPTED', createdAt: received,
+      })),
+    });
+
+    // Sea: FCL fills a 20' per PO, LCL goes out in one 40'HC.
+    const boxes = !sea ? [] : args.loading === 'FCL' ? lines.map((l) => [l]) : [lines];
+    const plans: { id: bigint; containerNo: string; sealNo: string; size: string; lines: typeof lines }[] = [];
+    for (const [i, box] of boxes.entries()) {
+      const size = args.loading === 'FCL' ? std20 : hc40;
+      const no = containerNo('CMA', 100_000 + n * 10 + i);
+      const seal = `CC${700_000 + n * 10 + i}`;
+      const clp = await prisma.clp.create({
+        data: {
+          ...t, code: `${ACC}CLP-${n}-${i + 1}`, seriesYear: yearOf(stuffed), shipmentId, shippingOrderId: so.id,
+          consolidationType: 'SINGLE', containerSizeId: size.id, carrierId: args.carrierId, finalCfsLocation: CFS,
+          containerNo: no, sealNo: seal, loadDatetime: stuffed, loadedBy: 'Karnaphuli CFS stuffing crew',
+          status: 'FINAL', finalisedBy: staff, finalisedAt: stuffed,
+          totalCtnQty: box.reduce((acc, l) => acc + l.ctnQty, 0),
+          totalPcsQty: box.reduce((acc, l) => acc + (l.pcsQty ?? 0), 0),
+          totalNetWeightKg: sum(box, (l) => l.netWeightKg),
+          totalGrossWeightKg: sum(box, (l) => l.grossWeightKg),
+          totalVolumeCbm: sum(box, (l) => l.volumeCbm),
+          createdAt: at(-7),
+        },
+        select: { id: true },
+      });
+      await prisma.clpBooking.create({ data: { ...t, clpId: clp.id, shipmentId, shippingOrderId: so.id } });
+      await prisma.clpLine.createMany({
+        data: box.map((l) => ({
+          ...t, clpId: clp.id, shipmentCargoLineId: l.id, shipmentPoId: l.shipmentPoId, poNo: l.poNo, itemCode: l.itemCode, sku: l.sku,
+          cartonLengthCm: l.cartonLengthCm, cartonWidthCm: l.cartonWidthCm, cartonHeightCm: l.cartonHeightCm,
+          ctnQty: l.ctnQty, pcsQty: l.pcsQty, netWeightKg: l.netWeightKg, grossWeightKg: l.grossWeightKg, volumeCbm: l.volumeCbm,
+          isFinalAllocation: true,
+        })),
+      });
+      plans.push({ id: clp.id, containerNo: no, sealNo: seal, size: size.name, lines: box });
+    }
+
+    /*
+     * The advise, written as the screen writes one: a draft, the booking it
+     * covers, its PO grid, then sent. The database lets a booking join a draft
+     * only, so the order matters.
+     */
+    const houseBlNo = sea ? `${ACC}HBL-${n}` : `${ACC}HAWB-${n}`;
+    const advise = await prisma.shipmentAdvise.create({
+      data: {
+        ...t, code: `${ACC}SA-${n}`, seriesYear: yearOf(advised), shipmentId, scheduleId: schedule.id, carrierId: args.carrierId,
+        transitType: 'DIRECT', firstVesselId: sea ? vessel.id : null, voyageNo, firstFlightNo: flightNo,
+        polId: args.pol, podId: args.pod, etd, eta, stuffingDate: sea ? stuffed : null,
+        // The carrier's master: a CMA CGM bill, or an Emirates (176) air waybill.
+        houseBlNo, mblNo: sea ? `CGP${String(4_100_000 + n)}` : `176-${String(40_000_000 + n * 7)}`,
+        status: 'DRAFT', createdBy: staff, createdAt: advised,
+      },
+      select: { id: true },
+    });
+    await prisma.shipmentAdviseBooking.create({ data: { ...t, adviseId: advise.id, shipmentId, createdBy: staff, createdAt: advised } });
+    await prisma.shipmentAdviseLine.createMany({
+      data: lines.map((l) => ({
+        ...t, adviseId: advise.id, shipmentId, shipmentPoId: l.shipmentPoId, shipmentCargoLineId: l.id,
+        clpId: plans.find((p) => p.lines.includes(l))?.id ?? null,
+        poNo: l.poNo, itemCode: l.itemCode, sku: l.sku, ctnQty: l.ctnQty, pcsQty: l.pcsQty,
+        netWeightKg: l.netWeightKg, grossWeightKg: l.grossWeightKg,
+        cartonLengthCm: l.cartonLengthCm, cartonWidthCm: l.cartonWidthCm, cartonHeightCm: l.cartonHeightCm,
+        volumeCbm: l.volumeCbm, chargeableWtKg: sea ? null : l.chargeableWtKg,
+        cargoReceiptDate: received, stuffingDate: sea ? stuffed : null, efrNo,
+      })),
+    });
+    const ctn = lines.reduce((acc, l) => acc + l.ctnQty, 0);
+    const gross = sum(lines, (l) => l.grossWeightKg);
+    const cbm = sum(lines, (l) => l.volumeCbm);
+    await prisma.shipmentAdvise.update({
+      where: { id: advise.id },
+      data: {
+        status: 'SENT', sentAt: advised, sentBy: staff,
+        totalPoCount: lines.length, totalCtnQty: ctn, totalPcsQty: lines.reduce((acc, l) => acc + (l.pcsQty ?? 0), 0),
+        totalNetWeightKg: sum(lines, (l) => l.netWeightKg), totalGrossWeightKg: gross, totalVolumeCbm: cbm,
+        totalChargeableWtKg: sea ? null : sum(lines, (l) => l.chargeableWtKg),
+      },
+    });
+
+    if (sea) {
+      // Drafted from the advise, approved, then issued on BL Print with three originals.
+      const party = `${consignee.name}\n${consignee.address}`;
+      const bl = await prisma.blDraft.create({
+        data: {
+          ...t, code: `${ACC}BL-${n}`, seriesYear: yearOf(advised), shipmentId, adviseId: advise.id, origin: 'STAFF', blNo: houseBlNo,
+          shipperText: `${args.customer.name}\n${OFFICE}`, consigneeText: party, notifyText: party,
+          pointCountryOfOrigin: 'Bangladesh', preCarriageByModeId: modeId, placeOfReceipt: CFS,
+          oceanVesselVoyage: `${vessel.name} / ${voyageNo}`, polId: args.pol, podId: args.pod,
+          packagesDescription: `${ctn} CARTONS\n${goods.name.toUpperCase()}\nHS CODE ${goods.hsCode ?? ''}`.trim(),
+          grossWeightKg: gross, measurementCbm: cbm, freightPayableAt: 'Chattogram', originalBlCount: 3, ladenOnBoardDate: etd,
+          status: 'APPROVED', approvedAt: at(-2), approvedBy: staff, issuedAt: at(-1), issuedBy: staff,
+          createdBy: staff, createdAt: advised,
+        },
+        select: { id: true },
+      });
+      await prisma.blDraftContainer.createMany({
+        data: plans.map((p) => ({
+          ...t, blDraftId: bl.id, clpId: p.id, containerNo: p.containerNo, containerSize: p.size, sealNo: p.sealNo,
+          ctnQty: p.lines.reduce((acc, l) => acc + l.ctnQty, 0),
+          grossWeightKg: sum(p.lines, (l) => l.grossWeightKg), measurementCbm: sum(p.lines, (l) => l.volumeCbm),
+          createdBy: staff,
+        })),
+      });
+    }
+
+    // Depart-Arrive Confirmation: sailed on its ETD; arrived once the ETA has come.
+    const confirm = (kind: 'DEPARTED' | 'ARRIVED', on: Date) =>
+      prisma.shipmentMilestone.create({
+        data: { ...t, shipmentId, kind, pulledOn: on, confirmedOn: on, confirmedBy: staff, confirmedAt: on, createdBy: staff, createdAt: on },
+      });
+    await confirm('DEPARTED', etd);
+    if (eta <= now) await confirm('ARRIVED', eta);
+
+    // The agent was pre-alerted with the HBL for every sea job before this month.
+    if (sea && args.date < monthStart) {
+      await prisma.preAlert.create({
+        data: {
+          ...t, shipmentId, agentId: agent.id, toAddresses: [agentEmail], documents: ['HBL'],
+          sentBy: staff, sentAt: args.date, createdBy: staff, createdAt: args.date,
+        },
+      });
+    }
+
+    return { quotationId: quotation.id, shipmentId, code };
   };
 
   /** Debit Invoice with its Selling Price grid and its Buying from … blocks, totals as retotalInvoice keeps them. */
@@ -530,19 +893,20 @@ export async function seedAccounts(prisma: PrismaClient, tenantId: bigint): Prom
     const specs: {
       kind: 'FCL' | 'LCL' | 'AIR';
       customer: { id: bigint; name: string; email: string };
+      goods: Goods;
       day: number;
       pod: bigint;
       units: number;
       sell: Prisma.Decimal.Value;
       cost: Prisma.Decimal.Value;
     }[] = [
-      { kind: 'FCL', customer: meghna, day: 1, pod: ham, units: 2 + (m % 3), sell: 1700, cost: 1180 },
-      { kind: 'FCL', customer: jamuna, day: 2, pod: ham, units: 3 + (m % 2), sell: 1650, cost: 1150 },
-      { kind: 'FCL', customer: meghna, day: 3, pod: rtm, units: 1 + (m % 2), sell: 1750, cost: 1220 },
-      { kind: 'LCL', customer: padma, day: 2, pod: ham, units: 8 + (m % 5), sell: 4300, cost: 3300 },
-      { kind: 'LCL', customer: jamuna, day: 3, pod: rtm, units: 5 + (m % 3), sell: 4400, cost: 3300 },
-      { kind: 'AIR', customer: rupsha, day: 1, pod: dxb, units: 600 + 50 * (m % 4), sell: '2.95', cost: '2.30' },
-      { kind: 'AIR', customer: rupsha, day: 3, pod: dxb, units: 400 + 30 * (m % 3), sell: '3.05', cost: '2.35' },
+      { kind: 'FCL', customer: meghna, goods: knit, day: 1, pod: ham, units: 2 + (m % 3), sell: 1700, cost: 1180 },
+      { kind: 'FCL', customer: jamuna, goods: denim, day: 2, pod: ham, units: 3 + (m % 2), sell: 1650, cost: 1150 },
+      { kind: 'FCL', customer: meghna, goods: knit, day: 3, pod: rtm, units: 1 + (m % 2), sell: 1750, cost: 1220 },
+      { kind: 'LCL', customer: padma, goods: handbags, day: 2, pod: ham, units: 8 + (m % 5), sell: 4300, cost: 3300 },
+      { kind: 'LCL', customer: jamuna, goods: denim, day: 3, pod: rtm, units: 5 + (m % 3), sell: 4400, cost: 3300 },
+      { kind: 'AIR', customer: rupsha, goods: tablets, day: 1, pod: dxb, units: 600 + 50 * (m % 4), sell: '2.95', cost: '2.30' },
+      { kind: 'AIR', customer: rupsha, goods: tablets, day: 3, pod: dxb, units: 400 + 30 * (m % 3), sell: '3.05', cost: '2.35' },
     ];
 
     let firstAir = true;
@@ -559,7 +923,8 @@ export async function seedAccounts(prisma: PrismaClient, tenantId: bigint): Prom
           { costHeadId: H.oceanFreight, costHeadName: 'Ocean Freight', ...box, quantity: qty, unitPrice: sellAt },
           { costHeadId: H.blFee, costHeadName: 'B/L Fee', unitId: uHbl, unitName: 'HBL', quantity: D(1), unitPrice: D(50) },
         ];
-        const job = await booking({ date, customer: spec.customer, type: 'SEA', loading: 'FCL', carrierId: cmaCgm, pol: ctg, pod: spec.pod, currency: 'USD', rate: usdRate, lines, status: 'BL_ISSUED' });
+        const cargo = Array.from({ length: spec.units }, (_, k) => container(spec.goods, m + k));
+        const job = await booking({ date, customer: spec.customer, goods: spec.goods, type: 'SEA', loading: 'FCL', carrierId: cmaCgm, pol: ctg, pod: spec.pod, currency: 'USD', rate: usdRate, lines, cargo });
         const inv = await invoice({
           date, job, customer: spec.customer, currency: 'USD', rate: usdRate, lines,
           costs: [
@@ -582,7 +947,7 @@ export async function seedAccounts(prisma: PrismaClient, tenantId: bigint): Prom
           { costHeadId: H.lclFreight, costHeadName: 'LCL Freight', unitId: uCbm, unitName: 'CBM', quantity: qty, unitPrice: sellAt.toDecimalPlaces(0) },
           { costHeadId: H.blFee, costHeadName: 'B/L Fee', unitId: uHbl, unitName: 'HBL', quantity: D(1), unitPrice: D(2500) },
         ];
-        const job = await booking({ date, customer: spec.customer, type: 'SEA', loading: 'LCL', carrierId: cmaCgm, pol: ctg, pod: spec.pod, currency: 'BDT', rate: D(1), lines, status: 'BL_ISSUED' });
+        const job = await booking({ date, customer: spec.customer, goods: spec.goods, type: 'SEA', loading: 'LCL', carrierId: cmaCgm, pol: ctg, pod: spec.pod, currency: 'BDT', rate: D(1), lines, cargo: [lcl(spec.goods, spec.units)] });
         const inv = await invoice({
           date, job, customer: spec.customer, currency: 'BDT', rate: D(1), lines,
           costs: [{ party: 'VENDOR', partyId: lclConsol, supplierInvoiceNo: `SALC-${job.code.slice(-4)}`, currency: 'BDT', rate: D(1), lines: [{ costHeadId: H.lclFreight, costHeadName: 'LCL Freight', unitId: uCbm, unitName: 'CBM', quantity: qty, unitPrice: costAt.toDecimalPlaces(0) }] }],
@@ -593,7 +958,7 @@ export async function seedAccounts(prisma: PrismaClient, tenantId: bigint): Prom
         if (m >= 1 && p1 !== null) await pay({ date: p1, cost: inv.costs[0]!, invCode: inv.code, serviceKey: 'EXPENSE.COST_OF_SERVICE.SEA_LCL', bankRate: D(1), who: 'Shah Amanat LCL Consolidators' });
       } else {
         const lines: Line[] = [{ costHeadId: H.airFreight, costHeadName: 'Air Freight', unitId: uKg, unitName: 'KG', quantity: qty, unitPrice: sellAt }];
-        const job = await booking({ date, customer: spec.customer, type: 'AIR', loading: null, carrierId: emirates, pol: dac, pod: spec.pod, currency: 'USD', rate: usdRate, lines, status: 'ADVISED' });
+        const job = await booking({ date, customer: spec.customer, goods: spec.goods, type: 'AIR', loading: null, carrierId: emirates, pol: dac, pod: spec.pod, currency: 'USD', rate: usdRate, lines, cargo: [air(spec.goods, spec.units)] });
         const inv = await invoice({
           date, job, customer: spec.customer, currency: 'USD', rate: usdRate, lines,
           costs: [
@@ -697,15 +1062,17 @@ export async function seedAccounts(prisma: PrismaClient, tenantId: bigint): Prom
     { costHeadId: H.oceanFreight, costHeadName: 'Ocean Freight', unitId: uContainer, unitName: 'Container', containerSizeId: size20, containerSizeName: '20STD', quantity: D(1), unitPrice: D(1500) },
     { costHeadId: H.blFee, costHeadName: 'B/L Fee', unitId: uHbl, unitName: 'HBL', quantity: D(1), unitPrice: D(50) },
   ];
-  const awaiting = await booking({ date: today, customer: meghna, type: 'SEA', loading: 'FCL', carrierId: cmaCgm, pol: ctg, pod: ham, currency: 'USD', rate: D('121.20'), lines: awaitingLines, status: 'BL_ISSUED' });
+  const awaiting = await booking({ date: today, customer: meghna, goods: knit, type: 'SEA', loading: 'FCL', carrierId: cmaCgm, pol: ctg, pod: ham, currency: 'USD', rate: D('121.20'), lines: awaitingLines, cargo: [container(knit, 0)] });
   const draftLines: Line[] = [{ costHeadId: H.lclFreight, costHeadName: 'LCL Freight', unitId: uCbm, unitName: 'CBM', quantity: D(6), unitPrice: D(4500) }];
-  const draftJob = await booking({ date: today, customer: padma, type: 'SEA', loading: 'LCL', carrierId: cmaCgm, pol: ctg, pod: ham, currency: 'BDT', rate: D(1), lines: draftLines, status: 'BL_ISSUED' });
+  const draftJob = await booking({ date: today, customer: padma, goods: handbags, type: 'SEA', loading: 'LCL', carrierId: cmaCgm, pol: ctg, pod: ham, currency: 'BDT', rate: D(1), lines: draftLines, cargo: [lcl(handbags, 6)] });
   const draft = await invoice({ date: today, job: draftJob, customer: padma, currency: 'BDT', rate: D(1), lines: draftLines, costs: [], status: 'DRAFT' });
 
   return [
     `  bank       : Bank Asia Ltd, Agrabad — account 0863303387801 (and Cash on Hand)`,
     `  customers  : Meghna Knitwear and Jamuna Denim (FCL, LCL), Padma Leather (LCL), Rupsha Pharma (Air)`,
     `  jobs       : ${counters['invoice']} debit invoices over ${MONTHS} months, each with carrier / agent / vendor costs`,
+    `  bookings   : ${counters['job']}, each taken through schedule, S/O, receipt, load plan, advise and BL issue — sea reads`,
+    `               BL issued, air (no BL) Shipment advised; all sailed, arrived once due, sea pre-alerted before this month`,
     `  vouchers   : ${(counters['INCOME'] ?? 0)} income, ${(counters['EXPENSE'] ?? 0)} expense, ${(counters['TRANSFER'] ?? 0)} transfer, ${(counters['JOURNAL'] ?? 0)} journal`,
     `  to try     : ${awaiting.code} waits on Awaiting Freight Inv; ${draft.code} is a draft on Debit Invoice`,
     `  outstanding: this month's invoices are not yet received or paid; one Air invoice is half paid`,

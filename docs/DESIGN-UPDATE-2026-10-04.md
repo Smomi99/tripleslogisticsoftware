@@ -639,6 +639,10 @@ previous YTD, the cash basis, the export, permissions, and an empty second works
 `demo` workspace, every record coded `DEMO-ACC-`:
 - four customers, an agent, two vendors and a bank account
 - 7 jobs a month (FCL in USD, LCL in BDT, Air in USD), each with a debit invoice and its cost blocks
+- every booking taken through schedule, S/O, cargo receipt, load plan (sea), sent advise and BL issue
+  (sea) before its invoice date, then departure and arrival confirmed — so sea bookings read BL issued
+  and air bookings Shipment advised with the records to back it. Sea jobs before this month carry a
+  pre-alert to the agent; air has none, as its HAWB and MAWB are uploads only
 - receipts and supplier payments at a bank rate that differs from the invoice rate, so both FX lines
   move on accrual
 - a month's office expenses, a quarterly interest income and income tax, a depreciation journal, a

@@ -6,7 +6,7 @@ import { hash } from '@node-rs/argon2';
 
 import { Prisma, PrismaClient } from '../apps/api/src/generated/prisma/client';
 
-import { ACC, clearAccounts, seedAccounts } from './demo-accounts';
+import { ACC, clearAccounts, containerNo, seedAccounts } from './demo-accounts';
 
 /**
  * Demo data — a workspace with enough in it to try the product on.
@@ -235,6 +235,12 @@ async function clear(tenantId: bigint, prefix: string = P): Promise<void> {
   await prisma.clpLine.deleteMany({ where: { ...t, clpId: { in: planIds } } });
   await prisma.clpBooking.deleteMany({ where: { ...t, clpId: { in: planIds } } });
   await prisma.clp.deleteMany({ where: { ...t, id: { in: planIds } } });
+
+  // Departures, arrivals and pre-alerts on demo bookings — the accounts demo
+  // makes them, and confirming one is the next step of trying a booking.
+  await prisma.shipmentMilestone.deleteMany({ where: { ...t, shipmentId: { in: shipmentIds } } });
+  await prisma.preAlert.deleteMany({ where: { ...t, shipmentId: { in: shipmentIds } } });
+  await prisma.preAlertDocument.deleteMany({ where: { ...t, shipmentId: { in: shipmentIds } } });
 
   await prisma.cargoReceiptLine.deleteMany({
     where: { ...t, receipt: { shipmentId: { in: shipmentIds } } },
@@ -1589,24 +1595,6 @@ function printSheet(): void {
 
 /** The CR-005 scenario's rows carry this, so it can be rebuilt on its own. */
 const EFRG = `${P}EFR-`;
-
-/** ISO 6346 — the Container Load Plan screen checks a container number's last digit. */
-function containerNo(owner: string, serial: number): string {
-  const body = `${owner}U${String(serial).padStart(6, '0')}`;
-  const value: Record<string, number> = {};
-  let n = 10;
-  for (const c of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') {
-    if (n % 11 === 0) n += 1;
-    value[c] = n;
-    n += 1;
-  }
-  let sum = 0;
-  for (let i = 0; i < 10; i += 1) {
-    const ch = body[i]!;
-    sum += (/\d/.test(ch) ? Number(ch) : value[ch]!) * 2 ** i;
-  }
-  return `${body}${(sum % 11) % 10}`;
-}
 
 /**
  * docs/CR-005-one-advise-per-efr.md, ready to click through — three examples,
