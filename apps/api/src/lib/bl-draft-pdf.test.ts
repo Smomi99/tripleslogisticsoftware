@@ -1,3 +1,4 @@
+import { freightTermsOf } from '@ff/shared';
 import { describe, expect, it } from 'vitest';
 
 import { blQrText, type BlDraftPdfInput } from './bl-draft-pdf';
@@ -32,20 +33,20 @@ const bill: BlDraftPdfInput = {
   exportReferences: null,
   forwardingAgentReferences: null,
   pointCountryOfOrigin: 'Bangladesh',
-  preCarriageByModeName: 'CFS / CY',
+  preCarriageVesselVoyage: 'CMA CGM SAO PAULO V-0BEORW1MA',
   placeOfReceipt: 'CHATTOGRAM',
   deliveryAgentText: null,
   oceanVesselVoyage: 'CMA CGM SAO PAULO V-0BEORW1MA',
   polName: 'Chattogram',
   podName: 'KOPER',
   placeOfDelivery: 'KOPER',
-  poItems: [],
   packagesDescription: null,
   marksAndNumbers: null,
   grossWeightKg: '5981.50',
   measurementCbm: '23.73',
   containers: [container(75)],
   freightPayableAt: 'DESTINATION',
+  freightTerms: 'COLLECT',
   originalBlCount: 3,
   ladenOnBoardDate: '2026-09-22',
   issuedOn: '2026-09-23',
@@ -98,5 +99,20 @@ describe('the bill of lading QR', () => {
       null,
     );
     expect(text).not.toMatch(/^(Issued|On Board|Delivery|Container|Packages):/m);
+  });
+});
+
+describe('who pays the freight (§13.10 Q8)', () => {
+  it('collects under the E and F terms, where the buyer books the carriage', () => {
+    for (const tos of ['EXW', 'FCA', 'FAS', 'FOB']) expect(freightTermsOf(tos)).toBe('COLLECT');
+  });
+
+  it('prepays under every C and D term, where the seller pays it at origin', () => {
+    for (const tos of ['CFR', 'CIF', 'CPT', 'CIP', 'DAP', 'DPU', 'DDP']) expect(freightTermsOf(tos)).toBe('PREPAID');
+  });
+
+  it('reads the code however it was typed, and says neither when there is none', () => {
+    expect(freightTermsOf(' fob ')).toBe('COLLECT');
+    expect(freightTermsOf(null)).toBeNull();
   });
 });

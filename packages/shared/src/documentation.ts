@@ -458,6 +458,27 @@ export const blIssueSchema = z.object({
 
 export type BlIssueInput = z.infer<typeof blIssueSchema>;
 
+/**
+ * Who pays the ocean freight, read from the booking's Incoterms (TOS) — what
+ * the bill prints under Prepaid / Collect and Freight Payable at (§13.10 Q8,
+ * answered 2026-10-05).
+ *
+ * Under the E and F terms the buyer contracts the main carriage, so freight is
+ * collected at destination; under every C and D term the seller pays it at the
+ * port of loading.
+ */
+export const FREIGHT_COLLECT_TOS = ['EXW', 'FCA', 'FAS', 'FOB'] as const;
+
+export const FREIGHT_TERMS = ['PREPAID', 'COLLECT'] as const;
+export type FreightTerms = (typeof FREIGHT_TERMS)[number];
+
+/** Null when the booking records no TOS — the bill then says neither. */
+export function freightTermsOf(tosCode: string | null): FreightTerms | null {
+  if (tosCode === null) return null;
+  const collect: readonly string[] = FREIGHT_COLLECT_TOS;
+  return collect.includes(tosCode.trim().toUpperCase()) ? 'COLLECT' : 'PREPAID';
+}
+
 /** What BL Print shows about a booking's bill, and what `Issue BL` confirms. */
 export interface BlPrintDto {
   shipmentId: string;

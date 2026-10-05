@@ -670,16 +670,33 @@ originals are printed. Everything below that is not in those cells is a default,
   page is: draft, ORIGINAL n of N or copy, issuer, bookings, shipper and consignee names,
   vessel/voyage, POL, POD, delivery, the first three containers, packages, weight, CBM, on-board and
   issue dates, originals), one code per page — *BILL OF LADING* top
-  right with the ORIGINAL / COPY mark under it; one ruled grid in a monospace face; the container
-  list at the foot of the description; the clause text on the right of the foot and *Signed as Agent
-  For the Carrier* under it. The letterhead carries no address line — that line was the email
+  right with the ORIGINAL / COPY mark under it; one ruled grid; the container lines under the
+  description; the clause text on the right of the foot and *Signed as Agent For the Carrier* under
+  it. The letterhead carries no address line — that line was the email
   signature block, and the client asked for it off the bill. Draft, BL Print and the customer
   portal all print this one layout.
-- Filled from the record: `SL.NO.` is the draft's own number (`BLD-…`); *Purchase order number /
-  Item Number* lists the advise's PO / item lines; *Place and date of issue* carries the date BL Print
-  issued the bill (*Not issued* on a copy printed before then); *Laden on Board Date* reads
-  `<port of loading>, DD/MM/YYYY`. *Prepaid*, *Collect*, *Total Freight* and *FREIGHT/CHARGES* print
-  empty — nothing records them (Q8–Q10).
+- Filled from the record: `SL.NO.` is the draft's own number (`BLD-…`). *Total Freight* and
+  *FREIGHT/CHARGES* print empty — nothing records them (Q8).
+- **Revised 2026-10-05 (client):**
+  - *Pre-Carriage By(mode)* prints the first leg's vessel and voyage, as the advise recorded them, and
+    *Place of Receipt* prints the port of loading. Both are read at print time; the draft's own mode
+    and place of receipt no longer print.
+  - The *Purchase order number / Item Number* column is gone. Its width went to *Marks and Numbers
+    Container and Seal Numbers*.
+  - The containers print as plain lines under the description, one per container —
+    `CONTAINER/SIZE/SEAL NO, CBM, GROSS WT`, then `TEMU1006375/20' Standard/M2604875, 23.73 CBM,
+    5981.50 KGS` — not a boxed table. The description gives up room so a heading and three
+    containers always show; past what fits, the rest are counted (*+ N more containers*).
+  - *Point and Country of origin* sits under *Forwarding Agent-References*, and *Also Notify, Routing
+    and instructions* takes the full height beside the notify party.
+  - *Laden on Board Date* is the date alone; *Place and date of issue* is `<PORT OF LOADING>,
+    DD/MM/YYYY` with that same on-board date. The day BL Print issued the bill stays in the QR.
+  - Prepaid or collect follows the booking's TOS (Q8): EXW, FCA, FAS and FOB print **COLLECT** with
+    *Freight Payable at* `DESTINATION`; every C and D term prints **PREPAID**, payable at the port of
+    loading. A booking with no TOS marks neither column and prints what the draft typed.
+  - Solid black Helvetica throughout. The form's blue labels and rules and its Courier printed as
+    broken dots on a black-and-white printer; any colour is halftoned there, and Courier's hairline
+    strokes break up at this size.
 
 ### 13.5 Schema — migration `20260926140000_bl_print`
 
@@ -748,7 +765,7 @@ keys, then grant them on the Roles screen.
 | 5 | Must `Laden on Board Date` be set before a bill is issued? | Not required; the Issue dialog warns when it is empty |
 | 6 | Does the customer see the issued bill, and its date, in their portal? | The portal's draft data carries `issuedAt`; nothing new is drawn |
 | 7 | Inbound's *"arrange to upload a file"* (G44) | Belongs to Copy Doc upload (K8), not built |
-| 8 | The client's form has *Prepaid*, *Collect* (their sample: *AS ARRANGED*), *Total Freight* and *FREIGHT/CHARGES · RATE BASIS*. Where do they come from — typed on the BL draft, or from the quotation / Incoterms? | Printed empty |
-| 9 | *Place and date of issue*: is the place the port of loading (as on their sample), the issuing office, or typed? | The issue date only |
+| 8 | The client's form has *Prepaid*, *Collect* (their sample: *AS ARRANGED*), *Total Freight* and *FREIGHT/CHARGES · RATE BASIS*. Where do they come from — typed on the BL draft, or from the quotation / Incoterms? | **Answered 2026-10-05:** Prepaid / Collect from the booking's TOS (see §13.4); *Total Freight* and *FREIGHT/CHARGES* still print empty |
+| 9 | *Place and date of issue*: is the place the port of loading (as on their sample), the issuing office, or typed? | **Answered 2026-10-05:** the port of loading and the laden-on-board date |
 | 10 | The form's *SL.NO.*: the BL draft's own number, or a serial of pre-printed stationery? | The BL draft number (`BLD-…`) |
 | 11 | The clause text (*RECEIVED by the carrier…*, *In witness whereof…*, *Excess Value Declaration*) was transcribed from their sample with obvious typos corrected. Confirm the wording, and whether it varies by workspace. | Fixed text, with the number of originals filled in |
