@@ -136,7 +136,6 @@ export async function blPrintDocument(
 
   const pdf = await renderBlDraftPdf({
     ...(await blDocumentInput(db, tenantId, row)),
-    status: issuedOn === null ? 'Approved, not issued' : `Issued ${issuedOn}`,
     isDraft: false,
     copies,
     issuedOn,

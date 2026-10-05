@@ -9,7 +9,6 @@ import {
   blDraftInputSchema,
   blDraftSendSchema,
   blTemplateInputSchema,
-  BL_DRAFT_STATUS_LABEL,
   CODE_PREFIX,
 } from '@ff/shared';
 
@@ -23,7 +22,7 @@ import {
   loadLiveBlDraft,
 } from '../lib/bl-draft-view';
 import { type BlDraftPdfInput, renderBlDraftPdf } from '../lib/bl-draft-pdf';
-import { letterheadOf } from '../lib/letterhead';
+import { letterheadOf, logoOf } from '../lib/letterhead';
 import { logger } from '../lib/logger';
 import { putFile } from '../lib/storage';
 import { CODE_RETRY_LIMIT, isUniqueViolation, nextCode } from '../lib/codes';
@@ -690,15 +689,27 @@ export async function blDocumentInput(
   db: TenantDb,
   tenantId: bigint,
   row: BlDraftRow,
-): Promise<Omit<BlDraftPdfInput, 'status' | 'isDraft'>> {
-  const head = await letterheadOf(db, tenantId);
+): Promise<Omit<BlDraftPdfInput, 'isDraft'>> {
+  const [head, logo, adviseLines] = await Promise.all([
+    letterheadOf(db, tenantId),
+    logoOf(db, tenantId),
+    // The PO / item column: every line of the bill's advise (CR-005: all its bookings).
+    db.shipmentAdviseLine.findMany({
+      where: { adviseId: row.adviseId, deletedAt: null },
+      orderBy: [{ poNo: 'asc' }, { id: 'asc' }],
+      select: { poNo: true, itemCode: true },
+    }),
+  ]);
   const dayOf = (d: Date | null): string | null =>
     d === null ? null : d.toISOString().slice(0, 10);
 
   return {
-    ...head,
+    // The name only: the letterhead's second line is the email signature block,
+    // which the client does not want on the bill.
+    companyName: head.companyName,
+    logo,
+    serialNo: row.code,
     blNo: row.blNo,
-    mblNo: row.advise.mblNo,
     manifestNo: row.manifestNo,
     bookingNo: billBookings(row).map((b) => b.code).join(', '),
     shipperText: row.shipperText,
@@ -715,6 +726,7 @@ export async function blDocumentInput(
     polName: row.pol.name,
     podName: row.pod.name,
     placeOfDelivery: row.placeOfDelivery,
+    poItems: [...new Set(adviseLines.map((l) => `${l.poNo} / ${l.itemCode}`))],
     packagesDescription: row.packagesDescription,
     marksAndNumbers: row.marksAndNumbers,
     grossWeightKg: row.grossWeightKg?.toString() ?? null,
@@ -747,7 +759,6 @@ export async function blDraftDocument(
 ): Promise<{ filename: string; pdf: Buffer }> {
   const pdf = await renderBlDraftPdf({
     ...(await blDocumentInput(db, tenantId, row)),
-    status: BL_DRAFT_STATUS_LABEL[row.status],
     isDraft: row.status === 'DRAFT' || row.status === 'SUBMITTED',
   });
 

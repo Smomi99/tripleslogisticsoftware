@@ -1,3 +1,4 @@
+import { openFile } from './storage';
 import type { TenantDb } from './tenant-client';
 
 /**
@@ -25,4 +26,24 @@ export async function letterheadOf(db: TenantDb, tenantId: bigint): Promise<Lett
     companyName: tenant?.name ?? 'Freight Forwarder',
     companyAddress: settings?.signatureBlock ?? null,
   };
+}
+
+/**
+ * The workspace's uploaded logo, or null.
+ *
+ * A workspace that has not uploaded one still gets a letterhead — the name
+ * carries it — so a missing or unreadable file is never a reason to withhold
+ * the document.
+ */
+export async function logoOf(db: TenantDb, tenantId: bigint): Promise<Buffer | null> {
+  const tenant = await db.tenant.findFirst({ where: { id: tenantId }, select: { logoFile: true } });
+  if (tenant?.logoFile == null || tenant.logoFile === '') return null;
+  try {
+    const file = await openFile(tenantId, tenant.logoFile);
+    const parts: Buffer[] = [];
+    for await (const chunk of file.stream) parts.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    return Buffer.concat(parts);
+  } catch {
+    return null;
+  }
 }

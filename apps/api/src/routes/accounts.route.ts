@@ -63,7 +63,7 @@ import { renderDebitInvoicePdf } from '../lib/debit-invoice-pdf';
 import { queueMail } from '../lib/email-queue';
 import { HttpError } from '../lib/http-error';
 import { nextDebitInvoiceNo, seriesYearOf } from '../lib/inquiry-no';
-import { letterheadOf } from '../lib/letterhead';
+import { letterheadOf, logoOf } from '../lib/letterhead';
 import { logger } from '../lib/logger';
 import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import {
@@ -686,23 +686,11 @@ async function invoiceDocument(
   tenantId: bigint,
   row: InvoiceRow,
 ): Promise<{ pdf: Buffer; filename: string }> {
-  const [letterhead, tenant, base] = await Promise.all([
+  const [letterhead, logo, base] = await Promise.all([
     letterheadOf(db, tenantId),
-    db.tenant.findFirst({ where: { id: tenantId }, select: { logoFile: true } }),
+    logoOf(db, tenantId),
     baseCurrency(db, tenantId),
   ]);
-
-  let logo: Buffer | null = null;
-  if (tenant?.logoFile != null && tenant.logoFile !== '') {
-    try {
-      const file = await openFile(tenantId, tenant.logoFile);
-      const parts: Buffer[] = [];
-      for await (const chunk of file.stream) parts.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-      logo = Buffer.concat(parts);
-    } catch {
-      logo = null;
-    }
-  }
 
   const b = row.shipment;
   const isBase = base !== null && row.currencyId === base.id;
