@@ -685,6 +685,9 @@ originals are printed. Everything below that is not in those cells is a default,
     route that transships, the last leg of the advise's schedule — the mother vessel, since the
     first leg prints as pre-carriage; on a direct sailing, the first and only vessel. It stays an
     editable field.
+  - *For Delivery of Goods Please Apply to:* prints the chosen agent's name, address and country —
+    the country left off when the address already ends with it (2026-10-06). Text typed on the
+    draft for that block still prints instead, as written.
   - Every gross weight and measurement prints to two decimals (2026-10-06) — the total columns,
     the container lines, the attached sheet and the QR: `5400` prints `5400.00`, `23.7300` prints
     `23.73`. Half rounds up, in decimal arithmetic.

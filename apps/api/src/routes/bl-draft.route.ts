@@ -681,6 +681,23 @@ blDraftRouter.post(
 );
 
 /**
+ * "For Delivery of Goods Please Apply to:" for the chosen agent — the name,
+ * then the address, then the country unless the address already ends with it
+ * (client, 2026-10-06: the name alone told the consignee nothing about where
+ * to go). Text typed on the draft prints instead, as written.
+ */
+export function agentAddressBlock(
+  agent: { name: string; address: string | null; country: string } | null,
+): string | null {
+  if (agent === null) return null;
+  const address = (agent.address ?? '').trim();
+  const country = agent.country.trim();
+  const named =
+    country !== '' && address.replace(/[\s.,]+$/, '').toLowerCase().endsWith(country.toLowerCase());
+  return [agent.name.trim(), address, named ? '' : country].filter((v) => v !== '').join('\n');
+}
+
+/**
  * What the bill says, read from the saved row.
  *
  * One reading for the draft and for BL Print's originals (§13), so an issued
@@ -735,7 +752,7 @@ export async function blDocumentInput(
     pointCountryOfOrigin: row.pointCountryOfOrigin,
     preCarriageVesselVoyage: preCarriage === '' ? null : preCarriage,
     placeOfReceipt: row.pol.name,
-    deliveryAgentText: row.deliveryAgentText ?? row.deliveryAgent?.name ?? null,
+    deliveryAgentText: row.deliveryAgentText ?? agentAddressBlock(row.deliveryAgent),
     oceanVesselVoyage: row.oceanVesselVoyage,
     polName: row.pol.name,
     podName: row.pod.name,
