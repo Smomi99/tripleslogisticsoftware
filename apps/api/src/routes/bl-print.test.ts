@@ -62,6 +62,8 @@ interface World {
   bareToken: string;
   polId: bigint;
   podId: bigint;
+  /** The destination agent the main bill sends the consignee to. */
+  agentId: bigint;
   /** The main line: a draft with no count, approved, then issued. */
   main: Booking;
   /** A draft sent to the customer before it was approved. */
@@ -116,6 +118,7 @@ async function cleanup(): Promise<void> {
     'shipment_schedule',
     'shipment',
     'vessel',
+    'agent',
     'quotation',
     'inquiry',
     'customer_pic',
@@ -210,6 +213,17 @@ async function makeWorld(name: string, slug: string, tag: string): Promise<World
 
   const vessel = await owner.vessel.create({
     data: { tenantId, code: `VSL-${tag}`, name: `Mariner ${tag}`, carrierId: carrier.id },
+    select: { id: true },
+  });
+  const agent = await owner.agent.create({
+    data: {
+      tenantId,
+      code: `AGT-${tag}`,
+      name: `Hanse Logistics ${tag}`,
+      country: 'Germany',
+      address: 'Hafenstrasse 4, 20457 Hamburg',
+      agentType: 'GENERAL',
+    },
     select: { id: true },
   });
   // The second leg's, on the route that transships at Colombo.
@@ -357,6 +371,7 @@ async function makeWorld(name: string, slug: string, tag: string): Promise<World
     bareToken: await token(bare.id, false, []),
     polId,
     podId,
+    agentId: agent.id,
     // FOB is freight collect, CIF prepaid (§13.10 Q8); the third records no TOS.
     main: await advised(1, 'FOB'),
     // Transships, so its bill names the first leg as pre-carriage.
@@ -396,7 +411,12 @@ afterAll(async () => {
 const asA = () => as(A.superToken, SLUG_A);
 
 /** `Make BL draft` — the staff form as the operator leaves it. */
-async function makeDraft(world: World, booking: Booking, originalBlCount?: number): Promise<string> {
+async function makeDraft(
+  world: World,
+  booking: Booking,
+  originalBlCount?: number,
+  extra: Record<string, unknown> = {},
+): Promise<string> {
   const res = await as(world.superToken, world.slug)
     .post(`/documentation/bookings/${booking.id}/bl-draft`)
     .send({
@@ -409,6 +429,7 @@ async function makeDraft(world: World, booking: Booking, originalBlCount?: numbe
       podId: world.podId.toString(),
       ladenOnBoardDate: TODAY,
       ...(originalBlCount === undefined ? {} : { originalBlCount }),
+      ...extra,
     });
   expect(res.status, JSON.stringify(res.body)).toBe(201);
   expect(res.body.data.blNo).toBe(booking.houseBlNo);
@@ -431,7 +452,7 @@ describe('the BL draft form (client, 2026-10-06)', () => {
 
 describe('before approval', () => {
   it('keeps an unapproved draft off BL Print, and refuses to issue or print it', async () => {
-    mainDraftId = await makeDraft(A, A.main);
+    mainDraftId = await makeDraft(A, A.main, undefined, { deliveryAgentId: A.agentId.toString() });
 
     const list = await asA().get('/documentation/bl-print?view=TO_ISSUE&limit=100');
     expect(list.status, JSON.stringify(list.body)).toBe(200);
@@ -549,6 +570,10 @@ describe('the approved bill on BL Print', () => {
     expect(text).toContain('COLLECT');
     expect(text).toContain('DESTINATION');
     expect(text).not.toContain('PREPAID');
+    // "For Delivery of Goods Please Apply to:" names the agent and where to find them (2026-10-06).
+    expect(text).toContain('Hanse Logistics A');
+    expect(text).toContain('Hafenstrasse 4, 20457 Hamburg');
+    expect(text.split('\n')).toContain('Germany');
     expect(text).not.toContain('DRAFT');
     expect(text).not.toContain('NON-NEGOTIABLE');
     expect(res.headers['content-disposition']).toContain(`${A.main.houseBlNo}-originals.pdf`);
@@ -721,5 +746,21 @@ describe('tenant isolation (§7A rule 4)', () => {
     expect((await asB.get(`/documentation/bookings/${A.main.id}/bl/pdf?kind=COPY`)).status).toBe(
       404,
     );
+  });
+});
+
+describe('the delivery agent block (client, 2026-10-06)', () => {
+  it('reads name, address, then the country unless the address already ends with it', async () => {
+    const { agentAddressBlock } = await import('./bl-draft.route');
+    expect(agentAddressBlock({ name: 'Hanse Logistics', address: 'Hafenstrasse 4, Hamburg', country: 'Germany' })).toBe(
+      ['Hanse Logistics', 'Hafenstrasse 4, Hamburg', 'Germany'].join('\n'),
+    );
+    expect(
+      agentAddressBlock({ name: 'Intermodal', address: 'Vojkovo nabrezje 38, Koper, Slovenia.', country: 'Slovenia' }),
+    ).toBe(['Intermodal', 'Vojkovo nabrezje 38, Koper, Slovenia.'].join('\n'));
+    expect(agentAddressBlock({ name: 'Gulf Link', address: null, country: 'UAE' })).toBe(
+      ['Gulf Link', 'UAE'].join('\n'),
+    );
+    expect(agentAddressBlock(null)).toBeNull();
   });
 });
