@@ -57,8 +57,8 @@ export const blDraftArgs = {
       },
     },
     preCarriage: { select: { name: true } },
-    // The name, and where to find them: the bill's "Please Apply to" block.
-    deliveryAgent: { select: { name: true, address: true, country: true } },
+    // The name and the agent's own Delivery agent details: the bill's "Please Apply to" block.
+    deliveryAgent: { select: { name: true, deliveryAgentDetails: true } },
     pol: { select: { name: true } },
     pod: { select: { name: true } },
     // §13: who issued the bill, for BL Print's confirmation and its list.
