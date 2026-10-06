@@ -681,6 +681,13 @@ originals are printed. Everything below that is not in those cells is a default,
     when the route transships; a direct sailing leaves it empty (2026-10-06). *Place of Receipt*
     prints the port of loading. Both are read at print time; the draft's own mode and place of
     receipt no longer print.
+  - The BL draft form fills *Ocean Vessel/Voyage* with the vessel that crosses (2026-10-06): on a
+    route that transships, the last leg of the advise's schedule — the mother vessel, since the
+    first leg prints as pre-carriage; on a direct sailing, the first and only vessel. It stays an
+    editable field.
+  - Every gross weight and measurement prints to two decimals (2026-10-06) — the total columns,
+    the container lines, the attached sheet and the QR: `5400` prints `5400.00`, `23.7300` prints
+    `23.73`. Half rounds up, in decimal arithmetic.
   - The *Purchase order number / Item Number* column is gone. Its width went to *Marks and Numbers
     Container and Seal Numbers*.
   - The containers print as plain lines, not a boxed table, in *Marks and Numbers Container and
