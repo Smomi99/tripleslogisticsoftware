@@ -670,23 +670,28 @@ originals are printed. Everything below that is not in those cells is a default,
   page is: draft, ORIGINAL n of N or copy, issuer, bookings, shipper and consignee names,
   vessel/voyage, POL, POD, delivery, the first three containers, packages, weight, CBM, on-board and
   issue dates, originals), one code per page — *BILL OF LADING* top
-  right with the ORIGINAL / COPY mark under it; one ruled grid; the container lines under the
-  description; the clause text on the right of the foot and *Signed as Agent For the Carrier* under
-  it. The letterhead carries no address line — that line was the email
+  right with the ORIGINAL / COPY mark under it; one ruled grid; the containers under the marks;
+  the clause text on the right of the foot and *Signed as Agent For the Carrier* under it. The letterhead carries no address line — that line was the email
   signature block, and the client asked for it off the bill. Draft, BL Print and the customer
   portal all print this one layout.
 - Filled from the record: `SL.NO.` is the draft's own number (`BLD-…`). *Total Freight* and
   *FREIGHT/CHARGES* print empty — nothing records them (Q8).
 - **Revised 2026-10-05 (client):**
-  - *Pre-Carriage By(mode)* prints the first leg's vessel and voyage, as the advise recorded them, and
-    *Place of Receipt* prints the port of loading. Both are read at print time; the draft's own mode
-    and place of receipt no longer print.
+  - *Pre-Carriage By(mode)* prints the first leg's vessel and voyage, as the advise recorded them,
+    when the route transships; a direct sailing leaves it empty (2026-10-06). *Place of Receipt*
+    prints the port of loading. Both are read at print time; the draft's own mode and place of
+    receipt no longer print.
   - The *Purchase order number / Item Number* column is gone. Its width went to *Marks and Numbers
     Container and Seal Numbers*.
-  - The containers print as plain lines under the description, one per container —
-    `CONTAINER/SIZE/SEAL NO, CBM, GROSS WT`, then `TEMU1006375/20' Standard/M2604875, 23.73 CBM,
-    5981.50 KGS` — not a boxed table. The description gives up room so a heading and three
-    containers always show; past what fits, the rest are counted (*+ N more containers*).
+  - The containers print as plain lines, not a boxed table, in *Marks and Numbers Container and
+    Seal Numbers* under the merchant's marks (2026-10-06): a `CONTAINER/SIZE/SEAL NO` heading, then
+    two lines each — `TEMU1006375/20' Standard/M2604875` over `23.73 CBM, 5981.50 KGS`.
+  - When they do not all fit, the column reads *N CONTAINERS — AS PER ATTACHED SHEET* and every
+    container is listed on an **attached sheet** printed after the page: the bill's number, vessel
+    and ports, then SL, container, size, seal, CBM and gross weight per line, and the bill's own
+    totals. Each original and each copy is followed by its own sheet, marked as that page is (DRAFT
+    and COPY carry their watermark); fifty containers to a sheet, more running onto further
+    sheets.
   - *Point and Country of origin* sits under *Forwarding Agent-References*, and *Also Notify, Routing
     and instructions* takes the full height beside the notify party.
   - *Laden on Board Date* is the date alone; *Place and date of issue* is `<PORT OF LOADING>,

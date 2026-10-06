@@ -697,14 +697,18 @@ export async function blDocumentInput(
 
   /*
    * The client's rules for the printed bill (§13.4, 2026-10-05). Pre-carriage
-   * is the first leg's vessel and voyage, as the advise recorded them; the
+   * is the first leg's vessel and voyage, as the advise recorded them, on a
+   * route that transships — a direct sailing leaves it empty (2026-10-06); the
    * place of receipt is the port of loading; and who pays the freight follows
    * the booking's Incoterms — payable at destination when collect, at the port
    * of loading when prepaid. A booking with no TOS keeps what the draft typed.
    */
-  const preCarriage = [row.advise.firstVessel?.name, row.advise.voyageNo]
-    .filter((v) => (v ?? '').trim() !== '')
-    .join(' / ');
+  const preCarriage =
+    row.advise.transitType === 'DIRECT'
+      ? ''
+      : [row.advise.firstVessel?.name, row.advise.voyageNo]
+          .filter((v) => (v ?? '').trim() !== '')
+          .join(' / ');
   const freightTerms = freightTermsOf(row.shipment.tos?.code ?? null);
   const freightPayableAt =
     freightTerms === null

@@ -1,7 +1,8 @@
 import { freightTermsOf } from '@ff/shared';
 import { describe, expect, it } from 'vitest';
 
-import { blQrText, type BlDraftPdfInput } from './bl-draft-pdf';
+import { blQrText, type BlDraftPdfInput, renderBlDraftPdf } from './bl-draft-pdf';
+import { extractPdfText } from './pdf-text';
 
 /**
  * The QR on the bill (§13.4). Whoever holds the paper scans it to check the
@@ -114,5 +115,43 @@ describe('who pays the freight (§13.10 Q8)', () => {
   it('reads the code however it was typed, and says neither when there is none', () => {
     expect(freightTermsOf(' fob ')).toBe('COLLECT');
     expect(freightTermsOf(null)).toBeNull();
+  });
+});
+
+/** pdfkit writes each page object uncompressed; "/Type /Pages" is the tree. */
+const pageCount = (pdf: Buffer): number => (pdf.toString('latin1').match(/\/Type \/Page(?!s)/g) ?? []).length;
+const containers = (n: number) => Array.from({ length: n }, (_, i) => container(i + 1));
+
+describe('the containers on the printed bill (client, 2026-10-06)', () => {
+  it('lists them under Marks and Numbers when they fit, two lines each', async () => {
+    const pdf = await renderBlDraftPdf({ ...bill, containers: containers(2) });
+    expect(pageCount(pdf)).toBe(1);
+    const text = extractPdfText(pdf);
+    expect(text).toContain("TEMU1006301/20' Standard/M2604801");
+    expect(text).toContain('23.73 CBM, 5981.50 KGS');
+    expect(text).not.toContain('ATTACHED SHEET');
+  });
+
+  it('lists every one on an attached sheet when they do not, after each printed page', async () => {
+    const pdf = await renderBlDraftPdf({
+      ...bill,
+      containers: containers(12),
+      copies: [
+        { mark: 'ORIGINAL', note: '1 of 2', watermark: null },
+        { mark: 'ORIGINAL', note: '2 of 2', watermark: null },
+      ],
+    });
+    expect(pageCount(pdf)).toBe(4);
+    const text = extractPdfText(pdf);
+    expect(text).toContain('12 CONTAINERS');
+    expect(text).toContain('AS PER ATTACHED SHEET');
+    for (const c of containers(12)) expect(text).toContain(c.containerNo);
+    expect(text).toContain('TOTAL 12 CONTAINERS');
+  });
+
+  it('runs a long list onto further sheets', async () => {
+    const pdf = await renderBlDraftPdf({ ...bill, containers: containers(60) });
+    expect(pageCount(pdf)).toBe(3);
+    expect(extractPdfText(pdf)).toContain('Container list, sheet 2 of 2');
   });
 });

@@ -112,6 +112,18 @@ const ENTRY_SIZE = 8;
 /** A copy's diagonal word — the one thing meant to print faint. */
 const COPY_GREY = '#6B7A88';
 
+/** The particulars body, where the marks, containers and description go. */
+const BODY_TOP = 392;
+const BODY_BOTTOM = 560;
+/** One container in Marks and Numbers: two lines and a gap; and the heading above them. */
+const CONTAINER_H = 21;
+const CONTAINER_HEAD_H = 11;
+/** "N CONTAINERS / AS PER ATTACHED SHEET", with the gap above it. */
+const SHEET_NOTE_H = 30;
+/** Containers on one attached sheet, and the height of each row. */
+const SHEET_ROWS = 50;
+const SHEET_ROW_H = 13;
+
 const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
 
 /** The receipt clause from the client's form, with the number of originals the bill states. */
@@ -149,6 +161,18 @@ const dmy = (iso: string): string => {
 };
 
 const blank = (v: string | null | undefined): boolean => v === null || v === undefined || v.trim() === '';
+
+type BlContainer = BlDraftPdfInput['containers'][number];
+
+/** "TEMU1006375/20' Standard/M2604875" — the first of a container's two lines. */
+const containerId = (c: BlContainer): string =>
+  [c.containerNo, c.containerSize, c.sealNo].filter((v) => !blank(v)).join('/');
+
+/** "23.73 CBM, 5981.50 KGS" — the second. */
+const containerMeasure = (c: BlContainer): string =>
+  [blank(c.measurementCbm) ? '' : `${c.measurementCbm} CBM`, blank(c.grossWeightKg) ? '' : `${c.grossWeightKg} KGS`]
+    .filter((v) => v !== '')
+    .join(', ');
 
 /**
  * The name at the top of a party block, without the address, cut to `max`
@@ -300,15 +324,34 @@ export async function renderBlDraftPdf(input: BlDraftPdfInput): Promise<Buffer> 
       doc.opacity(1).restore();
     };
 
-    /** "TEMU1006375/20' Standard/M2604875, 23.73 CBM, 5981.50 KGS" — one container. */
-    const containerLine = (c: BlDraftPdfInput['containers'][number]): string =>
-      [
-        [c.containerNo, c.containerSize, c.sealNo].filter((v) => !blank(v)).join('/'),
-        blank(c.measurementCbm) ? '' : `${c.measurementCbm} CBM`,
-        blank(c.grossWeightKg) ? '' : `${c.grossWeightKg} KGS`,
-      ]
-        .filter((v) => v !== '')
-        .join(', ');
+    /*
+     * Marks and Numbers carries the containers under the merchant's marks, two
+     * lines each — container/size/seal over CBM and weight (client,
+     * 2026-10-06). When they do not all fit, the column says so and every one
+     * is listed on an attached sheet after the bill. The page is the same for
+     * every copy, so this is worked out once.
+     */
+    const cols = [left, left + 149, left + 414, left + 476, right];
+    const textTop = BODY_TOP + 6;
+    const textBottom = BODY_BOTTOM - 4;
+    const marksX = cols[0]! + 3;
+    const marksW = cols[1]! - cols[0]! - 6;
+    doc.font(FONT).fontSize(ENTRY_SIZE);
+    const marksNeed = blank(input.marksAndNumbers)
+      ? 0
+      : doc.heightOfString(input.marksAndNumbers ?? '', { width: marksW, lineGap: 0.5 });
+    const n = input.containers.length;
+    const listNeed = n === 0 ? 0 : CONTAINER_HEAD_H + n * CONTAINER_H;
+    const onSheet = n > 0 && (marksNeed === 0 ? textTop : textTop + marksNeed + 8) + listNeed > textBottom;
+    // What the marks may take: everything, less the containers or the note pointing to the sheet.
+    const marksH = Math.min(
+      marksNeed,
+      textBottom - textTop - (n === 0 ? 0 : onSheet ? SHEET_NOTE_H : listNeed + 8),
+    );
+    const sheets: BlDraftPdfInput['containers'][] = [];
+    if (onSheet) {
+      for (let i = 0; i < n; i += SHEET_ROWS) sheets.push(input.containers.slice(i, i + SHEET_ROWS));
+    }
 
     // The client's rule (2026-10-05): the bill is dated with the day it went on
     // board, issued at the port of loading.
@@ -404,13 +447,10 @@ export async function renderBlDraftPdf(input: BlDraftPdfInput): Promise<Buffer> 
       label('Particulars Declared By the Merchant', left, 357, right - left, 'center');
 
       // The PO / item column is gone (2026-10-05); its width went to Marks and Numbers.
-      const cols = [left, left + 149, left + 414, left + 476, right];
       const headTop = 366;
-      const bodyTop = 392;
-      const bodyBottom = 560;
-      box(left, headTop, right, bodyBottom);
-      rule(left, bodyTop, right, bodyTop);
-      for (const x of cols.slice(1, -1)) rule(x, headTop, x, bodyBottom);
+      box(left, headTop, right, BODY_BOTTOM);
+      rule(left, BODY_TOP, right, BODY_TOP);
+      for (const x of cols.slice(1, -1)) rule(x, headTop, x, BODY_BOTTOM);
       const heads = [
         'Marks and Numbers Container and Seal Numbers',
         'Numbers and Description of Packages and Goods',
@@ -419,42 +459,24 @@ export async function renderBlDraftPdf(input: BlDraftPdfInput): Promise<Buffer> 
       ];
       heads.forEach((h, i) => label(h, cols[i]! + 3, headTop + 4, cols[i + 1]! - cols[i]! - 6, 'center'));
 
-      const textTop = bodyTop + 6;
-      const textBottom = bodyBottom - 4;
-      entry(input.marksAndNumbers, cols[0]! + 3, textTop, cols[1]! - cols[0]! - 6, textBottom - textTop);
+      entry(input.packagesDescription, cols[1]! + 3, textTop, cols[2]! - cols[1]! - 6, textBottom - textTop);
       entry(input.grossWeightKg, cols[2]! + 3, textTop, cols[3]! - cols[2]! - 6, 20, { bold: true, align: 'center' });
       entry(input.measurementCbm, cols[3]! + 3, textTop, cols[4]! - cols[3]! - 6, 20, { bold: true, align: 'center' });
 
-      /*
-       * The description, then the containers under it as plain lines — one per
-       * container, since a bill often carries several (2026-10-05). The
-       * description gives up room so a heading and the first three containers
-       * always show; past what fits, the rest are counted.
-       */
-      const descX = cols[1]! + 3;
-      const descW = cols[2]! - cols[1]! - 6;
-      const rowH = 10;
-      const reserve = input.containers.length === 0 ? 0 : 8 + rowH * (1 + Math.min(input.containers.length, 3));
-      doc.font(FONT).fontSize(ENTRY_SIZE);
-      const descNeed = blank(input.packagesDescription)
-        ? 0
-        : doc.heightOfString(input.packagesDescription ?? '', { width: descW, lineGap: 0.5 });
-      const descH = Math.max(0, Math.min(descNeed, textBottom - textTop - reserve));
-      entry(input.packagesDescription, descX, textTop, descW, descH);
-
-      if (input.containers.length > 0) {
-        let y = descNeed === 0 ? textTop : textTop + descH + 8;
-        const fits = Math.max(Math.floor((textBottom - y) / rowH) - 1, 1);
-        const shown =
-          input.containers.length > fits ? input.containers.slice(0, fits - 1) : input.containers;
-        const more = input.containers.length - shown.length;
-        fitted('CONTAINER/SIZE/SEAL NO, CBM, GROSS WT', descX, y, descW, 7.5, true);
-        for (const c of shown) {
-          y += rowH;
-          fitted(containerLine(c), descX, y, descW, 7.5);
-        }
-        if (more > 0) {
-          fitted(`+ ${more} more container${more === 1 ? '' : 's'}`, descX, y + rowH, descW, 7.5);
+      entry(input.marksAndNumbers, marksX, textTop, marksW, marksH);
+      if (n > 0) {
+        let y = marksNeed === 0 ? textTop : textTop + marksH + 8;
+        if (onSheet) {
+          fitted(`${n} CONTAINER${n === 1 ? '' : 'S'}`, marksX, y, marksW, 7.5, true);
+          fitted('AS PER ATTACHED SHEET', marksX, y + 10, marksW, 7.5, true);
+        } else {
+          fitted('CONTAINER/SIZE/SEAL NO', marksX, y, marksW, 7, true);
+          y += CONTAINER_HEAD_H;
+          for (const c of input.containers) {
+            fitted(containerId(c), marksX, y, marksW, 7.5);
+            fitted(containerMeasure(c), marksX, y + 9, marksW, 7.5);
+            y += CONTAINER_H;
+          }
         }
       }
 
@@ -462,6 +484,7 @@ export async function renderBlDraftPdf(input: BlDraftPdfInput): Promise<Buffer> 
       const c1 = left + 100;
       const c2 = left + 149;
       const c3 = left + 202;
+      const bodyBottom = BODY_BOTTOM;
       box(left, bodyBottom, c2, 612);
       label('FREIGHT/CHARGES. ITEM NO.', left + 3, bodyBottom + 3, c2 - left - 6);
       label('RATE/RATE BASIS', left + 3, bodyBottom + 11, c2 - left - 6);
@@ -543,9 +566,92 @@ export async function renderBlDraftPdf(input: BlDraftPdfInput): Promise<Buffer> 
       }
     };
 
+    /**
+     * The attached sheet: every container on the bill, for a bill that carries
+     * more than its Marks and Numbers column holds. Marked like the page it
+     * follows, so an original's sheet cannot pass for a copy's.
+     */
+    const drawSheet = (copy: BlPrintMark | null, rows: BlDraftPdfInput['containers'], sheet: number): void => {
+      doc.addPage();
+      fitted(input.companyName.toUpperCase(), left + 2, 40, mid - left - 10, 14, true);
+      doc.font(FONT).fontSize(10).fillColor(INK).text(
+        sheets.length === 1 ? 'Container list' : `Container list, sheet ${sheet} of ${sheets.length}`,
+        left + 2,
+        62,
+        { lineBreak: false },
+      );
+      doc.font(FONT_BOLD).fontSize(15).fillColor(INK).text('ATTACHED SHEET', mid, 50, {
+        width: right - mid,
+        align: 'right',
+        lineBreak: false,
+      });
+      if (copy !== null) {
+        doc.font(FONT_BOLD).fontSize(11).fillColor(INK).text(copy.mark, mid, 70, {
+          width: right - mid,
+          align: 'right',
+          lineBreak: false,
+        });
+        doc.font(FONT).fontSize(8).fillColor(INK).text(copy.note, mid, 83, {
+          width: right - mid,
+          align: 'right',
+          lineBreak: false,
+        });
+      }
+
+      const top = 96;
+      const q1 = left + 150;
+      const q2 = left + 330;
+      const q3 = left + 430;
+      cell('Bill of Lading Number', input.blNo, left, top, q1, top + 26, { bold: true });
+      cell('Ocean Vessel/Voyage', input.oceanVesselVoyage, q1, top, q2, top + 26);
+      cell('Port of Loading', input.polName, q2, top, q3, top + 26);
+      cell('Port of Discharge', input.podName, q3, top, right, top + 26);
+
+      // Aligned columns under one heading rule, with no grid: a list, not a box per value.
+      const listTop = top + 38;
+      const at = [left + 3, left + 33, left + 148, left + 268, left + 388, left + 463];
+      const ends = [...at.slice(1), right - 3];
+      const numeric = (i: number): boolean => i >= 4;
+      const row = (values: (string | null)[], y: number, bold: boolean): void => {
+        values.forEach((v, i) => {
+          if (v === null) return;
+          doc
+            .font(bold ? FONT_BOLD : FONT)
+            .fontSize(8.5)
+            .fillColor(INK)
+            .text(v, at[i]!, y, { width: ends[i]! - at[i]! - 6, align: numeric(i) ? 'right' : 'left', lineBreak: false });
+        });
+      };
+      row(['SL', 'Container No', 'Size', 'Seal No', 'CBM', 'Gross WT (KGS)'], listTop, true);
+      rule(left, listTop + 13, right, listTop + 13);
+      const first = (sheet - 1) * SHEET_ROWS;
+      const dash = (v: string | null): string => (blank(v) ? '—' : (v ?? ''));
+      rows.forEach((c, r) => {
+        row(
+          [String(first + r + 1), dash(c.containerNo), dash(c.containerSize), dash(c.sealNo), dash(c.measurementCbm), dash(c.grossWeightKg)],
+          listTop + 19 + r * SHEET_ROW_H,
+          false,
+        );
+      });
+      if (sheet === sheets.length) {
+        // The bill's own totals, as its Gross Weight and Measurement columns declare them.
+        const y = listTop + 19 + rows.length * SHEET_ROW_H + 2;
+        rule(left, y, right, y);
+        row(
+          [null, `TOTAL ${n} CONTAINER${n === 1 ? '' : 'S'}`, null, null, input.measurementCbm, input.grossWeightKg],
+          y + 6,
+          true,
+        );
+      }
+
+      if (input.isDraft) watermark('DRAFT', '#B3403A');
+      else if (copy?.watermark != null) watermark(copy.watermark, COPY_GREY);
+    };
+
     pages.forEach((copy, i) => {
       if (i > 0) doc.addPage();
       drawPage(copy, qrs[i]!);
+      sheets.forEach((rows, k) => drawSheet(copy, rows, k + 1));
     });
 
     doc.end();
