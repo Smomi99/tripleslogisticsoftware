@@ -855,6 +855,29 @@ const EMAIL_TEMPLATES = [
       'documents',
     ],
   },
+  {
+    /*
+     * CRM → Agent → Email prices (2026-10-06): the customer's letter, to the
+     * agents on the Agent list. Same shape as CUSTOMER_PRICE_OFFER and
+     * composePriceEmailBody — keep the three in step. Last in this list
+     * because a template's code is its position here.
+     */
+    key: 'AGENT_PRICE_OFFER',
+    name: 'Agent — latest freight rates',
+    subject: '{{subject}}',
+    bodyText: [
+      // Generic: one letter to many agents, as to many customers.
+      'Dear Sir/Madam,',
+      '',
+      '{{message}}',
+      '',
+      '{{rates}}',
+      '',
+      // The workspace's email signature, closing words included.
+      '{{signOff}}',
+    ].join('\n'),
+    variables: ['subject', 'message', 'rates', 'signOff'],
+  },
 ] as const;
 
 /**

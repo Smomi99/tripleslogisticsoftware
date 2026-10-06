@@ -1,5 +1,6 @@
 'use client';
 
+import { PRICE_EMAIL_PARTY_NOUN, type PriceEmailParty } from '@ff/shared';
 import { type KeyboardEvent, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -18,10 +19,11 @@ export interface AddressRow {
   checking: boolean;
 }
 
+/** A customer or agent, and the addresses their letter goes to. */
 export interface RecipientRow {
-  customerId: string;
-  customerCode: string;
-  customerName: string;
+  partyId: string;
+  partyCode: string;
+  partyName: string;
   emails: AddressRow[];
 }
 
@@ -32,21 +34,24 @@ export interface RecipientRow {
  * when it cannot. Click the address to correct it in place, × to drop it.
  * A red address is never sent to, so tidying is optional — but the reason is
  * right there, because fixing a typo is usually quicker than losing the
- * customer.
+ * customer or agent.
  */
 export function RecipientsPanel({
+  party,
   recipients,
   onEdit,
   onRemove,
   onAdd,
   onRemoveAllInvalid,
 }: {
+  party: PriceEmailParty;
   recipients: RecipientRow[];
-  onEdit: (customerId: string, key: string, next: string) => void;
-  onRemove: (customerId: string, key: string) => void;
-  onAdd: (customerId: string, address: string) => void;
+  onEdit: (partyId: string, key: string, next: string) => void;
+  onRemove: (partyId: string, key: string) => void;
+  onAdd: (partyId: string, address: string) => void;
   onRemoveAllInvalid: () => void;
 }) {
+  const noun = PRICE_EMAIL_PARTY_NOUN[party];
   const [view, setView] = useState<'all' | 'invalid'>('all');
 
   const all = recipients.flatMap((r) => r.emails);
@@ -61,7 +66,7 @@ export function RecipientsPanel({
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-body text-hull">
-          <span className="font-mono tabular-nums">{recipients.length}</span> customers ·{' '}
+          <span className="font-mono tabular-nums">{recipients.length}</span> {noun.many} ·{' '}
           <span className="font-mono tabular-nums text-verified">{valid}</span> valid ·{' '}
           <span className={cn('font-mono tabular-nums', invalid > 0 ? 'text-alert' : 'text-steel')}>
             {invalid}
@@ -70,7 +75,7 @@ export function RecipientsPanel({
         </p>
         <div className="flex flex-wrap items-center gap-3">
           <Segmented
-            label="Which customers to show"
+            label={`Which ${noun.many} to show`}
             value={view}
             options={[
               ['all', 'All'],
@@ -90,7 +95,7 @@ export function RecipientsPanel({
         <table className="w-full min-w-180 border-collapse text-cell">
           <thead>
             <tr className="border-b border-line bg-paper">
-              <th className="label-manifest w-64 px-3 py-2 text-left">Customer</th>
+              <th className="label-manifest w-64 px-3 py-2 text-left">{noun.label}</th>
               <th className="label-manifest px-3 py-2 text-left">Email addresses</th>
               <th className="label-manifest w-36 px-3 py-2 text-left">Will receive</th>
             </tr>
@@ -99,17 +104,17 @@ export function RecipientsPanel({
             {shown.length === 0 ? (
               <tr>
                 <td colSpan={3} className="px-3 py-6 text-center text-steel">
-                  {view === 'invalid' ? 'Every address checks out.' : 'No customers.'}
+                  {view === 'invalid' ? 'Every address checks out.' : `No ${noun.many}.`}
                 </td>
               </tr>
             ) : (
               shown.map((row) => (
-                <CustomerRow
-                  key={row.customerId}
+                <PartyRow
+                  key={row.partyId}
                   row={row}
-                  onEdit={(key, next) => onEdit(row.customerId, key, next)}
-                  onRemove={(key) => onRemove(row.customerId, key)}
-                  onAdd={(address) => onAdd(row.customerId, address)}
+                  onEdit={(key, next) => onEdit(row.partyId, key, next)}
+                  onRemove={(key) => onRemove(row.partyId, key)}
+                  onAdd={(address) => onAdd(row.partyId, address)}
                 />
               ))
             )}
@@ -120,7 +125,7 @@ export function RecipientsPanel({
   );
 }
 
-function CustomerRow({
+function PartyRow({
   row,
   onEdit,
   onRemove,
@@ -138,8 +143,8 @@ function CustomerRow({
   return (
     <tr className="border-b border-line align-top last:border-0 hover:bg-row-hover">
       <td className="px-3 py-2">
-        <span className="block font-mono tabular-nums text-steel">{row.customerCode}</span>
-        <span className="text-body text-hull">{row.customerName}</span>
+        <span className="block font-mono tabular-nums text-steel">{row.partyCode}</span>
+        <span className="text-body text-hull">{row.partyName}</span>
       </td>
       <td className="px-3 py-2">
         <div className="flex flex-wrap items-center gap-1.5">
@@ -157,7 +162,7 @@ function CustomerRow({
           {adding ? (
             <AddressInput
               initial=""
-              label={`New address for ${row.customerName}`}
+              label={`New address for ${row.partyName}`}
               onDone={(value) => {
                 setAdding(false);
                 if (value !== '') onAdd(value);

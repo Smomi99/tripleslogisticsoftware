@@ -105,6 +105,12 @@ export default function AgentPage() {
     [],
   );
 
+  /** The list's search and filter, for Email prices to select the same agents. */
+  const emailQuery: Record<string, string> = {};
+  if (list.searchInput.trim() !== '') emailQuery['search'] = list.searchInput.trim();
+  const agentType = list.filters['agentType'];
+  if (agentType !== undefined && agentType !== '') emailQuery['agentType'] = agentType;
+
   async function confirmToggle(): Promise<void> {
     if (toToggle === null) return;
     setToggling(true);
@@ -143,11 +149,25 @@ export default function AgentPage() {
         title="Agent"
         description="Overseas partners, what they handle, where they cover, and which networks they belong to."
         action={
-          can('CRM.AGENT.CREATE') ? (
-            <Button asChild>
-              <Link href="/crm/agent/new">+ Add agent</Link>
-            </Button>
-          ) : null
+          <div className="flex flex-wrap items-center gap-2">
+            {/*
+              Email prices writes to the agents this list is filtered to, so
+              it carries the filters with it — what the operator is looking at
+              is who gets the letter.
+            */}
+            {can('CRM.AGENT.PRICE_EMAIL') && (
+              <Button variant="secondary" asChild>
+                <Link href={{ pathname: '/crm/agent/price-email', query: emailQuery }}>
+                  Email prices
+                </Link>
+              </Button>
+            )}
+            {can('CRM.AGENT.CREATE') && (
+              <Button asChild>
+                <Link href="/crm/agent/new">+ Add agent</Link>
+              </Button>
+            )}
+          </div>
         }
       />
 

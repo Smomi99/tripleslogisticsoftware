@@ -42,8 +42,10 @@ export interface SignatureLogo {
 export const OUTWARD_TEMPLATES = new Set([
   'INQUIRY_AGENT_RFQ',
   'INQUIRY_CARRIER_RFQ',
-  // CRM → Customer → Email prices: a letter to a customer, under letterhead.
+  // CRM → Customer / Agent → Email prices: a letter to a customer or an
+  // agent, under letterhead.
   'CUSTOMER_PRICE_OFFER',
+  'AGENT_PRICE_OFFER',
 ]);
 
 /** A cid must be unique within the message and stable within it. */
