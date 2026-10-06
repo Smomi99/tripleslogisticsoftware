@@ -43,7 +43,9 @@ export const blDraftArgs = {
         houseBlNo: true,
         mblNo: true,
         status: true,
-        // The first leg's vessel and voyage — the printed bill's pre-carriage.
+        // The first leg's vessel and voyage — the printed bill's pre-carriage
+        // when the route transships; a direct sailing has none.
+        transitType: true,
         firstVessel: { select: { name: true } },
         voyageNo: true,
         // CR-005: one bill for every booking on its advise.

@@ -250,7 +250,11 @@ async function makeWorld(name: string, slug: string, tag: string): Promise<World
   });
 
   /** A booking whose advise has gone to the customer — where a BL starts. */
-  const advised = async (n: number, tos: string | null): Promise<Booking> => {
+  const advised = async (
+    n: number,
+    tos: string | null,
+    transitType: 'DIRECT' | 'INDIRECT' = 'DIRECT',
+  ): Promise<Booking> => {
     const code = `BKG-${YEAR}-8${tag}000${n}`;
     const shipment = await owner.shipment.create({
       data: {
@@ -283,7 +287,7 @@ async function makeWorld(name: string, slug: string, tag: string): Promise<World
         seriesYear: YEAR,
         shipmentId: shipment.id,
         carrierId: carrier.id,
-        transitType: 'DIRECT',
+        transitType,
         firstVesselId: vessel.id,
         voyageNo: `V-${tag}${n}`,
         polId,
@@ -320,7 +324,8 @@ async function makeWorld(name: string, slug: string, tag: string): Promise<World
     podId,
     // FOB is freight collect, CIF prepaid (§13.10 Q8); the third records no TOS.
     main: await advised(1, 'FOB'),
-    sentFirst: await advised(2, 'CIF'),
+    // Transships, so its bill names the first leg as pre-carriage.
+    sentFirst: await advised(2, 'CIF', 'INDIRECT'),
     withdrawn: await advised(3, null),
   };
 }
@@ -489,10 +494,10 @@ describe('the approved bill on BL Print', () => {
     // The client's form: the date of issue sits in "Place and date of issue".
     expect(text).toContain('Place and date of issue');
     expect(text).toContain(`CHITTAGONG A, ${dmy(TODAY)}`);
-    // Their rules (2026-10-05): pre-carriage is the first leg's vessel and
-    // voyage, the place of receipt is the port of loading whatever the draft
-    // typed, and FOB is freight collect, payable at destination.
-    expect(text).toContain('Mariner A / V-A1');
+    // Their rules (2026-10-05): a direct sailing has no pre-carriage, the
+    // place of receipt is the port of loading whatever the draft typed, and
+    // FOB is freight collect, payable at destination.
+    expect(text).not.toContain('Mariner A / V-A1');
     expect(text).not.toContain('Dhaka CFS');
     expect(text).toContain('COLLECT');
     expect(text).toContain('DESTINATION');
@@ -573,6 +578,8 @@ describe('a draft that went to the customer before it was approved', () => {
     expect(pageCount(res.body as Buffer)).toBe(3);
     const text = extractPdfText(res.body as Buffer);
     expect(text).toContain('3 of 3');
+    // It transships: pre-carriage is the first leg's vessel and voyage.
+    expect(text).toContain('Mariner A / V-A2');
     // CIF: the seller prepaid the freight, payable at the port of loading.
     expect(text).toContain('PREPAID');
     expect(text).not.toContain('COLLECT');
