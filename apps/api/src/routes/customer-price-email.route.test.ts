@@ -377,19 +377,19 @@ afterAll(async () => {
 });
 
 type Recipient = {
-  customerId: string;
-  customerName: string;
+  partyId: string;
+  partyName: string;
   emails: { address: string; valid: boolean; reason: string | null }[];
 };
 const recipientsOf = (res: request.Response) =>
-  (res.body as { data: { customers: Recipient[] } }).data.customers;
+  (res.body as { data: { recipients: Recipient[] } }).data.recipients;
 
 describe('who it goes to', () => {
   it('selects what the Customer list filters select, active customers only', async () => {
     const res = await get(`/recipients?customerType=EXPORTER&industrySectorId=${garments}`).expect(
       200,
     );
-    expect(recipientsOf(res).map((c) => c.customerName)).toEqual([
+    expect(recipientsOf(res).map((c) => c.partyName)).toEqual([
       'CPE Garments One',
       'CPE Garments Two',
       'CPE No Contact',
@@ -398,7 +398,7 @@ describe('who it goes to', () => {
 
   it('reaches the same fields with the search box', async () => {
     const res = await get('/recipients?search=leather').expect(200);
-    expect(recipientsOf(res).map((c) => c.customerName)).toEqual(['CPE Leather']);
+    expect(recipientsOf(res).map((c) => c.partyName)).toEqual(['CPE Leather']);
   });
 
   it('splits, de-duplicates and checks every address on the active contacts', async () => {
@@ -517,8 +517,8 @@ describe('sending', () => {
     const res = await post('/send', {
       ...letter(),
       recipients: [
-        { customerId: customer.one.toString(), emails: ['ops@one.test', 'md@one.test'] },
-        { customerId: customer.leather.toString(), emails: ['c@three.test'] },
+        { partyId: customer.one.toString(), emails: ['ops@one.test', 'md@one.test'] },
+        { partyId: customer.leather.toString(), emails: ['c@three.test'] },
       ],
     }).expect(200);
     expect(res.body.data).toEqual({ queued: 2 });
@@ -567,7 +567,7 @@ describe('sending', () => {
     await post('/send', {
       ...letter(),
       includeLocalCharges: false,
-      recipients: [{ customerId: customer.leather.toString(), emails: ['c@three.test'] }],
+      recipients: [{ partyId: customer.leather.toString(), emails: ['c@three.test'] }],
     }).expect(200);
     const row = await owner.emailLog.findFirstOrThrow({
       where: { tenantId, templateKey: 'CUSTOMER_PRICE_OFFER' },
@@ -582,7 +582,7 @@ describe('sending', () => {
     for (const stale of [rateId.lapsed, rateId.draft]) {
       const res = await post('/send', {
         ...letter([rateId.hamburg, stale]),
-        recipients: [{ customerId: customer.leather.toString(), emails: ['c@three.test'] }],
+        recipients: [{ partyId: customer.leather.toString(), emails: ['c@three.test'] }],
       }).expect(409);
       expect(JSON.stringify(res.body)).toContain('no longer on offer');
     }
@@ -594,7 +594,7 @@ describe('sending', () => {
       '/send',
       {
         ...letter(),
-        recipients: [{ customerId: customer.leather.toString(), emails: ['c@three.test'] }],
+        recipients: [{ partyId: customer.leather.toString(), emails: ['c@three.test'] }],
       },
       tokenNoPriceList,
     ).expect(403);
@@ -604,7 +604,7 @@ describe('sending', () => {
     const before = await owner.emailLog.count({ where: { tenantId } });
     const res = await post('/send', {
       ...letter(),
-      recipients: [{ customerId: customer.one.toString(), emails: ['ops@one.test', 'bad-address'] }],
+      recipients: [{ partyId: customer.one.toString(), emails: ['ops@one.test', 'bad-address'] }],
     }).expect(400);
     expect(JSON.stringify(res.body)).toContain('bad-address');
     expect(await owner.emailLog.count({ where: { tenantId } })).toBe(before);
@@ -613,7 +613,7 @@ describe('sending', () => {
   it('refuses an inactive customer, and another workspace’s', async () => {
     await post('/send', {
       ...letter(),
-      recipients: [{ customerId: customer.inactive.toString(), emails: ['d@four.test'] }],
+      recipients: [{ partyId: customer.inactive.toString(), emails: ['d@four.test'] }],
     }).expect(400);
 
     const stranger = await owner.customer.findFirstOrThrow({
@@ -622,7 +622,7 @@ describe('sending', () => {
     });
     await post('/send', {
       ...letter(),
-      recipients: [{ customerId: stranger.id.toString(), emails: ['stranger@beta.test'] }],
+      recipients: [{ partyId: stranger.id.toString(), emails: ['stranger@beta.test'] }],
     }).expect(400);
     expect(await owner.emailLog.count({ where: { toAddresses: { has: 'stranger@beta.test' } } })).toBe(0);
   });
@@ -632,7 +632,7 @@ describe('sending', () => {
     try {
       const res = await post('/send', {
         ...letter(),
-        recipients: [{ customerId: customer.leather.toString(), emails: ['c@three.test'] }],
+        recipients: [{ partyId: customer.leather.toString(), emails: ['c@three.test'] }],
       }).expect(409);
       expect(JSON.stringify(res.body)).toContain('Price team');
     } finally {
@@ -648,7 +648,7 @@ describe('sending', () => {
       '/send',
       {
         ...letter(),
-        recipients: [{ customerId: customer.leather.toString(), emails: ['c@three.test'] }],
+        recipients: [{ partyId: customer.leather.toString(), emails: ['c@three.test'] }],
       },
       tokenNoEmail,
     ).expect(403);

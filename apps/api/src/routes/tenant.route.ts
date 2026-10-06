@@ -6,6 +6,7 @@ import { HttpError } from '../lib/http-error';
 import { resolveTenant } from '../middleware/resolve-tenant';
 import { adminRouter } from './admin.route';
 import { agentRouter } from './agent.route';
+import { agentPriceEmailRouter } from './agent-price-email.route';
 import {
   agentInquiryRouter,
   agentQuoteRouter,
@@ -132,6 +133,8 @@ tenantRouter.use('/crm/customers', customerRouter);
 // as a customer id by /crm/customers/:id.
 tenantRouter.use('/crm/customer-price-email', customerPriceEmailRouter);
 tenantRouter.use('/crm/agents', agentRouter);
+// CRM → Agent → Email prices, on its own path for the same reason.
+tenantRouter.use('/crm/agent-price-email', agentPriceEmailRouter);
 tenantRouter.use('/crm/employees', employeeRouter);
 tenantRouter.use('/crm/users', userRouter);
 

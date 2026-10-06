@@ -141,10 +141,10 @@ export const ACTIONS = [
    */
   'RECEIVE',
   /*
-   * CRM → Customer's Email prices (2026-09-29). Writing to every customer on a
-   * filtered list at once is not editing a customer: one click puts the
-   * company's prices in front of hundreds of people, so it is granted
-   * deliberately rather than riding along with EDIT.
+   * CRM → Customer's Email prices (2026-09-29), and Agent's (2026-10-06).
+   * Writing to every customer or agent on a filtered list at once is not
+   * editing one: one click puts the company's prices in front of hundreds of
+   * people, so it is granted deliberately rather than riding along with EDIT.
    */
   'PRICE_EMAIL',
 ] as const;
@@ -740,7 +740,12 @@ export const FEATURES: readonly FeatureDefinition[] = [
     label: 'Customer',
     actions: [...MASTER_DELETABLE, 'PRICE_EMAIL'],
   },
-  { module: 'CRM', feature: 'CRM.AGENT', label: 'Agent', actions: MASTER_DELETABLE },
+  {
+    module: 'CRM',
+    feature: 'CRM.AGENT',
+    label: 'Agent',
+    actions: [...MASTER_DELETABLE, 'PRICE_EMAIL'],
+  },
   // Moved from Setting at the client's request: a vendor is a party you keep
   // a ledger against, like a customer or an agent, not a configuration value.
   // The migration renames the permission keys in place so existing grants survive.

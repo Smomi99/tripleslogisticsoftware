@@ -51,6 +51,7 @@ export const TEMPLATE_TEAM: Readonly<Record<string, NotificationTeam>> = {
   INQUIRY_CARRIER_RFQ: 'PRICE',
   QUOTATION_SENT: 'PRICE',
   CUSTOMER_PRICE_OFFER: 'PRICE',
+  AGENT_PRICE_OFFER: 'PRICE',
   SHIPMENT_SCHEDULE_PROPOSED: 'CS_DOC',
   SHIPMENT_ADVISE_SENT: 'CS_DOC',
   BL_DRAFT_SENT: 'CS_DOC',
@@ -62,7 +63,10 @@ export const TEMPLATE_TEAM: Readonly<Record<string, NotificationTeam>> = {
 };
 
 /** Letters that carry a signature of their own already, so the team's is not added twice. */
-export const SELF_SIGNED_TEMPLATES: ReadonlySet<string> = new Set(['CUSTOMER_PRICE_OFFER']);
+export const SELF_SIGNED_TEMPLATES: ReadonlySet<string> = new Set([
+  'CUSTOMER_PRICE_OFFER',
+  'AGENT_PRICE_OFFER',
+]);
 
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 

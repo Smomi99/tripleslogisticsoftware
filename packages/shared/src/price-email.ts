@@ -1,30 +1,47 @@
 import { z } from 'zod';
 
+import { agentListQuerySchema } from './agent';
 import type { LookupOption } from './cost-head';
 import { customerListQuerySchema } from './customer';
 import type { FreightRateDto } from './freight-rate';
 import { RATE_MODE_LABEL, RATE_MODES, type RateMode } from './rate-lookups';
 
 /**
- * CRM → Customer → Email prices.
+ * CRM → Customer → Email prices, and CRM → Agent → Email prices.
  *
- * The customers the list is filtered to, their contacts' addresses checked and
- * tidied, a lane picked from the Price List, and one letter per customer with
- * the selling rates in it. Asked for by the client on 2026-09-29.
+ * The customers (or agents) the list is filtered to, their contacts' addresses
+ * checked and tidied, a lane picked from the Price List, and one letter per
+ * customer or agent with the selling rates in it. Asked for by the client for
+ * customers on 2026-09-29; agents got the same, in every respect, on
+ * 2026-10-06.
  *
  * Three rules shape everything here:
  *
- *  1. One email per customer, with only that customer's contacts on it. A
- *     bulk To or Cc would hand every customer the rest of the address book.
+ *  1. One email per customer or agent, with only their own contacts on it. A
+ *     bulk To or Cc would hand every recipient the rest of the address book.
  *  2. Replies go to the Price team (Settings → Notifications), set as
  *     Reply-To. The client's choice: the people who own the rates answer them.
  *  3. Selling prices only. Buy price and margin never reach this text, for
  *     anyone — the same rule the downloaded price list follows, because an
- *     email leaves the building just as a file does.
+ *     email leaves the building just as a file does. An agent is an outside
+ *     company like a customer, so the rule is the same for them.
  */
 
-/** A send covers at most this many customers; the outbox drains ~120 a minute. */
-export const PRICE_EMAIL_MAX_CUSTOMERS = 500;
+/** Who a price email can be written to: each one's CRM list carries a button. */
+export const PRICE_EMAIL_PARTIES = ['customer', 'agent'] as const;
+export type PriceEmailParty = (typeof PRICE_EMAIL_PARTIES)[number];
+
+/** How the screen and the server name each party in their sentences. */
+export const PRICE_EMAIL_PARTY_NOUN: Record<
+  PriceEmailParty,
+  { label: string; one: string; many: string; list: string }
+> = {
+  customer: { label: 'Customer', one: 'customer', many: 'customers', list: 'Customer list' },
+  agent: { label: 'Agent', one: 'agent', many: 'agents', list: 'Agent list' },
+};
+
+/** A send covers at most this many customers or agents; the outbox drains ~120 a minute. */
+export const PRICE_EMAIL_MAX_RECIPIENTS = 500;
 /** Rates beyond this make a letter nobody reads; the screen says to narrow it. */
 export const PRICE_EMAIL_MAX_RATES = 200;
 
@@ -125,29 +142,37 @@ export type PriceEmailCheckInput = z.infer<typeof priceEmailCheckSchema>;
  * The Customer list's own filters, and only those — the button carries what
  * the list is showing, so the two must read the same parameters.
  */
-export const priceEmailRecipientQuerySchema = customerListQuerySchema.pick({
+export const customerPriceEmailRecipientQuerySchema = customerListQuerySchema.pick({
   search: true,
   customerType: true,
   businessArea: true,
   industrySectorId: true,
 });
-export type PriceEmailRecipientQuery = z.infer<typeof priceEmailRecipientQuerySchema>;
+export type CustomerPriceEmailRecipientQuery = z.infer<typeof customerPriceEmailRecipientQuerySchema>;
+
+/** The Agent list's own filters, and only those, for the same reason. */
+export const agentPriceEmailRecipientQuerySchema = agentListQuerySchema.pick({
+  search: true,
+  agentType: true,
+});
+export type AgentPriceEmailRecipientQuery = z.infer<typeof agentPriceEmailRecipientQuerySchema>;
 
 export interface PriceEmailAddressDto extends EmailCheckDto {
   /** The contact the address was read from. */
   picName: string | null;
 }
 
+/** One customer or agent, and the addresses their letter would go to. */
 export interface PriceEmailRecipientDto {
-  customerId: string;
-  customerCode: string;
-  customerName: string;
-  /** Empty when no contact has an address — the screen says the customer is skipped. */
+  partyId: string;
+  partyCode: string;
+  partyName: string;
+  /** Empty when no contact has an address — the screen says they are skipped. */
   emails: PriceEmailAddressDto[];
 }
 
 export interface PriceEmailRecipientsDto {
-  customers: PriceEmailRecipientDto[];
+  recipients: PriceEmailRecipientDto[];
 }
 
 // -------------------------------------------------------------------- context
@@ -342,8 +367,8 @@ export function defaultPriceEmailSubject(
 
 /**
  * How every letter opens. Generic on purpose (client, 2026-09-29): it is one
- * letter to many customers, and a company name in the greeting reads as a
- * mail merge. The same words the rate requests to agents and carriers use.
+ * letter to many customers or agents, and a company name in the greeting reads
+ * as a mail merge. The same words the rate requests to agents and carriers use.
  */
 export const PRICE_EMAIL_GREETING = 'Dear Sir/Madam,';
 
@@ -357,11 +382,11 @@ export const DEFAULT_PRICE_EMAIL_MESSAGE = [
 ].join('\n');
 
 /**
- * The whole letter one customer receives, as plain text — the text/plain part
- * that travels alongside the HTML table (priceEmailHtml).
+ * The whole letter one customer or agent receives, as plain text — the
+ * text/plain part that travels alongside the HTML table (priceEmailHtml).
  *
  * The server's fallback body comes from here, and the seeded
- * CUSTOMER_PRICE_OFFER template has the same shape.
+ * CUSTOMER_PRICE_OFFER and AGENT_PRICE_OFFER templates have the same shape.
  */
 export function composePriceEmailBody(parts: {
   message: string;
@@ -555,9 +580,9 @@ export function priceEmailRatesHtml(
 }
 
 /**
- * The whole letter one customer receives, as HTML — what their mail client
- * shows. The screen previews exactly this, so what the sender reads before
- * pressing Send is what the customer gets.
+ * The whole letter one customer or agent receives, as HTML — what their mail
+ * client shows. The screen previews exactly this, so what the sender reads
+ * before pressing Send is what the recipient gets.
  *
  * Every value is escaped: the message and the signature are typed by people,
  * and a "<" in either must arrive as a "<", not as markup.
@@ -592,34 +617,40 @@ export function priceEmailHtml(parts: {
 /**
  * What the screen sends: the letter's words, and WHICH rates — never their
  * figures. The server reads the rates back from the Price List and builds the
- * table itself, so the prices a customer receives are the published ones, and
- * a rate that lapsed between ticking and sending is refused rather than sent.
+ * table itself, so the prices a customer or agent receives are the published
+ * ones, and a rate that lapsed between ticking and sending is refused rather
+ * than sent.
+ *
+ * One shape for both parties; only the words naming who is missing differ.
  */
-export const priceEmailSendSchema = z.object({
-  subject: z.string().trim().min(1, 'Write a subject.').max(200, 'Keep the subject under 200 characters.'),
-  message: z.string().trim().min(1, 'Write the message.').max(5000, 'That message is too long.'),
-  mode: z.enum(RATE_MODES, { message: 'Choose a freight mode.' }),
-  rateIds: z
-    .array(z.string().regex(/^\d+$/, 'Unknown rate.'))
-    .min(1, 'Tick at least one rate to send.')
-    .max(PRICE_EMAIL_MAX_RATES, `At most ${PRICE_EMAIL_MAX_RATES} rates in one email.`),
-  includeLocalCharges: z.boolean().default(true),
-  recipients: z
-    .array(
-      z.object({
-        customerId: z.string().regex(/^\d+$/, 'Unknown customer.'),
-        emails: z.array(z.string().trim().max(320)).min(1).max(50),
-      }),
-    )
-    .min(1, 'Nobody to send to — every customer needs at least one valid address.')
-    .max(
-      PRICE_EMAIL_MAX_CUSTOMERS,
-      `At most ${PRICE_EMAIL_MAX_CUSTOMERS} customers in one send. Narrow the customer filters.`,
-    ),
-});
-export type PriceEmailSendInput = z.infer<typeof priceEmailSendSchema>;
+export function priceEmailSendSchema(party: PriceEmailParty) {
+  const noun = PRICE_EMAIL_PARTY_NOUN[party];
+  return z.object({
+    subject: z.string().trim().min(1, 'Write a subject.').max(200, 'Keep the subject under 200 characters.'),
+    message: z.string().trim().min(1, 'Write the message.').max(5000, 'That message is too long.'),
+    mode: z.enum(RATE_MODES, { message: 'Choose a freight mode.' }),
+    rateIds: z
+      .array(z.string().regex(/^\d+$/, 'Unknown rate.'))
+      .min(1, 'Tick at least one rate to send.')
+      .max(PRICE_EMAIL_MAX_RATES, `At most ${PRICE_EMAIL_MAX_RATES} rates in one email.`),
+    includeLocalCharges: z.boolean().default(true),
+    recipients: z
+      .array(
+        z.object({
+          partyId: z.string().regex(/^\d+$/, `Unknown ${noun.one}.`),
+          emails: z.array(z.string().trim().max(320)).min(1).max(50),
+        }),
+      )
+      .min(1, `Nobody to send to — every ${noun.one} needs at least one valid address.`)
+      .max(
+        PRICE_EMAIL_MAX_RECIPIENTS,
+        `At most ${PRICE_EMAIL_MAX_RECIPIENTS} ${noun.many} in one send. Narrow the ${noun.one} filters.`,
+      ),
+  });
+}
+export type PriceEmailSendInput = z.infer<ReturnType<typeof priceEmailSendSchema>>;
 
 export interface PriceEmailSendResultDto {
-  /** Letters written to the outbox — one per customer. */
+  /** Letters written to the outbox — one per customer or agent. */
   queued: number;
 }

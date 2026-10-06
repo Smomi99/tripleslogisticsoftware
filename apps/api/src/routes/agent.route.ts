@@ -16,6 +16,7 @@ import {
 } from '@ff/shared';
 
 import { Prisma } from '../generated/prisma/client';
+import { agentFilterWhere } from '../lib/agent-filter';
 import { CODE_RETRY_LIMIT, isUniqueViolation, nextCode } from '../lib/codes';
 import { HttpError } from '../lib/http-error';
 import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
@@ -195,23 +196,8 @@ agentRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
   const query = agentListQuerySchema.parse(req.query);
 
   const result = await withTenant(auth.tenantId, async (db) => {
-    const where = {
-      deletedAt: null,
-      ...(query.isActive !== undefined ? { isActive: query.isActive } : {}),
-      ...(query.agentType !== undefined ? { agentType: query.agentType } : {}),
-      ...(query.expertAreaId !== undefined
-        ? { expertAreas: { some: { expertAreaId: BigInt(query.expertAreaId) } } }
-        : {}),
-      ...(query.search !== undefined
-        ? {
-            OR: [
-              { name: { contains: query.search, mode: 'insensitive' as const } },
-              { code: { contains: query.search, mode: 'insensitive' as const } },
-              { country: { contains: query.search, mode: 'insensitive' as const } },
-            ],
-          }
-        : {}),
-    };
+    // Shared with Email prices, which must select exactly what this list shows.
+    const where = agentFilterWhere(query);
 
     const [rows, total] = await Promise.all([
       db.agent.findMany({
