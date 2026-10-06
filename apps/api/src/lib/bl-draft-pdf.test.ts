@@ -1,7 +1,7 @@
 import { freightTermsOf } from '@ff/shared';
 import { describe, expect, it } from 'vitest';
 
-import { blQrText, type BlDraftPdfInput, renderBlDraftPdf } from './bl-draft-pdf';
+import { blQrText, type BlDraftPdfInput, renderBlDraftPdf, twoDecimals } from './bl-draft-pdf';
 import { extractPdfText } from './pdf-text';
 
 /**
@@ -153,5 +153,32 @@ describe('the containers on the printed bill (client, 2026-10-06)', () => {
     const pdf = await renderBlDraftPdf({ ...bill, containers: containers(60) });
     expect(pageCount(pdf)).toBe(3);
     expect(extractPdfText(pdf)).toContain('Container list, sheet 2 of 2');
+  });
+});
+
+describe('weight and measurement on the bill (client, 2026-10-06)', () => {
+  it('prints them to two places, rounding half up in decimal', () => {
+    expect(twoDecimals('5400')).toBe('5400.00');
+    expect(twoDecimals('23.7300')).toBe('23.73');
+    // Half up, and exact: a float would round 0.125 and 5981.505 down.
+    expect(twoDecimals('0.125')).toBe('0.13');
+    expect(twoDecimals('5981.505')).toBe('5981.51');
+    expect(twoDecimals(null)).toBeNull();
+    expect(twoDecimals(' ')).toBeNull();
+  });
+
+  it('carries two places into the columns, the container lines and the QR', async () => {
+    const plain: BlDraftPdfInput = {
+      ...bill,
+      grossWeightKg: '5400',
+      measurementCbm: '27',
+      containers: [{ ...container(1), grossWeightKg: '5400', measurementCbm: '27' }],
+    };
+    const text = extractPdfText(await renderBlDraftPdf(plain));
+    expect(text.split('\n')).toContain('5400.00');
+    expect(text.split('\n')).toContain('27.00');
+    expect(text).toContain('27.00 CBM, 5400.00 KGS');
+    expect(blQrText(plain, null)).toContain('Gross Wt: 5400.00 KG');
+    expect(blQrText(plain, null)).toContain('Measurement: 27.00 CBM');
   });
 });

@@ -292,14 +292,39 @@ export async function blDraftPrefill(
       id: true,
       houseBlNo: true,
       mblNo: true,
+      transitType: true,
       firstVessel: { select: { name: true } },
       voyageNo: true,
+      // The last leg — the mother vessel, when the route transships.
+      schedule: {
+        select: {
+          legs: {
+            where: { deletedAt: null },
+            orderBy: { legNo: 'desc' },
+            take: 1,
+            select: { legNo: true, voyageNo: true, vessel: { select: { name: true } } },
+          },
+        },
+      },
       polId: true,
       podId: true,
       pol: { select: { name: true } },
       pod: { select: { name: true } },
     },
   });
+
+  /*
+   * The ocean vessel is the one that crosses (client, 2026-10-06): on a route
+   * that transships, the last leg's — the first leg prints as pre-carriage —
+   * and on a direct sailing, the first and only one.
+   */
+  const lastLeg = advise?.transitType === 'INDIRECT' ? advise.schedule?.legs[0] : undefined;
+  const oceanVessel =
+    advise === null
+      ? []
+      : lastLeg !== undefined && lastLeg.legNo > 1
+        ? [lastLeg.vessel?.name, lastLeg.voyageNo]
+        : [advise.firstVessel?.name, advise.voyageNo];
 
   const members = advise === null ? [] : await adviseMembers(db, advise.id);
   const containers =
@@ -349,11 +374,7 @@ export async function blDraftPrefill(
     deliveryAgentId: null,
     deliveryAgentName: null,
     deliveryAgentText: null,
-    oceanVesselVoyage:
-      advise === null
-        ? null
-        : [advise.firstVessel?.name, advise.voyageNo].filter((v) => (v ?? '') !== '').join(' / ') ||
-          null,
+    oceanVesselVoyage: oceanVessel.filter((v) => (v ?? '') !== '').join(' / ') || null,
     polId: (advise?.polId ?? shipment.polId).toString(),
     polName: advise?.pol.name ?? shipment.pol.name,
     podId: (advise?.podId ?? shipment.podId).toString(),

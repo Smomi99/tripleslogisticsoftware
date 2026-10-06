@@ -5,7 +5,6 @@
     "types": ["node"],
     "moduleResolution": "Bundler",
     "noEmit": true,
-    "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"]
     }

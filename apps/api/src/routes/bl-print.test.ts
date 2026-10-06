@@ -112,6 +112,8 @@ async function cleanup(): Promise<void> {
     'bl_draft',
     'shipment_advise_booking',
     'shipment_advise',
+    'shipment_schedule_leg',
+    'shipment_schedule',
     'shipment',
     'vessel',
     'quotation',
@@ -195,6 +197,7 @@ async function makeWorld(name: string, slug: string, tag: string): Promise<World
     ).id;
   const polId = await port('1', `Chittagong ${tag}`);
   const podId = await port('2', `Hamburg ${tag}`);
+  const viaId = await port('3', `Colombo ${tag}`);
 
   const carrierType = await owner.carrierType.findFirstOrThrow({
     where: { tenantId: null },
@@ -207,6 +210,11 @@ async function makeWorld(name: string, slug: string, tag: string): Promise<World
 
   const vessel = await owner.vessel.create({
     data: { tenantId, code: `VSL-${tag}`, name: `Mariner ${tag}`, carrierId: carrier.id },
+    select: { id: true },
+  });
+  // The second leg's, on the route that transships at Colombo.
+  const mother = await owner.vessel.create({
+    data: { tenantId, code: `VSL-M${tag}`, name: `Mother ${tag}`, carrierId: carrier.id },
     select: { id: true },
   });
 
@@ -277,6 +285,32 @@ async function makeWorld(name: string, slug: string, tag: string): Promise<World
       },
       select: { id: true },
     });
+    // A route that transships has its approved schedule: the feeder to
+    // Colombo, then the mother vessel on to Hamburg.
+    let scheduleId: bigint | null = null;
+    if (transitType === 'INDIRECT') {
+      scheduleId = (
+        await owner.shipmentSchedule.create({
+          data: {
+            tenantId,
+            code: `SCH-${tag}${n}`,
+            shipmentId: shipment.id,
+            carrierId: carrier.id,
+            transitType,
+            status: 'APPROVED',
+            decidedBy: superUser.id,
+            decidedAt: new Date(),
+          },
+          select: { id: true },
+        })
+      ).id;
+      await owner.shipmentScheduleLeg.createMany({
+        data: [
+          { tenantId, scheduleId, legNo: 1, vesselId: vessel.id, voyageNo: `V-${tag}${n}`, originPortId: polId, destinationPortId: viaId },
+          { tenantId, scheduleId, legNo: 2, vesselId: mother.id, voyageNo: `M-${tag}${n}`, originPortId: viaId, destinationPortId: podId },
+        ],
+      });
+    }
     const houseBlNo = `HBL${tag}${YEAR}000${n}`;
     // Made the way the advise route makes one (CR-005): a draft, the booking
     // it covers, then sent — the database only lets a booking join a draft.
@@ -286,6 +320,7 @@ async function makeWorld(name: string, slug: string, tag: string): Promise<World
         code: `SA-${YEAR}-8${tag}000${n}`,
         seriesYear: YEAR,
         shipmentId: shipment.id,
+        scheduleId,
         carrierId: carrier.id,
         transitType,
         firstVesselId: vessel.id,
@@ -381,6 +416,18 @@ async function makeDraft(world: World, booking: Booking, originalBlCount?: numbe
 }
 
 let mainDraftId: string;
+
+describe('the BL draft form (client, 2026-10-06)', () => {
+  it('fills Ocean Vessel with the mother vessel when the route transships, the only one when not', async () => {
+    const indirect = await asA().get(`/documentation/bookings/${A.sentFirst.id}/bl-draft/prefill`);
+    expect(indirect.status, JSON.stringify(indirect.body)).toBe(200);
+    expect(indirect.body.data.oceanVesselVoyage).toBe('Mother A / M-A2');
+
+    const direct = await asA().get(`/documentation/bookings/${A.main.id}/bl-draft/prefill`);
+    expect(direct.status, JSON.stringify(direct.body)).toBe(200);
+    expect(direct.body.data.oceanVesselVoyage).toBe('Mariner A / V-A1');
+  });
+});
 
 describe('before approval', () => {
   it('keeps an unapproved draft off BL Print, and refuses to issue or print it', async () => {

@@ -2,6 +2,8 @@ import type { FreightTerms } from '@ff/shared';
 import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
 
+import { Prisma } from '../generated/prisma/client';
+
 /**
  * The bill of lading — docs/MODULE_DOCUMENTATION.md §2.3, §13.
  *
@@ -162,6 +164,33 @@ const dmy = (iso: string): string => {
 
 const blank = (v: string | null | undefined): boolean => v === null || v === undefined || v.trim() === '';
 
+/**
+ * Weight and measurement to two places, as the client's bill writes them
+ * (2026-10-06): 5400 prints 5400.00, 23.7300 prints 23.73. Half rounds up, in
+ * decimal — never through a float, which would misround a weight like 0.125.
+ */
+export function twoDecimals(value: string | null): string | null {
+  if (blank(value)) return null;
+  try {
+    return new Prisma.Decimal((value ?? '').trim()).toFixed(2, Prisma.Decimal.ROUND_HALF_UP);
+  } catch {
+    // Not a number after all: print it as it was given rather than lose it.
+    return value;
+  }
+}
+
+/** The bill with every weight and measurement at two places, wherever it prints. */
+const withTwoDecimals = (bill: BlDraftPdfInput): BlDraftPdfInput => ({
+  ...bill,
+  grossWeightKg: twoDecimals(bill.grossWeightKg),
+  measurementCbm: twoDecimals(bill.measurementCbm),
+  containers: bill.containers.map((c) => ({
+    ...c,
+    grossWeightKg: twoDecimals(c.grossWeightKg),
+    measurementCbm: twoDecimals(c.measurementCbm),
+  })),
+});
+
 type BlContainer = BlDraftPdfInput['containers'][number];
 
 /** "TEMU1006375/20' Standard/M2604875" — the first of a container's two lines. */
@@ -199,7 +228,8 @@ const QR_CONTAINERS = 3;
  * Parties by name only, and only the first few containers: every character
  * makes the code denser, and it has to scan at the size it is printed.
  */
-export function blQrText(input: BlDraftPdfInput, copy: BlPrintMark | null): string {
+export function blQrText(bill: BlDraftPdfInput, copy: BlPrintMark | null): string {
+  const input = withTwoDecimals(bill);
   const document = input.isDraft
     ? 'DRAFT - not valid'
     : copy === null
@@ -237,7 +267,8 @@ export function blQrText(input: BlDraftPdfInput, copy: BlPrintMark | null): stri
   ].join('\n');
 }
 
-export async function renderBlDraftPdf(input: BlDraftPdfInput): Promise<Buffer> {
+export async function renderBlDraftPdf(bill: BlDraftPdfInput): Promise<Buffer> {
+  const input = withTwoDecimals(bill);
   const pages: (BlPrintMark | null)[] =
     input.copies === undefined || input.copies.length === 0 ? [null] : input.copies;
   // One code per page, since each page says whether it is an original or a
