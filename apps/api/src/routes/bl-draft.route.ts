@@ -681,20 +681,19 @@ blDraftRouter.post(
 );
 
 /**
- * "For Delivery of Goods Please Apply to:" for the chosen agent — the name,
- * then the address, then the country unless the address already ends with it
- * (client, 2026-10-06: the name alone told the consignee nothing about where
- * to go). Text typed on the draft prints instead, as written.
+ * "For Delivery of Goods Please Apply to:" for the chosen agent — the agent's
+ * own Delivery agent details from CRM, as written (client, 2026-10-06), with
+ * the name above them when they do not already open with it. An agent with no
+ * details prints the name alone. Text typed on the draft prints instead.
  */
-export function agentAddressBlock(
-  agent: { name: string; address: string | null; country: string } | null,
+export function deliveryAgentBlock(
+  agent: { name: string; deliveryAgentDetails: string | null } | null,
 ): string | null {
   if (agent === null) return null;
-  const address = (agent.address ?? '').trim();
-  const country = agent.country.trim();
-  const named =
-    country !== '' && address.replace(/[\s.,]+$/, '').toLowerCase().endsWith(country.toLowerCase());
-  return [agent.name.trim(), address, named ? '' : country].filter((v) => v !== '').join('\n');
+  const name = agent.name.trim();
+  const details = (agent.deliveryAgentDetails ?? '').trim();
+  if (details === '') return name;
+  return details.toLowerCase().startsWith(name.toLowerCase()) ? details : `${name}\n${details}`;
 }
 
 /**
@@ -752,7 +751,7 @@ export async function blDocumentInput(
     pointCountryOfOrigin: row.pointCountryOfOrigin,
     preCarriageVesselVoyage: preCarriage === '' ? null : preCarriage,
     placeOfReceipt: row.pol.name,
-    deliveryAgentText: row.deliveryAgentText ?? agentAddressBlock(row.deliveryAgent),
+    deliveryAgentText: row.deliveryAgentText ?? deliveryAgentBlock(row.deliveryAgent),
     oceanVesselVoyage: row.oceanVesselVoyage,
     polName: row.pol.name,
     podName: row.pod.name,

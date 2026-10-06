@@ -221,7 +221,9 @@ async function makeWorld(name: string, slug: string, tag: string): Promise<World
       code: `AGT-${tag}`,
       name: `Hanse Logistics ${tag}`,
       country: 'Germany',
-      address: 'Hafenstrasse 4, 20457 Hamburg',
+      // Not what the bill prints: that is the delivery agent details below.
+      address: 'Postfach 12, Bremen',
+      deliveryAgentDetails: 'HAFENSTRASSE 4, 20457 HAMBURG, GERMANY\nTEL +49 40 300 100',
       agentType: 'GENERAL',
     },
     select: { id: true },
@@ -570,10 +572,12 @@ describe('the approved bill on BL Print', () => {
     expect(text).toContain('COLLECT');
     expect(text).toContain('DESTINATION');
     expect(text).not.toContain('PREPAID');
-    // "For Delivery of Goods Please Apply to:" names the agent and where to find them (2026-10-06).
+    // "For Delivery of Goods Please Apply to:" is the agent's own delivery agent
+    // details, under its name since they do not open with it — not its address (2026-10-06).
     expect(text).toContain('Hanse Logistics A');
-    expect(text).toContain('Hafenstrasse 4, 20457 Hamburg');
-    expect(text.split('\n')).toContain('Germany');
+    expect(text).toContain('HAFENSTRASSE 4, 20457 HAMBURG, GERMANY');
+    expect(text).toContain('TEL +49 40 300 100');
+    expect(text).not.toContain('Postfach 12, Bremen');
     expect(text).not.toContain('DRAFT');
     expect(text).not.toContain('NON-NEGOTIABLE');
     expect(res.headers['content-disposition']).toContain(`${A.main.houseBlNo}-originals.pdf`);
@@ -750,17 +754,16 @@ describe('tenant isolation (§7A rule 4)', () => {
 });
 
 describe('the delivery agent block (client, 2026-10-06)', () => {
-  it('reads name, address, then the country unless the address already ends with it', async () => {
-    const { agentAddressBlock } = await import('./bl-draft.route');
-    expect(agentAddressBlock({ name: 'Hanse Logistics', address: 'Hafenstrasse 4, Hamburg', country: 'Germany' })).toBe(
-      ['Hanse Logistics', 'Hafenstrasse 4, Hamburg', 'Germany'].join('\n'),
-    );
+  it("prints the agent's delivery agent details, with the name above when they do not open with it", async () => {
+    const { deliveryAgentBlock } = await import('./bl-draft.route');
     expect(
-      agentAddressBlock({ name: 'Intermodal', address: 'Vojkovo nabrezje 38, Koper, Slovenia.', country: 'Slovenia' }),
-    ).toBe(['Intermodal', 'Vojkovo nabrezje 38, Koper, Slovenia.'].join('\n'));
-    expect(agentAddressBlock({ name: 'Gulf Link', address: null, country: 'UAE' })).toBe(
-      ['Gulf Link', 'UAE'].join('\n'),
+      deliveryAgentBlock({ name: 'Intermodal', deliveryAgentDetails: 'INTERMODAL SLOVENIA D.O.O.\nKOPER' }),
+    ).toBe(['INTERMODAL SLOVENIA D.O.O.', 'KOPER'].join('\n'));
+    expect(deliveryAgentBlock({ name: 'Hanse Logistics', deliveryAgentDetails: 'Hafenstrasse 4, Hamburg' })).toBe(
+      ['Hanse Logistics', 'Hafenstrasse 4, Hamburg'].join('\n'),
     );
-    expect(agentAddressBlock(null)).toBeNull();
+    // No details on the agent: the name alone.
+    expect(deliveryAgentBlock({ name: 'Gulf Link', deliveryAgentDetails: '  ' })).toBe('Gulf Link');
+    expect(deliveryAgentBlock(null)).toBeNull();
   });
 });
