@@ -87,7 +87,8 @@ const ACTION_LABEL: Record<Action, string> = {
   BUILD: 'Re-pull',
   // MODULE_ACCOUNTS §6: recording money in against a debit invoice.
   RECEIVE: 'Receive payment',
-  PRICE_EMAIL: 'Email prices',
+  // Shown as Bulk email since 2026-10-07; the key stays, so no role loses it.
+  PRICE_EMAIL: 'Bulk email',
 };
 
 export function PermissionMatrix({

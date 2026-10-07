@@ -38,7 +38,9 @@ import { RatesTable } from './rates-table';
 import { type AddressRow, type RecipientRow, RecipientsPanel } from './recipients-panel';
 
 /**
- * Email prices — CRM → Customer (2026-09-29) and CRM → Agent (2026-10-06).
+ * Email prices — CRM → Customer (2026-09-29) and CRM → Agent (2026-10-06),
+ * named Bulk email since 2026-10-07, when the rates became optional: a POL, a
+ * POD, both or neither, and with neither the letter goes as a message only.
  *
  * Three steps down the page — who, which rates, what it says — and a summary
  * beside them that holds the one Send button and says plainly what is still
@@ -167,15 +169,22 @@ export function PriceEmailScreen({
     };
   }, [authorizedRequest, base, mode]);
 
+  // Anything picked — a POL, a POD or a carrier — looks rates up; nothing picked is a message only.
+  const lanesPicked = polIds.length > 0 || podIds.length > 0 || carrierId !== '';
+
   // The rates for the lanes picked — debounced, since picking five PODs is five changes.
   useEffect(() => {
-    if (mode === null || polIds.length === 0 || podIds.length === 0) {
+    if (mode === null || !lanesPicked) {
       setRates(null);
+      // A lookup cancelled by clearing the picks never reaches its finally.
+      setRatesLoading(false);
       return;
     }
     let cancelled = false;
     const timer = setTimeout(() => {
-      const query = new URLSearchParams({ mode, polIds: polIds.join(','), podIds: podIds.join(',') });
+      const query = new URLSearchParams({ mode });
+      if (polIds.length > 0) query.set('polIds', polIds.join(','));
+      if (podIds.length > 0) query.set('podIds', podIds.join(','));
       if (carrierId !== '') query.set('carrierId', carrierId);
       setRatesLoading(true);
       void authorizedRequest<PriceEmailRatesDto>(`${base}/rates?${query.toString()}`)
@@ -198,18 +207,23 @@ export function PriceEmailScreen({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [authorizedRequest, base, carrierId, mode, podIds, polIds]);
+  }, [authorizedRequest, base, carrierId, lanesPicked, mode, podIds, polIds]);
 
   // The rows ticked, in the table's order — what the email will carry.
   const chosen = useMemo(() => (rates ?? []).filter((r) => picked.has(r.id)), [picked, rates]);
 
-  // The subject follows the lanes until somebody writes their own.
+  // The subject follows the lanes until somebody writes their own. With no
+  // lane there are no rates to name, so the sender writes it.
   useEffect(() => {
-    if (subjectEdited || mode === null) return;
+    if (subjectEdited) return;
+    if (mode === null || !lanesPicked) {
+      setSubject('');
+      return;
+    }
     const names = (ids: string[], from: LookupOption[]) =>
       ids.map((id) => bareName(from.find((o) => o.id === id)?.name ?? '')).filter((n) => n !== '');
     setSubject(defaultPriceEmailSubject(mode, names(polIds, options.pols), names(podIds, options.pods)));
-  }, [mode, options.pods, options.pols, podIds, polIds, subjectEdited]);
+  }, [lanesPicked, mode, options.pods, options.pols, podIds, polIds, subjectEdited]);
 
   // ----------------------------------------------------------- addresses
   function patchAddress(partyId: string, k: string, patch: Partial<AddressRow> | null): void {
@@ -330,8 +344,8 @@ export function PriceEmailScreen({
     blockers.push(`No ${noun.one} has a valid address yet.`);
   }
   if (checking) blockers.push('Still checking addresses…');
-  if (rates === null) blockers.push('Pick a POL and a POD to load the rates.');
-  else if (chosen.length === 0) blockers.push('Tick at least one rate to send.');
+  // Rates are optional (2026-10-07), but a lookup still running would send without them.
+  if (ratesLoading) blockers.push('Still finding rates…');
   if (subject.trim() === '') blockers.push('Write a subject.');
   if (message.trim() === '') blockers.push('Write the message.');
 
@@ -346,8 +360,9 @@ export function PriceEmailScreen({
           subject,
           message,
           // Which rates, not their figures: the server reads the prices
-          // back from the Price List and builds the table itself.
-          mode,
+          // back from the Price List and builds the table itself. None is a
+          // message-only letter, which needs no mode.
+          mode: mode ?? undefined,
           rateIds: chosen.map((r) => r.id),
           includeLocalCharges: includeLocal,
           recipients: sendable.map((r) => ({
@@ -370,7 +385,7 @@ export function PriceEmailScreen({
   const header = (
     <ChildScreenHeader
       parentLabel={noun.label}
-      parentName="Email prices"
+      parentName="Bulk email"
       title={`To the ${noun.many} on your list — ${described ?? `all active ${noun.many}`}.`}
       backHref={listHref}
     />
@@ -381,8 +396,8 @@ export function PriceEmailScreen({
       <div className="flex flex-col gap-4">
         {header}
         <EmptyState
-          title="Emailing prices is not part of your role"
-          description={`Ask an administrator for the ${noun.label} → Email prices permission.`}
+          title="Bulk email is not part of your role"
+          description={`Ask an administrator for the ${noun.label} → Bulk email permission.`}
         />
       </div>
     );
@@ -451,13 +466,13 @@ export function PriceEmailScreen({
           {/* ----------------------------------------------------- 2. rates */}
           <Step
             n={2}
-            title="Rates"
-            hint="One POL to several PODs, or several POLs to one POD. The rates shown are the ones published and valid today."
+            title="Rates — optional"
+            hint="Pick a POL, a POD or both — one POL to several PODs, or several POLs to one POD. Pick nothing to send the message without rates. The rates shown are the ones published and valid today."
           >
             {context !== null && context.modes.length === 0 ? (
               <p className="text-body text-steel">
-                You cannot see any price list, so there are no rates to send. Ask an administrator
-                for Price List access.
+                You cannot see any price list, so this email goes without rates. Ask an
+                administrator for Price List access to add them.
               </p>
             ) : (
               <div className="flex flex-col gap-3">
@@ -533,7 +548,7 @@ export function PriceEmailScreen({
 
                 <RatesStatus
                   loading={ratesLoading}
-                  lanesPicked={polIds.length > 0 && podIds.length > 0}
+                  lanesPicked={lanesPicked}
                   count={rates?.length ?? null}
                   ticked={chosen.length}
                   truncated={truncated}
@@ -603,7 +618,11 @@ export function PriceEmailScreen({
             {skipped > 0 && (
               <SummaryLine label="Skipped" value={skipped} note="no valid address" tone="signal" />
             )}
-            <SummaryLine label="Rates" value={chosen.length} note="ticked in the table" />
+            <SummaryLine
+              label="Rates"
+              value={chosen.length}
+              note={chosen.length === 0 ? 'none — message only' : 'ticked in the table'}
+            />
           </dl>
           <div className="border-t border-line pt-3">
             <p className="label-manifest">Replies go to</p>
@@ -682,7 +701,13 @@ function RatesStatus({
   ticked: number;
   truncated: boolean;
 }) {
-  if (!lanesPicked) return <p className="text-cell text-steel">Pick at least one POL and one POD.</p>;
+  if (!lanesPicked) {
+    return (
+      <p className="text-cell text-steel">
+        No rates — the email goes as a message only. Pick a POL, a POD or a carrier to add rates.
+      </p>
+    );
+  }
   if (loading) return <p className="text-cell text-steel">Finding rates…</p>;
   if (count === null) return null;
   if (count === 0) {

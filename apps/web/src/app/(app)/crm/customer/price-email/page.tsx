@@ -14,7 +14,7 @@ import { PriceEmailScreen } from '@/components/crm/price-email/price-email-scree
 import { useSession } from '@/lib/session';
 
 /**
- * CRM → Customer → Email prices (2026-09-29).
+ * CRM → Customer → Bulk email (2026-09-29; Email prices until 2026-10-07).
  *
  * The screen is shared with the Agent list's; this page reads the Customer
  * list's filters from the URL, exactly as the button carried them, and says
