@@ -15,6 +15,10 @@ import { RATE_MODE_LABEL, RATE_MODES, type RateMode } from './rate-lookups';
  * customers on 2026-09-29; agents got the same, in every respect, on
  * 2026-10-06.
  *
+ * Renamed Bulk email on 2026-10-07, when the lanes became optional (client):
+ * a POL, a POD, both or neither. With neither the letter goes without rates,
+ * as a message only.
+ *
  * Three rules shape everything here:
  *
  *  1. One email per customer or agent, with only their own contacts on it. A
@@ -227,8 +231,12 @@ export const priceEmailRatesQuerySchema = z
       .optional()
       .or(z.literal('').transform(() => undefined)),
   })
-  .refine((v) => v.polIds.length > 0 && v.podIds.length > 0, {
-    message: 'Choose at least one POL and one POD.',
+  /*
+   * Either end, or just a carrier, is enough since 2026-10-07 (client). With
+   * nothing picked there is nothing to look up: the screen sends no rates.
+   */
+  .refine((v) => v.polIds.length > 0 || v.podIds.length > 0 || v.carrierId !== undefined, {
+    message: 'Choose a POL, a POD or a carrier.',
     path: ['polIds'],
   })
   /*
@@ -352,7 +360,8 @@ export function priceEmailRatesText(
 
 /**
  * A subject that names the lane: "Sea FCL rates: Chattogram to Hamburg", or
- * "… to 3 destinations" when one end is a list.
+ * "… to 3 destinations" when one end is a list, or "… from Chattogram" when
+ * only one end was picked.
  */
 export function defaultPriceEmailSubject(
   mode: RateMode,
@@ -361,8 +370,11 @@ export function defaultPriceEmailSubject(
 ): string {
   const side = (names: string[], many: string) =>
     names.length === 1 ? names[0]! : `${names.length} ${many}`;
-  if (polNames.length === 0 || podNames.length === 0) return `${RATE_MODE_LABEL[mode]} rates`;
-  return `${RATE_MODE_LABEL[mode]} rates: ${side(polNames, 'origins')} to ${side(podNames, 'destinations')}`;
+  const rates = `${RATE_MODE_LABEL[mode]} rates`;
+  if (polNames.length === 0 && podNames.length === 0) return rates;
+  if (podNames.length === 0) return `${rates}: from ${side(polNames, 'origins')}`;
+  if (polNames.length === 0) return `${rates}: to ${side(podNames, 'destinations')}`;
+  return `${rates}: ${side(polNames, 'origins')} to ${side(podNames, 'destinations')}`;
 }
 
 /**
@@ -394,12 +406,13 @@ export function composePriceEmailBody(parts: {
   signOff: string;
 }): string {
   const signOff = parts.signOff.trim();
+  const rates = parts.rates.trim();
   return [
     PRICE_EMAIL_GREETING,
     '',
     parts.message.trim(),
-    '',
-    parts.rates.trim(),
+    // A message-only letter has no rates, and no gap where they would be.
+    ...(rates === '' ? [] : ['', rates]),
     // The signature carries its own closing ("Best regards,") — no second one here.
     ...(signOff === '' ? [] : ['', signOff]),
   ].join('\n');
@@ -622,31 +635,39 @@ export function priceEmailHtml(parts: {
  * than sent.
  *
  * One shape for both parties; only the words naming who is missing differ.
+ *
+ * Rates are optional since 2026-10-07: no rate ids is a message-only letter,
+ * and then no freight mode is needed either.
  */
 export function priceEmailSendSchema(party: PriceEmailParty) {
   const noun = PRICE_EMAIL_PARTY_NOUN[party];
-  return z.object({
-    subject: z.string().trim().min(1, 'Write a subject.').max(200, 'Keep the subject under 200 characters.'),
-    message: z.string().trim().min(1, 'Write the message.').max(5000, 'That message is too long.'),
-    mode: z.enum(RATE_MODES, { message: 'Choose a freight mode.' }),
-    rateIds: z
-      .array(z.string().regex(/^\d+$/, 'Unknown rate.'))
-      .min(1, 'Tick at least one rate to send.')
-      .max(PRICE_EMAIL_MAX_RATES, `At most ${PRICE_EMAIL_MAX_RATES} rates in one email.`),
-    includeLocalCharges: z.boolean().default(true),
-    recipients: z
-      .array(
-        z.object({
-          partyId: z.string().regex(/^\d+$/, `Unknown ${noun.one}.`),
-          emails: z.array(z.string().trim().max(320)).min(1).max(50),
-        }),
-      )
-      .min(1, `Nobody to send to — every ${noun.one} needs at least one valid address.`)
-      .max(
-        PRICE_EMAIL_MAX_RECIPIENTS,
-        `At most ${PRICE_EMAIL_MAX_RECIPIENTS} ${noun.many} in one send. Narrow the ${noun.one} filters.`,
-      ),
-  });
+  return z
+    .object({
+      subject: z.string().trim().min(1, 'Write a subject.').max(200, 'Keep the subject under 200 characters.'),
+      message: z.string().trim().min(1, 'Write the message.').max(5000, 'That message is too long.'),
+      mode: z.enum(RATE_MODES, { message: 'Choose a freight mode.' }).optional(),
+      rateIds: z
+        .array(z.string().regex(/^\d+$/, 'Unknown rate.'))
+        .max(PRICE_EMAIL_MAX_RATES, `At most ${PRICE_EMAIL_MAX_RATES} rates in one email.`)
+        .default([]),
+      includeLocalCharges: z.boolean().default(true),
+      recipients: z
+        .array(
+          z.object({
+            partyId: z.string().regex(/^\d+$/, `Unknown ${noun.one}.`),
+            emails: z.array(z.string().trim().max(320)).min(1).max(50),
+          }),
+        )
+        .min(1, `Nobody to send to — every ${noun.one} needs at least one valid address.`)
+        .max(
+          PRICE_EMAIL_MAX_RECIPIENTS,
+          `At most ${PRICE_EMAIL_MAX_RECIPIENTS} ${noun.many} in one send. Narrow the ${noun.one} filters.`,
+        ),
+    })
+    .refine((v) => v.rateIds.length === 0 || v.mode !== undefined, {
+      message: 'Choose a freight mode.',
+      path: ['mode'],
+    });
 }
 export type PriceEmailSendInput = z.infer<ReturnType<typeof priceEmailSendSchema>>;
 

@@ -105,7 +105,7 @@ export default function AgentPage() {
     [],
   );
 
-  /** The list's search and filter, for Email prices to select the same agents. */
+  /** The list's search and filter, for Bulk email to select the same agents. */
   const emailQuery: Record<string, string> = {};
   if (list.searchInput.trim() !== '') emailQuery['search'] = list.searchInput.trim();
   const agentType = list.filters['agentType'];
@@ -151,14 +151,14 @@ export default function AgentPage() {
         action={
           <div className="flex flex-wrap items-center gap-2">
             {/*
-              Email prices writes to the agents this list is filtered to, so
+              Bulk email writes to the agents this list is filtered to, so
               it carries the filters with it — what the operator is looking at
               is who gets the letter.
             */}
             {can('CRM.AGENT.PRICE_EMAIL') && (
               <Button variant="secondary" asChild>
                 <Link href={{ pathname: '/crm/agent/price-email', query: emailQuery }}>
-                  Email prices
+                  Bulk email
                 </Link>
               </Button>
             )}

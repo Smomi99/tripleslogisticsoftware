@@ -283,6 +283,14 @@ describe('the subject and the letter', () => {
     );
   });
 
+  it('names the one end picked, since either is optional (2026-10-07)', () => {
+    expect(defaultPriceEmailSubject('SEA_FCL', ['Chattogram'], [])).toBe('Sea FCL rates: from Chattogram');
+    expect(defaultPriceEmailSubject('SEA_FCL', [], ['Hamburg', 'Rotterdam'])).toBe(
+      'Sea FCL rates: to 2 destinations',
+    );
+    expect(defaultPriceEmailSubject('AIR', [], [])).toBe('Air rates');
+  });
+
   it('greets Sir/Madam — one letter to many — and ends with the email signature alone', () => {
     expect(
       composePriceEmailBody({
@@ -298,6 +306,12 @@ describe('the subject and the letter', () => {
   it('ends at the rates when no signature is set', () => {
     expect(composePriceEmailBody({ message: 'Rates.', rates: '• 20STD', signOff: '' })).toBe(
       'Dear Sir/Madam,\n\nRates.\n\n• 20STD',
+    );
+  });
+
+  it('leaves no gap where the rates would be in a message-only letter', () => {
+    expect(composePriceEmailBody({ message: 'Office closed Friday.', rates: '', signOff: 'CPE' })).toBe(
+      'Dear Sir/Madam,\n\nOffice closed Friday.\n\nCPE',
     );
   });
 });

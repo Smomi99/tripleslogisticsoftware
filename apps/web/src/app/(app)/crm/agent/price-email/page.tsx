@@ -7,8 +7,8 @@ import { Suspense, useMemo } from 'react';
 import { PriceEmailScreen } from '@/components/crm/price-email/price-email-screen';
 
 /**
- * CRM → Agent → Email prices (2026-10-06) — the customer's Email prices, for
- * the agents on the Agent list.
+ * CRM → Agent → Bulk email (2026-10-06; Email prices until 2026-10-07) — the
+ * customer's Bulk email, for the agents on the Agent list.
  *
  * The screen is shared with the Customer list's; this page reads the Agent
  * list's filters from the URL, exactly as the button carried them, and says

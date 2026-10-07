@@ -141,7 +141,8 @@ export const ACTIONS = [
    */
   'RECEIVE',
   /*
-   * CRM → Customer's Email prices (2026-09-29), and Agent's (2026-10-06).
+   * CRM → Customer's Email prices (2026-09-29), and Agent's (2026-10-06) —
+   * Bulk email on screen since 2026-10-07.
    * Writing to every customer or agent on a filtered list at once is not
    * editing one: one click puts the company's prices in front of hundreds of
    * people, so it is granted deliberately rather than riding along with EDIT.

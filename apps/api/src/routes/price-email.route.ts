@@ -38,7 +38,8 @@ import { requirePermission } from '../middleware/require-permission';
 import { offeredRatesById, PRICE_LIST_FEATURE_BY_MODE, priceListRows } from './freight-rate.route';
 
 /**
- * Email prices — CRM → Customer (2026-09-29) and CRM → Agent (2026-10-06).
+ * Email prices — CRM → Customer (2026-09-29) and CRM → Agent (2026-10-06),
+ * shown as Bulk email since 2026-10-07, when the rates became optional.
  *
  * The customers or agents a CRM list is filtered to, their contacts' addresses
  * checked, a lane from the Price List, and one letter each. The rules are set
@@ -284,7 +285,10 @@ export function createPriceEmailRouter<Query>(source: PriceEmailPartySource<Quer
   router.post('/send', requirePermission(permission), async (req, res) => {
     const auth = req.auth!;
     const input = sendSchema.parse(req.body);
-    assertPriceList(auth, input.mode);
+    // Rates are optional (2026-10-07). With them, the Price List rule above
+    // holds; a message-only letter shows no price, so it needs no Price List.
+    const rateMode = input.rateIds.length === 0 ? null : input.mode!;
+    if (rateMode !== null) assertPriceList(auth, rateMode);
 
     // The same recipient twice is one letter to all of the addresses given for them.
     const merged = new Map<string, Set<string>>();
@@ -321,7 +325,8 @@ export function createPriceEmailRouter<Query>(source: PriceEmailPartySource<Quer
     }
 
     const rateIds = [...new Set(input.rateIds)];
-    const rates = await offeredRatesById(auth, input.mode, rateIds.map((id) => BigInt(id)));
+    const rates =
+      rateMode === null ? [] : await offeredRatesById(auth, rateMode, rateIds.map((id) => BigInt(id)));
     if (rates.length !== rateIds.length) {
       const gone = rateIds.length - rates.length;
       throw HttpError.conflict(

@@ -479,6 +479,23 @@ describe('the rates', () => {
     expect((res.body.data.rates as { code: string }[]).map((r) => r.code)).toEqual(['CPE-R2']);
   });
 
+  it('takes one end alone, or just a carrier, since the lanes are optional (2026-10-07)', async () => {
+    const codes = (res: { body: { data: { rates: { code: string }[] } } }) =>
+      res.body.data.rates.map((r) => r.code).sort();
+    expect(codes(await get(`/rates?mode=SEA_FCL&polIds=${pol}`).expect(200))).toEqual([
+      'CPE-R1',
+      'CPE-R2',
+    ]);
+    expect(codes(await get(`/rates?mode=SEA_FCL&podIds=${hamburg}`).expect(200))).toEqual(['CPE-R1']);
+    expect(codes(await get(`/rates?mode=SEA_FCL&carrierId=${carrierB}`).expect(200))).toEqual([
+      'CPE-R2',
+    ]);
+  });
+
+  it('looks nothing up with nothing picked', async () => {
+    await get('/rates?mode=SEA_FCL').expect(400);
+  });
+
   it('refuses a list at both ends', async () => {
     await get(
       `/rates?mode=SEA_FCL&polIds=${pol},${antwerp}&podIds=${hamburg},${rotterdam}`,
@@ -575,6 +592,38 @@ describe('sending', () => {
     });
     expect(row.bodyHtml).toContain('>1,250.00</td>');
     expect(row.bodyHtml).not.toContain('Terminal Handling');
+  });
+
+  it('sends a message only when no rate is picked (2026-10-07), Price List or not', async () => {
+    for (const bearer of [token, tokenNoPriceList]) {
+      await post(
+        '/send',
+        {
+          subject: 'Office closed on Friday',
+          message: 'Our office is closed this Friday.',
+          rateIds: [],
+          recipients: [{ partyId: customer.leather.toString(), emails: ['c@three.test'] }],
+        },
+        bearer,
+      ).expect(200);
+      const row = await owner.emailLog.findFirstOrThrow({
+        where: { tenantId, templateKey: 'CUSTOMER_PRICE_OFFER' },
+        orderBy: { id: 'desc' },
+      });
+      expect(row.subject).toBe('Office closed on Friday');
+      expect(row.bodyHtml).toContain('Our office is closed this Friday.');
+      expect(row.bodyHtml).not.toContain('<table');
+      expect(row.bodyText).not.toContain('•');
+      expect(row.replyToAddresses).toEqual(['pricing@cpe.test']);
+    }
+  });
+
+  it('still needs a mode when rates are picked', async () => {
+    const { mode: _mode, ...noMode } = letter();
+    await post('/send', {
+      ...noMode,
+      recipients: [{ partyId: customer.leather.toString(), emails: ['c@three.test'] }],
+    }).expect(400);
   });
 
   it('refuses a rate that is not on offer — lapsed or never published — and sends nothing', async () => {
