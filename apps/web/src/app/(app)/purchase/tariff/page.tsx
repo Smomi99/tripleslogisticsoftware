@@ -23,6 +23,8 @@ import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 import { useMasterList } from '@/lib/use-master-list';
 
+import { TariffDetailDrawer } from './tariff-detail-drawer';
+
 /**
  * Purchase → Price List → Tariff — the client's `Tarrif` sheet
  * (docs/DESIGN-UPDATE-2026-10-04.md §5): local charges at a port, by
@@ -33,6 +35,7 @@ export default function TariffListPage() {
   const list = useMasterList<TariffListRow, 'code' | 'pol' | 'country'>('/api/tenant/purchase/tariffs', 'code');
   const [toToggle, setToToggle] = useState<TariffListRow | null>(null);
   const [isToggling, setToggling] = useState(false);
+  const [viewing, setViewing] = useState<TariffListRow | null>(null);
 
   const columns: DataTableColumn<TariffListRow>[] = useMemo(
     () => [
@@ -148,6 +151,10 @@ export default function TariffListPage() {
         isPending={list.isPending}
         actions={(row) => (
           <>
+            {/* Anyone who can see the list can read a tariff's charges (client, 2026-10-07). */}
+            <Button variant="text" size="inline" onClick={() => setViewing(row)}>
+              View
+            </Button>
             {can('PURCHASE.TARIFF.EDIT') && (
               <Link href={`/purchase/tariff/${row.id}` as Route} className="text-body text-harbour hover:underline">
                 Edit
@@ -198,6 +205,8 @@ export default function TariffListPage() {
         isPending={isToggling}
         onConfirm={() => void confirmToggle()}
       />
+
+      <TariffDetailDrawer row={viewing} onClose={() => setViewing(null)} />
     </div>
   );
 }

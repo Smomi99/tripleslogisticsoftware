@@ -148,6 +148,14 @@ describe('Tariff', () => {
     expect(retired).toBe(2);
   });
 
+  // The list's View (2026-10-07) reads this with VIEW alone.
+  it('lets a viewer read the charges', async () => {
+    const res = await api(A.viewerToken, A.slug).get(`/${tariffId}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.lines).toHaveLength(1);
+    expect(res.body.data.lines[0]).toMatchObject({ unitPrice: '1300.0000', currencyCode: 'USD' });
+  });
+
   it('goes inactive and back, and a viewer can do neither that nor add one', async () => {
     const off = await api(A.editorToken, A.slug).post(`/${tariffId}/toggle-status`, {});
     expect(off.body.data.isActive).toBe(false);
