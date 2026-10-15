@@ -187,6 +187,11 @@ export function VoucherForm({
   const [documents, setDocuments] = useState<OpenDocumentDto[]>([]);
   const [docKey, setDocKey] = useState('');
   const [settleAmount, setSettleAmount] = useState('');
+  /**
+   * Base per unit of a foreign invoice's currency: the invoice's own rate,
+   * until the bank's figure is typed in and says otherwise (§14.5).
+   */
+  const [rate, setRate] = useState<number | null>(null);
 
   const [pending, setPending] = useState<'save' | 'post' | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -236,6 +241,7 @@ export function VoucherForm({
         ? exact(doc.outstanding)
         : (Number(doc.outstanding) * Number(doc.conversionRate)).toFixed(2);
     setMoneyAmount(banked);
+    setRate(doc.isBaseCurrency || doc.conversionRate === null ? null : Number(doc.conversionRate));
     // §14.5: the service the invoice was for picks its category, when there is one.
     const key =
       doc.serviceKey === null
@@ -311,6 +317,9 @@ export function VoucherForm({
   const difference = debitUnits - creditUnits;
   const balanced = difference === 0 && debitUnits > 0;
   const partyMissing = settles && withParty && (partyId === '' || chosenDoc === null || units(settleAmount) <= 0);
+  // §14.6: a settlement never exceeds what is outstanding. The server refuses it too.
+  const overSettled =
+    settles && withParty && chosenDoc !== null && units(settleAmount) > units(chosenDoc.outstanding);
   const baseMismatch =
     settles && withParty && chosenDoc !== null && chosenDoc.isBaseCurrency && units(settleAmount) !== moneyUnits;
 
@@ -578,6 +587,11 @@ export function VoucherForm({
                 label={`Amount ${kind === 'EXPENSE' ? 'paid' : 'received'} against it (${chosenDoc.currencyCode})`}
                 required
                 hint={`${chosenDoc.currencyCode} ${amount(chosenDoc.outstanding)} still due.`}
+                error={
+                  overSettled
+                    ? `Only ${chosenDoc.currencyCode} ${amount(chosenDoc.outstanding)} is still due. Enter that or less.`
+                    : undefined
+                }
               >
                 <Input
                   id="settleAmount"
@@ -585,8 +599,11 @@ export function VoucherForm({
                   inputMode="decimal"
                   value={settleAmount}
                   onChange={(e) => {
-                    setSettleAmount(e.target.value);
-                    if (chosenDoc.isBaseCurrency) setAmount(e.target.value);
+                    const value = e.target.value;
+                    setSettleAmount(value);
+                    // The base amount follows, at the invoice's rate or the one the bank figure set.
+                    if (chosenDoc.isBaseCurrency) setAmount(value);
+                    else if (rate !== null) setAmount(units(value) > 0 ? (Number(value) * rate).toFixed(2) : '');
                   }}
                 />
               </Field>
@@ -654,7 +671,14 @@ export function VoucherForm({
               inputMode="decimal"
               value={moneyAmount}
               disabled={chosenDoc?.isBaseCurrency === true}
-              onChange={(e) => setAmount(e.target.value)}
+              onChange={(e) => {
+                const value = e.target.value;
+                setAmount(value);
+                // What the bank actually moved sets the rate; the invoice amount stays as typed.
+                if (foreignDoc && units(value) > 0 && units(settleAmount) > 0) {
+                  setRate(Number(value) / Number(settleAmount));
+                }
+              }}
             />
           </Field>
         </section>
@@ -815,7 +839,9 @@ export function VoucherForm({
             </>
           ) : (
             <Button
-              disabled={pending !== null || !balanced || moneyAccountId === '' || partyMissing || baseMismatch}
+              disabled={
+                pending !== null || !balanced || moneyAccountId === '' || partyMissing || overSettled || baseMismatch
+              }
               onClick={() => void save(true)}
             >
               {pending !== null ? 'Saving…' : 'Save'}
