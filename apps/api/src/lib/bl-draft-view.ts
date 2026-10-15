@@ -1,10 +1,17 @@
-import type { BlDraftContainerDto, BlDraftDto, BlDraftPrefillDto } from '@ff/shared';
+import {
+  type AirRouteLegDto,
+  AWB_ORIGINALS,
+  type BlDraftContainerDto,
+  type BlDraftDto,
+  type BlDraftPrefillDto,
+} from '@ff/shared';
 
 import { Prisma } from '../generated/prisma/client';
 
 import { adviseMembers, leadFirst, LIVE_MEMBERSHIP, liveAdviseOf } from './advise-group';
 import { HttpError } from './http-error';
 import type { TenantDb } from './tenant-client';
+import { tenantDayOf } from './tenant-day';
 
 /**
  * Reading a BL draft — docs/MODULE_DOCUMENTATION.md §2.3, §2.4.
@@ -19,6 +26,104 @@ import type { TenantDb } from './tenant-client';
 const dec = (d: Prisma.Decimal | null): string | null => (d === null ? null : d.toString());
 const stamp = (d: Date | null): string | null => (d === null ? null : d.toISOString());
 const day = (d: Date | null): string | null => (d === null ? null : d.toISOString().slice(0, 10));
+
+/**
+ * What an air waybill's routing is read from (§14): the first flight and
+ * departure as the advise recorded them, and the legs of the schedule the
+ * advise was built from.
+ *
+ * The airline by id, not through the relation: a customer session cannot read
+ * carrier rows (CR-004), and a required relation it cannot see fails the whole
+ * read — the portal's sea drafts with it. The name is only a fallback for a
+ * flight number with no designator, so the printer looks it up on its own.
+ */
+const AIR_ROUTE_SELECT = {
+  carrierId: true,
+  firstFlightNo: true,
+  etd: true,
+  pol: { select: { name: true, portCode: true } },
+  pod: { select: { name: true, portCode: true } },
+  schedule: {
+    select: {
+      legs: {
+        where: { deletedAt: null },
+        orderBy: { legNo: 'asc' as const },
+        select: {
+          legNo: true,
+          flightNo: true,
+          etd: true,
+          originPort: { select: { name: true, portCode: true } },
+          destinationPort: { select: { name: true, portCode: true } },
+        },
+      },
+    },
+  },
+} satisfies Prisma.ShipmentAdviseSelect;
+
+type AirRouteSource = Prisma.ShipmentAdviseGetPayload<{
+  select: typeof AIR_ROUTE_SELECT & { transitType: true };
+}>;
+
+/**
+ * The airline in a flight number — IATA's two-character designator, which is
+ * what an air waybill's "by" boxes carry: `G9 507` is Air Arabia's flight 507,
+ * so `G9`. A number in any other shape gives null, and the caller prints the
+ * airline's name instead.
+ */
+export function airlineDesignator(flightNo: string | null): string | null {
+  const m = /^\s*([A-Z][A-Z0-9]|[0-9][A-Z])\s*-?\s*\d{1,4}[A-Z]?\s*$/i.exec(flightNo ?? '');
+  return m === null ? null : m[1]!.toUpperCase();
+}
+
+/**
+ * The flights on an air waybill (§14), in order.
+ *
+ * A direct flight is the advise's own: its first flight, its departure, from
+ * its AOL to its AOD. A route that transships takes its legs from the
+ * schedule, with the ends and the first flight as the advise overrode them —
+ * the advise is what went to the customer, so where it differs it wins.
+ *
+ * `airlineName` stands in for a flight number with no designator.
+ */
+export function airRouteOf(advise: AirRouteSource, airlineName: string | null = null): AirRouteLegDto[] {
+  const legs = advise.schedule?.legs ?? [];
+  const designated = (flightNo: string | null): string | null =>
+    airlineDesignator(flightNo) ?? airlineName;
+
+  if (advise.transitType !== 'INDIRECT' || legs.length < 2) {
+    const departure = advise.etd ?? legs[0]?.etd ?? null;
+    return [
+      {
+        legNo: 1,
+        flightNo: advise.firstFlightNo,
+        carrier: designated(advise.firstFlightNo),
+        fromCode: advise.pol.portCode,
+        fromName: advise.pol.name,
+        toCode: advise.pod.portCode,
+        toName: advise.pod.name,
+        departure: departure?.toISOString() ?? null,
+      },
+    ];
+  }
+
+  const last = legs.length - 1;
+  return legs.map((leg, i) => {
+    const flightNo = i === 0 ? (advise.firstFlightNo ?? leg.flightNo) : leg.flightNo;
+    const from = i === 0 ? advise.pol : leg.originPort;
+    const to = i === last ? advise.pod : leg.destinationPort;
+    const departure = i === 0 ? (advise.etd ?? leg.etd) : leg.etd;
+    return {
+      legNo: leg.legNo,
+      flightNo,
+      carrier: designated(flightNo),
+      fromCode: from.portCode,
+      fromName: from.name,
+      toCode: to.portCode,
+      toName: to.name,
+      departure: departure?.toISOString() ?? null,
+    };
+  });
+}
 
 export const blDraftArgs = {
   include: {
@@ -48,6 +153,8 @@ export const blDraftArgs = {
         transitType: true,
         firstVessel: { select: { name: true } },
         voyageNo: true,
+        // §14: an air waybill's routing and flights, read from the advise.
+        ...AIR_ROUTE_SELECT,
         // CR-005: one bill for every booking on its advise.
         bookings: {
           where: { deletedAt: null },
@@ -59,8 +166,9 @@ export const blDraftArgs = {
     preCarriage: { select: { name: true } },
     // The name and the agent's own Delivery agent details: the bill's "Please Apply to" block.
     deliveryAgent: { select: { name: true, deliveryAgentDetails: true } },
-    pol: { select: { name: true } },
-    pod: { select: { name: true } },
+    // The airport codes and the country: an air waybill prints both (§14).
+    pol: { select: { name: true, portCode: true, country: true } },
+    pod: { select: { name: true, portCode: true, country: true } },
     // §13: who issued the bill, for BL Print's confirmation and its list.
     issuedByUser: { select: { username: true } },
     containers: {
@@ -106,6 +214,7 @@ export function blDraftDto(
     code: row.code,
     status: row.status,
     origin: row.origin,
+    shipmentType: row.shipment.shipmentType,
     shipmentId: row.shipmentId.toString(),
     bookingNo: row.shipment.code,
     bookingNos: billBookings(row).map((b) => b.code),
@@ -120,8 +229,8 @@ export function blDraftDto(
     exportReferences: row.exportReferences,
     forwardingAgentReferences: row.forwardingAgentReferences,
     pointCountryOfOrigin: row.pointCountryOfOrigin,
-    preCarriageByModeId: row.preCarriageByModeId.toString(),
-    preCarriageByModeName: row.preCarriage.name,
+    preCarriageByModeId: row.preCarriageByModeId?.toString() ?? null,
+    preCarriageByModeName: row.preCarriage?.name ?? null,
     placeOfReceipt: row.placeOfReceipt,
     deliveryAgentId: row.deliveryAgentId?.toString() ?? null,
     deliveryAgentName: row.deliveryAgent?.name ?? null,
@@ -136,9 +245,12 @@ export function blDraftDto(
     marksAndNumbers: row.marksAndNumbers,
     grossWeightKg: dec(row.grossWeightKg),
     measurementCbm: dec(row.measurementCbm),
+    packageCount: row.packageCount,
+    chargeableWeightKg: dec(row.chargeableWeightKg),
     freightPayableAt: row.freightPayableAt,
     originalBlCount: row.originalBlCount,
     ladenOnBoardDate: day(row.ladenOnBoardDate),
+    airRoute: row.shipment.shipmentType === 'AIR' ? airRouteOf(row.advise) : [],
     submittedAt: stamp(row.submittedAt),
     approvedAt: stamp(row.approvedAt),
     sentAt: stamp(row.sentAt),
@@ -269,6 +381,7 @@ export async function blDraftPrefill(
     where: { id: live?.shipmentId ?? shipmentId, deletedAt: null },
     select: {
       id: true,
+      tenantId: true,
       code: true,
       shipmentType: true,
       exporterName: true,
@@ -311,8 +424,23 @@ export async function blDraftPrefill(
       podId: true,
       pol: { select: { name: true } },
       pod: { select: { name: true } },
+      etd: true,
+      // §14: an air waybill's figures are the advise's totals — no containers.
+      totalCtnQty: true,
+      totalGrossWeightKg: true,
+      totalVolumeCbm: true,
+      totalChargeableWtKg: true,
     },
   });
+  const isAir = shipment.shipmentType === 'AIR';
+  // §14: the flights, in their own read — the schedule above is the sea's last leg only.
+  const airAdvise =
+    !isAir || live === null
+      ? null
+      : await db.shipmentAdvise.findFirst({
+          where: { id: live.id },
+          select: { ...AIR_ROUTE_SELECT, transitType: true },
+        });
 
   /*
    * The ocean vessel is the one that crosses (client, 2026-10-06): on a route
@@ -328,8 +456,9 @@ export async function blDraftPrefill(
         : [advise.firstVessel?.name, advise.voyageNo];
 
   const members = advise === null ? [] : await adviseMembers(db, advise.id);
+  // Air has no load plan, so nothing to pull a container from (§14).
   const containers =
-    advise === null ? [] : await containersForShipments(db, members.map((m) => m.id));
+    advise === null || isAir ? [] : await containersForShipments(db, members.map((m) => m.id));
   // DESIGN-UPDATE-2026-10-04 §2: a confirmed departure "will finally pull to
   // BL as on board date". The bill's own booking first, then any on its advise.
   const departed = await db.shipmentMilestone.findFirst({
@@ -344,12 +473,20 @@ export async function blDraftPrefill(
   const gross = containers.reduce((acc, c) => acc.add(c.grossWeightKg), new Prisma.Decimal(0));
   const cbm = containers.reduce((acc, c) => acc.add(c.measurementCbm), new Prisma.Decimal(0));
 
+  /*
+   * §14: an air waybill is executed before the flight rather than dated by
+   * it, so the departure stands in until a milestone confirms one. Read in
+   * the workspace's calendar — a 02:00 Dhaka departure is the day before in UTC.
+   */
+  const dayOf = await tenantDayOf(db, shipment.tenantId);
+  const departure = isAir ? (advise?.etd ?? null) : null;
+  const onBoard =
+    departed !== null ? day(departed.confirmedOn) : departure === null ? null : dayOf(departure);
+
   const blocked =
     advise === null
-      ? `${requested.code} has no sent shipment advise yet. The BL number is allocated there.`
-      : shipment.shipmentType === 'AIR'
-        ? 'Both BL Draft sheets say "Only for Outbound shipment-Sea". An air equivalent is open question 8.'
-        : null;
+      ? `${requested.code} has no sent shipment advise yet. The ${isAir ? 'HAWB' : 'BL'} number is allocated there.`
+      : null;
 
   const party = (name: string | null, address: string | null): string =>
     [name, address].filter((v) => (v ?? '').trim() !== '').join('\n');
@@ -369,13 +506,17 @@ export async function blDraftPrefill(
     exportReferences: null,
     forwardingAgentReferences: null,
     pointCountryOfOrigin: null,
-    preCarriageByModeId: shipment.modeId?.toString() ?? '',
-    preCarriageByModeName: shipment.mode?.name ?? '',
-    placeOfReceipt: shipment.placeOfReceipt ?? '',
+    shipmentType: shipment.shipmentType,
+    // A sea bill's starred boxes (B34, F34); an air waybill has neither.
+    preCarriageByModeId: isAir ? null : (shipment.modeId?.toString() ?? ''),
+    preCarriageByModeName: isAir ? null : (shipment.mode?.name ?? ''),
+    placeOfReceipt: isAir ? null : (shipment.placeOfReceipt ?? ''),
     deliveryAgentId: null,
     deliveryAgentName: null,
     deliveryAgentText: null,
-    oceanVesselVoyage: oceanVessel.filter((v) => (v ?? '') !== '').join(' / ') || null,
+    oceanVesselVoyage: isAir
+      ? null
+      : oceanVessel.filter((v) => (v ?? '') !== '').join(' / ') || null,
     polId: (advise?.polId ?? shipment.polId).toString(),
     polName: advise?.pol.name ?? shipment.pol.name,
     podId: (advise?.podId ?? shipment.podId).toString(),
@@ -383,11 +524,23 @@ export async function blDraftPrefill(
     placeOfDelivery: null,
     packagesDescription: null,
     marksAndNumbers: null,
-    grossWeightKg: containers.length === 0 ? null : gross.toString(),
-    measurementCbm: containers.length === 0 ? null : cbm.toString(),
+    grossWeightKg: isAir
+      ? dec(advise?.totalGrossWeightKg ?? null)
+      : containers.length === 0
+        ? null
+        : gross.toString(),
+    measurementCbm: isAir
+      ? dec(advise?.totalVolumeCbm ?? null)
+      : containers.length === 0
+        ? null
+        : cbm.toString(),
+    packageCount: isAir ? (advise?.totalCtnQty ?? null) : null,
+    chargeableWeightKg: isAir ? dec(advise?.totalChargeableWtKg ?? null) : null,
     freightPayableAt: null,
-    originalBlCount: null,
-    ladenOnBoardDate: day(departed?.confirmedOn ?? null),
+    // A waybill is always issued in three originals (§14); a sea bill says.
+    originalBlCount: isAir ? AWB_ORIGINALS.length : null,
+    ladenOnBoardDate: onBoard,
+    airRoute: airAdvise === null ? [] : airRouteOf(airAdvise),
     containers: containers.map((c, index) => ({
       id: `draft-${index}`,
       containerNo: c.containerNo,

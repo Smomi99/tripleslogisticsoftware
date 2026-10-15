@@ -50,6 +50,10 @@
 2. **Copy Doc upload** (Menu K8) — the last screen in the Documentation module.
    **BL Print (K7) is built — §13, 2026-09-26.**
 
+**The air waybill — §14, 2026-10-15.** An air booking now runs the whole chain
+without a CLP and ends in a House Air Waybill on the client's own form, drafted,
+approved, issued and printed through the BL Draft and BL Print screens.
+
 **Two deviations worth recording.** `runtimeDatabaseUrl` no longer falls back to
 the owner connection in production — CR-004 F6; it now refuses to boot, because
 an API silently running with row level security switched off is the wrong thing
@@ -599,14 +603,14 @@ Nothing below is guessed at in the schema. Each has a working default so the bui
 
 | # | Question | Working default |
 |---|---|---|
-| 1 | **Air and the CLP.** The air advise sheet says *"PO details will pull from CLP"*; the Menu sheet says *"No need CLP for Air Shipment"*. Which? | Build the air grid from confirmed cargo receipts; `Stuffing dt` typed (§3.7) |
+| 1 | **Air and the CLP.** The air advise sheet says *"PO details will pull from CLP"*; the Menu sheet says *"No need CLP for Air Shipment"*. Which? | **Answered 2026-10-15:** no CLP for air — the grid comes from the confirmed receipts (§3.7, §14) |
 | 2 | **`Stuffing date` on the air list.** With no CLP and no ULD module, who types it and when? | A field on the air advise |
 | 3 | **House BL format.** `Q14` on the sea sheet reads `TSL+26+09+001` — is that the HBL format: company prefix + 2-digit year + 2-digit month + a serial that resets monthly? And is `TSL` per workspace? | `{TENANT_PREFIX}{YY}{MM}{NNN}`, the prefix configurable in Settings |
 | 4 | **Should `Save & Send` attach the PDF?** Today nothing in the product attaches a file to an email (§9). | Yes, for both documents — build the attachment support |
 | 5 | **Who may set `MBL No`?** It is typed on the advise, but it arrives from the carrier, often after the advise has gone out. | Editable on a `SENT` advise by `EDIT` holders — the one exception to §5 rule 3, recorded in the audit log |
 | 6 | **Where does the customer reach their BL draft?** The Customer menu column does not list BL Draft (§2.5). | From the Action column of the customer's own shipment row |
 | 7 | **The rest of the portal columns.** Customer: Inquiry List, Quotation List, Shipment Booking, Shipment status, Financial Statement. Agent: Nomination, Shipment status, Financial Statement. No wireframes in this workbook. | Out of scope here; §7.2's plumbing is built so each becomes a screen, not a re-architecture |
-| 8 | **Inbound BL.** Both BL sheets say *"Only for Outbound shipment-Sea"*. Does an inbound shipment get a BL screen at all, and is there an air equivalent (HAWB draft)? | Outbound sea only, as written |
+| 8 | **Inbound BL.** Both BL sheets say *"Only for Outbound shipment-Sea"*. Does an inbound shipment get a BL screen at all, and is there an air equivalent (HAWB draft)? | **Air answered 2026-10-15:** yes — the House Air Waybill, §14. Inbound still has none |
 | 9 | **`Also Notify Party` and `Forwarding Agent-References`** — free text, or pulled from the agent master? | Free text, with the agent's details pullable into it |
 | 10 | **The two new shipment statuses** (§3.8) — confirm `ADVISED` and `BL_DRAFTED`, or keep the queues derived. | Add them |
 
@@ -785,3 +789,106 @@ keys, then grant them on the Roles screen.
 | 9 | *Place and date of issue*: is the place the port of loading (as on their sample), the issuing office, or typed? | **Answered 2026-10-05:** the port of loading and the laden-on-board date |
 | 10 | The form's *SL.NO.*: the BL draft's own number, or a serial of pre-printed stationery? | The BL draft number (`BLD-…`) |
 | 11 | The clause text (*RECEIVED by the carrier…*, *In witness whereof…*, *Excess Value Declaration*) was transcribed from their sample with obvious typos corrected. Confirm the wording, and whether it varies by workspace. | Fixed text, with the number of originals filled in |
+
+---
+
+## 14. THE AIR SHIPMENT AND ITS HOUSE AIR WAYBILL — built 2026-10-15
+
+### 14.1 What the client said
+
+*"For the air shipment please make BL like this … their no no to CLP."* With it, a
+sample House Air Waybill of their own (booking to Vienna via Sharjah on Air Arabia,
+HAWB `TSLHBL2607100305`). That answers §12 Q1 — **air has no CLP**, as Menu I23
+already said — and the air half of §12 Q8: an air booking's bill is a HAWB.
+
+### 14.2 The air chain
+
+```
+Booking (Air) → Flight booking → Approval → Shipping Order → Cargo Receipt
+  → Shipment Advise - Air (from the confirmed receipts; HAWB number allocated, MAWB typed)
+  → HAWB draft (BL Draft screen) → Approve → BL Print: Issue HAWB → three originals
+```
+
+What changed to make that true:
+
+| Where | Before | Now |
+|---|---|---|
+| Cargo Receipt list | *Make CLP* on every row | Sea rows only |
+| Available stock | Air bookings listed, waiting for a CLP forever | Sea only — the list is *"ready for make CLP"* |
+| `POST /ops/bookings/:id/clps` | Accepted an air booking | `409 AIR_NO_CLP` |
+| Shipment Advise - Air | *"No finalised load plan yet"* | *"12 CTN received — air needs no load plan, ready to advise"* |
+| BL Draft, BL Print | `409 SEA_ONLY` | The HAWB, below |
+| Booking file | *Vessel Schedule*, *Stuffing*, *BL* tabs | *Flight Schedule*, no Stuffing, *HAWB* |
+| Booking list actions | *Make BL draft*, *Issue BL* | *Make HAWB draft*, *Issue HAWB* on air |
+
+### 14.3 Decisions
+
+1. **One row, two documents.** The HAWB is the same `bl_draft`, with the same
+   lifecycle, permissions, customer hand-off and cancel rules (§3.6, §5, §13). Only
+   the form and the printed page differ, by `shipment.shipment_type`.
+2. **The flights are read, not typed** — from the advise (first flight, departure,
+   AOL, AOD) and the legs of the schedule it was built from, as the sea bill already
+   reads its pre-carriage (§13.4). The draft form shows them; a wrong flight is
+   corrected on the advise.
+3. **The figures start from the advise's totals** — pieces (`total_ctn_qty`), gross
+   and chargeable weight, volume — and stay editable until approval, like the sea
+   bill's gross weight.
+4. **Three originals, fixed.** The sample says *"COPIES OF 1,2 & 3 … ARE ORIGINAL"*.
+   An air draft is never asked; each original names whose it is at its foot:
+   `1-ISSUING CARRIER`, `2-CONSIGNEE`, `3-SHIPPER`. A copy says *COPY — NOT
+   NEGOTIABLE*.
+5. **Executed on (Date)** is the draft's `laden_on_board_date`, labelled for air —
+   the one date each bill is issued under. It opens on the departure until a
+   *Departed* milestone confirms one.
+
+### 14.4 The printed HAWB
+
+The client's sample, box for box, in solid black Helvetica (§13.4's reason):
+
+- **Header:** *MASTER AIR WAY BILL NO* (the advise's MAWB), the QR, *HOUSE AIR WAY
+  BILL NUMBER* (the HAWB).
+- **Left:** shipper, consignee, notify party; *AIRPORT OF DEPARTURE* as
+  `<airport>, <country> . DAC-SHJ-VIE`; the *to / By First Carrier / to / by / to /
+  by* boxes — airport codes, the second stop spelled out as on the sample, and the
+  airline's designator from the flight number (`G9 507` → `G9`), or its name.
+- **Right:** logo and name; the **issuer details** (address, AIN, FF licence,
+  enlistment no.) from *Settings → Notifications → Air waybill*; the IATA
+  conditions; *FREIGHT COLLECT / PREPAID*; *Currency* (the currency the booking's
+  quotation lines are priced in); *CHGS CODE* and the *WT/VAL* and *OTHER* marks
+  (`CC` / `PP`); *N.V.D* and *As Per Invoice*.
+- **Across:** airport of destination; two *Flight/Date* boxes (`G9 507/10-Jul-26`);
+  *Booked* and *Amount of Insurance*, empty as on the sample; the insurance clause.
+- **Goods:** pieces, gross weight with `K`, chargeable weight, *AS ARRANGED* for the
+  rate and total, and the nature of goods — the typed description, then
+  `VOLUME: n CBM`, then *Delivery Agent :* and the chosen agent's delivery details.
+- **Foot:** *Prepaid / Air Freight / Collect* with *AS ARRANGED* in the TOS's column
+  (both when there is no TOS, as the sample); the sample's charge lines; the
+  shipper's certification; *Executed on (Date)* · *At (Place)* — where the freight
+  is payable, `DESTINATION` on a collect booking, as the sample — · *Signature of
+  issuing agent office* as `<HBL prefix>/<AOL code>` (`TSL/DAC`).
+- Clause wording is the sample's with its typos corrected, as §13.10 Q11 did.
+
+### 14.5 Schema — migration `20261015100000_house_air_waybill`
+
+```
+bl_draft
+  pre_carriage_by_mode_id, place_of_receipt   DROP NOT NULL (sea still requires both, in the route)
+  + package_count         int            NULL   CHECK >= 0
+  + chargeable_weight_kg  numeric(18,3)  NULL   CHECK >= 0
+notification_setting
+  + awb_issuer_details    text           NULL
+```
+
+Affects `bl_draft` and `notification_setting` only. Nothing renamed or dropped; RLS,
+grants and audit triggers already cover both; the tenant guard on the mode column
+passes a NULL through. No new permissions.
+
+### 14.6 Open questions — for the client
+
+| # | Question | Working default |
+|---|---|---|
+| 1 | The sample prints *AS ARRANGED* under both Prepaid and Collect on a freight-collect bill. One column, or both? | The column the booking's TOS names; both only when there is no TOS |
+| 2 | *At (Place)* reads `DESTINATION` on the sample — the freight-payable place. Should it be the place of issue (Dhaka) instead? | Where the freight is payable, as the sample |
+| 3 | The sample leaves *Chargeable Weight* empty. Print it, or hide it as the rate is hidden? | Printed |
+| 4 | *Currency*: the quotation's currency, or always USD? | The currency the quotation's lines are priced in |
+| 5 | A customer printing their own HAWB draft cannot read the airline, the tenant settings or the quotation (CR-004), so their draft prints without the issuer lines and the currency. Widen the customer's read? | No — the customer's copy is a draft for checking; the one that goes out is printed by staff |

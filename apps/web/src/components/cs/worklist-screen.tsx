@@ -78,9 +78,26 @@ const DESCRIPTION: Record<ShipmentWorklistId, string> = {
   SHIPPING_ORDER: 'Bookings cleared to ship, and the orders already issued against them.',
   CARGO_RECEIPT: 'Bookings with cargo still to arrive, and what has come in so far.',
   SHIPMENT_ADVISE:
-    'Bookings with the cargo in and the container planned, and the advises already sent.',
-  BL_DRAFT: 'Bookings that have been advised, and the bills of lading drafted against them.',
-  BL_PRINT: 'Approved bills of lading waiting to be issued, and the ones already issued.',
+    'Bookings with the cargo in — on sea, with the container planned — and the advises already sent.',
+  BL_DRAFT:
+    'Bookings that have been advised, and the bills of lading or House Air Waybills drafted against them.',
+  BL_PRINT:
+    'Approved bills of lading and air waybills waiting to be issued, and the ones already issued.',
+};
+
+/*
+ * Shipment Advise - Air says what air actually waits on. Air has no load plan
+ * (Menu I23, "No need CLP for Air Shipment"): the advise is built from the
+ * confirmed receipt, so the sea wording would send the operator looking for a
+ * CLP that will never exist.
+ */
+const AIR_ADVISE = {
+  description: 'Air bookings with the cargo received, and the advises already sent. Air needs no load plan.',
+  empty: {
+    title: 'Nothing to advise',
+    description:
+      'An air booking arrives here once its cargo receipt is confirmed. There is no load plan to make — build the advise straight from the receipt.',
+  },
 };
 
 const EMPTY: Record<ShipmentWorklistId, { title: string; description: string }> = {
@@ -102,17 +119,17 @@ const EMPTY: Record<ShipmentWorklistId, { title: string; description: string }> 
   SHIPMENT_ADVISE: {
     title: 'Nothing to advise',
     description:
-      'A booking arrives here once its cargo has been received. Finalise the load plan, then build the advise.',
+      'A booking arrives here once its cargo has been received. On sea, finalise the load plan, then build the advise; air needs no load plan.',
   },
   BL_DRAFT: {
-    title: 'No bills of lading waiting',
+    title: 'No bills waiting',
     description:
-      'A booking arrives here once its shipment advise has gone to the customer — that is where the BL number comes from.',
+      'A booking arrives here once its shipment advise has gone to the customer — that is where the BL or HAWB number comes from.',
   },
   BL_PRINT: {
-    title: 'No bills of lading to issue',
+    title: 'No bills to issue',
     description:
-      'A booking arrives here once its BL draft is approved. Approve a draft on the BL Draft screen to issue and print it.',
+      'A booking arrives here once its BL or HAWB draft is approved. Approve a draft on the BL Draft screen to issue and print it.',
   },
 };
 
@@ -140,6 +157,9 @@ export function WorklistScreen({
 }) {
   const config = SHIPMENT_WORKLISTS[worklist];
   const { authorizedList, authorizedObjectUrl, can } = useSession();
+  const airAdvise = worklist === 'SHIPMENT_ADVISE' && fixedMode === 'AIR';
+  const description = airAdvise ? AIR_ADVISE.description : DESCRIPTION[worklist];
+  const empty = airAdvise ? AIR_ADVISE.empty : EMPTY[worklist];
 
   const [rows, setRows] = useState<ShipmentWorklistRow[]>([]);
   const [meta, setMeta] = useState<Meta>({ page: 1, limit: 25, total: 0 });
@@ -277,7 +297,7 @@ export function WorklistScreen({
 
   return (
     <div className="flex flex-col gap-4">
-      <PageHeader title={config.label} description={DESCRIPTION[worklist]} />
+      <PageHeader title={config.label} description={description} />
 
       {/*
         The client names these screens by their tabs (spec, 2026-09-18) — the
@@ -404,7 +424,10 @@ export function WorklistScreen({
               exactly what §12 forbids, and the eligibility rules would be the
               first thing to drift.
             */}
-              {worklist === 'CARGO_RECEIPT' && can('OPERATION.CONTAINER_LOAD_PLAN.CREATE') && (
+              {/* Menu I23: "No need CLP for Air Shipment" — air goes to its advise. */}
+              {worklist === 'CARGO_RECEIPT' &&
+                row.shipmentType === 'SEA' &&
+                can('OPERATION.CONTAINER_LOAD_PLAN.CREATE') && (
                 <Link
                   href={`/operation/container-load-plan?booking=${row.id}`}
                   className="text-body text-harbour hover:underline"
@@ -438,6 +461,7 @@ export function WorklistScreen({
               {worklist === 'BL_PRINT' && (
                 <BlPrintActions
                   shipmentId={row.id}
+                  shipmentType={row.shipmentType}
                   status={row.status}
                   onChanged={() => setReloadKey((k) => k + 1)}
                 />
@@ -464,11 +488,11 @@ export function WorklistScreen({
               />
             ) : (
               <EmptyState
-                title={EMPTY[worklist].title}
-                description={EMPTY[worklist].description}
+                title={empty.title}
+                description={empty.description}
                 action={
                   <Link
-                    href="/cs/shipment-booking-sea"
+                    href={fixedMode === 'AIR' ? '/cs/shipment-booking-air' : '/cs/shipment-booking-sea'}
                     className="text-body text-harbour hover:underline"
                   >
                     Go to the booking list

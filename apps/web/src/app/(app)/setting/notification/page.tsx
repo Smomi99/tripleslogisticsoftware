@@ -16,12 +16,13 @@ import { TeamIdentities } from './team-identities';
 
 const ENDPOINT = '/api/tenant/setting/notifications';
 
-type Section = 'recipients' | 'signature' | 'quotation' | 'teams';
+type Section = 'recipients' | 'signature' | 'quotation' | 'awb' | 'teams';
 
 const SECTIONS = [
   { id: 'recipients', label: 'Recipients' },
   { id: 'signature', label: 'Signature' },
   { id: 'quotation', label: 'Quotation notes' },
+  { id: 'awb', label: 'Air waybill' },
   { id: 'teams', label: 'Teams' },
 ] as const satisfies readonly { id: Section; label: string }[];
 
@@ -33,6 +34,7 @@ const FIELD_SECTION: Record<SettingField, Section> = {
   bccAddresses: 'recipients',
   signatureBlock: 'signature',
   quotationNotes: 'quotation',
+  awbIssuerDetails: 'awb',
 };
 
 const TEXTAREA =
@@ -56,6 +58,7 @@ export default function NotificationSettingPage() {
   const [priceTeamEmails, setPriceTeamEmails] = useState('');
   const [signatureBlock, setSignatureBlock] = useState('');
   const [quotationNotes, setQuotationNotes] = useState('');
+  const [awbIssuerDetails, setAwbIssuerDetails] = useState('');
   const [bccAddresses, setBccAddresses] = useState('');
   const [isLoading, setLoading] = useState(true);
   const [isSaving, setSaving] = useState(false);
@@ -69,6 +72,7 @@ export default function NotificationSettingPage() {
           setPriceTeamEmails(data.priceTeamEmails);
           setSignatureBlock(data.signatureBlock);
           setQuotationNotes(data.quotationNotes);
+          setAwbIssuerDetails(data.awbIssuerDetails);
           setBccAddresses(data.bccAddresses);
         }
       })
@@ -86,6 +90,7 @@ export default function NotificationSettingPage() {
       priceTeamEmails,
       signatureBlock,
       quotationNotes,
+      awbIssuerDetails,
       bccAddresses,
     });
     if (!parsed.success) {
@@ -248,6 +253,46 @@ export default function NotificationSettingPage() {
           <p className="mt-2 text-cell text-steel">
             These start as the product&apos;s own wording. Clear them and the quotation prints no
             notes at all — which is a choice, not an accident.
+          </p>
+
+          {saveButton}
+        </div>
+      </TabPanel>
+
+      {/*
+        MODULE_DOCUMENTATION §14. The client's House Air Waybill carries the
+        office address and the licence numbers under the company name. Not the
+        email signature: that one carries phones and a website, and the client
+        asked for it off the bill of lading.
+      */}
+      <TabPanel idBase="notification" id="awb" selected={section === 'awb'}>
+        <div className={CARD}>
+          <Field
+            id="awbIssuerDetails"
+            label="Issuer details"
+            hint="Printed under your company name at the top of every House Air Waybill, line for line."
+            error={errorOf('awbIssuerDetails')}
+            wide
+          >
+            <textarea
+              id="awbIssuerDetails"
+              rows={6}
+              value={awbIssuerDetails}
+              disabled={isLoading || !mayEdit}
+              placeholder={[
+                'Office address',
+                'City and postcode, country',
+                '',
+                'AIN NO- …',
+                'FF LICENSE NO- …',
+                'ENLISTMENT NO- …',
+              ].join('\n')}
+              onChange={(e) => setAwbIssuerDetails(e.target.value)}
+              className={TEXTAREA}
+            />
+          </Field>
+          <p className="mt-2 text-cell text-steel">
+            Left empty, the waybill prints your company name alone.
           </p>
 
           {saveButton}

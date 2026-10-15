@@ -45,6 +45,7 @@ notificationSettingRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (
         signatureBlock: true,
         bccAddresses: true,
         quotationNotes: true,
+        awbIssuerDetails: true,
       },
     }),
   );
@@ -58,6 +59,7 @@ notificationSettingRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (
       // Null means the workspace has never touched them, so the screen is
       // offered the product's own wording to edit from (§6.6).
       quotationNotes: row?.quotationNotes ?? DEFAULT_QUOTATION_NOTES,
+      awbIssuerDetails: row?.awbIssuerDetails ?? '',
     },
   };
   res.json(payload);
@@ -80,6 +82,7 @@ notificationSettingRouter.put('/', requirePermission(`${FEATURE}.EDIT`), async (
           // empty means "we want none". Collapsing them would make the second
           // impossible to say, and the settings screen promises it.
           quotationNotes: input.quotationNotes,
+          awbIssuerDetails: input.awbIssuerDetails || null,
           createdBy: auth.userId,
           updatedBy: auth.userId,
         },
@@ -88,6 +91,7 @@ notificationSettingRouter.put('/', requirePermission(`${FEATURE}.EDIT`), async (
           signatureBlock: true,
           bccAddresses: true,
           quotationNotes: true,
+          awbIssuerDetails: true,
         },
       });
     }
@@ -100,6 +104,7 @@ notificationSettingRouter.put('/', requirePermission(`${FEATURE}.EDIT`), async (
         // NOT `|| null`. Null means "never touched, offer the default"; empty
         // means "we want none", and the PDF then prints none.
         quotationNotes: input.quotationNotes,
+        awbIssuerDetails: input.awbIssuerDetails || null,
         updatedBy: auth.userId,
       },
       select: {
@@ -107,6 +112,7 @@ notificationSettingRouter.put('/', requirePermission(`${FEATURE}.EDIT`), async (
         signatureBlock: true,
         bccAddresses: true,
         quotationNotes: true,
+        awbIssuerDetails: true,
       },
     });
   });
@@ -118,6 +124,7 @@ notificationSettingRouter.put('/', requirePermission(`${FEATURE}.EDIT`), async (
       signatureBlock: saved.signatureBlock ?? '',
       bccAddresses: saved.bccAddresses ?? '',
       quotationNotes: saved.quotationNotes ?? DEFAULT_QUOTATION_NOTES,
+      awbIssuerDetails: saved.awbIssuerDetails ?? '',
     },
   };
   res.json(payload);

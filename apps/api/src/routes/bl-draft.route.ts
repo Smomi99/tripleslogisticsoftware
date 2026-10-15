@@ -2,6 +2,8 @@ import { Router } from 'express';
 
 import {
   type ApiSuccess,
+  AWB_ORIGINALS,
+  billTerms,
   type BlDraftDto,
   type BlDraftPrefillDto,
   type BlTemplateDto,
@@ -11,10 +13,14 @@ import {
   blTemplateInputSchema,
   CODE_PREFIX,
   freightTermsOf,
+  seaBillGaps,
+  type ShipmentType,
 } from '@ff/shared';
 
 import { adviseMembers, liveAdviseOf } from '../lib/advise-group';
+import { type AwbPdfInput, renderAwbPdf } from '../lib/awb-pdf';
 import {
+  airRouteOf,
   type BlDraftRow,
   billBookings,
   blDraftPrefill,
@@ -22,7 +28,7 @@ import {
   loadBlDraftById,
   loadLiveBlDraft,
 } from '../lib/bl-draft-view';
-import { type BlDraftPdfInput, renderBlDraftPdf } from '../lib/bl-draft-pdf';
+import { type BlDraftPdfInput, type BlPrintMark, renderBlDraftPdf } from '../lib/bl-draft-pdf';
 import { letterheadOf, logoOf } from '../lib/letterhead';
 import { logger } from '../lib/logger';
 import { putFile } from '../lib/storage';
@@ -30,19 +36,21 @@ import { CODE_RETRY_LIMIT, isUniqueViolation, nextCode } from '../lib/codes';
 import { queueMail } from '../lib/email-queue';
 import { Prisma } from '../generated/prisma/client';
 import { HttpError } from '../lib/http-error';
-import { nextBlDraftNo, seriesYearOf } from '../lib/inquiry-no';
+import { houseBlPrefixFor, nextBlDraftNo, seriesYearOf } from '../lib/inquiry-no';
 import { parseId } from '../lib/request';
 import { transitionShipment } from '../lib/shipment-status';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
+import { tenantDayOf } from '../lib/tenant-day';
 import { authenticate } from '../middleware/authenticate';
 import { requirePermission } from '../middleware/require-permission';
 
 /**
- * BL Draft — docs/MODULE_DOCUMENTATION.md §2.3, §5.
+ * BL Draft — docs/MODULE_DOCUMENTATION.md §2.3, §5, §14.
  *
- * Outbound sea only, as both client sheets say. One record for the staff copy
- * and the customer's (§3.6): what differs is `origin`, the status it moves
- * through, and which router may touch it.
+ * One record for the staff copy and the customer's (§3.6): what differs is
+ * `origin`, the status it moves through, and which router may touch it. A sea
+ * booking's is a bill of lading; an air booking's is a House Air Waybill
+ * (§14) — the same row and the same lifecycle, printed on the waybill.
  */
 export const blDraftRouter: Router = Router();
 
@@ -86,8 +94,35 @@ export async function writeContainers(
   });
 }
 
-/** The columns both the staff form and the customer form write. */
-export function blDraftWriteData(input: ReturnType<typeof blDraftInputSchema.parse>) {
+/**
+ * A sea bill's starred boxes (B34, F34), which the schema cannot require
+ * because an air waybill has neither (§14). Refused in the same shape as any
+ * other field error, naming what is missing.
+ */
+export function assertBillComplete(
+  input: ReturnType<typeof blDraftInputSchema.parse>,
+  shipmentType: ShipmentType,
+): void {
+  if (shipmentType === 'AIR') return;
+  const gaps = seaBillGaps(input);
+  if (gaps !== null) {
+    throw new HttpError(400, 'VALIDATION_ERROR', Object.values(gaps).flat().join(' '), gaps);
+  }
+}
+
+/**
+ * The columns both the staff form and the customer form write.
+ *
+ * An air waybill (§14) has no pre-carriage, place of receipt or ocean vessel,
+ * and is always issued in three originals; a sea bill has no pieces or
+ * chargeable weight boxes. Whatever the form sent for the other mode's boxes
+ * is not kept, so a row never carries a figure its document cannot print.
+ */
+export function blDraftWriteData(
+  input: ReturnType<typeof blDraftInputSchema.parse>,
+  shipmentType: ShipmentType,
+) {
+  const isAir = shipmentType === 'AIR';
   return {
     manifestNo: input.manifestNo ?? null,
     shipperText: input.shipperText,
@@ -97,9 +132,10 @@ export function blDraftWriteData(input: ReturnType<typeof blDraftInputSchema.par
     exportReferences: input.exportReferences ?? null,
     forwardingAgentReferences: input.forwardingAgentReferences ?? null,
     pointCountryOfOrigin: input.pointCountryOfOrigin ?? null,
-    preCarriageByModeId: BigInt(input.preCarriageByModeId),
-    placeOfReceipt: input.placeOfReceipt,
-    oceanVesselVoyage: input.oceanVesselVoyage ?? null,
+    preCarriageByModeId:
+      isAir || input.preCarriageByModeId == null ? null : BigInt(input.preCarriageByModeId),
+    placeOfReceipt: isAir ? null : (input.placeOfReceipt ?? null),
+    oceanVesselVoyage: isAir ? null : (input.oceanVesselVoyage ?? null),
     polId: BigInt(input.polId),
     podId: BigInt(input.podId),
     placeOfDelivery: input.placeOfDelivery ?? null,
@@ -107,8 +143,11 @@ export function blDraftWriteData(input: ReturnType<typeof blDraftInputSchema.par
     marksAndNumbers: input.marksAndNumbers ?? null,
     grossWeightKg: input.grossWeightKg == null ? null : new Prisma.Decimal(input.grossWeightKg),
     measurementCbm: input.measurementCbm == null ? null : new Prisma.Decimal(input.measurementCbm),
+    packageCount: isAir ? (input.packageCount ?? null) : null,
+    chargeableWeightKg:
+      isAir && input.chargeableWeightKg != null ? new Prisma.Decimal(input.chargeableWeightKg) : null,
     freightPayableAt: input.freightPayableAt ?? null,
-    originalBlCount: input.originalBlCount ?? null,
+    originalBlCount: isAir ? AWB_ORIGINALS.length : (input.originalBlCount ?? null),
     ladenOnBoardDate: input.ladenOnBoardDate == null ? null : new Date(input.ladenOnBoardDate),
   };
 }
@@ -167,13 +206,8 @@ export async function createBlDraft(
   });
   if (shipment === null) throw HttpError.notFound('Booking not found.');
 
-  if (shipment.shipmentType === 'AIR') {
-    throw new HttpError(
-      409,
-      'SEA_ONLY',
-      'Both BL Draft sheets say "Only for Outbound shipment-Sea". An air equivalent is open question 8.',
-    );
-  }
+  assertBillComplete(args.input, shipment.shipmentType);
+  const terms = billTerms(shipment.shipmentType);
 
   // CR-005: the advise this booking is on, made from it or from another
   // booking of its EFR. The bill is that advise's, one for all its bookings.
@@ -182,7 +216,7 @@ export async function createBlDraft(
     throw new HttpError(
       409,
       'NO_ADVISE',
-      `${shipment.code} has no sent shipment advise. The BL number is allocated there.`,
+      `${shipment.code} has no sent shipment advise. The ${terms.short} number is allocated there.`,
     );
   }
 
@@ -215,7 +249,7 @@ export async function createBlDraft(
           blNo: advise.houseBlNo,
           deliveryAgentId: args.deliveryAgentId,
           deliveryAgentText: args.deliveryAgentText,
-          ...blDraftWriteData(args.input),
+          ...blDraftWriteData(args.input, shipment.shipmentType),
           status: 'DRAFT',
           createdBy: args.userId,
           updatedBy: args.userId,
@@ -231,7 +265,10 @@ export async function createBlDraft(
     throw new HttpError(500, 'CODE_EXHAUSTED', 'Could not allocate a BL draft number.');
   }
 
-  await writeContainers(db, args.tenantId, created.id, advise.id, args.userId);
+  // An air waybill has no containers to write: air has no load plan (§14).
+  if (shipment.shipmentType === 'SEA') {
+    await writeContainers(db, args.tenantId, created.id, advise.id, args.userId);
+  }
   return created.id;
 }
 
@@ -300,11 +337,12 @@ blDraftRouter.patch('/bl-drafts/:id', requirePermission(`${FEATURE}.EDIT`), asyn
   const data = await withTenant(auth.tenantId, async (db) => {
     const row = await loadBlDraftById(db, id);
     assertBlEditable(row);
+    assertBillComplete(input, row.shipment.shipmentType);
 
     await db.blDraft.update({
       where: { id },
       data: {
-        ...blDraftWriteData(input),
+        ...blDraftWriteData(input, row.shipment.shipmentType),
         deliveryAgentId: input.deliveryAgentId == null ? null : BigInt(input.deliveryAgentId),
         deliveryAgentText: input.deliveryAgentText ?? null,
         updatedBy: auth.userId,
@@ -416,6 +454,7 @@ blDraftRouter.post('/bl-drafts/:id/send', requirePermission(`${FEATURE}.SEND`), 
   });
 
   const bookingNos = billBookings(sent).map((b) => b.code).join(', ');
+  const terms = billTerms(sent.shipment.shipmentType);
   await queueMail({
     attachments,
     tenantId: auth.tenantId,
@@ -434,10 +473,10 @@ blDraftRouter.post('/bl-drafts/:id/send', requirePermission(`${FEATURE}.SEND`), 
     relatedId: id,
     actorId: auth.userId,
     fallback: {
-      subject: `BL draft ${sent.blNo} — booking ${bookingNos}`,
+      subject: `${terms.draft} ${sent.blNo} — booking ${bookingNos}`,
       bodyText:
-        `The BL draft for booking ${bookingNos} (${sent.pol.name} to ${sent.pod.name}) ` +
-        `is attached to your file under BL number ${sent.blNo}. Please check it and confirm.`,
+        `The ${terms.draft} for booking ${bookingNos} (${sent.pol.name} to ${sent.pod.name}) ` +
+        `is attached to your file under ${terms.short} number ${sent.blNo}. Please check it and confirm.`,
     },
   });
 
@@ -776,6 +815,121 @@ export async function blDocumentInput(
 }
 
 /**
+ * The currency an air waybill's charges are stated in (§14): the one the
+ * booking's quotation lines are priced in — the first line's, when they mix.
+ */
+async function chargesCurrencyOf(db: TenantDb, shipmentId: bigint): Promise<string | null> {
+  const line = await db.quotationLine.findFirst({
+    where: {
+      deletedAt: null,
+      isActive: true,
+      quotation: { shipments: { some: { id: shipmentId } } },
+    },
+    orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+    select: { currencyCode: true },
+  });
+  return line?.currencyCode ?? null;
+}
+
+/**
+ * What the House Air Waybill says, read from the saved row (§14).
+ *
+ * The air counterpart of blDocumentInput: the same parties, figures and
+ * Incoterms rule, plus what only a waybill prints — the routing and flights
+ * from the advise, the MAWB, the pieces and chargeable weight, and the
+ * issuer's address and licence lines.
+ */
+export async function awbDocumentInput(
+  db: TenantDb,
+  tenantId: bigint,
+  row: BlDraftRow,
+): Promise<Omit<AwbPdfInput, 'isDraft'>> {
+  /*
+   * Each read degrades to nothing rather than failing: a customer printing
+   * their draft cannot see the settings, the tenant row, the airline or the
+   * quotation (CR-004), and gets the waybill without those boxes filled.
+   */
+  const [head, logo, settings, tenant, airline, currency, dayOf] = await Promise.all([
+    letterheadOf(db, tenantId),
+    logoOf(db, tenantId),
+    db.notificationSetting.findFirst({ select: { awbIssuerDetails: true } }),
+    db.tenant.findFirst({ where: { id: tenantId }, select: { slug: true } }),
+    db.carrier.findFirst({ where: { id: row.advise.carrierId }, select: { name: true } }),
+    chargesCurrencyOf(db, row.shipmentId),
+    tenantDayOf(db, tenantId),
+  ]);
+
+  const route = airRouteOf(row.advise, airline?.name ?? null);
+  const freightTerms = freightTermsOf(row.shipment.tos?.code ?? null);
+  // The sample's At (Place) is where the freight is payable — the bill of
+  // lading's rule, by the booking's Incoterms.
+  const executedAt =
+    freightTerms === null
+      ? row.freightPayableAt
+      : freightTerms === 'COLLECT'
+        ? 'DESTINATION'
+        : row.pol.name.toUpperCase();
+  const airport = (port: { name: string; country: string }): string =>
+    [port.name, port.country].filter((v) => v.trim() !== '').join(', ');
+
+  return {
+    companyName: head.companyName,
+    issuerDetails: settings?.awbIssuerDetails ?? null,
+    logo,
+    hawbNo: row.blNo,
+    mawbNo: row.advise.mblNo,
+    bookingNo: billBookings(row).map((b) => b.code).join(', '),
+    shipperText: row.shipperText,
+    consigneeText: row.consigneeText,
+    notifyText: row.notifyText,
+    departureAirport: airport(row.pol),
+    destinationAirport: row.pod.name,
+    routing: [route[0]?.fromCode ?? row.pol.portCode, ...route.map((leg) => leg.toCode)].join('-'),
+    legs: route.map((leg) => ({
+      toCode: leg.toCode,
+      toName: leg.toName,
+      carrier: leg.carrier,
+      flightNo: leg.flightNo,
+      departure: leg.departure === null ? null : dayOf(new Date(leg.departure)),
+    })),
+    currency,
+    freightTerms,
+    packageCount: row.packageCount,
+    grossWeightKg: row.grossWeightKg?.toString() ?? null,
+    chargeableWeightKg: row.chargeableWeightKg?.toString() ?? null,
+    measurementCbm: row.measurementCbm?.toString() ?? null,
+    goodsDescription: row.packagesDescription,
+    deliveryAgentText: row.deliveryAgentText ?? deliveryAgentBlock(row.deliveryAgent),
+    executedOn: row.ladenOnBoardDate?.toISOString().slice(0, 10) ?? null,
+    executedAt,
+    // "TSL/DAC": the prefix the house numbers carry, at the airport of departure.
+    // A customer cannot read the tenant row; the number itself starts with it.
+    issuingOffice: `${
+      tenant === null
+        ? row.blNo.replace(/[^A-Za-z]/g, '').slice(0, 3).toUpperCase()
+        : houseBlPrefixFor(tenant.slug)
+    }/${row.pol.portCode}`,
+  };
+}
+
+/**
+ * The printed bill for any row: a bill of lading on sea, a House Air Waybill
+ * on air (§14). The one place that chooses, so the draft's Print, Save & Send
+ * and BL Print can never draw a sea booking's bill on the air form.
+ */
+export async function renderBill(
+  db: TenantDb,
+  tenantId: bigint,
+  row: BlDraftRow,
+  marks: { isDraft: boolean; copies?: BlPrintMark[]; issuedOn?: string | null },
+): Promise<Buffer> {
+  if (row.shipment.shipmentType === 'AIR') {
+    return renderAwbPdf({ ...(await awbDocumentInput(db, tenantId, row)), ...marks });
+  }
+  return renderBlDraftPdf({ ...(await blDocumentInput(db, tenantId, row)), ...marks });
+}
+
+/**
  * The bytes of the BL draft, built from the saved row.
  *
  * Shared by the print endpoint and by `Save & Send`, so what the customer
@@ -787,8 +941,7 @@ export async function blDraftDocument(
   tenantId: bigint,
   row: BlDraftRow,
 ): Promise<{ filename: string; pdf: Buffer }> {
-  const pdf = await renderBlDraftPdf({
-    ...(await blDocumentInput(db, tenantId, row)),
+  const pdf = await renderBill(db, tenantId, row, {
     isDraft: row.status === 'DRAFT' || row.status === 'SUBMITTED',
   });
 
