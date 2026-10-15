@@ -402,7 +402,7 @@ export function ShipmentAdviseTab({
           <Field
             id="adviseStuffingDate"
             label="Stuffing date"
-            hint="Air has no container load plan to read this from — open question 2."
+            hint="Air has no container load plan to read this from, so it is typed here."
           >
             <Input
               type="date"

@@ -207,11 +207,18 @@ export function shipmentAction(
      */
     case 'CARGO_RECEIVED':
       return { label: 'Make Shipment Advise', permission: 'DOCUMENTATION.SHIPMENT_ADVISE.VIEW' };
+    // An air booking's bill is a House Air Waybill (MODULE_DOCUMENTATION §14).
     case 'ADVISED':
-      return { label: 'Make BL draft', permission: 'DOCUMENTATION.BL_DRAFT.VIEW' };
+      return {
+        label: shipmentType === 'AIR' ? 'Make HAWB draft' : 'Make BL draft',
+        permission: 'DOCUMENTATION.BL_DRAFT.VIEW',
+      };
     // The next link in Menu F22's chain, "BL Issue", done on BL Print (K7).
     case 'BL_DRAFTED':
-      return { label: 'Issue BL', permission: 'DOCUMENTATION.BL_PRINT.VIEW' };
+      return {
+        label: shipmentType === 'AIR' ? 'Issue HAWB' : 'Issue BL',
+        permission: 'DOCUMENTATION.BL_PRINT.VIEW',
+      };
     case 'BL_ISSUED':
     case 'SHORT_CLOSED':
     case 'CANCELLED':
@@ -649,7 +656,7 @@ export const SHIPMENT_WORKLISTS = {
         id: 'STOCK',
         label: 'Available stock',
         statuses: [],
-        hint: 'Cartons received and not yet on a load plan. This is what a CLP is built from.',
+        hint: 'Sea cartons received and not yet on a load plan — what a CLP is built from. Air cargo needs no load plan: it goes straight to Shipment Advise - Air.',
       },
       {
         id: 'RECEIVED',
@@ -681,13 +688,13 @@ export const SHIPMENT_WORKLISTS = {
         id: 'TO_ADVISE',
         label: 'To advise',
         statuses: ['CARGO_RECEIVED'],
-        hint: 'Cargo is in and the container is planned. Build the advise and send it to the customer.',
+        hint: 'Cargo is in — on sea, with its container planned; air needs no load plan. Build the advise and send it to the customer.',
       },
       {
         id: 'ADVISED',
         label: 'Advised',
         statuses: ['ADVISED', 'BL_DRAFTED', 'BL_ISSUED'],
-        hint: 'The customer has the advise, with its House BL number.',
+        hint: 'The customer has the advise, with its House BL or HAWB number.',
       },
     ],
   },
@@ -709,7 +716,7 @@ export const SHIPMENT_WORKLISTS = {
         id: 'TO_DRAFT',
         label: 'To draft',
         statuses: ['ADVISED'],
-        hint: 'Advised and waiting on a bill of lading. Draft it, or work the one the customer submitted.',
+        hint: 'Advised and waiting on a bill of lading, or a House Air Waybill on air. Draft it, or work the one the customer submitted.',
       },
       {
         id: 'DRAFTED',
@@ -739,13 +746,13 @@ export const SHIPMENT_WORKLISTS = {
         id: 'TO_ISSUE',
         label: 'To issue',
         statuses: ['BL_DRAFTED'],
-        hint: 'Approved bills of lading. Issue one to print its originals; a non-negotiable copy prints any time.',
+        hint: 'Approved bills of lading and air waybills. Issue one to print its originals; a copy prints any time.',
       },
       {
         id: 'ISSUED',
         label: 'Issued',
         statuses: ['BL_ISSUED'],
-        hint: 'Issued bills of lading. Print the originals again, or a non-negotiable copy.',
+        hint: 'Issued bills of lading and air waybills. Print the originals again, or a copy.',
       },
     ],
   },

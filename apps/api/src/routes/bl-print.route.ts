@@ -2,6 +2,8 @@ import { Router } from 'express';
 
 import {
   type ApiSuccess,
+  AWB_ORIGINALS,
+  billTerms,
   type BlPrintDto,
   type BlPrintKind,
   blIssueSchema,
@@ -10,7 +12,7 @@ import {
 
 import { adviseMembers } from '../lib/advise-group';
 import { type BlDraftRow, billBookings, liveBlDraftRow } from '../lib/bl-draft-view';
-import { type BlPrintMark, renderBlDraftPdf } from '../lib/bl-draft-pdf';
+import type { BlPrintMark } from '../lib/bl-draft-pdf';
 import { HttpError } from '../lib/http-error';
 import { parseId } from '../lib/request';
 import { transitionShipment } from '../lib/shipment-status';
@@ -18,7 +20,7 @@ import { tenantDayOf } from '../lib/tenant-day';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
 import { authenticate } from '../middleware/authenticate';
 import { requirePermission } from '../middleware/require-permission';
-import { blDocumentInput } from './bl-draft.route';
+import { renderBill } from './bl-draft.route';
 
 /**
  * BL Print (Menu K7) — docs/MODULE_DOCUMENTATION.md §13.
@@ -31,6 +33,10 @@ import { blDocumentInput } from './bl-draft.route';
  *
  * Routes are keyed by booking, like the worklist rows that call them — the
  * booking has one live bill, and the operator is looking at the booking.
+ *
+ * An air booking's bill is a House Air Waybill (§14): issued the same way, in
+ * three originals that are fixed rather than counted — one each for the
+ * issuing carrier, the consignee and the shipper, named at their foot.
  */
 export const blPrintRouter: Router = Router();
 
@@ -75,6 +81,7 @@ export async function approvedBill(db: TenantDb, shipmentId: bigint): Promise<Bl
 
 function printDto(row: BlDraftRow): BlPrintDto {
   return {
+    shipmentType: row.shipment.shipmentType,
     shipmentId: row.shipmentId.toString(),
     bookingNo: row.shipment.code,
     bookingNos: billBookings(row).map((b) => b.code),
@@ -96,8 +103,10 @@ function printDto(row: BlDraftRow): BlPrintDto {
 
 /** How many pages, and what each one says it is (§13.4). */
 function marksFor(row: BlDraftRow, kind: BlPrintKind): BlPrintMark[] {
+  const isAir = row.shipment.shipmentType === 'AIR';
   if (kind === 'COPY') {
-    return [{ mark: 'COPY', note: 'NON-NEGOTIABLE', watermark: 'COPY' }];
+    // An air waybill is not negotiable at all, so its copy says so plainly.
+    return [{ mark: 'COPY', note: isAir ? 'NOT NEGOTIABLE' : 'NON-NEGOTIABLE', watermark: 'COPY' }];
   }
 
   // §13.3 rule 4: an original exists once the bill is issued, and not before.
@@ -105,8 +114,12 @@ function marksFor(row: BlDraftRow, kind: BlPrintKind): BlPrintMark[] {
     throw new HttpError(
       409,
       'BL_NOT_ISSUED',
-      `${row.blNo} has not been issued. Issue it to print the originals; a non-negotiable copy prints now.`,
+      `${row.blNo} has not been issued. Issue it to print the originals; a copy prints now.`,
     );
+  }
+  // §14: the waybill's three, each naming whose it is.
+  if (isAir) {
+    return AWB_ORIGINALS.map((note) => ({ mark: 'ORIGINAL', note, watermark: null }));
   }
   const n = row.originalBlCount ?? 0;
   if (n === 0) {
@@ -134,12 +147,7 @@ export async function blPrintDocument(
   const dayOf = await tenantDayOf(db, tenantId);
   const issuedOn = row.issuedAt === null ? null : dayOf(row.issuedAt);
 
-  const pdf = await renderBlDraftPdf({
-    ...(await blDocumentInput(db, tenantId, row)),
-    isDraft: false,
-    copies,
-    issuedOn,
-  });
+  const pdf = await renderBill(db, tenantId, row, { isDraft: false, copies, issuedOn });
 
   // A BL number is the carrier's or ours, and not always filename-safe.
   const safe = row.blNo.replace(/[^A-Za-z0-9._-]+/g, '-');
@@ -184,8 +192,8 @@ blPrintRouter.post(
         throw new HttpError(
           409,
           'BL_ALREADY_ISSUED',
-          `${row.blNo} was issued on ${dayOf(row.issuedAt)}. Print its originals again from BL Print; ` +
-            'to correct it, cancel the draft and draft it again.',
+          `${billTerms(row.shipment.shipmentType).short} ${row.blNo} was issued on ${dayOf(row.issuedAt)}. ` +
+            'Print its originals again from BL Print; to correct it, cancel the draft and draft it again.',
         );
       }
 
@@ -194,9 +202,20 @@ blPrintRouter.post(
        * for only when the draft left it empty — a bill has to say how many
        * originals exist, and the approved draft can no longer be edited to say
        * it. Never changed here: that would be editing the approved bill.
+       *
+       * §14: an air waybill is never asked — it is issued in three.
        */
       const asked = input.originalBlCount ?? null;
-      let originals = row.originalBlCount;
+      const isAir = row.shipment.shipmentType === 'AIR';
+      let originals = isAir ? AWB_ORIGINALS.length : row.originalBlCount;
+      if (isAir && asked !== null && asked !== originals) {
+        throw new HttpError(
+          409,
+          'ORIGINALS_FIXED',
+          `${row.code} is an air waybill, issued in ${originals} originals — one each for the issuing ` +
+            'carrier, the consignee and the shipper.',
+        );
+      }
       if (originals === null) {
         if (asked === null) {
           throw new HttpError(

@@ -913,6 +913,19 @@ clpRouter.post('/bookings/:id/clps', requirePermission(`${FEATURE}.CREATE`), asy
 
   const data = await withTenant(auth.tenantId, async (db) => {
     const booking = await findBooking(db, shipmentId);
+    /*
+     * Menu I23: "No need CLP for Air Shipment". The candidate list and the
+     * consolidation gate already keep air out; this is the door a request can
+     * still come through by booking id.
+     */
+    if (booking.shipmentType === 'AIR') {
+      throw new HttpError(
+        409,
+        'AIR_NO_CLP',
+        `${booking.code} is an air shipment, and air has no container load plan. ` +
+          'Its cargo goes from the receipt straight to Shipment Advise - Air.',
+      );
+    }
 
     const size = await db.containerSize.findFirst({
       where: { id: containerSizeId, deletedAt: null },

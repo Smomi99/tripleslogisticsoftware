@@ -208,7 +208,7 @@ const containerMeasure = (c: BlContainer): string =>
  * characters. "TO THE ORDER OF" is not a name: the bank it names is the next
  * line, so a consigned-to-order block keeps both.
  */
-const nameOf = (block: string | null, max = 48): string | null => {
+export const nameOf = (block: string | null, max = 48): string | null => {
   const lines = (block ?? '').split('\n').map((l) => l.trim()).filter((l) => l !== '');
   if (lines.length === 0) return null;
   const name = /^to (the )?order( of)?:?$/i.test(lines[0]!) && lines[1] !== undefined

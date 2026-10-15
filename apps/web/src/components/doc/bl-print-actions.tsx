@@ -1,6 +1,13 @@
 'use client';
 
-import { type BlPrintDto, type BlPrintKind, type ShipmentStatus } from '@ff/shared';
+import {
+  AWB_ORIGINALS,
+  billTerms,
+  type BlPrintDto,
+  type BlPrintKind,
+  type ShipmentStatus,
+  type ShipmentType,
+} from '@ff/shared';
 import { useState } from 'react';
 import { toast } from 'sonner';
 
@@ -17,6 +24,9 @@ import { useSession } from '@/lib/session';
  * status the way every other Action button here is. Shared by the BL Print
  * list and the BL tab on the shipment file, so the two cannot disagree about
  * when a bill may be issued or printed.
+ *
+ * An air booking's bill is a House Air Waybill (§14): issued the same way, in
+ * three originals that are never asked for.
  */
 
 /** Stored UTC, read in Dhaka (CLAUDE.md §9). */
@@ -29,11 +39,13 @@ const inDhaka = (iso: string): string =>
 
 export function BlPrintActions({
   shipmentId,
+  shipmentType,
   status,
   onChanged,
   variant = 'links',
 }: {
   shipmentId: string;
+  shipmentType: ShipmentType;
   status: ShipmentStatus;
   onChanged: () => void;
   /** Text actions in a table row; buttons on the BL tab. */
@@ -47,6 +59,8 @@ export function BlPrintActions({
   const [fieldError, setFieldError] = useState<string | undefined>(undefined);
   const [isPending, setPending] = useState(false);
 
+  const isAir = shipmentType === 'AIR';
+  const terms = billTerms(shipmentType);
   const canPrint = can('DOCUMENTATION.BL_PRINT.EXPORT_PDF');
   const issuable = status === 'BL_DRAFTED' && can('DOCUMENTATION.BL_PRINT.ISSUE');
   const printable = status === 'BL_DRAFTED' || status === 'BL_ISSUED';
@@ -58,7 +72,7 @@ export function BlPrintActions({
       );
       window.open(url, '_blank', 'noopener');
     } catch (e) {
-      toast.error(e instanceof ApiError ? e.message : 'Could not open the bill of lading.');
+      toast.error(e instanceof ApiError ? e.message : `Could not open the ${terms.document}.`);
     }
   }
 
@@ -74,14 +88,15 @@ export function BlPrintActions({
       setOriginals(row.originalBlCount === null ? '' : String(row.originalBlCount));
     } catch (e) {
       setOpen(false);
-      toast.error(e instanceof ApiError ? e.message : 'Could not load the bill of lading.');
+      toast.error(e instanceof ApiError ? e.message : `Could not load the ${terms.document}.`);
     }
   }
 
   async function issue(): Promise<void> {
     if (bill === null) return;
-    // Asked for only when the approved draft left it empty (§13.3 rule 3).
-    const askCount = bill.originalBlCount === null;
+    // Asked for only when the approved draft left it empty (§13.3 rule 3) —
+    // never on an air waybill, which is issued in three (§14).
+    const askCount = bill.originalBlCount === null && !isAir;
     const n = Number(originals);
     if (askCount && (originals.trim() === '' || !Number.isInteger(n) || n < 0 || n > 99)) {
       setFieldError('Enter how many originals are being issued, from 0 to 99.');
@@ -95,7 +110,7 @@ export function BlPrintActions({
         `/api/tenant/documentation/bookings/${shipmentId}/bl/issue`,
         { method: 'POST', body: askCount ? { originalBlCount: n } : {} },
       );
-      toast.success(`BL ${issued.blNo} issued`);
+      toast.success(`${terms.short} ${issued.blNo} issued`);
       setOpen(false);
       onChanged();
       // The point of issuing: the originals, straight to the printer.
@@ -104,7 +119,7 @@ export function BlPrintActions({
       if (e instanceof ApiError && e.fields?.['originalBlCount'] !== undefined) {
         setFieldError(e.fields['originalBlCount'][0]);
       } else {
-        toast.error(e instanceof ApiError ? e.message : 'Could not issue the bill of lading.');
+        toast.error(e instanceof ApiError ? e.message : `Could not issue the ${terms.document}.`);
       }
     } finally {
       setPending(false);
@@ -131,14 +146,14 @@ export function BlPrintActions({
 
   return (
     <>
-      {issuable && action('Issue BL', () => void openIssue())}
+      {issuable && action(`Issue ${terms.short}`, () => void openIssue())}
       {status === 'BL_ISSUED' && canPrint && action('Print originals', () => void print('ORIGINAL'))}
       {canPrint && action('Print copy', () => void print('COPY'))}
 
       <Modal
         open={open}
         onOpenChange={setOpen}
-        title="Issue this bill of lading?"
+        title={`Issue this ${terms.document}?`}
         description="Issuing is what makes the originals printable. A wrong bill is corrected by cancelling its draft and drafting it again."
       >
         {bill === null ? (
@@ -151,9 +166,9 @@ export function BlPrintActions({
                 {bill.bookingNos.length > 1 ? 'Bookings' : 'Booking'}
               </dt>
               <dd className="font-mono tabular-nums text-hull">{bill.bookingNos.join(', ')}</dd>
-              <dt className="label-manifest self-center">House BL</dt>
+              <dt className="label-manifest self-center">{terms.house}</dt>
               <dd className="font-mono tabular-nums text-hull">{bill.blNo}</dd>
-              <dt className="label-manifest self-center">MBL</dt>
+              <dt className="label-manifest self-center">{terms.master}</dt>
               <dd className="font-mono tabular-nums text-hull">{bill.mblNo ?? '—'}</dd>
               <dt className="label-manifest self-center">Customer</dt>
               <dd className="text-hull">{bill.customerName}</dd>
@@ -161,7 +176,9 @@ export function BlPrintActions({
               <dd className="text-hull">
                 {bill.polName} → {bill.podName}
               </dd>
-              <dt className="label-manifest self-center">Laden on board</dt>
+              <dt className="label-manifest self-center">
+                {isAir ? 'Executed on' : 'Laden on board'}
+              </dt>
               <dd className="font-mono tabular-nums text-hull">
                 {bill.ladenOnBoardDate ?? '—'}
               </dd>
@@ -169,15 +186,25 @@ export function BlPrintActions({
               <dd className="font-mono tabular-nums text-hull">
                 {bill.approvedAt === null ? '—' : inDhaka(bill.approvedAt)}
               </dd>
-              {bill.originalBlCount !== null && (
+              {isAir ? (
                 <>
                   <dt className="label-manifest self-center">Originals</dt>
-                  <dd className="font-mono tabular-nums text-hull">{bill.originalBlCount}</dd>
+                  <dd className="text-hull">
+                    <span className="font-mono tabular-nums">{AWB_ORIGINALS.length}</span> — issuing
+                    carrier, consignee, shipper
+                  </dd>
                 </>
+              ) : (
+                bill.originalBlCount !== null && (
+                  <>
+                    <dt className="label-manifest self-center">Originals</dt>
+                    <dd className="font-mono tabular-nums text-hull">{bill.originalBlCount}</dd>
+                  </>
+                )
               )}
             </dl>
 
-            {bill.originalBlCount === null && (
+            {bill.originalBlCount === null && !isAir && (
               <Field
                 id={`blOriginals-${shipmentId}`}
                 label="No. of Original BL"
@@ -199,8 +226,9 @@ export function BlPrintActions({
 
             {bill.ladenOnBoardDate === null && (
               <p className="text-cell text-signal">
-                Laden on Board Date is empty on this bill, and the originals will print without
-                it.
+                {isAir
+                  ? 'Executed on (date) is empty on this waybill, and the originals will print without it.'
+                  : 'Laden on Board Date is empty on this bill, and the originals will print without it.'}
               </p>
             )}
 
@@ -209,7 +237,7 @@ export function BlPrintActions({
                 Back
               </Button>
               <Button disabled={isPending} onClick={() => void issue()}>
-                {isPending ? 'Issuing…' : 'Issue BL'}
+                {isPending ? 'Issuing…' : `Issue ${terms.short}`}
               </Button>
             </div>
           </div>

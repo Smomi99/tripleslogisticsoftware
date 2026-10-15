@@ -593,6 +593,13 @@ export const notificationSettingSchema = z.object({
   /** §6.6 of the quotation module: the standing notes on that document. */
   quotationNotes: z.string().trim().max(4000, 'Those notes are too long.').default(''),
   /**
+   * MODULE_DOCUMENTATION §14: the lines under the name on the House Air
+   * Waybill — office address, AIN, freight forwarder licence, enlistment no.
+   * Free text for the signature block's reason: every company writes these
+   * its own way.
+   */
+  awbIssuerDetails: z.string().trim().max(1000, 'That is too long.').default(''),
+  /**
    * Blind-copied on every message this workspace sends.
    *
    * Validated as a list for the same reason the price team addresses are:
@@ -620,6 +627,7 @@ export interface NotificationSettingDto {
   priceTeamEmails: string;
   signatureBlock: string;
   quotationNotes: string;
+  awbIssuerDetails: string;
   bccAddresses: string;
 }
 

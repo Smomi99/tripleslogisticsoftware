@@ -2,6 +2,7 @@
 
 import {
   BL_DRAFT_STATUS_LABEL,
+  billTerms,
   type BlDraftDto,
   type BlDraftPrefillDto,
   type BlDraftStatus,
@@ -155,6 +156,9 @@ export function PortalShipmentScreen() {
   if (openId !== null) {
     const editable = draft === null || draft.status === 'DRAFT';
     const booking = rows.find((r) => r.id === openId);
+    // §14: an air booking's bill is a House Air Waybill.
+    const isAir = (draft?.shipmentType ?? prefill?.shipmentType ?? booking?.shipmentType) === 'AIR';
+    const terms = billTerms(isAir ? 'AIR' : 'SEA');
 
     return (
       <div className="flex flex-col gap-4">
@@ -172,8 +176,8 @@ export function PortalShipmentScreen() {
         </button>
 
         <PageHeader
-          title={`BL draft — ${booking?.code ?? ''}`}
-          description="Fill in the bill of lading and submit it to your forwarder."
+          title={`${terms.draft} — ${booking?.code ?? ''}`}
+          description={`Fill in the ${terms.document} and submit it to your forwarder.`}
         />
 
         {error !== null && (
@@ -192,11 +196,11 @@ export function PortalShipmentScreen() {
         {/* CR-005: bookings that share an EFR share one bill of lading. */}
         {(draft?.bookingNos ?? prefill?.bookingNos ?? []).length > 1 && (
           <p className="text-body text-steel">
-            One bill of lading for your bookings{' '}
+            One {terms.document} for your bookings{' '}
             <span className="font-mono tabular-nums text-hull">
               {(draft?.bookingNos ?? prefill?.bookingNos ?? []).join(', ')}
             </span>
-            . They were received under the same EFR, so they travel on one BL.
+            . They were received under the same EFR, so they travel on one {terms.short}.
           </p>
         )}
 
@@ -214,6 +218,8 @@ export function PortalShipmentScreen() {
               setValues={setValues}
               disabled={!editable || isPending}
               isCustomerView
+              isAir={isAir}
+              airRoute={draft?.airRoute ?? prefill?.airRoute ?? []}
               modes={modes}
               agents={[]}
               containers={draft?.containers ?? prefill?.containers ?? []}
@@ -351,7 +357,7 @@ export function PortalShipmentScreen() {
                 className="text-body text-harbour hover:underline"
                 onClick={() => void openDraft(row.id)}
               >
-                {row.blDraftStatus === null ? 'Make BL draft' : 'Open BL draft'}
+                {`${row.blDraftStatus === null ? 'Make' : 'Open'} ${billTerms(row.shipmentType === 'AIR' ? 'AIR' : 'SEA').draft}`}
               </button>
             ) : null
           }

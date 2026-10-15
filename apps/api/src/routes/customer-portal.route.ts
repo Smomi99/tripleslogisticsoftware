@@ -9,6 +9,7 @@ import {
 
 import { blDraftPrefill, loadBlDraftById, loadLiveBlDraft } from '../lib/bl-draft-view';
 import {
+  assertBillComplete,
   assertBlEditable,
   blDraftDocument,
   blDraftWriteData,
@@ -269,9 +270,10 @@ customerPortalRouter.patch(
         );
       }
 
+      assertBillComplete(input, row.shipment.shipmentType);
       await db.blDraft.update({
         where: { id },
-        data: { ...blDraftWriteData(input), updatedBy: auth.userId },
+        data: { ...blDraftWriteData(input, row.shipment.shipmentType), updatedBy: auth.userId },
       });
       return loadLiveBlDraft(db, row.shipmentId);
     });

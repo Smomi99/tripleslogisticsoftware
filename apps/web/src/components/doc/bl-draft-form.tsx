@@ -1,6 +1,12 @@
 'use client';
 
-import type { BlDraftDto, BlDraftPrefillDto, BlTemplateDto } from '@ff/shared';
+import {
+  type AirRouteLegDto,
+  AWB_ORIGINALS,
+  type BlDraftDto,
+  type BlDraftPrefillDto,
+  type BlTemplateDto,
+} from '@ff/shared';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -16,6 +22,11 @@ import { Field, Input, Select } from '@/components/ui/field';
  *
  * Writing it twice would mean two field lists drifting apart over one document
  * that only ever has one final version.
+ *
+ * An air booking's bill is a House Air Waybill (MODULE_DOCUMENTATION §14): the
+ * same form showing the waybill's boxes instead — pieces, chargeable weight,
+ * the flights as the advise holds them — and none of the sea bill's
+ * pre-carriage, vessel, references or containers.
  */
 
 export interface BlDraftFormValues {
@@ -39,6 +50,8 @@ export interface BlDraftFormValues {
   marksAndNumbers: string;
   grossWeightKg: string;
   measurementCbm: string;
+  packageCount: string;
+  chargeableWeightKg: string;
   freightPayableAt: string;
   originalBlCount: string;
   ladenOnBoardDate: string;
@@ -54,8 +67,8 @@ export function valuesFrom(source: BlDraftDto | BlDraftPrefillDto): BlDraftFormV
     exportReferences: source.exportReferences ?? '',
     forwardingAgentReferences: source.forwardingAgentReferences ?? '',
     pointCountryOfOrigin: source.pointCountryOfOrigin ?? '',
-    preCarriageByModeId: source.preCarriageByModeId,
-    placeOfReceipt: source.placeOfReceipt,
+    preCarriageByModeId: source.preCarriageByModeId ?? '',
+    placeOfReceipt: source.placeOfReceipt ?? '',
     deliveryAgentId: source.deliveryAgentId ?? '',
     deliveryAgentText: source.deliveryAgentText ?? '',
     oceanVesselVoyage: source.oceanVesselVoyage ?? '',
@@ -66,6 +79,8 @@ export function valuesFrom(source: BlDraftDto | BlDraftPrefillDto): BlDraftFormV
     marksAndNumbers: source.marksAndNumbers ?? '',
     grossWeightKg: source.grossWeightKg ?? '',
     measurementCbm: source.measurementCbm ?? '',
+    packageCount: source.packageCount === null ? '' : String(source.packageCount),
+    chargeableWeightKg: source.chargeableWeightKg ?? '',
     freightPayableAt: source.freightPayableAt ?? '',
     originalBlCount: source.originalBlCount === null ? '' : String(source.originalBlCount),
     ladenOnBoardDate: source.ladenOnBoardDate ?? '',
@@ -85,8 +100,9 @@ export function bodyFrom(values: BlDraftFormValues): Record<string, unknown> {
     exportReferences: text(values.exportReferences),
     forwardingAgentReferences: text(values.forwardingAgentReferences),
     pointCountryOfOrigin: text(values.pointCountryOfOrigin),
-    preCarriageByModeId: values.preCarriageByModeId,
-    placeOfReceipt: values.placeOfReceipt,
+    // Null rather than empty, so the server can name a missing sea box.
+    preCarriageByModeId: text(values.preCarriageByModeId),
+    placeOfReceipt: text(values.placeOfReceipt),
     deliveryAgentId: text(values.deliveryAgentId),
     deliveryAgentText: text(values.deliveryAgentText),
     oceanVesselVoyage: text(values.oceanVesselVoyage),
@@ -97,6 +113,8 @@ export function bodyFrom(values: BlDraftFormValues): Record<string, unknown> {
     marksAndNumbers: text(values.marksAndNumbers),
     grossWeightKg: num(values.grossWeightKg),
     measurementCbm: num(values.measurementCbm),
+    packageCount: num(values.packageCount),
+    chargeableWeightKg: num(values.chargeableWeightKg),
     freightPayableAt: text(values.freightPayableAt),
     originalBlCount: num(values.originalBlCount),
     ladenOnBoardDate: text(values.ladenOnBoardDate),
@@ -136,11 +154,70 @@ function Block({
   );
 }
 
+/** Stored UTC, read in Dhaka (CLAUDE.md §9). */
+const departureInDhaka = (iso: string): string =>
+  new Date(iso).toLocaleString('en-GB', {
+    timeZone: 'Asia/Dhaka',
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
+
+/** The waybill's flights, read-only: they are the advise's (§14). */
+function AirRoute({ legs }: { legs: AirRouteLegDto[] }) {
+  return (
+    <div>
+      <h3 className="mb-1 text-section text-hull">Routing and flights</h3>
+      <p className="mb-2 text-cell text-steel">
+        From the shipment advise, as the waybill prints them. A wrong flight is corrected on the
+        advise.
+      </p>
+      {legs.length === 0 ? (
+        <p className="text-cell text-steel">The advise records no flight yet.</p>
+      ) : (
+        <div className="overflow-x-auto rounded-manifest border border-line">
+          <table className="w-full border-collapse text-cell">
+            <thead>
+              <tr className="bg-paper text-left label-manifest">
+                <th className="px-3 py-2">Leg</th>
+                <th className="px-3 py-2">Flight</th>
+                <th className="px-3 py-2">Airline</th>
+                <th className="px-3 py-2">From</th>
+                <th className="px-3 py-2">To</th>
+                <th className="px-3 py-2 text-right">Departure</th>
+              </tr>
+            </thead>
+            <tbody>
+              {legs.map((leg) => (
+                <tr key={leg.legNo} className="border-t border-line">
+                  <td className="px-3 py-2 font-mono tabular-nums">{leg.legNo}</td>
+                  <td className="px-3 py-2 font-mono tabular-nums">{leg.flightNo ?? '—'}</td>
+                  <td className="px-3 py-2 font-mono">{leg.carrier ?? '—'}</td>
+                  <td className="px-3 py-2">
+                    <span className="font-mono">{leg.fromCode}</span> {leg.fromName}
+                  </td>
+                  <td className="px-3 py-2">
+                    <span className="font-mono">{leg.toCode}</span> {leg.toName}
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono tabular-nums">
+                    {leg.departure === null ? '—' : departureInDhaka(leg.departure)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function BlDraftForm({
   values,
   setValues,
   disabled,
   isCustomerView,
+  isAir,
+  airRoute,
   modes,
   agents,
   containers,
@@ -153,6 +230,9 @@ export function BlDraftForm({
   disabled: boolean;
   /** The customer's copy of the screen (§2.4). */
   isCustomerView: boolean;
+  /** An air booking: the House Air Waybill's boxes (§14). */
+  isAir: boolean;
+  airRoute: AirRouteLegDto[];
   modes: { id: string; name: string }[];
   agents: { id: string; name: string }[];
   containers: BlDraftDto['containers'];
@@ -163,34 +243,179 @@ export function BlDraftForm({
   const [templateId, setTemplateId] = useState('');
   const set = (patch: Partial<BlDraftFormValues>): void => setValues({ ...values, ...patch });
 
+  const templatePicker = templates.length > 0 && !disabled && (
+    <div className="flex flex-wrap items-end gap-3">
+      <div className="flex w-72 flex-col gap-1">
+        <span className="label-manifest">Use template</span>
+        <Select value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
+          <option value="">Choose a saved template</option>
+          {templates.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
+        </Select>
+      </div>
+      <Button
+        variant="secondary"
+        disabled={templateId === ''}
+        onClick={() => {
+          const found = templates.find((t) => t.id === templateId);
+          if (found !== undefined) onUseTemplate(found);
+        }}
+      >
+        Apply
+      </Button>
+    </div>
+  );
+
+  /*
+   * G34 with H37's "There will be an option to select the agent." Absent from
+   * the customer's sheet, and absent here for the same reason: choosing the
+   * destination agent is the forwarder's call.
+   */
+  const agentPicker = !isCustomerView && (
+    <Field
+      id="deliveryAgentId"
+      label={isAir ? 'Delivery agent' : 'For Delivery of Goods Apply to'}
+      hint={isAir ? 'Printed under the goods on the waybill.' : undefined}
+    >
+      <Select
+        id="deliveryAgentId"
+        value={values.deliveryAgentId}
+        disabled={disabled}
+        onChange={(e) => set({ deliveryAgentId: e.target.value })}
+      >
+        <option value="">No agent chosen</option>
+        {agents.map((a) => (
+          <option key={a.id} value={a.id}>
+            {a.name}
+          </option>
+        ))}
+      </Select>
+    </Field>
+  );
+
+  // B16 and B29 on the customer sheet: `Pull`.
+  const pullButton = isCustomerView && !disabled && (
+    <div>
+      <Button variant="secondary" onClick={onPullParties}>
+        Pull my details
+      </Button>
+    </div>
+  );
+
+  const numberField = (
+    id: 'packageCount' | 'grossWeightKg' | 'chargeableWeightKg' | 'measurementCbm',
+    label: string,
+    inputMode: 'numeric' | 'decimal' = 'decimal',
+  ) => (
+    <Field id={id} label={label}>
+      <Input
+        id={id}
+        numeric
+        inputMode={inputMode}
+        value={values[id]}
+        disabled={disabled}
+        onChange={(e) => set({ [id]: e.target.value })}
+      />
+    </Field>
+  );
+
+  /*
+   * §14: the House Air Waybill. Its parties are the bill's three; its figures
+   * start from the advise's totals; its flights are shown, not typed.
+   */
+  if (isAir) {
+    return (
+      <div className="flex flex-col gap-5">
+        {templatePicker}
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <Block
+            id="shipperText"
+            label={isCustomerView ? 'Shipper (Exporter)' : "Shipper's name and address"}
+            required
+            value={values.shipperText}
+            disabled={disabled}
+            onChange={(v) => set({ shipperText: v })}
+          />
+          <Block
+            id="consigneeText"
+            label="Consignee's name and address"
+            required
+            value={values.consigneeText}
+            disabled={disabled}
+            onChange={(v) => set({ consigneeText: v })}
+          />
+          <Block
+            id="notifyText"
+            label={isCustomerView ? 'Notify Party (Importer)' : 'Notify Party'}
+            required
+            value={values.notifyText}
+            disabled={disabled}
+            onChange={(v) => set({ notifyText: v })}
+          />
+        </div>
+
+        {pullButton}
+
+        <AirRoute legs={airRoute} />
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+          {numberField('packageCount', 'No. of pieces', 'numeric')}
+          {numberField('grossWeightKg', 'Gross weight (KG)')}
+          {numberField('chargeableWeightKg', 'Chargeable weight (KG)')}
+          {numberField('measurementCbm', 'Volume (CBM)')}
+        </div>
+
+        <Block
+          id="packagesDescription"
+          label="Nature and quantity of goods"
+          hint="Order, style, HS code, invoice and EXP numbers, as they should read on the waybill. The volume and the delivery agent print under it."
+          rows={6}
+          value={values.packagesDescription}
+          disabled={disabled}
+          onChange={(v) => set({ packagesDescription: v })}
+        />
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+          <Field id="ladenOnBoardDate" label="Executed on (date)">
+            <Input
+              id="ladenOnBoardDate"
+              type="date"
+              value={values.ladenOnBoardDate}
+              disabled={disabled}
+              onChange={(e) => set({ ladenOnBoardDate: e.target.value })}
+            />
+          </Field>
+          <Field
+            id="freightPayableAt"
+            label="Freight payable at"
+            hint="Prints as At (Place). The booking's TOS decides it when it has one."
+          >
+            <Input
+              id="freightPayableAt"
+              value={values.freightPayableAt}
+              disabled={disabled}
+              onChange={(e) => set({ freightPayableAt: e.target.value })}
+            />
+          </Field>
+          {agentPicker}
+        </div>
+
+        <p className="text-cell text-steel">
+          Issued in {AWB_ORIGINALS.length} originals — for the issuing carrier, the consignee and
+          the shipper.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-5">
       {/* N13 `Use Templet` — beside the BL number on the client's sheet. */}
-      {templates.length > 0 && !disabled && (
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="flex w-72 flex-col gap-1">
-            <span className="label-manifest">Use template</span>
-            <Select value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
-              <option value="">Choose a saved template</option>
-              {templates.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </Select>
-          </div>
-          <Button
-            variant="secondary"
-            disabled={templateId === ''}
-            onClick={() => {
-              const found = templates.find((t) => t.id === templateId);
-              if (found !== undefined) onUseTemplate(found);
-            }}
-          >
-            Apply
-          </Button>
-        </div>
-      )}
+      {templatePicker}
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         {/*
@@ -230,14 +455,7 @@ export function BlDraftForm({
         />
       </div>
 
-      {/* B16 and B29 on the customer sheet: `Pull`. */}
-      {isCustomerView && !disabled && (
-        <div>
-          <Button variant="secondary" onClick={onPullParties}>
-            Pull my details
-          </Button>
-        </div>
-      )}
+      {pullButton}
 
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         <Field id="manifestNo" label="Manifest No">
@@ -312,28 +530,7 @@ export function BlDraftForm({
             onChange={(e) => set({ placeOfDelivery: e.target.value })}
           />
         </Field>
-        {/*
-          G34 with H37's "There will be an option to select the agent."
-          Absent from the customer's sheet, and absent here for the same
-          reason: choosing the destination agent is the forwarder's call.
-        */}
-        {!isCustomerView && (
-          <Field id="deliveryAgentId" label="For Delivery of Goods Apply to">
-            <Select
-              id="deliveryAgentId"
-              value={values.deliveryAgentId}
-              disabled={disabled}
-              onChange={(e) => set({ deliveryAgentId: e.target.value })}
-            >
-              <option value="">No agent chosen</option>
-              {agents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-        )}
+        {agentPicker}
       </div>
 
       {/* B40's block: the containers, pulled from the load plans. */}

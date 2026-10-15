@@ -3,9 +3,11 @@ import { type RequestHandler, Router } from 'express';
 import {
   type ApiSuccess,
   BL_DRAFT_STATUS_LABEL,
+  billTerms,
   buildMeta,
   SHIPMENT_WORKLISTS,
   type ShipmentStatus,
+  type ShipmentType,
   type ShipmentWorklistId,
   type ShipmentWorklistRow,
   shipmentWorklistQuerySchema,
@@ -84,10 +86,14 @@ async function detailsFor(
   db: TenantDb,
   tenantId: bigint,
   worklist: ShipmentWorklistId,
-  ids: bigint[],
+  rows: { id: bigint; shipmentType: ShipmentType }[],
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>();
-  if (ids.length === 0) return out;
+  if (rows.length === 0) return out;
+  const ids = rows.map((r) => r.id);
+  const typeOf = new Map(rows.map((r) => [r.id.toString(), r.shipmentType]));
+  /** HBL / MBL on sea, HAWB / MAWB on air (§14). */
+  const termsOf = (id: bigint | string) => billTerms(typeOf.get(id.toString()) ?? 'SEA');
 
   if (worklist === 'APPROVAL') {
     // §5.3: the decision is per PO, so the count IS the state of play.
@@ -198,11 +204,12 @@ async function detailsFor(
       const key = shipmentId.toString();
       if (out.has(key)) continue;
       const shared = sharedWith(shipmentId, advise.bookings);
+      const house = termsOf(shipmentId).houseShort;
       out.set(
         key,
         advise.status === 'SENT'
-          ? `${advise.code} sent ${dateOut(advise.sentAt) ?? ''} — HBL ${advise.houseBlNo}`.trim() + shared
-          : `${advise.code} drafted — HBL ${advise.houseBlNo}, not sent${shared}`,
+          ? `${advise.code} sent ${dateOut(advise.sentAt) ?? ''} — ${house} ${advise.houseBlNo}`.trim() + shared
+          : `${advise.code} drafted — ${house} ${advise.houseBlNo}, not sent${shared}`,
       );
     }
 
@@ -239,11 +246,45 @@ async function detailsFor(
         ),
       );
     }
+    /*
+     * Air has no load plan to wait for (Menu I23, "No need CLP for Air
+     * Shipment"): its advise is built from the confirmed receipts, so what an
+     * air row says is how much of the cargo those receipts hold.
+     */
+    const airIds = ids.filter((id) => typeOf.get(id.toString()) === 'AIR' && !out.has(id.toString()));
+    const airCartons = new Map<string, number>();
+    if (airIds.length > 0) {
+      const received = await db.cargoReceiptLine.findMany({
+        where: {
+          deletedAt: null,
+          lineStatus: 'ACCEPTED',
+          receipt: { shipmentId: { in: airIds }, deletedAt: null, status: 'CONFIRMED' },
+        },
+        select: { receivedCtnQty: true, receipt: { select: { shipmentId: true } } },
+      });
+      for (const line of received) {
+        const key = line.receipt.shipmentId.toString();
+        airCartons.set(key, (airCartons.get(key) ?? 0) + line.receivedCtnQty);
+      }
+    }
+
     for (const id of ids) {
       const key = id.toString();
-      if (!out.has(key)) {
-        out.set(key, withNote(key, 'No finalised load plan yet — the advise pulls its PO grid from one.'));
+      if (out.has(key)) continue;
+      if (typeOf.get(key) === 'AIR') {
+        const ctn = airCartons.get(key) ?? 0;
+        out.set(
+          key,
+          withNote(
+            key,
+            ctn === 0
+              ? 'No confirmed cargo receipt yet — the air advise is built from one.'
+              : `${count(ctn, 'CTN', 'CTN')} received — air needs no load plan, ready to advise`,
+          ),
+        );
+        continue;
       }
+      out.set(key, withNote(key, 'No finalised load plan yet — the advise pulls its PO grid from one.'));
     }
     return out;
   }
@@ -286,10 +327,12 @@ async function detailsFor(
       if (out.has(key)) continue;
       const shared = sharedWith(m.shipmentId, m.advise.bookings);
       const draft = drafts.find((d) => d.adviseId === m.adviseId);
+      const t = termsOf(m.shipmentId);
+      const house = t.houseShort;
       if (draft === undefined) {
         out.set(
           key,
-          `HBL ${m.advise.houseBlNo}${m.advise.mblNo === null ? '' : `, MBL ${m.advise.mblNo}`} — no draft yet${shared}`,
+          `${house} ${m.advise.houseBlNo}${m.advise.mblNo === null ? '' : `, ${t.master} ${m.advise.mblNo}`} — no draft yet${shared}`,
         );
         continue;
       }
@@ -302,7 +345,7 @@ async function detailsFor(
        */
       // Once BL Print has issued it, that is the news (§13).
       const state =
-        draft.issuedAt === null ? BL_DRAFT_STATUS_LABEL[draft.status].toLowerCase() : 'BL issued';
+        draft.issuedAt === null ? BL_DRAFT_STATUS_LABEL[draft.status].toLowerCase() : `${t.short} issued`;
       out.set(
         key,
         (draft.origin === 'CUSTOMER'
@@ -351,7 +394,9 @@ async function detailsFor(
       if (out.has(key)) continue;
       const draft = drafts.find((d) => d.adviseId === m.adviseId);
       if (draft === undefined) continue;
-      const bill = `HBL ${draft.blNo}${m.advise.mblNo === null ? '' : `, MBL ${m.advise.mblNo}`}`;
+      const t = termsOf(m.shipmentId);
+      const house = t.houseShort;
+      const bill = `${house} ${draft.blNo}${m.advise.mblNo === null ? '' : `, ${t.master} ${m.advise.mblNo}`}`;
       const originals =
         draft.originalBlCount === null
           ? 'number of originals not set'
@@ -568,12 +613,7 @@ function handler(worklist: ShipmentWorklistId) {
         }),
       ]);
 
-      const detail = await detailsFor(
-        db,
-        auth.tenantId,
-        worklist,
-        found.map((r) => r.id),
-      );
+      const detail = await detailsFor(db, auth.tenantId, worklist, found);
       // The EFR column: what each booking's confirmed receipts say, and which
       // bookings it will share one advise with (CR-005).
       const ids = found.map((r) => r.id);

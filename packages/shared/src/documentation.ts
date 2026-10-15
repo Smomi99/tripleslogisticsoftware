@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import type { ShipmentType } from './inquiry';
 import { TRANSIT_TYPES } from './quotation';
 
 /**
@@ -286,11 +287,31 @@ export interface BlDraftContainerDto {
   measurementCbm: string | null;
 }
 
+/**
+ * §14: one leg of an air waybill's routing — the flights as the advise and the
+ * schedule it was built from hold them. Read, never typed on the draft: the
+ * flights are the booking's, and the advise is where they were agreed.
+ */
+export interface AirRouteLegDto {
+  legNo: number;
+  flightNo: string | null;
+  /** The airline's two-character designator from the flight number, or its name. */
+  carrier: string | null;
+  fromCode: string;
+  fromName: string;
+  toCode: string;
+  toName: string;
+  /** ISO timestamp of the departure, when the schedule has one. */
+  departure: string | null;
+}
+
 export interface BlDraftDto {
   id: string;
   code: string;
   status: BlDraftStatus;
   origin: BlDraftOrigin;
+  /** §14: SEA is a bill of lading, AIR a House Air Waybill — one row, two documents. */
+  shipmentType: ShipmentType;
   shipmentId: string;
   bookingNo: string;
   /** CR-005: every booking the bill covers — its advise's bookings. */
@@ -309,9 +330,10 @@ export interface BlDraftDto {
   forwardingAgentReferences: string | null;
   pointCountryOfOrigin: string | null;
 
-  preCarriageByModeId: string;
-  preCarriageByModeName: string;
-  placeOfReceipt: string;
+  /** Required on sea; an air waybill has neither (§14). */
+  preCarriageByModeId: string | null;
+  preCarriageByModeName: string | null;
+  placeOfReceipt: string | null;
 
   deliveryAgentId: string | null;
   deliveryAgentName: string | null;
@@ -328,10 +350,17 @@ export interface BlDraftDto {
   marksAndNumbers: string | null;
   grossWeightKg: string | null;
   measurementCbm: string | null;
+  /** §14, air: No. of Pieces and Chargeable Weight. Null on sea. */
+  packageCount: number | null;
+  chargeableWeightKg: string | null;
 
   freightPayableAt: string | null;
   originalBlCount: number | null;
+  /** Sea: Laden on Board Date. Air: Executed on (Date). */
   ladenOnBoardDate: string | null;
+
+  /** §14: the air waybill's flights. Empty on sea. */
+  airRoute: AirRouteLegDto[];
 
   submittedAt: string | null;
   approvedAt: string | null;
@@ -366,7 +395,8 @@ export interface BlDraftPrefillDto
  * The party blocks are required and free text: a bill of lading without a
  * shipper, a consignee and a notify party is not a bill of lading. B34 and F34
  * are starred on the client's sheet, so `preCarriageByModeId` and
- * `placeOfReceipt` are required too.
+ * `placeOfReceipt` are required on a sea bill — by `seaBillGaps` below, since
+ * an air waybill (§14) has neither box and this schema does not know the mode.
  *
  * `blNo` is absent on purpose — it comes from the advise (§3.3) and is not the
  * form's to set.
@@ -383,8 +413,8 @@ export const blDraftInputSchema = z.object({
   forwardingAgentReferences: optionalText(2000),
   pointCountryOfOrigin: optionalText(500),
 
-  preCarriageByModeId: idString,
-  placeOfReceipt: z.string().trim().min(1, 'Place of receipt is required.').max(500, 'That is too long.'),
+  preCarriageByModeId: idString.nullish(),
+  placeOfReceipt: optionalText(500),
 
   deliveryAgentId: idString.nullish(),
   deliveryAgentText: optionalText(2000),
@@ -398,6 +428,14 @@ export const blDraftInputSchema = z.object({
   marksAndNumbers: optionalText(8000),
   grossWeightKg: z.number().nonnegative('Weight cannot be negative.').nullish(),
   measurementCbm: z.number().nonnegative('Measurement cannot be negative.').nullish(),
+  /** §14, air: No. of Pieces and Chargeable Weight. Ignored on a sea bill. */
+  packageCount: z
+    .number()
+    .int('Use a whole number of pieces.')
+    .min(0, 'That cannot be negative.')
+    .max(9_999_999, 'That is too many.')
+    .nullish(),
+  chargeableWeightKg: z.number().nonnegative('Weight cannot be negative.').nullish(),
 
   freightPayableAt: optionalText(500),
   originalBlCount: z.number().int().min(0, 'That cannot be negative.').max(99, 'That is too many.').nullish(),
@@ -408,6 +446,58 @@ export const blDraftInputSchema = z.object({
 });
 
 export type BlDraftInput = z.infer<typeof blDraftInputSchema>;
+
+/**
+ * What a sea bill requires that an air waybill does not have at all — B34 and
+ * F34, starred on the client's sheet. Field errors in the shape the API returns
+ * them, or null when there are none.
+ */
+export function seaBillGaps(input: BlDraftInput): Record<string, string[]> | null {
+  const gaps: Record<string, string[]> = {};
+  if ((input.preCarriageByModeId ?? '') === '') {
+    gaps['preCarriageByModeId'] = ['Pre-carriage by (mode) is required.'];
+  }
+  if ((input.placeOfReceipt ?? '').trim() === '') {
+    gaps['placeOfReceipt'] = ['Place of receipt is required.'];
+  }
+  return Object.keys(gaps).length === 0 ? null : gaps;
+}
+
+/**
+ * §14: what the bill is called, by mode. Sea issues a House BL against the
+ * carrier's MBL; air a House Air Waybill against the airline's MAWB. One table
+ * so every screen, list and message says the same words for the same booking.
+ */
+export const BILL_TERMS = {
+  SEA: {
+    short: 'BL',
+    house: 'House BL',
+    houseShort: 'HBL',
+    master: 'MBL',
+    document: 'bill of lading',
+    draft: 'BL draft',
+  },
+  AIR: {
+    short: 'HAWB',
+    house: 'HAWB',
+    houseShort: 'HAWB',
+    master: 'MAWB',
+    document: 'air waybill',
+    draft: 'HAWB draft',
+  },
+} as const satisfies Record<ShipmentType, Record<string, string>>;
+
+export function billTerms(shipmentType: ShipmentType) {
+  return BILL_TERMS[shipmentType];
+}
+
+/**
+ * §14: a House Air Waybill is issued in three originals, and each says whose
+ * it is at its foot — the client's sample reads "1-ISSUING CARRIER", and its
+ * header "COPIES OF 1,2 & 3 OF THIS AIR WAY BILL ARE ORIGINAL". Fixed, so an
+ * air draft never asks how many.
+ */
+export const AWB_ORIGINALS = ['1-ISSUING CARRIER', '2-CONSIGNEE', '3-SHIPPER'] as const;
 
 export const blDraftSendSchema = shipmentAdviseSendSchema;
 export type BlDraftSendInput = ShipmentAdviseSendInput;
@@ -481,6 +571,8 @@ export function freightTermsOf(tosCode: string | null): FreightTerms | null {
 
 /** What BL Print shows about a booking's bill, and what `Issue BL` confirms. */
 export interface BlPrintDto {
+  /** §14: an air bill is a House Air Waybill, issued in three fixed originals. */
+  shipmentType: ShipmentType;
   shipmentId: string;
   bookingNo: string;
   /** CR-005: every booking the bill covers. */

@@ -2,6 +2,7 @@
 
 import {
   BL_DRAFT_STATUS_LABEL,
+  billTerms,
   type BlDraftDto,
   type BlDraftPrefillDto,
   type BlTemplateDto,
@@ -27,6 +28,9 @@ import { useSession } from '@/lib/session';
  * The staff half of the document. The customer's half runs the same form
  * (bl-draft-form.tsx) from the portal, and the two meet here: a draft the
  * customer submitted arrives in this tab as SUBMITTED, waiting to be approved.
+ *
+ * On an air booking the bill is a House Air Waybill (§14): the same tab and the
+ * same acts, in the waybill's words.
  */
 
 /** Stored UTC, read in Dhaka (CLAUDE.md §9). */
@@ -70,6 +74,11 @@ export function BlDraftTab({
   const [templateOpen, setTemplateOpen] = useState(false);
   const [templateName, setTemplateName] = useState('');
 
+  const isAir = booking.shipmentType === 'AIR';
+  const terms = billTerms(booking.shipmentType);
+  /** "HAWB draft" → "HAWB draft saved"; "BL draft" likewise. */
+  const said = (verb: string): string => `${terms.draft} ${verb}`;
+
   const load = useCallback(async () => {
     setLoaded(false);
     try {
@@ -90,11 +99,11 @@ export function BlDraftTab({
         setSendTo(fresh.recipients.map((r) => r.email).join(', '));
       }
     } catch (e) {
-      setError(e instanceof ApiError ? e.message : 'Could not load the BL draft.');
+      setError(e instanceof ApiError ? e.message : `Could not load the ${terms.draft}.`);
     } finally {
       setLoaded(true);
     }
-  }, [authorizedRequest, booking.id, can]);
+  }, [authorizedRequest, booking.id, can, terms.draft]);
 
   useEffect(() => {
     void load();
@@ -138,7 +147,7 @@ export function BlDraftTab({
   if (draft === null && prefill === null) {
     return (
       <EmptyState
-        title="No BL draft yet"
+        title={`No ${terms.draft} yet`}
         description="You do not have permission to draft one on this booking."
       />
     );
@@ -162,15 +171,16 @@ export function BlDraftTab({
     <div className="flex flex-col gap-4">
       {bookingNos.length > 1 && (
         <p className="text-cell text-steel">
-          One BL for{' '}
+          One {terms.short} for{' '}
           <span className="font-mono tabular-nums text-hull">{bookingNos.join(', ')}</span> — they
-          share an EFR and a shipment advise. The containers below are all of theirs.
+          share an EFR and a shipment advise.
+          {isAir ? ' The pieces and weights are all of theirs.' : ' The containers below are all of theirs.'}
         </p>
       )}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <h2 className="text-section text-hull">
-            {draft === null ? 'New BL draft' : draft.code}
+            {draft === null ? `New ${terms.draft}` : draft.code}
           </h2>
           {draft !== null && (
             <Status tone={TONE[draft.status]}>{BL_DRAFT_STATUS_LABEL[draft.status]}</Status>
@@ -180,12 +190,14 @@ export function BlDraftTab({
           )}
           {/* §13: issued on BL Print — the originals exist from here. */}
           {draft?.issuedAt != null && (
-            <Status tone="active">BL issued {inDhaka(draft.issuedAt)}</Status>
+            <Status tone="active">
+              {terms.short} issued {inDhaka(draft.issuedAt)}
+            </Status>
           )}
         </div>
         <p className="font-mono text-cell tabular-nums text-steel">
-          BL {blNo}
-          {draft?.mblNo != null && ` · MBL ${draft.mblNo}`}
+          {terms.houseShort} {blNo}
+          {draft?.mblNo != null && ` · ${terms.master} ${draft.mblNo}`}
         </p>
       </div>
 
@@ -203,6 +215,8 @@ export function BlDraftTab({
         setValues={setValues}
         disabled={!editable || isPending}
         isCustomerView={false}
+        isAir={isAir}
+        airRoute={draft?.airRoute ?? prefill?.airRoute ?? []}
         modes={modes}
         agents={agents}
         containers={draft?.containers ?? prefill?.containers ?? []}
@@ -234,7 +248,7 @@ export function BlDraftTab({
                     `/api/tenant/documentation/bookings/${booking.id}/bl-draft`,
                     { method: 'POST', body: bodyFrom(values) },
                   ),
-                'BL draft saved',
+                said('saved'),
               );
             }}
           >
@@ -282,7 +296,7 @@ export function BlDraftTab({
                     `/api/tenant/documentation/bl-drafts/${draft.id}/approve`,
                     { method: 'POST', body: {} },
                   ),
-                'BL draft approved',
+                said('approved'),
               );
             }}
           >
@@ -306,7 +320,7 @@ export function BlDraftTab({
                   );
                   window.open(url, '_blank', 'noopener');
                 } catch (e) {
-                  setError(e instanceof ApiError ? e.message : 'Could not open the BL draft.');
+                  setError(e instanceof ApiError ? e.message : `Could not open the ${terms.draft}.`);
                 }
               })();
             }}
@@ -322,6 +336,7 @@ export function BlDraftTab({
         {draft !== null && draft.approvedAt !== null && draft.status !== 'CANCELLED' && (
           <BlPrintActions
             shipmentId={booking.id}
+            shipmentType={booking.shipmentType}
             status={booking.status}
             variant="buttons"
             onChanged={() => {
@@ -337,7 +352,7 @@ export function BlDraftTab({
         )}
       </div>
 
-      <Modal open={sendOpen} onOpenChange={setSendOpen} title="Send the BL draft">
+      <Modal open={sendOpen} onOpenChange={setSendOpen} title={`Send the ${terms.draft}`}>
         <div className="flex flex-col gap-4">
           <Field id="blSendTo" label="To" hint="Comma separated." required>
             <Input id="blSendTo" value={sendTo} onChange={(e) => setSendTo(e.target.value)} />
@@ -368,7 +383,7 @@ export function BlDraftTab({
                         },
                       },
                     ),
-                  'BL draft sent',
+                  said('sent'),
                 );
               }}
             >
@@ -430,11 +445,11 @@ export function BlDraftTab({
         </div>
       </Modal>
 
-      <Modal open={cancelOpen} onOpenChange={setCancelOpen} title="Cancel this BL draft?">
+      <Modal open={cancelOpen} onOpenChange={setCancelOpen} title={`Cancel this ${terms.draft}?`}>
         <div className="flex flex-col gap-4">
           <p className="text-body text-steel">
             The booking goes back to its shipment advise, and a new draft can be started against
-            the same BL number.
+            the same {terms.short} number.
           </p>
           {draft?.issuedAt != null && (
             <p className="text-body text-alert">
@@ -466,7 +481,7 @@ export function BlDraftTab({
                       `/api/tenant/documentation/bl-drafts/${draft.id}/cancel`,
                       { method: 'POST', body: { reason: cancelReason.trim() } },
                     ),
-                  'BL draft cancelled',
+                  said('cancelled'),
                 );
               }}
             >

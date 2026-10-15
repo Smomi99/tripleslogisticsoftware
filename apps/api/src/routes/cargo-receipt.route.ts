@@ -782,6 +782,14 @@ cargoReceiptRouter.get('/cargo-stock', requirePermission(`${FEATURE}.VIEW`), asy
     const search = query.search ?? null;
 
     /*
+     * Sea only. This list is "ready for make CLP", and air never gets one
+     * (Menu I23, "No need CLP for Air Shipment"): its cargo goes from the
+     * receipt straight to Shipment Advise - Air. Listing it here would leave it
+     * waiting forever for a plan nobody will make.
+     */
+    if (query.shipmentType === 'AIR') return { data: [] as CargoStockRow[], total: 0 };
+
+    /*
      * Only bookings that have reached the point of having something in hand.
      * A booking still awaiting its first carton belongs on the other tab, and
      * a cancelled one holds no stock anybody may load.
@@ -790,7 +798,7 @@ cargoReceiptRouter.get('/cargo-stock', requirePermission(`${FEATURE}.VIEW`), asy
       where: {
         deletedAt: null,
         status: { in: ['PART_RECEIVED', 'CARGO_RECEIVED', 'SHORT_CLOSED'] },
-        ...(query.shipmentType === undefined ? {} : { shipmentType: query.shipmentType }),
+        shipmentType: 'SEA',
         ...(query.family === undefined ? {} : { loadingType: { in: loadingTypesOf(query.family) } }),
         ...(search === null
           ? {}

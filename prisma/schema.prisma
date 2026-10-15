@@ -3048,6 +3048,11 @@ model NotificationSetting {
   /// workspace that clears them deliberately gets none.
   quotationNotes String? @map("quotation_notes") @db.Text
 
+  /// MODULE_DOCUMENTATION §14: the lines under the name at the head of the
+  /// House Air Waybill — office address, AIN, freight forwarder licence and
+  /// enlistment numbers. Null prints the name alone.
+  awbIssuerDetails String? @map("awb_issuer_details") @db.Text
+
   /// DESIGN-UPDATE-2026-10-04 §7: "our mail server may send as the team
   /// addresses". Off, mail leaves from the deployment's own account with the
   /// team's address as Reply-To — the only claim every SMTP host will sign.
@@ -5612,9 +5617,11 @@ model BlDraft {
   forwardingAgentReferences String? @map("forwarding_agent_references") @db.Text
   pointCountryOfOrigin      String? @map("point_country_of_origin") @db.Text
 
-  /// B34 and F34 are starred on the sheet — required.
-  preCarriageByModeId BigInt @map("pre_carriage_by_mode_id")
-  placeOfReceipt      String @map("place_of_receipt") @db.Text
+  /// B34 and F34 are starred on the sheet — required on a sea bill, and the
+  /// route holds a sea draft to them. A House Air Waybill has neither box
+  /// (MODULE_DOCUMENTATION §14), so the columns are nullable.
+  preCarriageByModeId BigInt? @map("pre_carriage_by_mode_id")
+  placeOfReceipt      String? @map("place_of_receipt") @db.Text
 
   /// G34 "For Delivery of Goods Please Apply to:" with H37's "There will be an
   /// option to select the agent." The text is kept beside the id for the same
@@ -5634,8 +5641,16 @@ model BlDraft {
   grossWeightKg  Decimal? @map("gross_weight_kg") @db.Decimal(18, 3)
   measurementCbm Decimal? @map("measurement_cbm") @db.Decimal(18, 4)
 
+  /// §14, air only: the waybill's No. of Pieces and Chargeable Weight boxes.
+  /// Pulled from the advise's totals and editable until the draft is approved,
+  /// like the gross weight beside them. A sea bill leaves both null.
+  packageCount       Int?     @map("package_count")
+  chargeableWeightKg Decimal? @map("chargeable_weight_kg") @db.Decimal(18, 3)
+
   freightPayableAt String?   @map("freight_payable_at") @db.Text
   originalBlCount  Int?      @map("original_bl_count")
+  /// Sea: Laden on Board Date. Air: the waybill's Executed on (Date) (§14) —
+  /// the one date each bill is issued under.
   ladenOnBoardDate DateTime? @map("laden_on_board_date") @db.Date
 
   status BlDraftStatus @default(DRAFT)
@@ -5669,7 +5684,7 @@ model BlDraft {
   tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   shipment      Shipment       @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict)
   advise        ShipmentAdvise @relation(fields: [tenantId, adviseId, shipmentId], references: [tenantId, id, shipmentId], onDelete: Restrict)
-  preCarriage   Mode           @relation("BlDraftPreCarriageMode", fields: [preCarriageByModeId], references: [id], onDelete: Restrict)
+  preCarriage   Mode?          @relation("BlDraftPreCarriageMode", fields: [preCarriageByModeId], references: [id], onDelete: Restrict)
   deliveryAgent Agent?         @relation("BlDraftDeliveryAgent", fields: [tenantId, deliveryAgentId], references: [tenantId, id], onDelete: Restrict)
   pol           Port           @relation("BlDraftPol", fields: [polId], references: [id], onDelete: Restrict)
   pod           Port           @relation("BlDraftPod", fields: [podId], references: [id], onDelete: Restrict)

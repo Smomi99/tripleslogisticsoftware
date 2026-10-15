@@ -57,6 +57,17 @@ const TONE: Record<ShipmentStatus, 'active' | 'pending' | 'inactive' | 'overdue'
   CANCELLED: 'overdue',
 };
 
+/*
+ * An air booking's file in its own words (MODULE_DOCUMENTATION §14): a flight
+ * schedule, a House Air Waybill — and no stuffing, because air has no load
+ * plan (Menu I23, "No need CLP for Air Shipment").
+ */
+const AIR_TAB_LABEL: Partial<Record<ShipmentTabId, string>> = {
+  schedule: 'Flight Schedule',
+  bl: 'HAWB',
+};
+const AIR_HIDDEN_TABS: readonly ShipmentTabId[] = ['stuffing'];
+
 function Cell({ label, value }: { label: string; value: string | null }) {
   return (
     <div>
@@ -164,8 +175,9 @@ export function ShipmentFileScreen({ shipmentId }: { shipmentId: string }) {
       {/* ------------------------------------------------------------- tabs */}
       <nav aria-label="Shipment file" className="border-b border-line">
         <ul className="flex flex-wrap gap-1">
-          {SHIPMENT_TABS.map((entry) => {
+          {SHIPMENT_TABS.filter((entry) => !(isAir && AIR_HIDDEN_TABS.includes(entry.id))).map((entry) => {
             const active = entry.id === tab;
+            const label = (isAir ? AIR_TAB_LABEL[entry.id] : undefined) ?? entry.label;
             if (!entry.live) {
               return (
                 <li key={entry.id}>
@@ -179,7 +191,7 @@ export function ShipmentFileScreen({ shipmentId }: { shipmentId: string }) {
                     title="Coming soon"
                     className="inline-block cursor-default border-b-2 border-transparent px-3 py-2 text-body text-steel/50"
                   >
-                    {entry.label}
+                    {label}
                   </span>
                 </li>
               );
@@ -196,7 +208,7 @@ export function ShipmentFileScreen({ shipmentId }: { shipmentId: string }) {
                       : 'border-b-2 border-transparent px-3 py-2 text-body text-steel hover:text-hull'
                   }
                 >
-                  {entry.label}
+                  {label}
                 </button>
               </li>
             );
