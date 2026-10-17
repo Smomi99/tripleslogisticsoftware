@@ -28,6 +28,7 @@ export function agentFilterWhere(query: AgentFilter): Prisma.AgentWhereInput {
       ? {
           OR: [
             { name: { contains: query.search, mode: 'insensitive' as const } },
+            { shortName: { contains: query.search, mode: 'insensitive' as const } },
             { code: { contains: query.search, mode: 'insensitive' as const } },
             { country: { contains: query.search, mode: 'insensitive' as const } },
           ],

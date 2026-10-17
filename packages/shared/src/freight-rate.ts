@@ -260,6 +260,8 @@ export interface FreightRateDto {
   purchaseSourceType: PurchaseSourceType;
   purchaseSourceId: string;
   purchaseSourceName: string;
+  /** The source's short name, when it has one — what Purchase via shows. */
+  purchaseSourceShortName: string | null;
   currencyId: string;
   currencyCode: string;
   validFrom: string;

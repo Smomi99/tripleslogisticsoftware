@@ -52,6 +52,7 @@ interface CarrierRow {
   id: bigint;
   code: string;
   name: string;
+  short_name: string | null;
   type_id: bigint;
   type_name: string;
   office_address: string | null;
@@ -66,6 +67,7 @@ function toDto(row: CarrierRow): CarrierDto {
     id: row.id.toString(),
     code: row.code,
     name: row.name,
+    shortName: row.short_name,
     typeId: row.type_id.toString(),
     typeName: row.type_name,
     officeAddress: row.office_address,
@@ -133,7 +135,9 @@ carrierRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (req, res) =>
     ];
     if (query.search !== undefined) {
       const needle = `%${query.search}%`;
-      conditions.push(Prisma.sql`(c.name ILIKE ${needle} OR c.code ILIKE ${needle})`);
+      conditions.push(
+        Prisma.sql`(c.name ILIKE ${needle} OR c.code ILIKE ${needle} OR c.short_name ILIKE ${needle})`,
+      );
     }
     if (query.typeId !== undefined) {
       conditions.push(Prisma.sql`c.type_id = ${BigInt(query.typeId)}`);
@@ -160,7 +164,7 @@ carrierRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (req, res) =>
     const direction = Prisma.raw(query.sortOrder === 'desc' ? 'DESC' : 'ASC');
 
     const rows = await db.$queryRaw<CarrierRow[]>`
-      SELECT c.id, c.code, c.name, c.type_id, t.name AS type_name, c.office_address,
+      SELECT c.id, c.code, c.name, c.short_name, c.type_id, t.name AS type_name, c.office_address,
              (c.is_active AND COALESCE(o.is_active, true)) AS effective_is_active,
              (c.tenant_id IS NULL) AS is_system,
              (SELECT count(*) FROM carrier_pic p
@@ -227,6 +231,7 @@ carrierRouter.post('/', requirePermission(`${FEATURE}.CREATE`), async (req, res)
             tenantId: auth.tenantId,
             code,
             name: input.name,
+            shortName: input.shortName || null,
             typeId,
             officeAddress: input.officeAddress ?? null,
             createdBy: auth.userId,
@@ -236,6 +241,7 @@ carrierRouter.post('/', requirePermission(`${FEATURE}.CREATE`), async (req, res)
             id: true,
             code: true,
             name: true,
+            shortName: true,
             typeId: true,
             officeAddress: true,
             isActive: true,
@@ -252,6 +258,7 @@ carrierRouter.post('/', requirePermission(`${FEATURE}.CREATE`), async (req, res)
       id: created.id.toString(),
       code: created.code,
       name: created.name,
+      shortName: created.shortName,
       typeId: created.typeId.toString(),
       typeName: created.type.name,
       officeAddress: created.officeAddress,
@@ -287,6 +294,7 @@ carrierRouter.patch('/:id', requirePermission(`${FEATURE}.EDIT`), async (req, re
       where: { id },
       data: {
         name: input.name,
+        shortName: input.shortName || null,
         typeId,
         officeAddress: input.officeAddress ?? null,
         updatedBy: auth.userId,
@@ -295,6 +303,7 @@ carrierRouter.patch('/:id', requirePermission(`${FEATURE}.EDIT`), async (req, re
         id: true,
         code: true,
         name: true,
+        shortName: true,
         typeId: true,
         officeAddress: true,
         isActive: true,
@@ -309,6 +318,7 @@ carrierRouter.patch('/:id', requirePermission(`${FEATURE}.EDIT`), async (req, re
       id: updated.id.toString(),
       code: updated.code,
       name: updated.name,
+      shortName: updated.shortName,
       typeId: updated.typeId.toString(),
       typeName: updated.type.name,
       officeAddress: updated.officeAddress,
@@ -1294,7 +1304,7 @@ carrierRouter.post(
     const copyId = await withTenant(auth.tenantId, async (db) => {
       const shared = await db.carrier.findFirst({
         where: { id, deletedAt: null },
-        select: { id: true, tenantId: true, name: true, typeId: true, officeAddress: true },
+        select: { id: true, tenantId: true, name: true, shortName: true, typeId: true, officeAddress: true },
       });
       await assertCustomisable(
         db,
@@ -1312,7 +1322,8 @@ carrierRouter.post(
             data: {
               tenantId: auth.tenantId,
               code,
-              name: shared.name, typeId: shared.typeId, officeAddress: shared.officeAddress,
+              name: shared.name, shortName: shared.shortName, typeId: shared.typeId,
+              officeAddress: shared.officeAddress,
               createdBy: auth.userId,
               updatedBy: auth.userId,
             },

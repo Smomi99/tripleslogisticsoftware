@@ -8,6 +8,7 @@ import {
 
 import { listQuerySchema } from './api';
 import { countrySchema } from './countries';
+import { shortNameSchema } from './short-name';
 
 /**
  * Agent and its children (CLAUDE.md §6).
@@ -32,6 +33,7 @@ const idListSchema = z.array(z.string().regex(/^\d+$/)).default([]);
 
 export const agentInputSchema = z.object({
   name: z.string().trim().min(1, 'Enter the agent name.').max(200, 'Name is too long.'),
+  shortName: shortNameSchema,
   country: countrySchema,
   address: z.string().trim().max(2000, 'Address is too long.').optional(),
   /**
@@ -80,6 +82,7 @@ export interface AgentDto {
   id: string;
   code: string;
   name: string;
+  shortName: string | null;
   country: string;
   address: string | null;
   deliveryAgentDetails: string | null;

@@ -172,6 +172,8 @@ export function RateEntryScreen({
   const [draft, setDraft] = useState<DraftRow>(emptyDraft(''));
   /** The rate the add row is currently editing, if any (§5.1's Edit action). */
   const [editing, setEditing] = useState<FreightRateDto | null>(null);
+  /** The rate the add row was copied from by Duplicate, if any. */
+  const [copiedFrom, setCopiedFrom] = useState<FreightRateDto | null>(null);
   const [addError, setAddError] = useState<string | null>(null);
   const [isSaving, setSaving] = useState(false);
   const [isPanelOpen, setPanelOpen] = useState(false);
@@ -266,23 +268,15 @@ export function RateEntryScreen({
         ? options.vendors
         : options.agents;
 
-  /**
-   * Loads an existing rate back into the add row.
-   *
-   * §5.1's list carries Edit | Delete, and this screen's shape is a row of
-   * inputs — so Edit fills that row rather than opening a second form the user
-   * would have to learn. The save edits the rate in place, expired or not.
-   */
-  function beginEdit(rate: FreightRateDto): void {
+  /** An existing rate, as the add row's inputs. */
+  function draftFrom(rate: FreightRateDto): DraftRow {
     const prices: Record<string, string> = {};
     for (const line of rate.lines) {
       if (line.buyPrice !== undefined) prices[line.tierId] = line.buyPrice;
     }
     const first = rate.lines[0];
 
-    setEditing(rate);
-    setAddError(null);
-    setDraft({
+    return {
       polId: rate.polId,
       podId: rate.podId,
       carrierId: rate.carrierId,
@@ -319,12 +313,43 @@ export function RateEntryScreen({
         currencyId: charge.currencyId,
         ...(charge.remarks === null ? {} : { remarks: charge.remarks }),
       })),
-    });
+    };
+  }
+
+  /**
+   * Loads an existing rate back into the add row.
+   *
+   * §5.1's list carries Edit | Delete, and this screen's shape is a row of
+   * inputs — so Edit fills that row rather than opening a second form the user
+   * would have to learn. The save edits the rate in place, expired or not.
+   */
+  function beginEdit(rate: FreightRateDto): void {
+    setEditing(rate);
+    setCopiedFrom(null);
+    setAddError(null);
+    setDraft(draftFrom(rate));
+    firstFieldRef.current?.focus();
+  }
+
+  /**
+   * Copies a rate into the add row as a new one (client request, 2026-10-17).
+   *
+   * Nothing is saved until Add. A buyer duplicates to change one thing — the
+   * carrier, the POD, the validity — and a published copy of the same lane
+   * over the same dates would be refused as an overlap anyway, so the copy
+   * waits in the row for that change.
+   */
+  function beginDuplicate(rate: FreightRateDto): void {
+    setEditing(null);
+    setCopiedFrom(rate);
+    setAddError(null);
+    setDraft(draftFrom(rate));
     firstFieldRef.current?.focus();
   }
 
   function cancelEdit(): void {
     setEditing(null);
+    setCopiedFrom(null);
     setAddError(null);
     setDraft(emptyDraft(draft.currencyId));
   }
@@ -373,6 +398,7 @@ export function RateEntryScreen({
       if (editing === null) {
         await authorizedRequest('/api/tenant/purchase/rates', { method: 'POST', body });
         toast.success('Rate added');
+        setCopiedFrom(null);
       } else {
         await authorizedRequest(`/api/tenant/purchase/rates/${editing.id}`, {
           method: 'PATCH',
@@ -686,12 +712,19 @@ export function RateEntryScreen({
             <Button type="button" onClick={() => void submitDraft()} disabled={isSaving}>
               {isSaving ? 'Saving…' : editing === null ? 'Add' : 'Save changes'}
             </Button>
-            {editing !== null && (
+            {(editing !== null || copiedFrom !== null) && (
               <Button type="button" variant="secondary" onClick={cancelEdit} disabled={isSaving}>
                 Cancel
               </Button>
             )}
           </div>
+
+          {copiedFrom !== null && (
+            <p className="mt-2 text-cell text-steel">
+              Copied from <span className="font-mono tabular-nums text-hull">{copiedFrom.code}</span>
+              {' — change what differs, then Add to save it as a new rate.'}
+            </p>
+          )}
 
           {editing !== null && (
             <p className="mt-2 text-cell text-steel">
@@ -902,7 +935,22 @@ export function RateEntryScreen({
                     {rate.isExpired && ' • expired'}
                   </div>
                 </td>
-                <Td>{rate.purchaseSourceName}</Td>
+                <Td>
+                  {/*
+                    The short name when the party has one (client, 2026-10-17),
+                    the full name on hover. Dotted, so the hover is findable.
+                  */}
+                  {rate.purchaseSourceShortName === null ? (
+                    rate.purchaseSourceName
+                  ) : (
+                    <abbr
+                      title={rate.purchaseSourceName}
+                      className="cursor-help underline decoration-steel decoration-dotted underline-offset-2"
+                    >
+                      {rate.purchaseSourceShortName}
+                    </abbr>
+                  )}
+                </Td>
                 <td className="px-2.5 py-2">
                   <Status
                     tone={
@@ -925,6 +973,17 @@ export function RateEntryScreen({
                   {canEdit && options.canSeeBuyPrice && !rate.isSuperseded && (
                     <Button variant="text" size="inline" onClick={() => beginEdit(rate)}>
                       Edit
+                    </Button>
+                  )}
+                  {/* A copy needs the buy prices to copy, for the same reason. */}
+                  {canCreate && options.canSeeBuyPrice && (
+                    <Button
+                      variant="text"
+                      size="inline"
+                      onClick={() => beginDuplicate(rate)}
+                      aria-label={`Duplicate ${rate.code}`}
+                    >
+                      Duplicate
                     </Button>
                   )}
                   {canEdit && (

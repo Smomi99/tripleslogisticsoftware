@@ -52,6 +52,7 @@ const VENDOR_SELECT = {
   id: true,
   code: true,
   name: true,
+  shortName: true,
   country: true,
   address: true,
   serviceDescription: true,
@@ -73,6 +74,7 @@ interface VendorRow {
   id: bigint;
   code: string;
   name: string;
+  shortName: string | null;
   country: string;
   address: string | null;
   serviceDescription: string | null;
@@ -94,6 +96,7 @@ function toDto(row: VendorRow): VendorDto {
     id: row.id.toString(),
     code: row.code,
     name: row.name,
+    shortName: row.shortName,
     country: row.country,
     address: row.address,
     serviceDescription: row.serviceDescription,
@@ -132,6 +135,7 @@ vendorRouter.get('/', requirePermission(`${FEATURE}.VIEW`), async (req, res) => 
         ? {
             OR: [
               { name: { contains: query.search, mode: 'insensitive' as const } },
+              { shortName: { contains: query.search, mode: 'insensitive' as const } },
               { code: { contains: query.search, mode: 'insensitive' as const } },
               { country: { contains: query.search, mode: 'insensitive' as const } },
             ],
@@ -218,6 +222,7 @@ vendorRouter.post('/', requirePermission(`${FEATURE}.CREATE`), async (req, res) 
             tenantId: auth.tenantId,
             code,
             name: input.name,
+            shortName: input.shortName || null,
             country: input.country,
             address: input.address || null,
             serviceDescription: input.serviceDescription || null,
@@ -267,6 +272,7 @@ vendorRouter.patch('/:id', requirePermission(`${FEATURE}.EDIT`), async (req, res
       where: { id },
       data: {
         name: input.name,
+        shortName: input.shortName || null,
         country: input.country,
         address: input.address || null,
         serviceDescription: input.serviceDescription || null,

@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { listQuerySchema } from './api';
 import { optionalCountrySchema } from './countries';
+import { shortNameSchema } from './short-name';
 
 /**
  * Carrier and its two children (CLAUDE.md §5).
@@ -23,6 +24,7 @@ export const carrierInputSchema = z.object({
     .trim()
     .min(1, 'Enter the carrier name.')
     .max(200, 'Name must be 200 characters or fewer.'),
+  shortName: shortNameSchema,
   typeId: z.string().regex(/^\d+$/, 'Choose a carrier type.'),
   officeAddress: z.string().trim().max(2000, 'Address is too long.').optional(),
 });
@@ -41,6 +43,7 @@ export interface CarrierDto {
   id: string;
   code: string;
   name: string;
+  shortName: string | null;
   typeId: string;
   typeName: string;
   officeAddress: string | null;

@@ -61,6 +61,7 @@ const rate = (over: Partial<FreightRateDto> = {}): FreightRateDto =>
     isSuperseded: false,
     purchaseSourceType: 'CARRIER',
     purchaseSourceName: 'Maersk',
+    purchaseSourceShortName: null,
     lines: [
       {
         id: '1',

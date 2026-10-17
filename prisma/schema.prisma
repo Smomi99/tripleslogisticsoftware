@@ -676,6 +676,9 @@ model Carrier {
   id            BigInt    @id @default(autoincrement())
   code          String    @db.VarChar(32)
   name          String    @db.VarChar(200)
+  /// Asked for by the client on 2026-10-17; not in §5. Shown in Purchase via
+  /// on the rate screens, the full name on hover.
+  shortName     String?   @map("short_name") @db.VarChar(50)
   typeId        BigInt    @map("type_id")
   officeAddress String?   @map("office_address") @db.Text
   isActive      Boolean   @default(true) @map("is_active")
@@ -930,6 +933,9 @@ model Vendor {
   id                 BigInt    @id @default(autoincrement())
   code               String    @db.VarChar(32)
   name               String    @db.VarChar(200)
+  /// Asked for by the client on 2026-10-17; not in §5. Shown in Purchase via
+  /// on the rate screens, the full name on hover.
+  shortName          String?   @map("short_name") @db.VarChar(50)
   address            String?   @db.Text
   country            String    @db.VarChar(100)
   serviceDescription String?   @map("service_description") @db.Text
@@ -1320,6 +1326,9 @@ model Agent {
   id                   BigInt    @id @default(autoincrement())
   code                 String    @db.VarChar(32)
   name                 String    @db.VarChar(200)
+  /// Asked for by the client on 2026-10-17; not in §6. Shown in Purchase via
+  /// on the rate screens, the full name on hover.
+  shortName            String?   @map("short_name") @db.VarChar(50)
   country              String    @db.VarChar(100)
   address              String?   @db.Text
   /// Asked for by the client on 2026-09-24; not in §6. Free text, entered
