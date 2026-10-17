@@ -334,6 +334,7 @@ function VendorForm({
     resolver: zodResolver(vendorInputSchema),
     defaultValues: {
       name: '',
+      shortName: '',
       country: '',
       address: '',
       serviceDescription: '',
@@ -350,6 +351,7 @@ function VendorForm({
   useEffect(() => {
     reset({
       name: vendor?.name ?? '',
+      shortName: vendor?.shortName ?? '',
       country: vendor?.country ?? '',
       address: vendor?.address ?? '',
       serviceDescription: vendor?.serviceDescription ?? '',
@@ -387,8 +389,16 @@ function VendorForm({
       // Eight fields would be a very tall single column inside a modal.
       columns={2}
     >
-      <Field id="name" label="Vendor name" required error={errors.name?.message} wide>
+      <Field id="name" label="Vendor name" required error={errors.name?.message}>
         <Input id="name" autoFocus aria-invalid={errors.name !== undefined} {...register('name')} />
+      </Field>
+      <Field
+        id="shortName"
+        label="Short name"
+        hint="Shown in Purchase via on the rate screens. Hover it for the full name."
+        error={errors.shortName?.message}
+      >
+        <Input id="shortName" aria-invalid={errors.shortName !== undefined} {...register('shortName')} />
       </Field>
       <Field id="vendorTypeId" label="Vendor type" required error={errors.vendorTypeId?.message}>
         <Select id="vendorTypeId" aria-invalid={errors.vendorTypeId !== undefined} {...register('vendorTypeId')}>

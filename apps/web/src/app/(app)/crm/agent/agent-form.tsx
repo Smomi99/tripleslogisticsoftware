@@ -59,6 +59,7 @@ export function AgentForm({ agent }: { agent: AgentDto | null }) {
     resolver: zodResolver(agentInputSchema),
     defaultValues: {
       name: '',
+      shortName: '',
       country: '',
       address: '',
       deliveryAgentDetails: '',
@@ -86,6 +87,7 @@ export function AgentForm({ agent }: { agent: AgentDto | null }) {
     if (agent === null) return;
     reset({
       name: agent.name,
+      shortName: agent.shortName ?? '',
       country: agent.country,
       address: agent.address ?? '',
       deliveryAgentDetails: agent.deliveryAgentDetails ?? '',
@@ -127,8 +129,17 @@ export function AgentForm({ agent }: { agent: AgentDto | null }) {
       error={formError ?? undefined}
       columns={2}
     >
-      <Field id="name" label="Agent name" required error={errors.name?.message} wide>
+      <Field id="name" label="Agent name" required error={errors.name?.message}>
         <Input id="name" autoFocus aria-invalid={errors.name !== undefined} {...register('name')} />
+      </Field>
+
+      <Field
+        id="shortName"
+        label="Short name"
+        hint="Shown in Purchase via on the rate screens. Hover it for the full name."
+        error={errors.shortName?.message}
+      >
+        <Input id="shortName" aria-invalid={errors.shortName !== undefined} {...register('shortName')} />
       </Field>
 
       <Field id="country" label="Country" required error={errors.country?.message}>

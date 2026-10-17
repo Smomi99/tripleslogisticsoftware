@@ -54,6 +54,7 @@ const SELECT = {
   id: true,
   code: true,
   name: true,
+  shortName: true,
   country: true,
   address: true,
   deliveryAgentDetails: true,
@@ -76,6 +77,7 @@ type AgentRow = {
   id: bigint;
   code: string;
   name: string;
+  shortName: string | null;
   country: string;
   address: string | null;
   deliveryAgentDetails: string | null;
@@ -102,6 +104,7 @@ function toDto(row: AgentRow): AgentDto {
     id: row.id.toString(),
     code: row.code,
     name: row.name,
+    shortName: row.shortName,
     country: row.country,
     address: row.address,
     deliveryAgentDetails: row.deliveryAgentDetails,
@@ -367,6 +370,7 @@ agentRouter.post('/', requirePermission(`${FEATURE}.CREATE`), async (req, res) =
             tenantId: auth.tenantId,
             code,
             name: input.name,
+            shortName: input.shortName || null,
             country: input.country,
             address: input.address || null,
             deliveryAgentDetails: input.deliveryAgentDetails || null,
@@ -462,6 +466,7 @@ agentRouter.patch('/:id', requirePermission(`${FEATURE}.EDIT`), async (req, res)
       where: { id },
       data: {
         name: input.name,
+        shortName: input.shortName || null,
         country: input.country,
         address: input.address || null,
         deliveryAgentDetails: input.deliveryAgentDetails || null,
