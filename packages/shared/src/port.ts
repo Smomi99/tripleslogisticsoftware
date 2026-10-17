@@ -100,3 +100,14 @@ export interface PortLookupDto {
 export function portLabel(port: { name: string; portCode: string }): string {
   return `${port.name} - ${port.portCode}`;
 }
+
+/**
+ * How an airport reads in a picker: `DAC - Hazrat Shahjalal Intl`.
+ *
+ * Code first — the exception to `portLabel`, at the client's request. Air
+ * desks work in IATA codes: DAC, DXB, HKG are what is on the booking and the
+ * air waybill, and they are often better known than the airport's full name.
+ */
+export function airportLabel(port: { name: string; portCode: string }): string {
+  return `${port.portCode} - ${port.name}`;
+}
