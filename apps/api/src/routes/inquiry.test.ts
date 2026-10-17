@@ -557,6 +557,9 @@ describe('§5.4 — the form options', () => {
     expect(sea.some((n) => n.includes('IQSEA1'))).toBe(true);
     expect(sea.some((n) => n.includes('IQAIR1'))).toBe(false);
     expect(air.some((n) => n.includes('IQAIR1'))).toBe(true);
+    // Airports read code first, `DAC - Hazrat Shahjalal Intl`; sea ports keep name first.
+    expect(air).toContain('IQAIR1 - Inq Airport A');
+    expect(sea.every((n) => !/^IQSEA\d - /.test(n))).toBe(true);
 
     expect(response.body.data.defaultSalesmanId).toBe(salesOneEmployeeId.toString());
     expect(response.body.data.canViewAll).toBe(false);
