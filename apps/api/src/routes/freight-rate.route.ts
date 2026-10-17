@@ -118,9 +118,9 @@ const rateInclude = {
   carrier: { select: { id: true, name: true } },
   goodsType: { select: { id: true, name: true } },
   currency: { select: { id: true, code: true, currency: true } },
-  purchaseCarrier: { select: { id: true, name: true } },
-  purchaseVendor: { select: { id: true, name: true } },
-  purchaseAgent: { select: { id: true, name: true } },
+  purchaseCarrier: { select: { id: true, name: true, shortName: true } },
+  purchaseVendor: { select: { id: true, name: true, shortName: true } },
+  purchaseAgent: { select: { id: true, name: true, shortName: true } },
   lines: {
     where: { deletedAt: null },
     include: { tier: { select: { id: true, code: true, label: true, sortOrder: true } } },
@@ -140,8 +140,15 @@ const rateInclude = {
 
 type RateWithRelations = Prisma.FreightRateGetPayload<{ include: typeof rateInclude }>;
 
-function purchaseSource(rate: RateWithRelations): { id: string; name: string } {
-  const source: Record<PurchaseSourceType, { id: bigint; name: string } | null> = {
+function purchaseSource(rate: RateWithRelations): {
+  id: string;
+  name: string;
+  shortName: string | null;
+} {
+  const source: Record<
+    PurchaseSourceType,
+    { id: bigint; name: string; shortName: string | null } | null
+  > = {
     CARRIER: rate.purchaseCarrier,
     VENDOR: rate.purchaseVendor,
     AGENT: rate.purchaseAgent,
@@ -149,8 +156,8 @@ function purchaseSource(rate: RateWithRelations): { id: string; name: string } {
   const named = source[rate.purchaseSourceType];
   // The CHECK constraint guarantees one is set; this is belt and braces.
   return named === null
-    ? { id: '', name: '—' }
-    : { id: named.id.toString(), name: named.name };
+    ? { id: '', name: '—', shortName: null }
+    : { id: named.id.toString(), name: named.name, shortName: named.shortName };
 }
 
 function toDto(rate: RateWithRelations, today: Date): FreightRateDto {
@@ -209,6 +216,7 @@ function toDto(rate: RateWithRelations, today: Date): FreightRateDto {
     purchaseSourceType: rate.purchaseSourceType,
     purchaseSourceId: source.id,
     purchaseSourceName: source.name,
+    purchaseSourceShortName: source.shortName,
     currencyId: rate.currencyId.toString(),
     currencyCode: isoCurrency(rate.currency.currency),
     validFrom: isoDate(rate.validFrom),

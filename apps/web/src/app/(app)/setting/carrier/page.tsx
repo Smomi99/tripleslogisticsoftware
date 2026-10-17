@@ -380,6 +380,7 @@ function CarrierForm({
     resolver: zodResolver(carrierInputSchema),
     defaultValues: {
       name: carrier?.name ?? '',
+      shortName: carrier?.shortName ?? '',
       typeId: carrier?.typeId ?? '',
       officeAddress: carrier?.officeAddress ?? '',
     },
@@ -388,6 +389,7 @@ function CarrierForm({
   useEffect(() => {
     reset({
       name: carrier?.name ?? '',
+      shortName: carrier?.shortName ?? '',
       typeId: carrier?.typeId ?? types[0]?.id ?? '',
       officeAddress: carrier?.officeAddress ?? '',
     });
@@ -417,6 +419,15 @@ function CarrierForm({
     >
       <Field id="name" label="Carrier name" required error={errors.name?.message}>
         <Input id="name" autoFocus aria-invalid={errors.name !== undefined} {...register('name')} />
+      </Field>
+
+      <Field
+        id="shortName"
+        label="Short name"
+        hint="Shown in Purchase via on the rate screens. Hover it for the full name."
+        error={errors.shortName?.message}
+      >
+        <Input id="shortName" aria-invalid={errors.shortName !== undefined} {...register('shortName')} />
       </Field>
 
       <Field id="typeId" label="Type" required error={errors.typeId?.message}>

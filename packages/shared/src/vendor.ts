@@ -8,6 +8,7 @@ import {
 
 import { listQuerySchema } from './api';
 import { countrySchema } from './countries';
+import { shortNameSchema } from './short-name';
 
 /**
  * Vendor and its contact people (CLAUDE.md §5).
@@ -22,6 +23,7 @@ import { countrySchema } from './countries';
 
 export const vendorInputSchema = z.object({
   name: z.string().trim().min(1, 'Enter the vendor name.').max(200, 'Name is too long.'),
+  shortName: shortNameSchema,
   country: countrySchema,
   address: z.string().trim().max(2000, 'Address is too long.').optional(),
   serviceDescription: z.string().trim().max(2000, 'Description is too long.').optional(),
@@ -57,6 +59,7 @@ export interface VendorDto {
   id: string;
   code: string;
   name: string;
+  shortName: string | null;
   country: string;
   address: string | null;
   serviceDescription: string | null;
