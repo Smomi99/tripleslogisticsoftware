@@ -27,6 +27,7 @@ import {
   agentQuoteDecisionSchema,
   agentQuoteShortlistSchema,
   type StaffAgentQuoteDto,
+  airportLabel,
   portLabel,
 } from '@ff/shared';
 import { Router } from 'express';
@@ -377,12 +378,21 @@ inquiryRouter.get('/inquiry-options', requirePermission(`${FEATURE}.VIEW`), asyn
       id: p.id.toString(),
       name: portLabel(p),
     });
+    // Airports lead with the IATA code, so they sort by it too — a list that
+    // reads `DAC - …` but is ordered by name looks shuffled.
+    const asAirportOption = (p: { id: bigint; portCode: string; name: string }): LookupOption => ({
+      id: p.id.toString(),
+      name: airportLabel(p),
+    });
 
     return {
       sources: sources.map((s) => ({ id: s.id.toString(), name: s.name })),
       customers: customers.map((c) => ({ id: c.id.toString(), name: c.name })),
       seaPorts: ports.filter((p) => p.type === 'SEAPORT').map(asOption),
-      airPorts: ports.filter((p) => p.type === 'AIRPORT').map(asOption),
+      airPorts: ports
+        .filter((p) => p.type === 'AIRPORT')
+        .sort((a, b) => a.portCode.localeCompare(b.portCode))
+        .map(asAirportOption),
       commodities: commodities.map((c) => ({
         id: c.id.toString(),
         name: c.name,
