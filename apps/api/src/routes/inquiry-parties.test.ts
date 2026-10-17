@@ -12,7 +12,8 @@ import { withTenant } from '../lib/tenant-client';
  * Who an inquiry is sent to.
  *
  * The client's rule: Inbound picks agents, Outbound picks customers. Their
- * contacts seed an email list that stays editable afterwards.
+ * contacts seed an email list that stays editable afterwards. Cross Border
+ * (2026-10-17) picks agents too — the ones tagged Cross Border, any country.
  *
  * The sharp edge is the movement type. The screen only offers one side, but the
  * screen is a convenience — the server has to refuse a customer id posted
@@ -57,7 +58,7 @@ async function cleanup(): Promise<void> {
     'email_log',
     'inquiry_party_contact', 'inquiry_party', 'inquiry_commodity', 'inquiry_volume', 'inquiry',
     'freight_rate', 'goods_type', 'carrier_port_pair',
-    'agent_pic', 'agent', 'carrier_pic', 'carrier', 'customer_pic', 'customer', 'industry_sector', 'port', '"user"',
+    'agent_expert_area', 'agent_pic', 'agent', 'carrier_pic', 'carrier', 'customer_pic', 'customer', 'industry_sector', 'port', '"user"',
   ]) {
     await owner.$executeRawUnsafe(`DELETE FROM ${t} WHERE tenant_id IN ${scope}`);
   }
@@ -167,6 +168,27 @@ describe('the party picker', () => {
     expect(outbound.body.data.map((p: { name: string }) => p.name)).not.toContain('IP Customer');
   });
 
+  it('offers the Cross Border agents, of any country, for Cross Border', async () => {
+    const names = (res: request.Response) => res.body.data.map((p: { name: string }) => p.name);
+    const crossBorder = `/api/tenant/sales/inquiry-parties?movement=CROSS_BORDER&polId=${polId}`;
+
+    // Nobody tagged yet: every agent, rather than an empty picker.
+    expect(names(await as().get(crossBorder))).toContain('IP Agent');
+
+    const area = await owner.expertArea.findFirstOrThrow({
+      where: { tenantId: null, name: 'Cross Border' },
+      select: { id: true },
+    });
+    const expert = await owner.agent.create({
+      // Neither the POL's country nor the untagged agent's.
+      data: { tenantId, code: 'IP-AGT-CB', name: 'IP Cross Border Agent', country: 'Nepal', agentType: 'GENERAL' },
+      select: { id: true },
+    });
+    await owner.agentExpertArea.create({ data: { tenantId, agentId: expert.id, expertAreaId: area.id } });
+
+    expect(names(await as().get(crossBorder))).toEqual(['IP Cross Border Agent']);
+  });
+
   it('carries each party’s contacts and their addresses', async () => {
     const response = await as().get('/api/tenant/sales/inquiry-parties?movement=INBOUND');
     const agent = response.body.data.find((p: { name: string }) => p.name === 'IP Agent');
@@ -200,6 +222,28 @@ describe('recipients on an inquiry', () => {
     expect(response.status, JSON.stringify(response.body.error ?? {})).toBe(201);
     expect(response.body.data.parties[0].name).toBe('IP Carrier');
     expect(response.body.data.partyContacts[0].email).toBe('carrier@ip.test');
+  });
+
+  it('records agents on a Cross Border inquiry and shares it with them', async () => {
+    const response = await raise({
+      movementType: 'CROSS_BORDER',
+      partyIds: [agentId.toString()],
+      partyContactIds: [agentPicId.toString()],
+    });
+    expect(response.status, JSON.stringify(response.body.error ?? {})).toBe(201);
+    expect(response.body.data.movementType).toBe('CROSS_BORDER');
+    expect(response.body.data.parties[0].name).toBe('IP Agent');
+    // Priced by agents, as Inbound is — never routed to the Price Team.
+    expect(response.body.data.status).toBe('RFQ_SENT');
+  });
+
+  it('refuses a carrier posted against a Cross Border inquiry', async () => {
+    const response = await raise({
+      movementType: 'CROSS_BORDER',
+      partyIds: [carrierId.toString()],
+    });
+    expect(response.status).toBe(400);
+    expect(response.body.error.message).toMatch(/agents/i);
   });
 
   it('refuses a carrier posted against an Inbound inquiry', async () => {

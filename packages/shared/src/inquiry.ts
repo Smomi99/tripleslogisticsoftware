@@ -21,13 +21,33 @@ export const SHIPMENT_TYPE_LABEL: Record<ShipmentType, string> = {
   AIR: 'Air',
 };
 
-export const MOVEMENT_TYPES = ['INBOUND', 'OUTBOUND'] as const;
+export const MOVEMENT_TYPES = ['INBOUND', 'OUTBOUND', 'CROSS_BORDER'] as const;
 export type MovementType = (typeof MOVEMENT_TYPES)[number];
 
 export const MOVEMENT_TYPE_LABEL: Record<MovementType, string> = {
   INBOUND: 'Inbound',
   OUTBOUND: 'Outbound',
+  CROSS_BORDER: 'Cross Border',
 };
+
+/**
+ * Whether an inquiry is priced by agents rather than carriers.
+ *
+ * Inbound and Cross Border go to agents (RFQ email, the agent's RFQ screen);
+ * Outbound goes to carriers and the Price Team. One question, asked in one
+ * place, so a fourth movement cannot be routed one way by the API and labelled
+ * the other way by the form.
+ */
+export function pricedByAgents(movementType: MovementType): boolean {
+  return movementType !== 'OUTBOUND';
+}
+
+/**
+ * The expert area a Cross Border inquiry's agents are drawn from — the system
+ * lookup row seeded at the client's request on 2026-09-24. Matched by name, not
+ * code, because a system row's code is its seed position.
+ */
+export const CROSS_BORDER_EXPERT_AREA = 'Cross Border';
 
 /**
  * One carrier's standing on a lane (§6.2's Carrier Position, from CR-001).
@@ -292,7 +312,7 @@ export const inquiryInputSchema = z
     sourceId: idField,
     shipmentType: z.enum(SHIPMENT_TYPES, { message: 'Choose sea or air.' }),
     customerId: idField,
-    movementType: z.enum(MOVEMENT_TYPES, { message: 'Choose inbound or outbound.' }),
+    movementType: z.enum(MOVEMENT_TYPES, { message: 'Choose a type of movement.' }),
     polId: idField,
     podId: idField,
     placeOfReceipt: z.string().trim().max(500, 'That is too long.').optional(),

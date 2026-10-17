@@ -2,7 +2,7 @@
 
 import {
   MOVEMENT_TYPE_LABEL,
-  MOVEMENT_TYPES,
+  TARIFF_MOVEMENT_TYPES,
   type MovementType,
   TARIFF_TYPE_LABEL,
   TARIFF_TYPES,
@@ -138,7 +138,7 @@ export function TariffForm({ tariff }: { tariff: TariffDto | null }) {
           <Field id="tariff-movement" label="Movement Type" required>
             <Select id="tariff-movement" value={movementType} onChange={(e) => setMovementType(e.target.value as MovementType | '')}>
               <option value="">Choose</option>
-              {MOVEMENT_TYPES.map((m) => (
+              {TARIFF_MOVEMENT_TYPES.map((m) => (
                 <option key={m} value={m}>
                   {MOVEMENT_TYPE_LABEL[m]}
                 </option>

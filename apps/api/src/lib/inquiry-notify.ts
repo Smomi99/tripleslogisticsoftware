@@ -1,3 +1,5 @@
+import { MOVEMENT_TYPE_LABEL, type MovementType } from '@ff/shared';
+
 import { queueMail } from './email-queue';
 import type { RoutePlan } from './inquiry-routing';
 import { logger } from './logger';
@@ -7,7 +9,7 @@ import type { TenantDb } from './tenant-client';
  * Telling someone an inquiry needs a price.
  *
  * The client's rule, in their words: an Inbound inquiry goes to the selected
- * agents' contacts; an Outbound one with no live rate goes to the price team so
+ * agents' contacts (and so does a Cross Border one); an Outbound one with no live rate goes to the price team so
  * they can obtain one from a carrier; and nothing is sent at all when the lane
  * already matches a purchased rate — there is nothing to ask for.
  *
@@ -21,7 +23,7 @@ export interface NotifyInput {
   tenantId: bigint;
   inquiryId: bigint;
   code: string;
-  movementType: 'INBOUND' | 'OUTBOUND';
+  movementType: MovementType;
   polLabel: string;
   podLabel: string;
   customerName: string;
@@ -83,7 +85,7 @@ function rfqVariables(
 function agentVariables(input: NotifyInput, signature: string): Record<string, string> {
   return {
     ...rfqVariables(input, signature),
-    movement: input.movementType === 'INBOUND' ? 'Inbound' : 'Outbound',
+    movement: MOVEMENT_TYPE_LABEL[input.movementType],
     // Agents sign in at the same door as staff and land on Agent Inquiry.
     // This used to point at /portal, which stopped existing when the separate
     // portal was removed — a dead link in every RFQ we sent.
@@ -110,7 +112,7 @@ function staffVariables(input: NotifyInput): Record<string, string> {
     customerName: input.customerName,
     polLabel: input.polLabel,
     podLabel: input.podLabel,
-    movement: input.movementType === 'INBOUND' ? 'Inbound' : 'Outbound',
+    movement: MOVEMENT_TYPE_LABEL[input.movementType],
     link: input.appUrl === null ? '' : `${input.appUrl}/sales/inquiry`,
   };
 }

@@ -2,7 +2,13 @@ import { z } from 'zod';
 
 import { listQuerySchema } from './api';
 import type { LookupOption } from './cost-head';
-import { MOVEMENT_TYPES, type MovementType } from './inquiry';
+import { type MovementType } from './inquiry';
+
+/**
+ * A tariff is a port's charges in or out. Cross Border is an inquiry movement
+ * (2026-10-17) the client has not asked for a tariff of, so it is not offered.
+ */
+export const TARIFF_MOVEMENT_TYPES = ['INBOUND', 'OUTBOUND'] as const satisfies readonly MovementType[];
 
 /**
  * Purchase → Price List → Tariff (docs/DESIGN-UPDATE-2026-10-04.md §5).
@@ -46,7 +52,7 @@ export type TariffLineInput = z.input<typeof tariffLineInputSchema>;
 
 export const tariffSaveSchema = z.object({
   polId: id('POL'),
-  movementType: z.enum(MOVEMENT_TYPES),
+  movementType: z.enum(TARIFF_MOVEMENT_TYPES),
   tariffType: z.enum(TARIFF_TYPES),
   lines: z.array(tariffLineInputSchema).min(1, 'Add at least one charge.').max(200, 'A tariff holds up to 200 charges.'),
 });
@@ -55,7 +61,7 @@ export type TariffSaveInput = z.input<typeof tariffSaveSchema>;
 export const TARIFF_SORT_FIELDS = ['code', 'pol', 'country'] as const;
 
 export const tariffListQuerySchema = listQuerySchema.extend({
-  movementType: z.enum(MOVEMENT_TYPES).optional(),
+  movementType: z.enum(TARIFF_MOVEMENT_TYPES).optional(),
   tariffType: z.enum(TARIFF_TYPES).optional(),
   sortBy: z.enum(TARIFF_SORT_FIELDS).optional(),
 });

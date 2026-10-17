@@ -28,7 +28,10 @@ import {
   agentQuoteShortlistSchema,
   type StaffAgentQuoteDto,
   airportLabel,
+  CROSS_BORDER_EXPERT_AREA,
+  type MovementType,
   portLabel,
+  pricedByAgents,
 } from '@ff/shared';
 import { Router } from 'express';
 
@@ -607,9 +610,9 @@ function volumeRows(
  * business records, and the migration grants ff_app DELETE here for exactly
  * this, as it does on the other join tables.
  *
- * Inbound writes agents, Outbound writes customers. The ids are validated
- * against the right table first, so a client sending a customer id on an
- * Inbound inquiry is refused rather than silently storing nothing.
+ * Inbound and Cross Border write agents, Outbound writes carriers. The ids
+ * are validated against the right table first, so a client sending a carrier
+ * id on an Inbound inquiry is refused rather than silently storing nothing.
  */
 async function writeParties(
   db: TenantDb,
@@ -617,23 +620,23 @@ async function writeParties(
   inquiryId: bigint,
   input: ReturnType<typeof inquiryInputSchema.parse>,
 ): Promise<void> {
-  const inbound = input.movementType === 'INBOUND';
+  const toAgents = pricedByAgents(input.movementType);
   const partyIds = [...new Set(input.partyIds)].map((v) => BigInt(v));
   const contactIds = [...new Set(input.partyContactIds)].map((v) => BigInt(v));
 
   if (partyIds.length > 0) {
-    const found = inbound
+    const found = toAgents
       ? await db.agent.findMany({ where: { id: { in: partyIds }, deletedAt: null }, select: { id: true } })
       : await db.carrier.findMany({ where: { id: { in: partyIds }, deletedAt: null }, select: { id: true } });
     if (found.length !== partyIds.length) {
       throw HttpError.badRequest(
-        inbound ? 'One of those agents is not available.' : 'One of those carriers is not available.',
+        toAgents ? 'One of those agents is not available.' : 'One of those carriers is not available.',
       );
     }
   }
 
   if (contactIds.length > 0) {
-    const found = inbound
+    const found = toAgents
       ? await db.agentPic.findMany({ where: { id: { in: contactIds }, deletedAt: null }, select: { id: true } })
       : await db.carrierPic.findMany({ where: { id: { in: contactIds }, deletedAt: null }, select: { id: true } });
     if (found.length !== contactIds.length) {
@@ -649,8 +652,8 @@ async function writeParties(
       data: partyIds.map((partyId) => ({
         tenantId: auth.tenantId,
         inquiryId,
-        agentId: inbound ? partyId : null,
-        carrierId: inbound ? null : partyId,
+        agentId: toAgents ? partyId : null,
+        carrierId: toAgents ? null : partyId,
         createdBy: auth.userId,
       })),
     });
@@ -661,8 +664,8 @@ async function writeParties(
       data: contactIds.map((contactId) => ({
         tenantId: auth.tenantId,
         inquiryId,
-        agentPicId: inbound ? contactId : null,
-        carrierPicId: inbound ? null : contactId,
+        agentPicId: toAgents ? contactId : null,
+        carrierPicId: toAgents ? null : contactId,
         createdBy: auth.userId,
       })),
     });
@@ -1023,7 +1026,10 @@ inquiryRouter.get('/lane-check', requirePermission(`${FEATURE}.VIEW`), async (re
 
 inquiryRouter.get('/inquiry-parties', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
   const auth = req.auth!;
-  const inbound = req.query['movement'] !== 'OUTBOUND';
+  const movement = req.query['movement'];
+  const movementType: MovementType =
+    movement === 'OUTBOUND' || movement === 'CROSS_BORDER' ? movement : 'INBOUND';
+  const inbound = movementType === 'INBOUND';
   const polId = req.query['polId'];
 
   const parties = await withTenant(auth.tenantId, async (db) => {
@@ -1054,7 +1060,31 @@ inquiryRouter.get('/inquiry-parties', requirePermission(`${FEATURE}.VIEW`), asyn
       },
       orderBy: { name: 'asc' as const },
     };
-    if (!inbound) return db.carrier.findMany(shape);
+    if (!pricedByAgents(movementType)) return db.carrier.findMany(shape);
+    if (movementType === 'CROSS_BORDER') {
+      /*
+       * A Cross Border lane may touch neither our country nor the agent's, so
+       * the POL's country says nothing about who can handle it. The agents who
+       * can are the ones tagged with the Cross Border expert area, wherever
+       * they sit (the client's decision of 2026-10-17).
+       */
+      const experts = await db.agent.findMany({
+        ...shape,
+        where: {
+          ...shape.where,
+          expertAreas: {
+            some: {
+              expertArea: {
+                name: { equals: CROSS_BORDER_EXPERT_AREA, mode: 'insensitive' },
+                deletedAt: null,
+              },
+            },
+          },
+        },
+      });
+      // The same fallback as Inbound: nobody tagged yet beats an empty picker.
+      return experts.length > 0 ? experts : db.agent.findMany(shape);
+    }
     const agents = await db.agent.findMany({
       ...shape,
       where: { ...shape.where, ...(country === null ? {} : { country }) },
