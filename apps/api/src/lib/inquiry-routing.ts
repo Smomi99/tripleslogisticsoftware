@@ -1,3 +1,5 @@
+import { type MovementType, pricedByAgents } from '@ff/shared';
+
 import { MANAGE_PROFIT } from './rate-visibility';
 import type { TenantDb } from './tenant-client';
 
@@ -12,6 +14,8 @@ import type { TenantDb } from './tenant-client';
  *               RFQ_SENT. Unless the lane already has a live rate, in which
  *               case share it but send nothing — the client is explicit that
  *               we do not spam agents for lanes we can already price.
+ *               CROSS_BORDER takes this path too (2026-10-17): its agents
+ *               are the ones tagged Cross Border, not the POL country's.
  *
  *   OUTBOUND  → look for a live rate on the lane.
  *               found     → PRICED, and nobody needs telling.
@@ -25,8 +29,8 @@ import type { TenantDb } from './tenant-client';
  */
 
 export type RouteBranch =
-  | 'INBOUND_SHARED'
-  | 'INBOUND_RATE_EXISTS'
+  | 'AGENTS_SHARED'
+  | 'AGENTS_RATE_EXISTS'
   | 'OUTBOUND_PRICED'
   | 'OUTBOUND_AWAITING_RATE'
   | 'NOWHERE';
@@ -55,7 +59,7 @@ export interface RoutePlan {
 
 export interface RouteInput {
   inquiryId: bigint;
-  movementType: 'INBOUND' | 'OUTBOUND';
+  movementType: MovementType;
   shipmentType: 'SEA' | 'AIR';
   polId: bigint;
   podId: bigint;
@@ -168,7 +172,7 @@ export async function priceTeamAddresses(db: TenantDb): Promise<string[]> {
 export async function decideRoute(db: TenantDb, input: RouteInput): Promise<RoutePlan> {
   const liveRates = await liveRatesForLane(db, input);
 
-  if (input.movementType === 'INBOUND') {
+  if (pricedByAgents(input.movementType)) {
     // The contacts the operator picked on the form, not every contact the
     // agent has. Choosing them was a deliberate act.
     const contacts = await db.inquiryPartyContact.findMany({
@@ -205,7 +209,7 @@ export async function decideRoute(db: TenantDb, input: RouteInput): Promise<Rout
     // on their RFQ screen and can still quote it; we simply did not chase them
     // for a lane we can already price ourselves.
     return {
-      branch: liveRates > 0 ? 'INBOUND_RATE_EXISTS' : 'INBOUND_SHARED',
+      branch: liveRates > 0 ? 'AGENTS_RATE_EXISTS' : 'AGENTS_SHARED',
       status: 'RFQ_SENT',
       awaitingRate: false,
       agentEmails: liveRates > 0 ? [] : agentEmails,

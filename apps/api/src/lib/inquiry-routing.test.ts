@@ -195,7 +195,7 @@ beforeEach(async () => {
 
 let sequence = 0;
 async function makeInquiry(over: {
-  movementType: 'INBOUND' | 'OUTBOUND';
+  movementType: 'INBOUND' | 'OUTBOUND' | 'CROSS_BORDER';
   goodsTypeId?: bigint | null;
   withAgent?: boolean;
   withContact?: boolean;
@@ -270,7 +270,7 @@ describe('branch 1 — inbound, no rate on the lane', () => {
     const id = await makeInquiry({ movementType: 'INBOUND', withAgent: true, withContact: true });
     const plan = await route(id);
 
-    expect(plan.branch).toBe('INBOUND_SHARED');
+    expect(plan.branch).toBe('AGENTS_SHARED');
     expect(plan.status).toBe('RFQ_SENT');
     expect(plan.agentEmails).toEqual(['mette@route.test']);
     expect(plan.priceTeamEmails).toEqual([]);
@@ -289,6 +289,20 @@ describe('branch 1 — inbound, no rate on the lane', () => {
   });
 });
 
+describe('branch 1 — cross border goes the inbound way', () => {
+  it('shares it with the agents, asks them, and says RFQ_SENT', async () => {
+    // The client's decision of 2026-10-17: Cross Border is priced by agents,
+    // never by the Price Team.
+    const id = await makeInquiry({ movementType: 'CROSS_BORDER', withAgent: true, withContact: true });
+    const plan = await route(id);
+
+    expect(plan.branch).toBe('AGENTS_SHARED');
+    expect(plan.status).toBe('RFQ_SENT');
+    expect(plan.agentEmails).toEqual(['mette@route.test']);
+    expect(plan.priceTeamEmails).toEqual([]);
+  });
+});
+
 describe('branch 1, the exception — inbound where a rate already exists', () => {
   it('shares it but asks nobody', async () => {
     // The client states this outright: do not spam agents for lanes we can
@@ -297,7 +311,7 @@ describe('branch 1, the exception — inbound where a rate already exists', () =
     const id = await makeInquiry({ movementType: 'INBOUND', withAgent: true, withContact: true });
     const plan = await route(id);
 
-    expect(plan.branch).toBe('INBOUND_RATE_EXISTS');
+    expect(plan.branch).toBe('AGENTS_RATE_EXISTS');
     expect(plan.liveRates).toBe(1);
     expect(plan.agentEmails).toEqual([]);
     // Still RFQ_SENT: the agents hold it on their screen and can still quote.

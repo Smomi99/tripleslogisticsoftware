@@ -2,7 +2,7 @@
 
 import {
   MOVEMENT_TYPE_LABEL,
-  MOVEMENT_TYPES,
+  TARIFF_MOVEMENT_TYPES,
   TARIFF_TYPE_LABEL,
   TARIFF_TYPES,
   type TariffListRow,
@@ -102,7 +102,7 @@ export default function TariffListPage() {
           <span className="label-manifest">Movement</span>
           <Select aria-label="Movement type" value={list.filters.movementType ?? ''} onChange={(e) => list.setFilter('movementType', e.target.value)}>
             <option value="">Inbound and outbound</option>
-            {MOVEMENT_TYPES.map((m) => (
+            {TARIFF_MOVEMENT_TYPES.map((m) => (
               <option key={m} value={m}>
                 {MOVEMENT_TYPE_LABEL[m]}
               </option>

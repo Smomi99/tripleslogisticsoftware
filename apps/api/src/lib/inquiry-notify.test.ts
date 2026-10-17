@@ -57,7 +57,7 @@ function stubDb(over: {
  * WHAT each audience is told, and what they are not.
  */
 const plan = (over: Partial<RoutePlan> = {}): RoutePlan => ({
-  branch: 'INBOUND_SHARED',
+  branch: 'AGENTS_SHARED',
   status: 'RFQ_SENT',
   awaitingRate: false,
   agentEmails: [],

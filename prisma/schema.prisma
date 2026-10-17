@@ -2743,9 +2743,12 @@ enum ShipmentType {
 
 /// §3.3's movement_type. Deliberately not customer.business_area, which is the
 /// same words over a different set — that one also allows BOTH.
+/// CROSS_BORDER added 2026-10-17 at the client's request: priced by agents, as
+/// INBOUND is. A tariff is still INBOUND or OUTBOUND only (shared/tariff.ts).
 enum MovementType {
   INBOUND
   OUTBOUND
+  CROSS_BORDER
 
   @@map("movement_type")
 }

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import type { MovementType } from './inquiry';
 // Type-only: shipment.ts imports from here, so a value import would be a cycle.
 import type { ShipmentStatus } from './shipment';
 
@@ -125,7 +126,7 @@ export interface QuotationDto {
   customerId: string;
   customerName: string;
   shipmentType: string;
-  movementType: string;
+  movementType: MovementType;
   polId: string;
   polName: string | null;
   polCode: string | null;

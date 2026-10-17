@@ -6,6 +6,8 @@ import {
   OUTCOME_STATUSES,
   SETTABLE_STATUSES,
   loadingTypeLabel,
+  MOVEMENT_TYPE_LABEL,
+  pricedByAgents,
 } from '@ff/shared';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
@@ -74,7 +76,7 @@ export function ViewDrawer({
     ['Source', inquiry.sourceName],
     ['Customer', inquiry.customerName],
     ['Shipment type', inquiry.shipmentType],
-    ['Movement', inquiry.movementType],
+    ['Movement', MOVEMENT_TYPE_LABEL[inquiry.movementType]],
     ['POL', inquiry.polName ?? inquiry.polCode],
     ['POD', inquiry.podName ?? inquiry.podCode],
     ['Place of receipt', inquiry.placeOfReceipt ?? '—'],
@@ -96,7 +98,7 @@ export function ViewDrawer({
       loadingTypeLabel(inquiry.loadingType) ?? '—',
     ],
     [
-      inquiry.movementType === 'INBOUND' ? 'Agents' : 'Customers notified',
+      pricedByAgents(inquiry.movementType) ? 'Agents' : 'Customers notified',
       inquiry.parties.length === 0 ? '—' : inquiry.parties.map((p) => p.name).join(', '),
     ],
     [

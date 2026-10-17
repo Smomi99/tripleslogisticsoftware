@@ -15,7 +15,9 @@ NEW INQUIRY ──┬─ Outbound, rate exists  → Price Check → Quotation
               │
               ├─ Outbound, no valid rate → email Price Team → (they buy) → Quotation
               │
-              └─ Inbound → share to country agents → RFQ on agent portal
+              ├─ Inbound → share to country agents → RFQ on agent portal
+              │
+              └─ Cross Border → share to Cross Border agents → RFQ on agent portal
                                    → agents quote → we pick cheapest → Quotation
                                                           ↓
                                               winner sees "Won"
@@ -142,7 +144,7 @@ inquiry                                            -- client: Table_Inquiry
   source_id           FK inquiry_source
   shipment_type       ENUM('SEA','AIR')
   customer_id         FK customer
-  movement_type       ENUM('INBOUND','OUTBOUND')
+  movement_type       ENUM('INBOUND','OUTBOUND','CROSS_BORDER')   -- CROSS_BORDER added 2026-10-17
   pol_id, pod_id      FK port
   goods_type_id       FK goods_type
   place_of_receipt    TEXT
@@ -272,6 +274,13 @@ if movement_type = INBOUND:
     → EXCEPTION: if a valid rate already exists for the lane, skip the email entirely
       (the client states this explicitly — do not spam agents for lanes we can already price)
 
+if movement_type = CROSS_BORDER:          (client decision, 2026-10-17)
+    → exactly the INBOUND path above — shared with agents, RFQ_SENT, the same
+      live-rate exception — except for WHICH agents are listed:
+    → agents tagged with the "Cross Border" expert area, in any country
+      (a cross-border lane may touch neither our country nor the POL's);
+      every agent when nobody is tagged yet
+
 if movement_type = OUTBOUND:
     → look for a valid rate: matching mode, POL, POD, goods type, today within validity
     → found     → status = PRICED, show it on Price Check
@@ -347,7 +356,8 @@ Show FCL size rows when `Loading Type = FCL`, the LCL row when LCL, the Air row 
 `Shipment Type = AIR`. Rows the user leaves blank are not persisted.
 
 `Share to Agent / Carrier` appears **only when movement = Inbound**, listing agents whose country
-matches the POL country, with their PIC and email prefilled and editable.
+matches the POL country, with their PIC and email prefilled and editable. Cross Border lists the
+agents tagged with the "Cross Border" expert area instead (§5.1).
 
 ### 6.2 Live Inquiry (internal list)
 

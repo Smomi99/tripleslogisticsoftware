@@ -8,6 +8,7 @@ import {
   isoCurrency,
   TRANSIT_TYPES,
   loadingTypeLabel,
+  MOVEMENT_TYPE_LABEL,
   SHIPMENT_STATUS_LABEL,
 } from '@ff/shared';
 import Link from 'next/link';
@@ -364,7 +365,7 @@ export function QuotationForm({
     ['Inquiry No', quotation.inquiryCode],
     ['Shipment Type', quotation.shipmentType],
     ['Customer', quotation.customerName],
-    ['Type of Movement', quotation.movementType],
+    ['Type of Movement', MOVEMENT_TYPE_LABEL[quotation.movementType]],
     ['POL', quotation.polName ?? quotation.polCode],
     ['POD', quotation.podName ?? quotation.podCode],
     ['Goods Type', quotation.goodsTypeName],

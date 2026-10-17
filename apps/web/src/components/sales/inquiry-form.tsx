@@ -13,6 +13,7 @@ import {
   MOVEMENT_TYPES,
   MOVEMENT_TYPE_LABEL,
   type MovementType,
+  pricedByAgents,
   SHIPMENT_TYPES,
   SHIPMENT_TYPE_LABEL,
   type ShipmentType,
@@ -292,6 +293,7 @@ export function InquiryForm({
     let cancelled = false;
     // polId narrows the Inbound list to agents in the ORIGIN country, so the
     // fetch has to re-run when the port changes, not only the movement.
+    // Cross Border lists the Cross Border agents of any country instead.
     const query = new URLSearchParams({ movement: movementType });
     if (polId !== '') query.set('polId', polId);
     void authorizedRequest<InquiryPartyOption[]>(
@@ -367,7 +369,11 @@ export function InquiryForm({
     );
   }, [contactOptions, partyContactIds, emailsTouched]);
 
-  /** Changing the movement swaps agents for customers, so the picks go with it. */
+  /**
+   * Changing the movement changes who is offered — agents for carriers, or
+   * Inbound's POL-country agents for the Cross Border ones — so the picks go
+   * with it.
+   */
   function changeMovementType(next: MovementType): void {
     if (next === movementType) return;
     setMovementType(next);
@@ -690,8 +696,8 @@ export function InquiryForm({
               ) : (
                 <p className="rounded-manifest border border-line bg-paper px-3 py-2 text-body text-steel">
                   {laneStatus.status === 'EXPIRED'
-                    ? `No live rate on this lane — the last one expired on ${laneStatus.latestValidTo}. Ask ${movementType === 'INBOUND' ? 'an agent' : 'a carrier'} to quote it.`
-                    : `No rate on this lane yet. Ask ${movementType === 'INBOUND' ? 'an agent' : 'a carrier'} to quote it.`}
+                    ? `No live rate on this lane — the last one expired on ${laneStatus.latestValidTo}. Ask ${pricedByAgents(movementType) ? 'an agent' : 'a carrier'} to quote it.`
+                    : `No rate on this lane yet. Ask ${pricedByAgents(movementType) ? 'an agent' : 'a carrier'} to quote it.`}
                 </p>
               )}
             </div>
@@ -700,14 +706,15 @@ export function InquiryForm({
           {laneStatus !== null && laneStatus.status !== 'MATCHED' && (
             <>
           {/*
-            Who to chase a rate from. Inbound offers agents, Outbound offers
-            carriers — a customer is who the inquiry is FOR, never who you buy
-            from. Shown only when the lane has no live rate: if one exists there
-            is nothing to chase, and an expired one is no use for quoting.
+            Who to chase a rate from. Inbound and Cross Border offer agents,
+            Outbound offers carriers — a customer is who the inquiry is FOR,
+            never who you buy from. Shown only when the lane has no live rate:
+            if one exists there is nothing to chase, and an expired one is no
+            use for quoting.
           */}
           <Field
             id="partyIds"
-            label={movementType === 'INBOUND' ? 'Agents' : 'Carriers'}
+            label={pricedByAgents(movementType) ? 'Agents' : 'Carriers'}
             error={errorFor('partyIds')}
             wide
           >
@@ -725,7 +732,7 @@ export function InquiryForm({
                 );
                 setPartyContactIds((ids) => ids.filter((id) => stillOffered.has(id)));
               }}
-              placeholder={movementType === 'INBOUND' ? 'Choose agents' : 'Choose carriers'}
+              placeholder={pricedByAgents(movementType) ? 'Choose agents' : 'Choose carriers'}
             />
           </Field>
 
