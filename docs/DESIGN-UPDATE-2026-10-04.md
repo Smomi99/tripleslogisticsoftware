@@ -635,6 +635,23 @@ Tests: `income-statement.test.ts`, 9 cases. Every figure is hand arithmetic over
 the 500 gain and 100 loss from settlements, a workspace's own sub ledger, drafts left out, YTD and
 previous YTD, the cash basis, the export, permissions, and an empty second workspace.
 
+**Demo data to try it on:** `pnpm db:demo:accounts` builds 22 months of a working forwarder in the
+`demo` workspace, every record coded `DEMO-ACC-`:
+- four customers, an agent, two vendors and a bank account
+- 7 jobs a month (FCL in USD, LCL in BDT, Air in USD), each with a debit invoice and its cost blocks
+- every booking taken through schedule, S/O, cargo receipt, load plan (sea), sent advise and BL issue
+  (sea) before its invoice date, then departure and arrival confirmed — so sea bookings read BL issued
+  and air bookings Shipment advised with the records to back it. Sea jobs before this month carry a
+  pre-alert to the agent; air has none, as its HAWB and MAWB are uploads only
+- receipts and supplier payments at a bank rate that differs from the invoice rate, so both FX lines
+  move on accrual
+- a month's office expenses, a quarterly interest income and income tax, a depreciation journal, a
+  discount, and a petty cash transfer
+
+The current month holds a booking awaiting its invoice and a draft invoice. Pick last month to see a
+full month on both bases. `pnpm db:demo:accounts:clear` takes it out again, and `pnpm db:demo` /
+`db:demo:clear` include it.
+
 ---
 
 ## 10. REPORTS
