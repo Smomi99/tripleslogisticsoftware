@@ -45,6 +45,8 @@ export interface DataTableProps<T extends RowData> {
   /** The business code for the stencilled gutter column (§12). */
   getCode: (row: T) => string;
   codeHeader?: string;
+  /** Makes the code a button — a screen whose number opens the record in a popup. */
+  onCodeClick?: (row: T) => void;
   total: number;
   page: number;
   limit: number;
@@ -84,6 +86,7 @@ export function DataTable<T extends RowData>({
   getRowId,
   getCode,
   codeHeader = 'Code',
+  onCodeClick,
   total,
   page,
   limit,
@@ -228,9 +231,21 @@ export function DataTable<T extends RowData>({
                   anchor the eye returns to when scanning.
                 */}
                 <td className="sticky left-14 z-10 border-r border-line bg-paper/60 px-3 transition-colors duration-[120ms] group-hover:bg-row-hover">
-                  <span className="whitespace-nowrap font-mono text-hull" data-numeric="">
-                    {getCode(row.original)}
-                  </span>
+                  {onCodeClick === undefined ? (
+                    <span className="whitespace-nowrap font-mono text-hull" data-numeric="">
+                      {getCode(row.original)}
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      aria-haspopup="dialog"
+                      onClick={() => onCodeClick(row.original)}
+                      className="whitespace-nowrap rounded-manifest font-mono text-harbour transition-colors duration-[120ms] hover:text-harbour-ink hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-harbour"
+                      data-numeric=""
+                    >
+                      {getCode(row.original)}
+                    </button>
+                  )}
                 </td>
                 {columns.map((column, columnIndex) => (
                   <td

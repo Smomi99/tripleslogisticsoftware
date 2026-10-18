@@ -31,6 +31,9 @@ import { shipmentAdviseRouter } from './shipment-advise.route';
 import { blDraftRouter } from './bl-draft.route';
 import { blPrintRouter } from './bl-print.route';
 import { accountsRouter } from './accounts.route';
+import { financialStatementsRouter } from './financial-statements.route';
+import { freightCertificateRouter } from './freight-certificate.route';
+import { taDaRouter } from './ta-da.route';
 import { ledgerRouter } from './ledger.route';
 import { customerPortalRouter } from './customer-portal.route';
 import { clpRouter } from './clp.route';
@@ -118,7 +121,13 @@ tenantRouter.use('/documentation', docWorklistRouter);
 // Credit Invoice, Receivable-Payable list.
 // docs/DESIGN-UPDATE-2026-10-04.md §9: before the routers that own /accounts.
 tenantRouter.use('/accounts/income-statement', incomeStatementRouter);
+// Balance Sheet and Cash Flow Statement (Menu M15, M16), 2026-10-18.
+tenantRouter.use('/accounts', financialStatementsRouter);
+// TA/DA claims (Menu M17), 2026-10-18.
+tenantRouter.use('/accounts/ta-da', taDaRouter);
 tenantRouter.use('/accounts', accountsRouter);
+// The Freight Certificate, made from a debit invoice (the client's sample of 2026-10-18).
+tenantRouter.use('/accounts', freightCertificateRouter);
 // The books (§14): Chart of accounts, the four Transaction screens, and the
 // Bank / Account set-ups.
 tenantRouter.use('/accounts', ledgerRouter);

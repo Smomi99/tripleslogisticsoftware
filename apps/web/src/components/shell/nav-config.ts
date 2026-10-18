@@ -139,6 +139,10 @@ const ROUTES: Record<string, RouteEntry> = {
   'ACCOUNTS.INCOME_STATEMENT': '/accounts/income-statement',
   // docs/DESIGN-UPDATE-2026-10-04.md §8, Menu M14.
   'ACCOUNTS.SHIPMENT_PROFITABILITY': '/accounts/shipment-profitability',
+  // 2026-10-18, on our recommendation: Menu M15, M16 and TA/DA.
+  'ACCOUNTS.BALANCE_SHEET': '/accounts/balance-sheet',
+  'ACCOUNTS.CASH_FLOW_STATEMENT': '/accounts/cash-flow',
+  'ACCOUNTS.TA_DA': '/accounts/ta-da',
   'ACCOUNTS.BANK_SETUP': '/accounts/bank-setup',
   'ACCOUNTS.ACCOUNT_SETUP': '/accounts/account-setup',
   'CUSTOMER.SHIPMENT': '/portal/shipment',

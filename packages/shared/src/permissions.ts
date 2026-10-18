@@ -399,7 +399,12 @@ export const FEATURES: readonly FeatureDefinition[] = [
      * left the building, so it is not yet business history — MODULE_INQUIRY_
      * QUOTATION §11 Q13, answered 2026-09-29 as "a delete limited to DRAFT".
      */
-    actions: ['VIEW', 'CREATE', 'EDIT', 'DELETE', 'SEND', 'FOLLOWUP', 'EXPORT_PDF', 'VIEW_ALL'],
+    /*
+     * VIEW_BUY_PRICE (2026-10-18): the quotation's Cost Details — what the
+     * forwarder expects to pay the carrier, agent and vendor. Column-level, as
+     * on the debit invoice: reading a quotation is not reading its margin.
+     */
+    actions: ['VIEW', 'CREATE', 'EDIT', 'DELETE', 'SEND', 'FOLLOWUP', 'EXPORT_PDF', 'VIEW_ALL', 'VIEW_BUY_PRICE'],
   },
   /*
    * Column-level, like PURCHASE's VIEW_BUY_PRICE. Adding a cost head nobody
@@ -601,6 +606,20 @@ export const FEATURES: readonly FeatureDefinition[] = [
     feature: 'ACCOUNTS.DEBIT_INVOICE',
     label: 'Debit Invoice',
     actions: [...MASTER, 'SEND', 'EXPORT_PDF', 'CANCEL', 'RECEIVE', 'VIEW_BUY_PRICE'],
+  },
+  /*
+   * The client's sample of 2026-10-18: a letter for the shipper certifying
+   * what the freight cost, made from an issued freight debit invoice. A child
+   * screen — it opens from the invoice, never from the sidebar. Its own
+   * feature because writing a letter the shipper takes to their bank is not
+   * the same trust as composing the invoice.
+   */
+  {
+    module: 'ACCOUNTS',
+    feature: 'ACCOUNTS.FREIGHT_CERTIFICATE',
+    label: 'Freight Certificate',
+    actions: ['VIEW', 'CREATE', 'EDIT', 'EXPORT_PDF'],
+    childScreen: true,
   },
   /*
    * MODULE_ACCOUNTS §14.2: the suppliers' invoices — the cost blocks of issued

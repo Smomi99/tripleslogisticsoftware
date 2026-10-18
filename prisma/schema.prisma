@@ -308,7 +308,12 @@ model Tenant {
   debitInvoiceLines     DebitInvoiceLine[]
   debitInvoiceCosts     DebitInvoiceCost[]
   debitInvoiceCostLines DebitInvoiceCostLine[]
+  quotationCosts        QuotationCost[]
+  quotationCostLines    QuotationCostLine[]
   debitInvoiceReceipts  DebitInvoiceReceipt[]
+  freightCertificates   FreightCertificate[]
+  taDaClaims            TaDaClaim[]
+  taDaClaimLines        TaDaClaimLine[]
 
   ledgerAccounts     LedgerAccount[]
   banks              Bank[]
@@ -523,6 +528,10 @@ model Currency {
 
   debitInvoices     DebitInvoice[]     @relation("DebitInvoiceCurrency")
   debitInvoiceCosts DebitInvoiceCost[] @relation("DebitInvoiceCostCurrency")
+  quotationCosts    QuotationCost[]    @relation("QuotationCostCurrency")
+
+  freightCertificates FreightCertificate[] @relation("FreightCertificateCurrency")
+  taDaClaims          TaDaClaim[]          @relation("TaDaClaimCurrency")
 
   openingSettlements OpeningSettlement[] @relation("OpeningSettlementCurrency")
   tariffLines TariffLine[] @relation("TariffLineCurrency")
@@ -592,6 +601,7 @@ model CostUnit {
 
   debitInvoiceLines     DebitInvoiceLine[]     @relation("DebitInvoiceLineCostUnit")
   debitInvoiceCostLines DebitInvoiceCostLine[] @relation("DebitInvoiceCostLineCostUnit")
+  quotationCostLines    QuotationCostLine[]    @relation("QuotationCostLineCostUnit")
 
   tariffLines TariffLine[] @relation("TariffLineUnit")
 
@@ -629,6 +639,7 @@ model CostHead {
 
   debitInvoiceLines     DebitInvoiceLine[]
   debitInvoiceCostLines DebitInvoiceCostLine[]
+  quotationCostLines    QuotationCostLine[]
 
   tariffLines TariffLine[]
 
@@ -713,6 +724,7 @@ model Carrier {
   clps              Clp[]              @relation("ClpCarrier")
   advises           ShipmentAdvise[]   @relation("ShipmentAdviseCarrier")
   debitInvoiceCosts DebitInvoiceCost[] @relation("DebitInvoiceCostCarrier")
+  quotationCosts    QuotationCost[]    @relation("QuotationCostCarrier")
   journalEntries    JournalEntry[]     @relation("JournalEntryCarrier")
 
   @@unique([tenantId, code])
@@ -976,6 +988,7 @@ model Vendor {
   users User[] @relation("VendorUsers")
 
   debitInvoiceCosts  DebitInvoiceCost[]  @relation("DebitInvoiceCostVendor")
+  quotationCosts     QuotationCost[]     @relation("QuotationCostVendor")
   journalEntries     JournalEntry[]      @relation("JournalEntryVendor")
   openingSettlements OpeningSettlement[] @relation("OpeningSettlementVendor")
 
@@ -1378,6 +1391,7 @@ model Agent {
   blTemplates    BlTemplate[]   @relation("BlTemplateDeliveryAgent")
 
   debitInvoiceCosts  DebitInvoiceCost[]  @relation("DebitInvoiceCostAgent")
+  quotationCosts     QuotationCost[]     @relation("QuotationCostAgent")
   journalEntries     JournalEntry[]      @relation("JournalEntryAgent")
   openingSettlements OpeningSettlement[] @relation("OpeningSettlementAgent")
 
@@ -1546,6 +1560,7 @@ model Employee {
   inquiriesAsSalesman Inquiry[]
   customersOwned      Customer[] @relation("CustomerSalesman")
   supervisedClps      Clp[]      @relation("ClpSupervisor")
+  taDaClaims          TaDaClaim[] @relation("TaDaClaimEmployee")
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -1968,8 +1983,22 @@ model User {
   debitInvoiceCostsUpdated     DebitInvoiceCost[]     @relation("DebitInvoiceCostUpdatedBy")
   debitInvoiceCostLinesCreated DebitInvoiceCostLine[] @relation("DebitInvoiceCostLineCreatedBy")
   debitInvoiceCostLinesUpdated DebitInvoiceCostLine[] @relation("DebitInvoiceCostLineUpdatedBy")
+  quotationCostsCreated        QuotationCost[]        @relation("QuotationCostCreatedBy")
+  quotationCostsUpdated        QuotationCost[]        @relation("QuotationCostUpdatedBy")
+  quotationCostLinesCreated    QuotationCostLine[]    @relation("QuotationCostLineCreatedBy")
+  quotationCostLinesUpdated    QuotationCostLine[]    @relation("QuotationCostLineUpdatedBy")
   debitInvoiceReceiptsCreated  DebitInvoiceReceipt[]  @relation("DebitInvoiceReceiptCreatedBy")
   debitInvoiceReceiptsUpdated  DebitInvoiceReceipt[]  @relation("DebitInvoiceReceiptUpdatedBy")
+  freightCertificatesCreated   FreightCertificate[]   @relation("FreightCertificateCreatedBy")
+  freightCertificatesUpdated   FreightCertificate[]   @relation("FreightCertificateUpdatedBy")
+  taDaClaimsSubmitted          TaDaClaim[]            @relation("TaDaClaimSubmittedBy")
+  taDaClaimsDecided            TaDaClaim[]            @relation("TaDaClaimDecidedBy")
+  taDaClaimsPaid               TaDaClaim[]            @relation("TaDaClaimPaidByUser")
+  taDaClaimsCancelled          TaDaClaim[]            @relation("TaDaClaimCancelledBy")
+  taDaClaimsCreated            TaDaClaim[]            @relation("TaDaClaimCreatedBy")
+  taDaClaimsUpdated            TaDaClaim[]            @relation("TaDaClaimUpdatedBy")
+  taDaClaimLinesCreated        TaDaClaimLine[]        @relation("TaDaClaimLineCreatedBy")
+  taDaClaimLinesUpdated        TaDaClaimLine[]        @relation("TaDaClaimLineUpdatedBy")
 
   // The books (MODULE_ACCOUNTS.md §14)
   ledgerAccountsCreated      LedgerAccount[]     @relation("LedgerAccountCreatedBy")
@@ -2325,6 +2354,7 @@ model ContainerSize {
 
   debitInvoiceLines     DebitInvoiceLine[]     @relation("DebitInvoiceLineContainerSize")
   debitInvoiceCostLines DebitInvoiceCostLine[] @relation("DebitInvoiceCostLineContainerSize")
+  quotationCostLines    QuotationCostLine[]    @relation("QuotationCostLineContainerSize")
 
   tariffLines TariffLine[] @relation("TariffLineContainerSize")
 
@@ -3652,6 +3682,8 @@ model Quotation {
   updatedByUser User? @relation("QuotationUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   lines       QuotationLine[]
+  /// The buying side (2026-10-18): never printed, never sent.
+  costs       QuotationCost[]
   commodities QuotationCommodity[]
   recipients  QuotationRecipient[]
   followups   QuotationFollowup[]
@@ -3760,6 +3792,112 @@ model QuotationLine {
   @@index([containerSizeId])
   @@index([currencyId])
   @@map("quotation_line")
+}
+
+/// The quotation's buying side (client, 2026-10-18): "on New debit invoice we
+/// have cost details — we want the same on the quotation", and the debit
+/// invoice's cost blocks then start from these.
+///
+/// The same shape as debit_invoice_cost — one "Buying from Carrier / Agent /
+/// Vendor" block, its currency and frozen rate, its grid — less what only a
+/// supplier's actual bill has (their invoice number and file). Internal only:
+/// the quotation PDF and the customer's email never read these tables.
+model QuotationCost {
+  tenantId    BigInt            @map("tenant_id")
+  id          BigInt            @id @default(autoincrement())
+  quotationId BigInt            @map("quotation_id")
+  sortOrder   Int               @default(0) @map("sort_order")
+  partyType   SupplierPartyType @map("party_type")
+
+  /// Exactly the one party_type names (CHECK), as on debit_invoice_cost.
+  carrierId BigInt? @map("carrier_id")
+  agentId   BigInt? @map("agent_id")
+  vendorId  BigInt? @map("vendor_id")
+
+  currencyId     BigInt  @map("currency_id")
+  currencyCode   String  @map("currency_code") @db.VarChar(10)
+  conversionRate Decimal @map("conversion_rate") @db.Decimal(18, 10)
+
+  /// "Total Cost =", in the block's currency and in base, read back from the
+  /// GENERATED line amounts.
+  totalAmount     Decimal @default(0) @map("total_amount") @db.Decimal(18, 4)
+  totalAmountBase Decimal @default(0) @map("total_amount_base") @db.Decimal(18, 4)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  quotation Quotation @relation(fields: [tenantId, quotationId], references: [tenantId, id], onDelete: Restrict)
+  carrier   Carrier?  @relation("QuotationCostCarrier", fields: [carrierId], references: [id], onDelete: Restrict)
+  agent     Agent?    @relation("QuotationCostAgent", fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
+  vendor    Vendor?   @relation("QuotationCostVendor", fields: [tenantId, vendorId], references: [tenantId, id], onDelete: Restrict)
+  currency  Currency  @relation("QuotationCostCurrency", fields: [currencyId], references: [id], onDelete: Restrict)
+
+  createdByUser User? @relation("QuotationCostCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("QuotationCostUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  lines QuotationCostLine[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([quotationId])
+  @@index([carrierId])
+  @@index([agentId])
+  @@index([vendorId])
+  @@index([currencyId])
+  @@map("quotation_cost")
+}
+
+/// One row of a quotation cost block's grid.
+model QuotationCostLine {
+  tenantId        BigInt              @map("tenant_id")
+  id              BigInt              @id @default(autoincrement())
+  quotationCostId BigInt              @map("quotation_cost_id")
+  sortOrder       Int                 @default(0) @map("sort_order")
+  /// AUTO is the price list's buy price for the charge; MANUAL was typed.
+  source          QuotationLineSource @default(MANUAL)
+
+  costHeadId   BigInt @map("cost_head_id")
+  costHeadName String @map("cost_head_name") @db.VarChar(200)
+
+  containerSizeId   BigInt? @map("container_size_id")
+  containerSizeName String? @map("container_size_name") @db.VarChar(100)
+  costUnitId        BigInt? @map("cost_unit_id")
+  unitName          String? @map("unit_name") @db.VarChar(100)
+
+  quantity  Decimal  @db.Decimal(18, 3)
+  /// "Buying price".
+  unitPrice Decimal  @map("unit_price") @db.Decimal(18, 4)
+  /// GENERATED quantity * unit_price.
+  amount    Decimal? @default(dbgenerated()) @db.Decimal(18, 4)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  cost          QuotationCost  @relation(fields: [tenantId, quotationCostId], references: [tenantId, id], onDelete: Restrict)
+  costHead      CostHead       @relation(fields: [tenantId, costHeadId], references: [tenantId, id], onDelete: Restrict)
+  containerSize ContainerSize? @relation("QuotationCostLineContainerSize", fields: [containerSizeId], references: [id], onDelete: Restrict)
+  costUnit      CostUnit?      @relation("QuotationCostLineCostUnit", fields: [costUnitId], references: [id], onDelete: Restrict)
+
+  createdByUser User? @relation("QuotationCostLineCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("QuotationCostLineUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([quotationCostId])
+  @@index([costHeadId])
+  @@index([containerSizeId])
+  @@index([costUnitId])
+  @@map("quotation_cost_line")
 }
 
 /// The commodities the quotation covers, snapshotted from the inquiry.
@@ -5930,6 +6068,8 @@ model DebitInvoice {
   lines    DebitInvoiceLine[]
   costs    DebitInvoiceCost[]
   receipts DebitInvoiceReceipt[]
+  /// One live at a time (the partial index in its migration).
+  freightCertificates FreightCertificate[]
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -6132,6 +6272,214 @@ model DebitInvoiceReceipt {
   @@index([debitInvoiceId])
   @@index([journalEntryId])
   @@map("debit_invoice_receipt")
+}
+
+/// client: Freight Certificate (the sample supplied 2026-10-18, "Ref No :
+/// TSL-2021-201") — a letter for the shipper, usually for their bank, stating
+/// what the freight on one shipment cost.
+///
+/// Made from an issued freight debit invoice, one live per invoice. The
+/// shipment facts are copied in as text when it is made and stay editable,
+/// like a BL draft's party blocks (MODULE_DOCUMENTATION §3.4): the letter
+/// prints what was certified, and correcting a master later must never
+/// rewrite it. Invoice No, Exp No and LC/TT/Sales Contract No are recorded
+/// nowhere else in the product, so they are typed here.
+model FreightCertificate {
+  tenantId       BigInt @map("tenant_id")
+  id             BigInt @id @default(autoincrement())
+  /// "Ref No": FC-2026-000001, per workspace per year of the certificate
+  /// date, never reused.
+  code           String @db.VarChar(32)
+  seriesYear     Int    @map("series_year")
+  debitInvoiceId BigInt @map("debit_invoice_id")
+
+  /// "DT".
+  certificateDate DateTime @map("certificate_date") @db.Date
+
+  /// "Shipper / Exporter Name: and Address".
+  shipperText           String    @map("shipper_text") @db.Text
+  /// "Cartons/Bales".
+  packages              String?   @db.Text
+  commodity             String?   @db.Text
+  /// "Invoice No" and its "Date": the shipper's commercial invoice, not ours.
+  commercialInvoiceNo   String?   @map("commercial_invoice_no") @db.VarChar(100)
+  commercialInvoiceDate DateTime? @map("commercial_invoice_date") @db.Date
+  /// "Exp No" and its "Date".
+  expNo                 String?   @map("exp_no") @db.VarChar(100)
+  expDate               DateTime? @map("exp_date") @db.Date
+  /// "Bill of Lading no" — the house air waybill's number on an air booking.
+  blNo                  String?   @map("bl_no") @db.VarChar(64)
+  /// "LC/TT/Sales Contract No".
+  lcNo                  String?   @map("lc_no") @db.VarChar(200)
+  portOfLoading         String?   @map("port_of_loading") @db.Text
+  portOfDelivery        String?   @map("port_of_delivery") @db.Text
+
+  /// "Ocean Freight & Local Charges — Figure USD": the debit invoice's total in
+  /// US dollars. Worked out by the server from the invoice each time the
+  /// certificate is saved, never typed (decided 2026-10-18).
+  currencyId     BigInt  @map("currency_id")
+  amount         Decimal @db.Decimal(18, 4)
+  /// "Conversion Rate : 1 USD = n BDT" — base units per US dollar. The
+  /// invoice's own rate when it is in dollars; otherwise the workspace's rate
+  /// in force on the certificate date.
+  conversionRate Decimal @map("conversion_rate") @db.Decimal(18, 10)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  debitInvoice DebitInvoice @relation(fields: [tenantId, debitInvoiceId], references: [tenantId, id], onDelete: Restrict)
+  /// Currency is system-capable, so a single-column key plus the tenant guard.
+  currency     Currency     @relation("FreightCertificateCurrency", fields: [currencyId], references: [id], onDelete: Restrict)
+
+  createdByUser User? @relation("FreightCertificateCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("FreightCertificateUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  /// One live certificate per debit invoice: a partial unique index in the migration.
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([debitInvoiceId])
+  @@index([currencyId])
+  @@map("freight_certificate")
+}
+
+/// A TA/DA claim's life (2026-10-18). DRAFT and REJECTED are the employee's to
+/// change; SUBMITTED waits on an approver; APPROVED waits on Accounts; PAID
+/// names the Expense voucher that paid it. Cancelling that voucher puts the
+/// claim back to APPROVED.
+enum TaDaStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  PAID
+  CANCELLED
+
+  @@map("ta_da_status")
+}
+
+/// Accounts → TA/DA (Menu M17) — Travel Allowance / Daily Allowance claims.
+///
+/// The menu names the screen and no sheet draws it (MODULE_ACCOUNTS §14.13
+/// Q1). Built 2026-10-18 on our recommendation ("do all with your
+/// recommendation"): an employee's claim for field work — the port, customs,
+/// a customer's factory — line by line, approved, then paid from cash or bank
+/// by an Expense voucher on the chart's TA/DA account
+/// (EXPENSE.OPERATING.TA_DA), so the money is in the books the way every
+/// other payment is.
+model TaDaClaim {
+  tenantId   BigInt @map("tenant_id")
+  id         BigInt @id @default(autoincrement())
+  /// TADA-2026-000001, per workspace per year of the claim date, never reused.
+  code       String @db.VarChar(32)
+  seriesYear Int    @map("series_year")
+
+  employeeId BigInt   @map("employee_id")
+  claimDate  DateTime @map("claim_date") @db.Date
+  purpose    String   @db.Text
+
+  status TaDaStatus @default(DRAFT)
+
+  /// The workspace's base currency when the claim was made (§4 rule 6):
+  /// allowances are paid locally.
+  currencyId  BigInt  @map("currency_id")
+  /// Read back from the lines on every save.
+  totalTa     Decimal @default(0) @map("total_ta") @db.Decimal(18, 4)
+  totalDa     Decimal @default(0) @map("total_da") @db.Decimal(18, 4)
+  totalAmount Decimal @default(0) @map("total_amount") @db.Decimal(18, 4)
+
+  submittedAt  DateTime? @map("submitted_at") @db.Timestamptz(6)
+  submittedBy  BigInt?   @map("submitted_by")
+  /// Approved or rejected — the status says which.
+  decidedAt    DateTime? @map("decided_at") @db.Timestamptz(6)
+  decidedBy    BigInt?   @map("decided_by")
+  rejectReason String?   @map("reject_reason") @db.Text
+  /// The Expense voucher that paid it; cleared if that voucher is cancelled.
+  journalEntryId BigInt?   @map("journal_entry_id")
+  paidAt         DateTime? @map("paid_at") @db.Timestamptz(6)
+  paidBy         BigInt?   @map("paid_by")
+  cancelledAt    DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  cancelledBy    BigInt?   @map("cancelled_by")
+  cancelReason   String?   @map("cancel_reason") @db.Text
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  employee     Employee      @relation("TaDaClaimEmployee", fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
+  /// Currency is system-capable, so a single-column key plus the tenant guard.
+  currency     Currency      @relation("TaDaClaimCurrency", fields: [currencyId], references: [id], onDelete: Restrict)
+  journalEntry JournalEntry? @relation("TaDaClaimPaidBy", fields: [tenantId, journalEntryId], references: [tenantId, id], onDelete: Restrict)
+
+  submittedByUser User? @relation("TaDaClaimSubmittedBy", fields: [submittedBy], references: [id], onDelete: Restrict)
+  decidedByUser   User? @relation("TaDaClaimDecidedBy", fields: [decidedBy], references: [id], onDelete: Restrict)
+  paidByUser      User? @relation("TaDaClaimPaidByUser", fields: [paidBy], references: [id], onDelete: Restrict)
+  cancelledByUser User? @relation("TaDaClaimCancelledBy", fields: [cancelledBy], references: [id], onDelete: Restrict)
+  createdByUser   User? @relation("TaDaClaimCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser   User? @relation("TaDaClaimUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  lines TaDaClaimLine[]
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@index([currencyId])
+  @@index([journalEntryId])
+  @@index([submittedBy])
+  @@index([decidedBy])
+  @@index([paidBy])
+  @@index([cancelledBy])
+  @@map("ta_da_claim")
+}
+
+/// One trip or day on a claim.
+model TaDaClaimLine {
+  tenantId   BigInt   @map("tenant_id")
+  id         BigInt   @id @default(autoincrement())
+  claimId    BigInt   @map("claim_id")
+  sortOrder  Int      @default(0) @map("sort_order")
+  travelDate DateTime @map("travel_date") @db.Date
+  fromPlace  String   @map("from_place") @db.VarChar(200)
+  toPlace    String   @map("to_place") @db.VarChar(200)
+  /// How they went — Rickshaw, CNG, Bus, Train, Air… Free text: the ways of
+  /// getting about Dhaka and Chattogram are not a closed set worth a master.
+  mode        String? @db.VarChar(100)
+  description String? @db.Text
+  /// Travel Allowance: the fare.
+  taAmount    Decimal @default(0) @map("ta_amount") @db.Decimal(18, 4)
+  /// Daily Allowance: food and the day's stay.
+  daAmount    Decimal @default(0) @map("da_amount") @db.Decimal(18, 4)
+  /// GENERATED ta_amount + da_amount.
+  amount      Decimal? @default(dbgenerated()) @db.Decimal(18, 4)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  claim  TaDaClaim @relation(fields: [tenantId, claimId], references: [tenantId, id], onDelete: Restrict)
+
+  createdByUser User? @relation("TaDaClaimLineCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("TaDaClaimLineUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([claimId])
+  @@map("ta_da_claim_line")
 }
 
 // ===========================================================================
@@ -6356,6 +6704,8 @@ model JournalEntry {
   receipts           DebitInvoiceReceipt[]
   supplierPayments   SupplierPayment[]
   openingSettlements OpeningSettlement[]
+  /// The TA/DA claim this Expense voucher paid, if it paid one.
+  taDaClaims         TaDaClaim[]         @relation("TaDaClaimPaidBy")
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])

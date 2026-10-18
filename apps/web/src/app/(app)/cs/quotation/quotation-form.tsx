@@ -21,6 +21,8 @@ import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 
+import { QuotationCostDetails } from './quotation-costs';
+
 /**
  * §6.5 — the Quotation screen.
  *
@@ -609,6 +611,16 @@ export function QuotationForm({
           quotation and the record cannot disagree.
         </p>
       </section>
+
+      {/* -------------------------------------- Cost Details (2026-10-18) */}
+      {can('CUSTOMER_SERVICE.QUOTATION.VIEW_BUY_PRICE') && (
+        <QuotationCostDetails
+          // A revision is another row with its own cost side.
+          key={quotation.id}
+          quotationId={quotation.id}
+          sellTotalBase={quotation.lines.reduce((sum, l) => sum + Number(l.billAmountLocal), 0)}
+        />
+      )}
 
       {/* --------------------------------------------------- send / actions */}
       <section className="rounded-manifest border border-line bg-surface p-5 shadow-manifest">

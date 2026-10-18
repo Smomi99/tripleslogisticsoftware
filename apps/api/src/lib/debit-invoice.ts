@@ -61,7 +61,7 @@ function qty(value: Prisma.Decimal): string {
 
 // -------------------------------------------------------------- the reads
 
-const LINE_SELECT = {
+export const LINE_SELECT = {
   id: true,
   source: true,
   costHeadId: true,
@@ -195,6 +195,12 @@ export const INVOICE_SELECT = {
       journalEntry: { select: { id: true, code: true } },
     },
   },
+  freightCertificates: {
+    where: { deletedAt: null },
+    orderBy: { id: 'desc' as const },
+    take: 1,
+    select: { id: true, code: true },
+  },
 } satisfies Prisma.DebitInvoiceSelect;
 
 export type InvoiceRow = Prisma.DebitInvoiceGetPayload<{ select: typeof INVOICE_SELECT }>;
@@ -293,7 +299,7 @@ export function paymentCountOf(row: { costs: { payments: unknown[] }[] }): numbe
 
 // ------------------------------------------------------------- the DTO
 
-function lineDto(
+export function lineDto(
   line: InvoiceRow['lines'][number],
   rate: Prisma.Decimal,
 ): DebitInvoiceLineDto {
@@ -394,6 +400,10 @@ export function invoiceDto(
       journalEntryId: r.journalEntry?.id.toString() ?? null,
       journalEntryCode: r.journalEntry?.code ?? null,
     })),
+    freightCertificate:
+      row.freightCertificates[0] === undefined
+        ? null
+        : { id: row.freightCertificates[0].id.toString(), code: row.freightCertificates[0].code },
     issuedAt: row.issuedAt?.toISOString() ?? null,
     sentAt: row.sentAt?.toISOString() ?? null,
     cancelledAt: row.cancelledAt?.toISOString() ?? null,
@@ -424,7 +434,7 @@ export function rateFor(currencyId: bigint, rate: string, base: BaseCurrency): P
   return currencyId === base.id ? new Prisma.Decimal(1) : new Prisma.Decimal(rate);
 }
 
-interface ResolvedLine {
+export interface ResolvedLine<S extends string = InvoiceLineData['source']> {
   costHeadId: bigint;
   costHeadName: string;
   containerSizeId: bigint | null;
@@ -433,15 +443,18 @@ interface ResolvedLine {
   unitName: string | null;
   quantity: string;
   unitPrice: string;
-  source: InvoiceLineData['source'];
+  source: S;
 }
+
+/** A grid row as a save sends it, whatever its `source` vocabulary. */
+type LineData<S extends string> = Omit<InvoiceLineData, 'source'> & { source: S };
 
 /**
  * Names snapshotted from the masters, so the document keeps saying what it said
  * when a cost head is renamed later. A reference this workspace cannot see is
  * refused by name rather than failing on a foreign key.
  */
-async function resolveLines(db: TenantDb, lines: InvoiceLineData[]): Promise<ResolvedLine[]> {
+export async function resolveLines<S extends string>(db: TenantDb, lines: LineData<S>[]): Promise<ResolvedLine<S>[]> {
   if (lines.length === 0) return [];
   const headIds = [...new Set(lines.map((l) => BigInt(l.costHeadId)))];
   const sizeIds = [...new Set(lines.flatMap((l) => (l.containerSizeId === null ? [] : [BigInt(l.containerSizeId)])))];
@@ -529,7 +542,7 @@ async function writeSellLines(
   });
 }
 
-async function partyIsVisible(db: TenantDb, type: SupplierPartyType, id: bigint): Promise<boolean> {
+export async function partyIsVisible(db: TenantDb, type: SupplierPartyType, id: bigint): Promise<boolean> {
   const where = { id, deletedAt: null };
   if (type === 'CARRIER') return (await db.carrier.findFirst({ where, select: { id: true } })) !== null;
   if (type === 'AGENT') return (await db.agent.findFirst({ where, select: { id: true } })) !== null;
@@ -1040,7 +1053,106 @@ export async function prefillFor(
     const agentName =
       shipment.quotation.sourceAgentQuote?.agent.name ?? shipment.quotation.inquiry.wonAgent?.name ?? null;
 
-    costs = [
+    /*
+     * The quotation's Cost Details (client, 2026-10-18: "on the debit note the
+     * cost details will pull from the quotation"). Each block comes across as
+     * the quotation priced it, at today's rate like the selling side.
+     *
+     * The load plan's figure is what the carrier actually charged for the box,
+     * where CR-002 §9 has allocated one; it replaces what was quoted for that
+     * cost head and size in the carrier's block, rather than sitting beside it
+     * and counting the box twice.
+     */
+    const quoted = await db.quotationCost.findMany({
+      where: { quotationId: shipment.quotation.id, deletedAt: null },
+      orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+      select: {
+        partyType: true,
+        carrierId: true,
+        agentId: true,
+        vendorId: true,
+        carrier: { select: { name: true } },
+        agent: { select: { name: true } },
+        vendor: { select: { name: true } },
+        currencyId: true,
+        currencyCode: true,
+        lines: {
+          where: { deletedAt: null },
+          orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+          select: {
+            costHeadId: true,
+            costHeadName: true,
+            containerSizeId: true,
+            containerSizeName: true,
+            costUnitId: true,
+            unitName: true,
+            quantity: true,
+            unitPrice: true,
+          },
+        },
+      },
+    });
+
+    if (quoted.length > 0) {
+      const pulled: NonNullable<DebitInvoicePrefillDto['costs']> = [];
+      for (const block of quoted) {
+        const [partyId, partyName] =
+          block.partyType === 'CARRIER'
+            ? [block.carrierId, block.carrier?.name ?? null]
+            : block.partyType === 'AGENT'
+              ? [block.agentId, block.agent?.name ?? null]
+              : [block.vendorId, block.vendor?.name ?? null];
+        pulled.push({
+          id: null,
+          partyType: block.partyType,
+          partyId: partyId?.toString() ?? null,
+          partyName,
+          supplierInvoiceNo: null,
+          currencyId: block.currencyId.toString(),
+          conversionRate: await rateOf(block.currencyId, block.currencyCode),
+          lines: block.lines.map((l) => ({
+            costHeadId: l.costHeadId.toString(),
+            costHeadName: l.costHeadName,
+            containerSizeId: l.containerSizeId?.toString() ?? null,
+            containerSizeName: l.containerSizeName,
+            costUnitId: l.costUnitId?.toString() ?? null,
+            unitName: l.unitName,
+            quantity: l.quantity.toString(),
+            unitPrice: l.unitPrice.toString(),
+            source: 'QUOTATION' as const,
+          })),
+        });
+      }
+
+      if (carrierLines.length > 0) {
+        const carrierBlock = pulled.find(
+          (b) => b.partyType === 'CARRIER' && b.currencyId === carrierCurrencyId.toString(),
+        );
+        const sameBox = (a: { costHeadId: string; containerSizeId?: string | null | undefined }) =>
+          carrierLines.some((c) => c.costHeadId === a.costHeadId && c.containerSizeId === (a.containerSizeId ?? null));
+        if (carrierBlock !== undefined) {
+          carrierBlock.lines = [...carrierBlock.lines.filter((l) => !sameBox(l)), ...carrierLines];
+          notes.push('The carrier’s container cost is the load plan’s, in place of what the quotation estimated.');
+        } else if (!pulled.some((b) => b.partyType === 'CARRIER')) {
+          pulled.unshift({
+            id: null,
+            partyType: 'CARRIER',
+            partyId: shipment.carrierId.toString(),
+            partyName: shipment.carrier.name,
+            supplierInvoiceNo: null,
+            currencyId: carrierCurrencyId.toString(),
+            conversionRate: await rateOf(carrierCurrencyId, carrierCurrencyCode),
+            lines: carrierLines,
+          });
+        } else {
+          notes.push(
+            `The load plans hold this booking’s carrier cost in ${carrierCurrencyCode}, and the quotation ` +
+              'estimated it in another currency, so the quotation’s figure was kept. Check it against the carrier’s invoice.',
+          );
+        }
+      }
+      costs = pulled;
+    } else costs = [
       {
         id: null,
         partyType: 'CARRIER',

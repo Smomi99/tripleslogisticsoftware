@@ -14,7 +14,6 @@ import {
   CODE_PREFIX,
   type DocumentPartyDto,
   documentPartyQuerySchema,
-  type JournalEntryData,
   type JournalEntryDto,
   journalEntryCancelSchema,
   journalEntryInputSchema,
@@ -38,7 +37,6 @@ import { CODE_RETRY_LIMIT, isUniqueViolation, nextCode } from '../lib/codes';
 import { type BaseCurrency, baseCurrency, resolveRates } from '../lib/currency-rate';
 import { day, dec, describeLines, isoOf, money, paymentOf } from '../lib/debit-invoice';
 import { HttpError } from '../lib/http-error';
-import { seriesYearOf } from '../lib/inquiry-no';
 import {
   accountOption,
   accountsSummary,
@@ -46,7 +44,9 @@ import {
   accountTotals,
   balanceOf,
   bankLedgerName,
+  accountsFor,
   buildLines,
+  createEntry,
   ensureChart,
   ENTRY_SELECT,
   entryDto,
@@ -58,7 +58,6 @@ import {
   labelOf,
   loadAccounts,
   loadEntry,
-  nextVoucherNo,
   openingOutstanding,
   serviceKeyOf,
   settle,
@@ -66,6 +65,7 @@ import {
   supplierColumns,
   systemAccount,
   unsettle,
+  writeLines,
 } from '../lib/ledger';
 import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import { parseId } from '../lib/request';
@@ -941,38 +941,6 @@ async function dtoFor(db: TenantDb, tenantId: bigint, id: bigint, kind: JournalE
   return entryDto(row, { baseCurrencyCode: base === null ? null : isoOf(base), displayName: displayNameFromKey });
 }
 
-/** Resolves every account a voucher names, in one query. */
-async function accountsFor(db: TenantDb, input: JournalEntryData): Promise<Map<string, AccountRow>> {
-  const ids = new Set<string>(input.lines.map((l) => l.ledgerAccountId));
-  if (input.kind !== 'JOURNAL') ids.add(input.moneyAccountId);
-  const rows = await loadAccounts(db);
-  return new Map(rows.filter((r) => ids.has(r.id.toString())).map((r) => [r.id.toString(), r]));
-}
-
-/** Writes the lines of a voucher, replacing any a draft already had. */
-async function writeLines(
-  db: TenantDb,
-  args: { tenantId: bigint; userId: bigint; entryId: bigint; lines: ReturnType<typeof buildLines> },
-): Promise<Prisma.Decimal> {
-  await db.journalLine.updateMany({
-    where: { journalEntryId: args.entryId, deletedAt: null },
-    data: { deletedAt: new Date(), isActive: false, updatedBy: args.userId },
-  });
-  await db.journalLine.createMany({
-    data: args.lines.map((l, index) => ({
-      tenantId: args.tenantId,
-      journalEntryId: args.entryId,
-      sortOrder: index,
-      ledgerAccountId: l.ledgerAccountId,
-      debit: l.debit,
-      credit: l.credit,
-      createdBy: args.userId,
-      updatedBy: args.userId,
-    })),
-  });
-  return args.lines.reduce((sum, l) => sum.plus(l.debit), new Prisma.Decimal(0));
-}
-
 for (const kind of Object.keys(SLUG) as JournalEntryKind[]) {
   const path = `/${SLUG[kind]}`;
   const feature = JOURNAL_ENTRY_FEATURE[kind];
@@ -1057,45 +1025,8 @@ for (const kind of Object.keys(SLUG) as JournalEntryKind[]) {
 
     const id = await withTenant(auth.tenantId, async (db) => {
       const base = await requireBase(db, auth.tenantId);
-      await ensureChart(db, auth.tenantId, auth.userId);
-      const lines = buildLines(input, await accountsFor(db, input));
       const entryDate = new Date(`${input.entryDate}T00:00:00.000Z`);
-      const year = seriesYearOf(entryDate);
-      const now = new Date();
-
-      let entryId: bigint | null = null;
-      for (let attempt = 0; attempt < CODE_RETRY_LIMIT && entryId === null; attempt += 1) {
-        const code = await nextVoucherNo(db, auth.tenantId, kind, year);
-        try {
-          entryId = (
-            await db.journalEntry.create({
-              data: {
-                tenantId: auth.tenantId,
-                code,
-                seriesYear: year,
-                kind,
-                entryDate,
-                description: input.description,
-                status: posting ? 'POSTED' : 'DRAFT',
-                postedAt: posting ? now : null,
-                postedBy: posting ? auth.userId : null,
-                createdBy: auth.userId,
-                updatedBy: auth.userId,
-              },
-              select: { id: true },
-            })
-          ).id;
-        } catch (error) {
-          if (isUniqueViolation(error, 'code')) continue;
-          throw error;
-        }
-      }
-      if (entryId === null) {
-        throw new HttpError(409, 'CODE_GENERATION_FAILED', 'Could not allocate a voucher number. Please try again.');
-      }
-
-      const total = await writeLines(db, { tenantId: auth.tenantId, userId: auth.userId, entryId, lines });
-      await db.journalEntry.update({ where: { id: entryId }, data: { totalAmount: total } });
+      const entryId = await createEntry(db, { tenantId: auth.tenantId, userId: auth.userId, input, posting });
 
       if ((input.kind === 'EXPENSE' || input.kind === 'INCOME') && input.settlement !== null && input.settlement !== undefined) {
         await settle(db, {

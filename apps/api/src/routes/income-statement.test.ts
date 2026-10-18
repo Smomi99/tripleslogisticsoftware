@@ -81,7 +81,14 @@ async function makeWorld(name: string, slug: string, tag: string, withBooks: boo
     });
     return { id, token: await signAccessToken({ sub: id.toString(), tenantId: tenantId.toString(), isSuperadmin: false, permissions, tokenVersion: 0 }) };
   };
-  const viewer = await user(`USR-V${tag}`, ['ACCOUNTS.INCOME_STATEMENT.VIEW', 'ACCOUNTS.INCOME_STATEMENT.EXPORT']);
+  const viewer = await user(`USR-V${tag}`, [
+    'ACCOUNTS.INCOME_STATEMENT.VIEW',
+    'ACCOUNTS.INCOME_STATEMENT.EXPORT',
+    'ACCOUNTS.BALANCE_SHEET.VIEW',
+    'ACCOUNTS.BALANCE_SHEET.EXPORT',
+    'ACCOUNTS.CASH_FLOW_STATEMENT.VIEW',
+    'ACCOUNTS.CASH_FLOW_STATEMENT.EXPORT',
+  ]);
   const bare = await user(`USR-B${tag}`, []);
   const world = { slug, viewerToken: viewer.token, bareToken: bare.token };
   if (!withBooks) return world;
@@ -366,5 +373,107 @@ describe('Income Statement', () => {
     expect(other.get('NET_REVENUE')).toEqual(['0.00', '0.00', '0.00']);
     expect(other.get('NET_PROFIT_AFTER_TAX')).toEqual(['0.00', '0.00', '0.00']);
     expect(other.get('GROSS_PROFIT_PERCENT')).toEqual([null, null, null]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Balance Sheet and Cash Flow Statement (2026-10-18), over the same fixtures.
+//
+//   books to 31-Oct-2026   cash: −2,000 rent −50 courier −100 discount −400 tax
+//                          +200 interest +10,500 received −6,100 paid = 2,050;
+//                          building −300 (depreciation); profit 1,750
+//   accrual adds           billed 10,000 + 4,000 + 500 + 7,000, received 10,000:
+//                          receivable 11,500; costed 6,000 + 1,000 + 3,000 +
+//                          5,000, paid 6,000: payable 9,000
+//   so                     earned 1,750 + 11,500 − 9,000 = 4,250: this year's
+//                          2,250 (the Income Statement's YTD) and last year's 2,000
+// ---------------------------------------------------------------------------
+
+function statement(kind: 'balance-sheet' | 'cash-flow', token: string, slug: string) {
+  return (path: string) =>
+    request(app).get(`/api/tenant/accounts/${kind}${path}`).set('Authorization', `Bearer ${token}`).set('X-Tenant-Slug', slug);
+}
+
+type StatementRow = { key: string; amounts: (string | null)[] };
+const byKey = (rows: StatementRow[]) => new Map(rows.map((r) => [r.key, r.amounts]));
+
+describe('Balance Sheet', () => {
+  const AS_AT = '?asOf=2026-10-31&yearStartMonth=7';
+
+  it('balances on accrual: the books, plus what the invoices leave owing', async () => {
+    const res = await statement('balance-sheet', A.viewerToken, A.slug)(AS_AT);
+    expect(res.status, JSON.stringify(res.body.error ?? {})).toBe(200);
+    expect(res.body.data).toMatchObject({ currencyCode: 'BDT', basis: 'ACCRUAL', balanced: true });
+    expect(res.body.data.columns.map((c: { asOf: string }) => c.asOf)).toEqual(['2026-10-31', '2025-10-31']);
+    const rows = byKey(res.body.data.rows);
+    expect(rows.get('CASH')).toEqual(['2050.00', '0.00']);
+    expect(rows.get('LONG_TERM_ASSETS')).toEqual(['-300.00', '0.00']);
+    expect(rows.get('RECEIVABLE')).toEqual(['11500.00', '7000.00']);
+    expect(rows.get('TOTAL_ASSETS')).toEqual(['13250.00', '7000.00']);
+    expect(rows.get('PAYABLE')).toEqual(['9000.00', '5000.00']);
+    expect(rows.get('TOTAL_LIABILITIES')).toEqual(['9000.00', '5000.00']);
+    // Profit for the Year is the Income Statement's accrual YTD; the rest came before.
+    expect(rows.get('PROFIT')).toEqual(['2250.00', '2000.00']);
+    expect(rows.get('RETAINED')).toEqual(['2000.00', '0.00']);
+    expect(rows.get('TOTAL_LIABILITIES_AND_EQUITY')).toEqual(['13250.00', '7000.00']);
+    expect(rows.has('DIFFERENCE')).toBe(false);
+  });
+
+  it('on a cash basis, is the books as they stand', async () => {
+    const res = await statement('balance-sheet', A.viewerToken, A.slug)(`${AS_AT}&basis=CASH`);
+    expect(res.status).toBe(200);
+    expect(res.body.data.balanced).toBe(true);
+    const rows = byKey(res.body.data.rows);
+    expect(rows.get('RECEIVABLE')).toEqual(['0.00', '0.00']);
+    expect(rows.get('PAYABLE')).toEqual(['0.00', '0.00']);
+    expect(rows.get('TOTAL_ASSETS')).toEqual(['1750.00', '0.00']);
+    expect(rows.get('PROFIT')).toEqual(['1750.00', '0.00']);
+    expect(rows.get('RETAINED')).toEqual(['0.00', '0.00']);
+  });
+
+  it('exports, refuses a user without the permission, and shows another workspace nothing', async () => {
+    const xlsx = await statement('balance-sheet', A.viewerToken, A.slug)(`/export${AS_AT}`)
+      .buffer(true)
+      .parse((r, done) => {
+        const chunks: Buffer[] = [];
+        r.on('data', (c: Buffer) => chunks.push(c));
+        r.on('end', () => done(null, Buffer.concat(chunks)));
+      });
+    expect(xlsx.status).toBe(200);
+    expect((xlsx.body as Buffer).subarray(0, 2).toString()).toBe('PK');
+
+    expect((await statement('balance-sheet', A.bareToken, A.slug)(AS_AT)).status).toBe(403);
+    expect((await statement('balance-sheet', A.viewerToken, A.slug)('?asOf=31-10-2026')).status).toBe(400);
+    const other = await statement('balance-sheet', B.viewerToken, B.slug)(AS_AT);
+    expect(other.status).toBe(200);
+    expect(byKey(other.body.data.rows).get('TOTAL_ASSETS')).toEqual(['0.00', '0.00']);
+  });
+});
+
+describe('Cash Flow Statement', () => {
+  it('splits what the cash moved by where it went, and reconciles to the books', async () => {
+    const res = await statement('cash-flow', A.viewerToken, A.slug)(QUERY);
+    expect(res.status, JSON.stringify(res.body.error ?? {})).toBe(200);
+    const rows = byKey(res.body.data.rows);
+    // October: 10,500 banked less the 100 discount; 6,100 to the carrier.
+    expect(rows.get('OP_CUSTOMERS')).toEqual(['10400.00', '10400.00', '0.00']);
+    expect(rows.get('OP_SUPPLIERS')).toEqual(['-6100.00', '-6100.00', '0.00']);
+    expect(rows.get('OP_EXPENSES')).toEqual(['-2050.00', '-2050.00', '0.00']);
+    expect(rows.get('OP_TAX')).toEqual(['-400.00', '-400.00', '0.00']);
+    expect(rows.get('NET_OPERATING')).toEqual(['1850.00', '1850.00', '0.00']);
+    // September's deposit interest is in the year to date, not the month.
+    expect(rows.get('INV_INTEREST')).toEqual(['0.00', '200.00', '0.00']);
+    expect(rows.get('NET_CHANGE')).toEqual(['1850.00', '2050.00', '0.00']);
+    expect(rows.get('OPENING_CASH')).toEqual(['200.00', '0.00', '0.00']);
+    expect(rows.get('CLOSING_CASH')).toEqual(['2050.00', '2050.00', '0.00']);
+    // Depreciation moved no cash, and a draft is not in the books.
+    expect(rows.has('DIFFERENCE')).toBe(false);
+  });
+
+  it('refuses a user without the permission, and shows another workspace nothing', async () => {
+    expect((await statement('cash-flow', A.bareToken, A.slug)(QUERY)).status).toBe(403);
+    const other = await statement('cash-flow', B.viewerToken, B.slug)(QUERY);
+    expect(other.status).toBe(200);
+    expect(byKey(other.body.data.rows).get('CLOSING_CASH')).toEqual(['0.00', '0.00', '0.00']);
   });
 });

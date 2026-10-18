@@ -101,7 +101,7 @@ interface PartyFilter {
  * voucher that settled part of it (negative). Both are converted at today's
  * rate, because nothing froze one — so a fully settled opening nets to zero.
  */
-interface OpeningMovement {
+export interface OpeningMovement {
   key: string;
   side: 'RECEIVABLE' | 'PAYABLE';
   amount: Prisma.Decimal;
@@ -118,7 +118,7 @@ interface OpeningMovement {
  * customer's and vendor's since §14.14. Carriers have none. Less what vouchers
  * have settled against them (§14.6).
  */
-async function openingMovements(db: TenantDb, filter?: PartyFilter): Promise<OpeningMovement[]> {
+export async function openingMovements(db: TenantDb, filter?: PartyFilter): Promise<OpeningMovement[]> {
   const wants = (type: LedgerPartyType): boolean => filter === undefined || filter.type === type;
   const idFilter = (type: LedgerPartyType) => (filter !== undefined && filter.type === type ? { id: filter.id } : {});
   const currency = { select: { currency: true } } as const;

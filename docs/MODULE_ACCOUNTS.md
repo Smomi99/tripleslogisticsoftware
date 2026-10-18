@@ -765,3 +765,149 @@ figure cannot express.
 - Settling an opening (§14.6) is unchanged: Expense pays what *we owe* a vendor, carrier or agent, and
   Income receives what a *customer owes*. A vendor's or agent's *owe us* figure, and what we owe a
   customer, are still recorded by Journal (§14.13 Q8).
+
+---
+
+## 15. FREIGHT CERTIFICATE — the client's sample, 2026-10-18
+
+**The request.** On the Debit Invoice popup (the invoice number on the list opens it), beside `Edit
+invoice` and `Close`, a `Create Freight Certificate` that produces the client's sample: Ref No and DT,
+"FREIGHT CERTIFICATE", a ruled table (Shipper / Exporter Name and Address, Cartons/Bales, Commodity,
+Invoice No + Date, Exp No + Date, Bill of Lading no, LC/TT/Sales Contract No, Port of loading, Port of
+delivery, Ocean Freight & Local Charges — Figure USD and In word), "issued without any prejudice", the
+conversion rate, and "For and on behalf of" the company.
+
+**Decided with the client, 2026-10-18.**
+
+1. **Saved, with its own number.** Table `freight_certificate` (migration
+   `20261018100000_freight_certificate`), one live per debit invoice. Ref No is `FC-<year>-<n>`, per
+   workspace per year, never reused — the sample's `TSL-` is the client's initials, and a prefix every
+   workspace shares cannot be one company's.
+2. **Invoice No + Date, Exp No + Date and LC/TT/Sales Contract No are typed on the certificate.** The
+   product records them nowhere else. Everything else starts from the booking — the exporter (or the
+   customer), the cartons on the shipment advise (or the booked quantity), the commodities, the advise's
+   house BL / HAWB number, POL and POD — and stays editable, since the certificate prints what was
+   certified.
+3. **The figure is the invoice total in US dollars, never typed.** A dollar invoice states its own total at
+   its own frozen rate; any other invoice is converted from its base total at the workspace's dollar
+   rate in force on the certificate date. Worked out again on every save.
+4. **Sea and air.** On an air booking the labels read Air Freight & Local Charges, Air Waybill No, Airport
+   of loading and Airport of destination.
+
+**Rules.** Made only from an ISSUED freight invoice with a booking. A cancelled invoice's certificate can be
+read, not changed or printed. The PDF carries no letterhead — the sample is printed on the company's pad.
+
+**Permissions.** `ACCOUNTS.FREIGHT_CERTIFICATE` — VIEW, CREATE, EDIT, EXPORT_PDF. A child screen
+(`/accounts/debit-invoice/[id]/freight-certificate`), so no sidebar item. Superadmin holds it; every other
+role is granted it on the Roles matrix.
+
+**API.** `GET | POST | PATCH /api/tenant/accounts/debit-invoices/:id/freight-certificate`, and
+`GET …/freight-certificate/pdf`. Tests in `routes/ledger.test.ts` (made, numbered, one per invoice,
+changed, printed, refused without a booking, 403 without the grant, 404 from another workspace) and
+`lib/freight-certificate.test.ts`.
+
+---
+
+## 16. QUOTATION COST DETAILS — client, 2026-10-18
+
+**The request.** "On New debit invoice we have cost details. We want the same functionality on the
+quotation, and on the debit note the cost details will pull from the quotation — with edit, add and remove
+as before."
+
+**Built.**
+
+- **On the quotation:** the debit invoice's Cost Details — one "Buying from Carrier / Agent / Vendor" block
+  each, its currency and rate, its grid (cost head, size, unit, qty, buying price), Total Cost per block,
+  Grand total cost, and the Gross profit and GP % against the quotation's selling total. Tables
+  `quotation_cost` / `quotation_cost_line` (migration `20261018110000_quotation_cost`), the debit invoice's
+  shape less the supplier's invoice number and file. The web screens share one component
+  (`components/accounts/cost-blocks.tsx`), so the two cannot drift.
+- **Where an unsaved quotation's costs start:** the buy price of every freight line it pulled from the price
+  list, owed to whoever the rate was bought from (`freight_rate.purchase_source_*`), in the rate's currency;
+  and, for a quotation made from an agent's quote, that agent's own prices (the option for the quotation's
+  carrier, or its only option). The price list holds no buying price for local charges, so those are typed.
+  One block of each kind is always offered, named where the quotation says who.
+- **On the debit invoice:** `Make invoice` starts its cost blocks from the quotation's saved Cost Details, at
+  today's rate like the selling side, every line marked "from quotation" and freely edited, added to or
+  removed. Where a finalised load plan has allocated the booking's actual container cost (CR-002 §9), that
+  figure replaces the quoted one for the same cost head and size in the carrier's block. A quotation with no
+  saved costs falls back to the previous behaviour.
+
+**Rules.** Saved on its own route (`GET | PUT /api/tenant/cs/quotations/:id/costs`), so changing what the
+forwarder expects to pay never issues the customer a revision; a revision carries the cost side over, and a
+superseded revision's costs are read-only. Never printed or sent. New permission
+`CUSTOMER_SERVICE.QUOTATION.VIEW_BUY_PRICE` (column-level, as on the debit invoice), granted by the migration
+to every role that already held both `CUSTOMER_SERVICE.QUOTATION.VIEW` and
+`ACCOUNTS.DEBIT_INVOICE.VIEW_BUY_PRICE`; editing also needs `CUSTOMER_SERVICE.QUOTATION.EDIT`.
+
+---
+
+## 17. BALANCE SHEET AND CASH FLOW STATEMENT — built 2026-10-18, on our recommendation
+
+The menu names both (M15, M16) and no sheet draws them (§14.13 Q1); DESIGN-UPDATE-2026-10-04 §9 held them
+on Q21. The client's instruction of 2026-10-18 was "do all with your recommendation", so both follow the
+Income Statement's answer to Q21 — accrual as a report over the books, with a Cash switch — and the three
+statements tell one story. No migration; the existing `ACCOUNTS.BALANCE_SHEET` and
+`ACCOUNTS.CASH_FLOW_STATEMENT` features (VIEW, EXPORT).
+
+**Balance Sheet** (`lib/balance-sheet.ts`). As at a day, beside the same day a year earlier. Assets
+(Current: Cash in Hand, Cash at Bank, Accounts Receivable, Inventory, Short-Term Loans to Others, Other;
+Non-Current: Land, Buildings and Other Long-Term Assets), Liabilities (Current: Accounts Payable, Customer
+Advances, Payroll, Taxes, Other; Long-Term: Loans, Other) and Owner's Equity (Owner Investment and Drawings,
+Opening Balance Equity, Retained Earnings Brought Forward, Profit for the Year).
+
+- Every asset, liability and equity account is its posted balance to the day, mapped from the chart.
+- **Accrual** adds what the books do not hold, because an invoice does not post (§14.13 Q2): receivables on
+  issued debit invoices less what was received, payables on their cost details less what was paid, and
+  the CRM openings (at today's rate, as the Receivable-Payable list takes them) — and the matching
+  adjustment to retained earnings. Each is one side of an entry the books would have made, so the sheet
+  balances by construction.
+- **Profit for the Year** is the Income Statement's net profit (same basis) from the start of the
+  financial year to the day; Retained Earnings Brought Forward is everything earned before it.
+- A "Difference" row appears only if the two sides ever disagree.
+
+**Cash Flow Statement** (`lib/cash-flow.ts`). The direct method, read from the books, in the Income
+Statement's three columns (month, YTD, previous YTD). Cash is every sub ledger of Cash and Bank. For each
+posted voucher that moved cash, each of its other lines is where the money came from or went: classified by
+account into Operating (customers, carriers/agents/vendors, employees, operating expenses, taxes, other),
+Investing (long-term assets, loans to others, deposit interest) and Financing (owner, loans, interest
+paid). A transfer between two cash accounts moves nothing. Opening cash + net change = closing cash, by
+construction; a Difference row would mean a voucher the classification missed. Cash basis by nature, so no
+switch.
+
+Both export to Excel. Tests: the end of `routes/income-statement.test.ts`, over the Income Statement's own
+fixtures, every figure hand arithmetic (accrual and cash balance sheets, both columns, the cash flow's three
+columns reconciling to the books, permissions, a second workspace).
+
+---
+
+## 18. TA/DA — built 2026-10-18, on our recommendation
+
+The menu names TA/DA and no sheet draws it (§14.13 Q1). Built on the client's instruction of 2026-10-18,
+"do all with your recommendation".
+
+**A claim** (`ta_da_claim`, migration `20261018120000_ta_da`): TADA-<year>-<n>, the employee, the claim
+date, the purpose, and a row per trip or day (`ta_da_claim_line`): date · from · to · mode (free text with
+suggestions — Rickshaw, CNG, Bus, Train, Launch, Air…) · note · **TA** (the fare) · **DA** (food and the
+day's stay). Totals are read back from the GENERATED line amounts. In the workspace's base currency.
+
+**Its life:** DRAFT → *Submit* → SUBMITTED → *Approve* → APPROVED → *Pay* → PAID; or *Reject* (with a reason)
+→ REJECTED, which the claimant changes and submits again; or *Cancel claim* (with a reason) → CANCELLED, at
+any point before payment. Every step re-reads the claim and refuses a move out of turn. An approver may not
+approve or reject their own claim.
+
+**Pay** posts an Expense voucher — Dr Operating Expense › TA/DA (`EXPENSE.OPERATING.TA_DA`), Cr the cash or
+bank account chosen — through the same code as Transaction → Expense (`createEntry` in `lib/ledger.ts`), so
+it is in the books, the Income Statement (Travel & Entertainment), the Balance Sheet and the Cash Flow
+Statement like any other payment. Cancelling that voucher on the Expense screen puts the claim back to
+APPROVED, to be paid again.
+
+**Permissions:** the existing `ACCOUNTS.TA_DA` feature — VIEW the list and claims, CREATE/EDIT write and
+submit, APPROVE approves or rejects, TOGGLE_STATUS cancels, EXPORT downloads the list. Pay also needs
+`ACCOUNTS.EXPENSE.CREATE`, because it writes an Expense voucher.
+
+**Screens:** Accounts → TA/DA (list: search, status filter, Export to Excel; the claim number opens it) and
+the claim page. Tests: `routes/ledger.test.ts`, "TA/DA claims".
+
+Not built, for the client to ask for: a per-day DA rate table by designation or city, receipts uploaded per
+line, and a link from a claim to the booking it was for.

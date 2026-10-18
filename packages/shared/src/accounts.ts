@@ -481,6 +481,8 @@ export interface DebitInvoiceDto {
 
   recipientEmails: string[];
   receipts: DebitInvoiceReceiptDto[];
+  /** The Freight Certificate made from it, once there is one (2026-10-18). */
+  freightCertificate: { id: string; code: string } | null;
 
   issuedAt: string | null;
   sentAt: string | null;
@@ -551,7 +553,8 @@ export interface InvoiceOptionDto {
   label: string;
 }
 
-export interface DebitInvoiceOptionsDto {
+/** What a cost-block grid draws from — the debit invoice's and the quotation's alike. */
+export interface CostOptionsDto {
   baseCurrencyId: string | null;
   baseCurrencyCode: string | null;
   /** `rate` is today's workspace rate, or null where none can be resolved. */
@@ -562,8 +565,110 @@ export interface DebitInvoiceOptionsDto {
   carriers: InvoiceOptionDto[];
   agents: InvoiceOptionDto[];
   vendors: InvoiceOptionDto[];
+}
+
+export interface DebitInvoiceOptionsDto extends CostOptionsDto {
   customers: InvoiceOptionDto[];
   canViewBuyPrice: boolean;
+}
+
+// ===========================================================================
+// Quotation Cost Details (client, 2026-10-18)
+// ===========================================================================
+//
+// "On New debit invoice we have cost details. We want the same functionality on
+// the quotation, and on the debit note the cost details will pull from the
+// quotation." The debit invoice's cost blocks, on a quotation, less what only a
+// supplier's actual bill carries (their invoice number and file). Internal:
+// never printed and never sent, and saved on their own route so changing what
+// the forwarder expects to pay never issues the customer a new revision.
+
+/** AUTO is the price list's buy price for a charge the quotation pulled. */
+export const QUOTATION_COST_LINE_SOURCES = ['AUTO', 'MANUAL'] as const;
+export type QuotationCostLineSource = (typeof QUOTATION_COST_LINE_SOURCES)[number];
+
+export const quotationCostLineInputSchema = invoiceLineInputSchema.extend({
+  source: z.enum(QUOTATION_COST_LINE_SOURCES).default('MANUAL'),
+});
+export type QuotationCostLineInput = z.input<typeof quotationCostLineInputSchema>;
+
+export const quotationCostInputSchema = z
+  .object({
+    partyType: z.enum(SUPPLIER_PARTY_TYPES),
+    /** '' until somebody chooses one from the block's combo box. */
+    partyId: optionalId,
+    currencyId: idString('Choose the currency this cost is in.'),
+    conversionRate: rate,
+    lines: z.array(quotationCostLineInputSchema).max(200, 'That is too many lines for one block.'),
+  })
+  .superRefine((block, ctx) => {
+    if (block.lines.length > 0 && block.partyId === null) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['partyId'],
+        message: `Choose the ${SUPPLIER_PARTY_LABEL[block.partyType].toLowerCase()} this cost is owed to.`,
+      });
+    }
+  });
+export type QuotationCostInput = z.input<typeof quotationCostInputSchema>;
+export type QuotationCostData = z.output<typeof quotationCostInputSchema>;
+
+/** `Save cost details`: the whole cost side, replaced. */
+export const quotationCostsSaveSchema = z.object({
+  costs: z.array(quotationCostInputSchema).max(20, 'That is too many cost blocks.'),
+});
+export type QuotationCostsSaveInput = z.input<typeof quotationCostsSaveSchema>;
+
+export interface QuotationCostLineDto {
+  id: string;
+  source: QuotationCostLineSource;
+  costHeadId: string;
+  costHeadName: string;
+  containerSizeId: string | null;
+  containerSizeName: string | null;
+  costUnitId: string | null;
+  unitName: string | null;
+  quantity: string;
+  unitPrice: string;
+  amount: string;
+  amountBase: string;
+}
+
+export interface QuotationCostDto {
+  id: string;
+  partyType: SupplierPartyType;
+  partyId: string;
+  partyName: string;
+  currencyId: string;
+  currencyCode: string;
+  conversionRate: string;
+  totalAmount: string;
+  totalAmountBase: string;
+  lines: QuotationCostLineDto[];
+}
+
+/** A block as an unsaved cost side starts: what the form opens on. */
+export type QuotationCostDraftDto = Omit<QuotationCostInput, 'lines'> & {
+  partyName: string | null;
+  lines: (QuotationCostLineInput & { costHeadName: string; containerSizeName: string | null; unitName: string | null })[];
+};
+
+/** The Cost Details section of one quotation. */
+export interface QuotationCostsDto {
+  quotationId: string;
+  /** What is saved; null until the cost side has been saved once. */
+  costs: QuotationCostDto[] | null;
+  /** Where an unsaved cost side starts — the price list's buy prices. Empty once saved. */
+  prefill: QuotationCostDraftDto[];
+  /** Anything the prefill could not do, said in words. */
+  notes: string[];
+  /** The selling total in base, as stored, for the gross profit beside the costs. */
+  sellTotalBase: string;
+  /** Null until saved. */
+  costTotalBase: string | null;
+  /** Decided by the server: the grant, and a quotation that is still the live revision. */
+  editable: boolean;
+  options: CostOptionsDto;
 }
 
 /** One row of the Receivable-Payable list (sheet row 8). */
