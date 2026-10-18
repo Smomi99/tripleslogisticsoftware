@@ -42,6 +42,7 @@ export * from './clp';
 export * from './iso6346';
 export * from './shipment';
 export * from './short-name';
+export * from './ta-da';
 export * from './tariff';
 export * from './user';
 export * from './vendor';

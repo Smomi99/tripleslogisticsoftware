@@ -22,7 +22,8 @@ import { Prisma } from '../generated/prisma/client';
 import type { BaseCurrency } from './currency-rate';
 import { day, dec, money, paymentOf, toBase } from './debit-invoice';
 import { HttpError } from './http-error';
-import { formatDocumentNo } from './inquiry-no';
+import { CODE_RETRY_LIMIT, isUniqueViolation } from './codes';
+import { formatDocumentNo, seriesYearOf } from './inquiry-no';
 import type { TenantDb } from './tenant-client';
 
 /**
@@ -913,6 +914,95 @@ export async function unsettle(db: TenantDb, entryId: bigint, userId: bigint): P
   await db.debitInvoiceReceipt.updateMany({ where: { journalEntryId: entryId, deletedAt: null }, data: gone });
   await db.supplierPayment.updateMany({ where: { journalEntryId: entryId, deletedAt: null }, data: gone });
   await db.openingSettlement.updateMany({ where: { journalEntryId: entryId, deletedAt: null }, data: gone });
+  // A TA/DA claim it paid is approved and unpaid again, to be paid once more.
+  await db.taDaClaim.updateMany({
+    where: { journalEntryId: entryId, status: 'PAID', deletedAt: null },
+    data: { status: 'APPROVED', journalEntryId: null, paidAt: null, paidBy: null, updatedBy: userId },
+  });
+}
+
+/** Resolves every account a voucher names, in one query. */
+export async function accountsFor(db: TenantDb, input: JournalEntryData): Promise<Map<string, AccountRow>> {
+  const ids = new Set<string>(input.lines.map((l) => l.ledgerAccountId));
+  if (input.kind !== 'JOURNAL') ids.add(input.moneyAccountId);
+  const rows = await loadAccounts(db);
+  return new Map(rows.filter((r) => ids.has(r.id.toString())).map((r) => [r.id.toString(), r]));
+}
+
+/** Writes the lines of a voucher, replacing any a draft already had. */
+export async function writeLines(
+  db: TenantDb,
+  args: { tenantId: bigint; userId: bigint; entryId: bigint; lines: ReturnType<typeof buildLines> },
+): Promise<Prisma.Decimal> {
+  await db.journalLine.updateMany({
+    where: { journalEntryId: args.entryId, deletedAt: null },
+    data: { deletedAt: new Date(), isActive: false, updatedBy: args.userId },
+  });
+  await db.journalLine.createMany({
+    data: args.lines.map((l, index) => ({
+      tenantId: args.tenantId,
+      journalEntryId: args.entryId,
+      sortOrder: index,
+      ledgerAccountId: l.ledgerAccountId,
+      debit: l.debit,
+      credit: l.credit,
+      createdBy: args.userId,
+      updatedBy: args.userId,
+    })),
+  });
+  return args.lines.reduce((sum, l) => sum.plus(l.debit), new Prisma.Decimal(0));
+}
+
+/**
+ * A voucher's header and lines, numbered — what every Transaction screen's
+ * Save does, and what TA/DA's Pay does on its behalf. Settling a document is
+ * the caller's: only the caller knows what the voucher was against.
+ */
+export async function createEntry(
+  db: TenantDb,
+  args: { tenantId: bigint; userId: bigint; input: JournalEntryData; posting: boolean },
+): Promise<bigint> {
+  const { tenantId, userId, input, posting } = args;
+  await ensureChart(db, tenantId, userId);
+  const lines = buildLines(input, await accountsFor(db, input));
+  const entryDate = new Date(`${input.entryDate}T00:00:00.000Z`);
+  const year = seriesYearOf(entryDate);
+  const now = new Date();
+
+  let entryId: bigint | null = null;
+  for (let attempt = 0; attempt < CODE_RETRY_LIMIT && entryId === null; attempt += 1) {
+    const code = await nextVoucherNo(db, tenantId, input.kind, year);
+    try {
+      entryId = (
+        await db.journalEntry.create({
+          data: {
+            tenantId,
+            code,
+            seriesYear: year,
+            kind: input.kind,
+            entryDate,
+            description: input.description,
+            status: posting ? 'POSTED' : 'DRAFT',
+            postedAt: posting ? now : null,
+            postedBy: posting ? userId : null,
+            createdBy: userId,
+            updatedBy: userId,
+          },
+          select: { id: true },
+        })
+      ).id;
+    } catch (error) {
+      if (isUniqueViolation(error, 'code')) continue;
+      throw error;
+    }
+  }
+  if (entryId === null) {
+    throw new HttpError(409, 'CODE_GENERATION_FAILED', 'Could not allocate a voucher number. Please try again.');
+  }
+
+  const total = await writeLines(db, { tenantId, userId, entryId, lines });
+  await db.journalEntry.update({ where: { id: entryId }, data: { totalAmount: total } });
+  return entryId;
 }
 
 // ------------------------------------------------------------ the reads

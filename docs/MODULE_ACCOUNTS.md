@@ -878,3 +878,36 @@ switch.
 Both export to Excel. Tests: the end of `routes/income-statement.test.ts`, over the Income Statement's own
 fixtures, every figure hand arithmetic (accrual and cash balance sheets, both columns, the cash flow's three
 columns reconciling to the books, permissions, a second workspace).
+
+---
+
+## 18. TA/DA — built 2026-10-18, on our recommendation
+
+The menu names TA/DA and no sheet draws it (§14.13 Q1). Built on the client's instruction of 2026-10-18,
+"do all with your recommendation".
+
+**A claim** (`ta_da_claim`, migration `20261018120000_ta_da`): TADA-<year>-<n>, the employee, the claim
+date, the purpose, and a row per trip or day (`ta_da_claim_line`): date · from · to · mode (free text with
+suggestions — Rickshaw, CNG, Bus, Train, Launch, Air…) · note · **TA** (the fare) · **DA** (food and the
+day's stay). Totals are read back from the GENERATED line amounts. In the workspace's base currency.
+
+**Its life:** DRAFT → *Submit* → SUBMITTED → *Approve* → APPROVED → *Pay* → PAID; or *Reject* (with a reason)
+→ REJECTED, which the claimant changes and submits again; or *Cancel claim* (with a reason) → CANCELLED, at
+any point before payment. Every step re-reads the claim and refuses a move out of turn. An approver may not
+approve or reject their own claim.
+
+**Pay** posts an Expense voucher — Dr Operating Expense › TA/DA (`EXPENSE.OPERATING.TA_DA`), Cr the cash or
+bank account chosen — through the same code as Transaction → Expense (`createEntry` in `lib/ledger.ts`), so
+it is in the books, the Income Statement (Travel & Entertainment), the Balance Sheet and the Cash Flow
+Statement like any other payment. Cancelling that voucher on the Expense screen puts the claim back to
+APPROVED, to be paid again.
+
+**Permissions:** the existing `ACCOUNTS.TA_DA` feature — VIEW the list and claims, CREATE/EDIT write and
+submit, APPROVE approves or rejects, TOGGLE_STATUS cancels, EXPORT downloads the list. Pay also needs
+`ACCOUNTS.EXPENSE.CREATE`, because it writes an Expense voucher.
+
+**Screens:** Accounts → TA/DA (list: search, status filter, Export to Excel; the claim number opens it) and
+the claim page. Tests: `routes/ledger.test.ts`, "TA/DA claims".
+
+Not built, for the client to ask for: a per-day DA rate table by designation or city, receipts uploaded per
+line, and a link from a claim to the booking it was for.

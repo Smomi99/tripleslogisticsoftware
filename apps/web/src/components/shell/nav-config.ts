@@ -142,6 +142,7 @@ const ROUTES: Record<string, RouteEntry> = {
   // 2026-10-18, on our recommendation: Menu M15, M16 and TA/DA.
   'ACCOUNTS.BALANCE_SHEET': '/accounts/balance-sheet',
   'ACCOUNTS.CASH_FLOW_STATEMENT': '/accounts/cash-flow',
+  'ACCOUNTS.TA_DA': '/accounts/ta-da',
   'ACCOUNTS.BANK_SETUP': '/accounts/bank-setup',
   'ACCOUNTS.ACCOUNT_SETUP': '/accounts/account-setup',
   'CUSTOMER.SHIPMENT': '/portal/shipment',

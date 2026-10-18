@@ -383,3 +383,27 @@ export async function nextFreightCertificateNo(db: TenantDb, tenantId: bigint, y
   `;
   return formatFreightCertificateNo(year, (rows[0]?.max_seq ?? 0) + 1);
 }
+
+// ---------------------------------------------------------------------------
+// TA/DA claims — Accounts, 2026-10-18
+// ---------------------------------------------------------------------------
+
+/** TADA-2026-000001. */
+export const TA_DA_PREFIX = 'TADA';
+
+export function formatTaDaNo(year: number, sequence: number): string {
+  return formatDocumentNo(TA_DA_PREFIX, year, sequence);
+}
+
+/** MAX over every row, cancelled ones included: a claim number is never handed out twice. */
+export async function nextTaDaNo(db: TenantDb, tenantId: bigint, year: number): Promise<string> {
+  const pattern = `${TA_DA_PREFIX}-${year}-%`;
+  const rows = await db.$queryRaw<{ max_seq: number | null }[]>`
+    SELECT MAX((regexp_replace(code, '^.*-', ''))::int) AS max_seq
+      FROM ta_da_claim
+     WHERE tenant_id = ${tenantId}
+       AND series_year = ${year}
+       AND code LIKE ${pattern}
+  `;
+  return formatTaDaNo(year, (rows[0]?.max_seq ?? 0) + 1);
+}

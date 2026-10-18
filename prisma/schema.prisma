@@ -312,6 +312,8 @@ model Tenant {
   quotationCostLines    QuotationCostLine[]
   debitInvoiceReceipts  DebitInvoiceReceipt[]
   freightCertificates   FreightCertificate[]
+  taDaClaims            TaDaClaim[]
+  taDaClaimLines        TaDaClaimLine[]
 
   ledgerAccounts     LedgerAccount[]
   banks              Bank[]
@@ -529,6 +531,7 @@ model Currency {
   quotationCosts    QuotationCost[]    @relation("QuotationCostCurrency")
 
   freightCertificates FreightCertificate[] @relation("FreightCertificateCurrency")
+  taDaClaims          TaDaClaim[]          @relation("TaDaClaimCurrency")
 
   openingSettlements OpeningSettlement[] @relation("OpeningSettlementCurrency")
   tariffLines TariffLine[] @relation("TariffLineCurrency")
@@ -1557,6 +1560,7 @@ model Employee {
   inquiriesAsSalesman Inquiry[]
   customersOwned      Customer[] @relation("CustomerSalesman")
   supervisedClps      Clp[]      @relation("ClpSupervisor")
+  taDaClaims          TaDaClaim[] @relation("TaDaClaimEmployee")
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -1987,6 +1991,14 @@ model User {
   debitInvoiceReceiptsUpdated  DebitInvoiceReceipt[]  @relation("DebitInvoiceReceiptUpdatedBy")
   freightCertificatesCreated   FreightCertificate[]   @relation("FreightCertificateCreatedBy")
   freightCertificatesUpdated   FreightCertificate[]   @relation("FreightCertificateUpdatedBy")
+  taDaClaimsSubmitted          TaDaClaim[]            @relation("TaDaClaimSubmittedBy")
+  taDaClaimsDecided            TaDaClaim[]            @relation("TaDaClaimDecidedBy")
+  taDaClaimsPaid               TaDaClaim[]            @relation("TaDaClaimPaidByUser")
+  taDaClaimsCancelled          TaDaClaim[]            @relation("TaDaClaimCancelledBy")
+  taDaClaimsCreated            TaDaClaim[]            @relation("TaDaClaimCreatedBy")
+  taDaClaimsUpdated            TaDaClaim[]            @relation("TaDaClaimUpdatedBy")
+  taDaClaimLinesCreated        TaDaClaimLine[]        @relation("TaDaClaimLineCreatedBy")
+  taDaClaimLinesUpdated        TaDaClaimLine[]        @relation("TaDaClaimLineUpdatedBy")
 
   // The books (MODULE_ACCOUNTS.md §14)
   ledgerAccountsCreated      LedgerAccount[]     @relation("LedgerAccountCreatedBy")
@@ -6336,6 +6348,140 @@ model FreightCertificate {
   @@map("freight_certificate")
 }
 
+/// A TA/DA claim's life (2026-10-18). DRAFT and REJECTED are the employee's to
+/// change; SUBMITTED waits on an approver; APPROVED waits on Accounts; PAID
+/// names the Expense voucher that paid it. Cancelling that voucher puts the
+/// claim back to APPROVED.
+enum TaDaStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  PAID
+  CANCELLED
+
+  @@map("ta_da_status")
+}
+
+/// Accounts → TA/DA (Menu M17) — Travel Allowance / Daily Allowance claims.
+///
+/// The menu names the screen and no sheet draws it (MODULE_ACCOUNTS §14.13
+/// Q1). Built 2026-10-18 on our recommendation ("do all with your
+/// recommendation"): an employee's claim for field work — the port, customs,
+/// a customer's factory — line by line, approved, then paid from cash or bank
+/// by an Expense voucher on the chart's TA/DA account
+/// (EXPENSE.OPERATING.TA_DA), so the money is in the books the way every
+/// other payment is.
+model TaDaClaim {
+  tenantId   BigInt @map("tenant_id")
+  id         BigInt @id @default(autoincrement())
+  /// TADA-2026-000001, per workspace per year of the claim date, never reused.
+  code       String @db.VarChar(32)
+  seriesYear Int    @map("series_year")
+
+  employeeId BigInt   @map("employee_id")
+  claimDate  DateTime @map("claim_date") @db.Date
+  purpose    String   @db.Text
+
+  status TaDaStatus @default(DRAFT)
+
+  /// The workspace's base currency when the claim was made (§4 rule 6):
+  /// allowances are paid locally.
+  currencyId  BigInt  @map("currency_id")
+  /// Read back from the lines on every save.
+  totalTa     Decimal @default(0) @map("total_ta") @db.Decimal(18, 4)
+  totalDa     Decimal @default(0) @map("total_da") @db.Decimal(18, 4)
+  totalAmount Decimal @default(0) @map("total_amount") @db.Decimal(18, 4)
+
+  submittedAt  DateTime? @map("submitted_at") @db.Timestamptz(6)
+  submittedBy  BigInt?   @map("submitted_by")
+  /// Approved or rejected — the status says which.
+  decidedAt    DateTime? @map("decided_at") @db.Timestamptz(6)
+  decidedBy    BigInt?   @map("decided_by")
+  rejectReason String?   @map("reject_reason") @db.Text
+  /// The Expense voucher that paid it; cleared if that voucher is cancelled.
+  journalEntryId BigInt?   @map("journal_entry_id")
+  paidAt         DateTime? @map("paid_at") @db.Timestamptz(6)
+  paidBy         BigInt?   @map("paid_by")
+  cancelledAt    DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  cancelledBy    BigInt?   @map("cancelled_by")
+  cancelReason   String?   @map("cancel_reason") @db.Text
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  employee     Employee      @relation("TaDaClaimEmployee", fields: [tenantId, employeeId], references: [tenantId, id], onDelete: Restrict)
+  /// Currency is system-capable, so a single-column key plus the tenant guard.
+  currency     Currency      @relation("TaDaClaimCurrency", fields: [currencyId], references: [id], onDelete: Restrict)
+  journalEntry JournalEntry? @relation("TaDaClaimPaidBy", fields: [tenantId, journalEntryId], references: [tenantId, id], onDelete: Restrict)
+
+  submittedByUser User? @relation("TaDaClaimSubmittedBy", fields: [submittedBy], references: [id], onDelete: Restrict)
+  decidedByUser   User? @relation("TaDaClaimDecidedBy", fields: [decidedBy], references: [id], onDelete: Restrict)
+  paidByUser      User? @relation("TaDaClaimPaidByUser", fields: [paidBy], references: [id], onDelete: Restrict)
+  cancelledByUser User? @relation("TaDaClaimCancelledBy", fields: [cancelledBy], references: [id], onDelete: Restrict)
+  createdByUser   User? @relation("TaDaClaimCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser   User? @relation("TaDaClaimUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  lines TaDaClaimLine[]
+
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([employeeId])
+  @@index([currencyId])
+  @@index([journalEntryId])
+  @@index([submittedBy])
+  @@index([decidedBy])
+  @@index([paidBy])
+  @@index([cancelledBy])
+  @@map("ta_da_claim")
+}
+
+/// One trip or day on a claim.
+model TaDaClaimLine {
+  tenantId   BigInt   @map("tenant_id")
+  id         BigInt   @id @default(autoincrement())
+  claimId    BigInt   @map("claim_id")
+  sortOrder  Int      @default(0) @map("sort_order")
+  travelDate DateTime @map("travel_date") @db.Date
+  fromPlace  String   @map("from_place") @db.VarChar(200)
+  toPlace    String   @map("to_place") @db.VarChar(200)
+  /// How they went — Rickshaw, CNG, Bus, Train, Air… Free text: the ways of
+  /// getting about Dhaka and Chattogram are not a closed set worth a master.
+  mode        String? @db.VarChar(100)
+  description String? @db.Text
+  /// Travel Allowance: the fare.
+  taAmount    Decimal @default(0) @map("ta_amount") @db.Decimal(18, 4)
+  /// Daily Allowance: food and the day's stay.
+  daAmount    Decimal @default(0) @map("da_amount") @db.Decimal(18, 4)
+  /// GENERATED ta_amount + da_amount.
+  amount      Decimal? @default(dbgenerated()) @db.Decimal(18, 4)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  claim  TaDaClaim @relation(fields: [tenantId, claimId], references: [tenantId, id], onDelete: Restrict)
+
+  createdByUser User? @relation("TaDaClaimLineCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("TaDaClaimLineUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([claimId])
+  @@map("ta_da_claim_line")
+}
+
 // ===========================================================================
 // ACCOUNTS — the books: docs/MODULE_ACCOUNTS.md §14
 // Chart of accounts, Bank / Account set up, Journal, Expense, Income,
@@ -6558,6 +6704,8 @@ model JournalEntry {
   receipts           DebitInvoiceReceipt[]
   supplierPayments   SupplierPayment[]
   openingSettlements OpeningSettlement[]
+  /// The TA/DA claim this Expense voucher paid, if it paid one.
+  taDaClaims         TaDaClaim[]         @relation("TaDaClaimPaidBy")
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])

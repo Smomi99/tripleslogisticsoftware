@@ -79,7 +79,7 @@ async function cleanup(): Promise<void> {
   const scope = `(SELECT id FROM tenant WHERE slug IN ('${SLUG_A}', '${SLUG_B}'))`;
   const wipe = (table: string, extra = '') =>
     owner.$executeRawUnsafe(`DELETE FROM "${table}" WHERE tenant_id IN ${scope}${extra}`);
-  for (const table of ['debit_invoice_receipt', 'supplier_payment', 'opening_settlement', 'journal_line', 'journal_entry', 'bank_account']) {
+  for (const table of ['ta_da_claim_line', 'ta_da_claim', 'debit_invoice_receipt', 'supplier_payment', 'opening_settlement', 'journal_line', 'journal_entry', 'bank_account']) {
     await wipe(table);
   }
   await wipe('ledger_account', ' AND parent_id IS NOT NULL');
@@ -105,6 +105,7 @@ async function cleanup(): Promise<void> {
     'industry_sector',
     'email_log',
     'user',
+    'employee',
   ]) {
     await wipe(table);
   }
@@ -1108,6 +1109,160 @@ describe('Freight Certificate (the client’s sample of 2026-10-18)', () => {
     expect((await asB().get(certificate())).status).toBe(404);
     expect((await asB().patch(certificate()).send(typed)).status).toBe(404);
     expect((await asB().get(`${certificate()}/pdf`)).status).toBe(404);
+  });
+});
+
+describe('TA/DA claims (2026-10-18)', () => {
+  const tada = (token: string, slug: string) => {
+    const wrap = (r: request.Test) => r.set('Authorization', `Bearer ${token}`).set('X-Tenant-Slug', slug);
+    return {
+      get: (p: string) => wrap(request(app).get(`/api/tenant/accounts/ta-da${p}`)),
+      post: (p: string) => wrap(request(app).post(`/api/tenant/accounts/ta-da${p}`)),
+      patch: (p: string) => wrap(request(app).patch(`/api/tenant/accounts/ta-da${p}`)),
+    };
+  };
+  const asSuper = () => tada(A.superToken, SLUG_A);
+  let employeeId: string;
+  let claimId: string;
+  let otherId: string;
+  const claim = (overrides: Record<string, unknown> = {}) => ({
+    employeeId,
+    claimDate: TODAY,
+    purpose: 'Customs at Chattogram port for BKG-A',
+    lines: [
+      { travelDate: TODAY, fromPlace: 'Agrabad office', toPlace: 'CTG port', mode: 'CNG', taAmount: '350', daAmount: '0' },
+      { travelDate: TODAY, fromPlace: 'CTG port', toPlace: 'Custom House', mode: 'Rickshaw', taAmount: '80', daAmount: '500' },
+    ],
+    ...overrides,
+  });
+
+  beforeAll(async () => {
+    const employee = await owner.employee.create({
+      data: { tenantId: A.tenantId, code: 'EMP-TADA-A', name: 'Rahim Uddin', country: 'Bangladesh' },
+      select: { id: true },
+    });
+    employeeId = employee.id.toString();
+  });
+
+  it('makes a claim, numbered, totalling its lines', async () => {
+    expect((await asSuper().post('').send(claim({ lines: [] }))).status).toBe(400);
+    const nothing = claim({ lines: [{ travelDate: TODAY, fromPlace: 'A', toPlace: 'B', taAmount: '0', daAmount: '0' }] });
+    expect((await asSuper().post('').send(nothing)).status).toBe(400);
+
+    const res = await asSuper().post('').send(claim());
+    expect(res.status, JSON.stringify(res.body.error ?? {})).toBe(201);
+    claimId = res.body.data.id;
+    expect(res.body.data.code).toMatch(new RegExp(`^TADA-${YEAR}-\\d{6}$`));
+    expect(res.body.data).toMatchObject({
+      status: 'DRAFT',
+      employeeName: 'Rahim Uddin',
+      currencyCode: 'BDT',
+      totalTa: '430.0000',
+      totalDa: '500.0000',
+      totalAmount: '930.0000',
+      editable: true,
+    });
+    expect(res.body.data.lines[1]).toMatchObject({ mode: 'Rickshaw', amount: '580.0000' });
+
+    const list = await asSuper().get('?search=Rahim');
+    expect(list.body.data.map((r: { id: string }) => r.id)).toContain(claimId);
+  });
+
+  it('goes Draft → Submitted → Approved, and refuses a move out of turn', async () => {
+    expect((await asSuper().post(`/${claimId}/approve`).send({})).status).toBe(409);
+    const submitted = await asSuper().post(`/${claimId}/submit`).send({});
+    expect(submitted.status, JSON.stringify(submitted.body.error ?? {})).toBe(200);
+    expect(submitted.body.data).toMatchObject({ status: 'SUBMITTED', editable: false });
+    expect((await asSuper().patch(`/${claimId}`).send(claim())).status).toBe(409);
+    const approved = await asSuper().post(`/${claimId}/approve`).send({});
+    expect(approved.status, JSON.stringify(approved.body.error ?? {})).toBe(200);
+    expect(approved.body.data.status).toBe('APPROVED');
+    expect(approved.body.data.decidedAt).not.toBeNull();
+  });
+
+  it('rejects with a reason; a rejected claim is changed and submitted again', async () => {
+    const made = await asSuper().post('').send(claim({ purpose: 'Factory visit' }));
+    otherId = made.body.data.id;
+    await asSuper().post(`/${otherId}/submit`).send({}).expect(200);
+    expect((await asSuper().post(`/${otherId}/reject`).send({ reason: '' })).status).toBe(400);
+    const rejected = await asSuper().post(`/${otherId}/reject`).send({ reason: 'Attach the CNG receipt' });
+    expect(rejected.body.data).toMatchObject({ status: 'REJECTED', rejectReason: 'Attach the CNG receipt', editable: true });
+
+    const changed = await asSuper().patch(`/${otherId}`).send(claim({ purpose: 'Factory visit, receipts attached' }));
+    expect(changed.status, JSON.stringify(changed.body.error ?? {})).toBe(200);
+    const again = await asSuper().post(`/${otherId}/submit`).send({});
+    expect(again.body.data).toMatchObject({ status: 'SUBMITTED', rejectReason: null });
+  });
+
+  it('pays by an Expense voucher on the TA/DA account; cancelling the voucher unpays it', async () => {
+    const paid = await asSuper().post(`/${claimId}/pay`).send({ paymentDate: TODAY, moneyAccountId: bank });
+    expect(paid.status, JSON.stringify(paid.body.error ?? {})).toBe(200);
+    expect(paid.body.data.status).toBe('PAID');
+    expect(paid.body.data.voucher.code).toMatch(/^PV-/);
+
+    // Dr TA/DA 930, Cr the bank 930 — in the books like any Expense voucher.
+    const voucher = await asA().get(`/expense/${paid.body.data.voucher.id}`);
+    expect(voucher.status).toBe(200);
+    expect(voucher.body.data.status).toBe('POSTED');
+    const lines = voucher.body.data.lines as { ledgerAccountId: string; debit: string; credit: string }[];
+    expect(lines.find((l) => l.ledgerAccountId === account('EXPENSE.OPERATING.TA_DA'))).toMatchObject({ debit: '930.0000' });
+    expect(lines.find((l) => l.ledgerAccountId === bank)).toMatchObject({ credit: '930.0000' });
+
+    expect((await asSuper().post(`/${claimId}/pay`).send({ paymentDate: TODAY, moneyAccountId: bank })).status).toBe(409);
+    expect((await asSuper().post(`/${claimId}/cancel`).send({ reason: 'Duplicate' })).status).toBe(409);
+
+    const cancelled = await asA().post(`/expense/${paid.body.data.voucher.id}/cancel`).send({ reason: 'Wrong account' });
+    expect(cancelled.status, JSON.stringify(cancelled.body.error ?? {})).toBe(200);
+    const after = await asSuper().get(`/${claimId}`);
+    expect(after.body.data).toMatchObject({ status: 'APPROVED', voucher: null, paidAt: null });
+  });
+
+  it('cancels an unpaid claim, with a reason', async () => {
+    expect((await asSuper().post(`/${otherId}/cancel`).send({ reason: '' })).status).toBe(400);
+    const res = await asSuper().post(`/${otherId}/cancel`).send({ reason: 'Trip called off' });
+    expect(res.body.data).toMatchObject({ status: 'CANCELLED', cancelReason: 'Trip called off', editable: false });
+  });
+
+  it('will not let an approver approve their own claim', async () => {
+    const user = await owner.user.create({
+      data: {
+        tenantId: A.tenantId,
+        code: 'USR-TADA-A',
+        username: 'tada-approver-a',
+        email: 'tada-approver@books-alpha.test',
+        passwordHash: 'x',
+        employeeId: BigInt(employeeId),
+      },
+      select: { id: true },
+    });
+    const token = await signAccessToken({
+      sub: user.id.toString(),
+      tenantId: A.tenantId.toString(),
+      isSuperadmin: false,
+      permissions: ['ACCOUNTS.TA_DA.VIEW', 'ACCOUNTS.TA_DA.CREATE', 'ACCOUNTS.TA_DA.APPROVE'],
+      tokenVersion: 0,
+    });
+    const own = tada(token, SLUG_A);
+    const made = await own.post('').send(claim({ purpose: 'My own trip' }));
+    expect(made.status).toBe(201);
+    await own.post(`/${made.body.data.id}/submit`).send({}).expect(200);
+    expect((await own.post(`/${made.body.data.id}/approve`).send({})).status).toBe(403);
+    // Paying needs the Expense grant as well.
+    expect((await own.post(`/${claimId}/pay`).send({ paymentDate: TODAY, moneyAccountId: bank })).status).toBe(403);
+  });
+
+  it('guards every route, and shows workspace B nothing of A', async () => {
+    for (const token of [A.bareToken, A.clerkToken]) {
+      const who = tada(token, SLUG_A);
+      expect((await who.get('')).status).toBe(403);
+      expect((await who.get(`/${claimId}`)).status).toBe(403);
+      expect((await who.post('').send(claim())).status).toBe(403);
+      expect((await who.post(`/${claimId}/approve`).send({})).status).toBe(403);
+      expect((await who.post(`/${claimId}/cancel`).send({ reason: 'x' })).status).toBe(403);
+    }
+    const b = tada(B.superToken, SLUG_B);
+    expect((await b.get(`/${claimId}`)).status).toBe(404);
+    expect((await b.get('')).body.data).toEqual([]);
   });
 });
 

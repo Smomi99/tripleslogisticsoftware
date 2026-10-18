@@ -129,6 +129,8 @@ export const TENANT_OWNED_MODELS = [
   'DebitInvoiceReceipt',
   'QuotationCost', // 2026-10-18: the quotation's buying side
   'QuotationCostLine',
+  'TaDaClaim', // 2026-10-18: Accounts → TA/DA
+  'TaDaClaimLine',
   'FreightCertificate', // the client's sample of 2026-10-18
   // The books (docs/MODULE_ACCOUNTS.md §14). Every workspace keeps its own
   // chart: the predefined one is copied in, never shared, because a workspace
