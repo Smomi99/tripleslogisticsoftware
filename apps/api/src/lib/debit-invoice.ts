@@ -61,7 +61,7 @@ function qty(value: Prisma.Decimal): string {
 
 // -------------------------------------------------------------- the reads
 
-const LINE_SELECT = {
+export const LINE_SELECT = {
   id: true,
   source: true,
   costHeadId: true,
@@ -195,6 +195,12 @@ export const INVOICE_SELECT = {
       journalEntry: { select: { id: true, code: true } },
     },
   },
+  freightCertificates: {
+    where: { deletedAt: null },
+    orderBy: { id: 'desc' as const },
+    take: 1,
+    select: { id: true, code: true },
+  },
 } satisfies Prisma.DebitInvoiceSelect;
 
 export type InvoiceRow = Prisma.DebitInvoiceGetPayload<{ select: typeof INVOICE_SELECT }>;
@@ -293,7 +299,7 @@ export function paymentCountOf(row: { costs: { payments: unknown[] }[] }): numbe
 
 // ------------------------------------------------------------- the DTO
 
-function lineDto(
+export function lineDto(
   line: InvoiceRow['lines'][number],
   rate: Prisma.Decimal,
 ): DebitInvoiceLineDto {
@@ -394,6 +400,10 @@ export function invoiceDto(
       journalEntryId: r.journalEntry?.id.toString() ?? null,
       journalEntryCode: r.journalEntry?.code ?? null,
     })),
+    freightCertificate:
+      row.freightCertificates[0] === undefined
+        ? null
+        : { id: row.freightCertificates[0].id.toString(), code: row.freightCertificates[0].code },
     issuedAt: row.issuedAt?.toISOString() ?? null,
     sentAt: row.sentAt?.toISOString() ?? null,
     cancelledAt: row.cancelledAt?.toISOString() ?? null,

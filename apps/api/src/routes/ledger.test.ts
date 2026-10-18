@@ -86,6 +86,7 @@ async function cleanup(): Promise<void> {
   await wipe('ledger_account');
   await wipe('bank');
   for (const table of [
+    'freight_certificate',
     'debit_invoice_cost_line',
     'debit_invoice_cost',
     'debit_invoice_line',
@@ -743,6 +744,30 @@ describe('Credit Invoice and Make Payment (§14.2, §14.6)', () => {
     expect(ledger.body.data.entries[1].journalEntryCode).toMatch(/^PV-/);
   });
 
+  it('opens one credit invoice with its lines and the payments made against it', async () => {
+    const res = await asA().get(`/credit-invoices/${carrierCostId}`);
+    expect(res.status, JSON.stringify(res.body.error ?? {})).toBe(200);
+    expect(res.body.data).toMatchObject({
+      id: carrierCostId,
+      supplierInvoiceNo: 'Inv-CMA-001',
+      partyType: 'CARRIER',
+      partyName: 'CMA-CGM A',
+      debitInvoiceId,
+      customerName: 'Shafidi Exports A',
+      currencyCode: 'USD',
+      totalAmount: '800.0000',
+      paidAmount: '800.0000',
+      outstandingAmount: '0.0000',
+      paymentStatus: 'PAID',
+    });
+    expect(res.body.data.lines).toHaveLength(1);
+    expect(res.body.data.lines[0]).toMatchObject({ amount: '800.0000', amountBase: fixed4(D(800).times(usdRate)) });
+    expect(res.body.data.payments.map((p: { amount: string }) => p.amount)).toEqual(['300.0000', '500.0000']);
+    expect(res.body.data.payments[0].journalEntryCode).toMatch(/^PV-/);
+
+    expect((await asA().get('/credit-invoices/999999999')).status).toBe(404);
+  });
+
   it('will not let a paid credit invoice be deleted, repriced below what was paid, or its debit invoice cancelled', async () => {
     const del = await asA().delete(`/credit-invoices/${carrierCostId}`);
     expect(del.status).toBe(409);
@@ -893,6 +918,115 @@ describe('the Receivable-Payable list’s Unbilled column (§14.7)', () => {
   });
 });
 
+describe('Freight Certificate (the client’s sample of 2026-10-18)', () => {
+  const certificate = () => `/debit-invoices/${debitInvoiceId}/freight-certificate`;
+  const typed = {
+    certificateDate: TODAY,
+    shipperText: 'Shafidi Exports A\nPlot 7, Chittagong EPZ',
+    packages: '1,250 Cartons',
+    commodity: 'Knit garments',
+    commercialInvoiceNo: 'SEA/INV/2026/101',
+    commercialInvoiceDate: TODAY,
+    expNo: 'EXP-0099-2026',
+    expDate: TODAY,
+    blNo: '',
+    lcNo: 'LC 0001',
+    portOfLoading: 'Chittagong A',
+    portOfDelivery: 'Hamburg A',
+  };
+
+  it('starts from the booking, with the invoice total in dollars', async () => {
+    const res = await asA().get(certificate());
+    expect(res.status, JSON.stringify(res.body.error ?? {})).toBe(200);
+    expect(res.body.data).toMatchObject({
+      debitInvoiceId,
+      certificate: null,
+      isAir: false,
+      lockedReason: null,
+      printable: false,
+      // A dollar invoice states its own total at its own frozen rate.
+      figure: { amount: '1000.0000', conversionRate: usdRate.toString(), baseCurrencyCode: 'BDT' },
+    });
+    expect(res.body.data.figure.amountInWords).toBe('US Dollars One thousand only');
+    expect(res.body.data.fields).toMatchObject({
+      certificateDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
+      shipperText: 'Shafidi Exports A',
+      portOfLoading: 'Chittagong A',
+      portOfDelivery: 'Hamburg A',
+      commercialInvoiceNo: null,
+      expNo: null,
+      lcNo: null,
+    });
+  });
+
+  it('makes one, numbered, and refuses a second', async () => {
+    const bad = await asA().post(certificate()).send({ ...typed, shipperText: '' });
+    expect(bad.status).toBe(400);
+
+    const made = await asA().post(certificate()).send(typed);
+    expect(made.status, JSON.stringify(made.body.error ?? {})).toBe(201);
+    expect(made.body.data.code).toMatch(new RegExp(`^FC-${YEAR}-\\d{6}$`));
+    expect(made.body.data).toMatchObject({ amount: '1000.0000', conversionRate: usdRate.toString() });
+    expect(made.body.data.fields).toMatchObject({ expNo: 'EXP-0099-2026', lcNo: 'LC 0001', blNo: null });
+
+    const again = await asA().post(certificate()).send(typed);
+    expect(again.status).toBe(409);
+    expect(again.body.error.code).toBe('CERTIFICATE_EXISTS');
+
+    // The invoice's popup learns it has one.
+    const inv = (await asA().get(`/debit-invoices/${debitInvoiceId}`)).body.data;
+    expect(inv.freightCertificate).toEqual({ id: made.body.data.id, code: made.body.data.code });
+  });
+
+  it('saves changes, keeps the number, and prints', async () => {
+    const before = (await asA().get(certificate())).body.data.certificate;
+    const saved = await asA().patch(certificate()).send({ ...typed, blNo: 'TSL-HBL-0001', packages: '' });
+    expect(saved.status, JSON.stringify(saved.body.error ?? {})).toBe(200);
+    expect(saved.body.data.code).toBe(before.code);
+    expect(saved.body.data.fields).toMatchObject({ blNo: 'TSL-HBL-0001', packages: null });
+
+    const view = (await asA().get(certificate())).body.data;
+    expect(view.printable).toBe(true);
+    expect(view.fields.blNo).toBe('TSL-HBL-0001');
+
+    const pdf = await asA().get(`${certificate()}/pdf`);
+    expect(pdf.status).toBe(200);
+    expect(pdf.headers['content-type']).toBe('application/pdf');
+    expect(pdf.headers['content-disposition']).toContain(`${before.code}.pdf`);
+  });
+
+  it('will not certify an invoice raised without a booking', async () => {
+    const other = await asA()
+      .post('/debit-invoices')
+      .send({
+        invoiceDate: TODAY,
+        customerId: A.customerId.toString(),
+        currencyId: bdt.toString(),
+        conversionRate: '1',
+        lines: [{ costHeadId: A.freightHead.toString(), quantity: '1', unitPrice: '500' }],
+      });
+    expect(other.status, JSON.stringify(other.body.error ?? {})).toBe(201);
+    const path = `/debit-invoices/${other.body.data.id}/freight-certificate`;
+    expect((await asA().get(path)).status).toBe(409);
+    const made = await asA().post(path).send(typed);
+    expect(made.status).toBe(409);
+    expect(made.body.error.code).toBe('NOT_CERTIFIABLE');
+  });
+
+  it('needs its own grant, and shows workspace B nothing of A (§7A rule 4)', async () => {
+    for (const token of [A.bareToken, A.clerkToken]) {
+      const who = as(token, SLUG_A);
+      expect((await who.get(certificate())).status).toBe(403);
+      expect((await who.post(certificate()).send(typed)).status).toBe(403);
+      expect((await who.patch(certificate()).send(typed)).status).toBe(403);
+      expect((await who.get(`${certificate()}/pdf`)).status).toBe(403);
+    }
+    expect((await asB().get(certificate())).status).toBe(404);
+    expect((await asB().patch(certificate()).send(typed)).status).toBe(404);
+    expect((await asB().get(`${certificate()}/pdf`)).status).toBe(404);
+  });
+});
+
 // ---------------------------------------------------------------------------
 
 describe('who may see what', () => {
@@ -908,6 +1042,7 @@ describe('who may see what', () => {
       '/income',
       '/internal-transfer',
       '/credit-invoices',
+      `/credit-invoices/${carrierCostId}`,
       '/vouchers/options',
       `/vouchers/open-documents?partyType=CUSTOMER&partyId=${A.customerId}`,
       `/vouchers/document-party?creditInvoice=${carrierCostId}`,
@@ -934,6 +1069,7 @@ describe('who may see what', () => {
     }
     const aJournal = (await asA().get('/journal')).body.data[0].id as string;
     expect((await asB().get(`/journal/${aJournal}`)).status).toBe(404);
+    expect((await asB().get(`/credit-invoices/${carrierCostId}`)).status).toBe(404);
 
     // B's own chart is its own, and holds none of A's money.
     const chart = (await asB().get('/chart')).body.data;

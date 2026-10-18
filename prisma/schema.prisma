@@ -309,6 +309,7 @@ model Tenant {
   debitInvoiceCosts     DebitInvoiceCost[]
   debitInvoiceCostLines DebitInvoiceCostLine[]
   debitInvoiceReceipts  DebitInvoiceReceipt[]
+  freightCertificates   FreightCertificate[]
 
   ledgerAccounts     LedgerAccount[]
   banks              Bank[]
@@ -523,6 +524,8 @@ model Currency {
 
   debitInvoices     DebitInvoice[]     @relation("DebitInvoiceCurrency")
   debitInvoiceCosts DebitInvoiceCost[] @relation("DebitInvoiceCostCurrency")
+
+  freightCertificates FreightCertificate[] @relation("FreightCertificateCurrency")
 
   openingSettlements OpeningSettlement[] @relation("OpeningSettlementCurrency")
   tariffLines TariffLine[] @relation("TariffLineCurrency")
@@ -1970,6 +1973,8 @@ model User {
   debitInvoiceCostLinesUpdated DebitInvoiceCostLine[] @relation("DebitInvoiceCostLineUpdatedBy")
   debitInvoiceReceiptsCreated  DebitInvoiceReceipt[]  @relation("DebitInvoiceReceiptCreatedBy")
   debitInvoiceReceiptsUpdated  DebitInvoiceReceipt[]  @relation("DebitInvoiceReceiptUpdatedBy")
+  freightCertificatesCreated   FreightCertificate[]   @relation("FreightCertificateCreatedBy")
+  freightCertificatesUpdated   FreightCertificate[]   @relation("FreightCertificateUpdatedBy")
 
   // The books (MODULE_ACCOUNTS.md §14)
   ledgerAccountsCreated      LedgerAccount[]     @relation("LedgerAccountCreatedBy")
@@ -5930,6 +5935,8 @@ model DebitInvoice {
   lines    DebitInvoiceLine[]
   costs    DebitInvoiceCost[]
   receipts DebitInvoiceReceipt[]
+  /// One live at a time (the partial index in its migration).
+  freightCertificates FreightCertificate[]
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -6132,6 +6139,80 @@ model DebitInvoiceReceipt {
   @@index([debitInvoiceId])
   @@index([journalEntryId])
   @@map("debit_invoice_receipt")
+}
+
+/// client: Freight Certificate (the sample supplied 2026-10-18, "Ref No :
+/// TSL-2021-201") — a letter for the shipper, usually for their bank, stating
+/// what the freight on one shipment cost.
+///
+/// Made from an issued freight debit invoice, one live per invoice. The
+/// shipment facts are copied in as text when it is made and stay editable,
+/// like a BL draft's party blocks (MODULE_DOCUMENTATION §3.4): the letter
+/// prints what was certified, and correcting a master later must never
+/// rewrite it. Invoice No, Exp No and LC/TT/Sales Contract No are recorded
+/// nowhere else in the product, so they are typed here.
+model FreightCertificate {
+  tenantId       BigInt @map("tenant_id")
+  id             BigInt @id @default(autoincrement())
+  /// "Ref No": FC-2026-000001, per workspace per year of the certificate
+  /// date, never reused.
+  code           String @db.VarChar(32)
+  seriesYear     Int    @map("series_year")
+  debitInvoiceId BigInt @map("debit_invoice_id")
+
+  /// "DT".
+  certificateDate DateTime @map("certificate_date") @db.Date
+
+  /// "Shipper / Exporter Name: and Address".
+  shipperText           String    @map("shipper_text") @db.Text
+  /// "Cartons/Bales".
+  packages              String?   @db.Text
+  commodity             String?   @db.Text
+  /// "Invoice No" and its "Date": the shipper's commercial invoice, not ours.
+  commercialInvoiceNo   String?   @map("commercial_invoice_no") @db.VarChar(100)
+  commercialInvoiceDate DateTime? @map("commercial_invoice_date") @db.Date
+  /// "Exp No" and its "Date".
+  expNo                 String?   @map("exp_no") @db.VarChar(100)
+  expDate               DateTime? @map("exp_date") @db.Date
+  /// "Bill of Lading no" — the house air waybill's number on an air booking.
+  blNo                  String?   @map("bl_no") @db.VarChar(64)
+  /// "LC/TT/Sales Contract No".
+  lcNo                  String?   @map("lc_no") @db.VarChar(200)
+  portOfLoading         String?   @map("port_of_loading") @db.Text
+  portOfDelivery        String?   @map("port_of_delivery") @db.Text
+
+  /// "Ocean Freight & Local Charges — Figure USD": the debit invoice's total in
+  /// US dollars. Worked out by the server from the invoice each time the
+  /// certificate is saved, never typed (decided 2026-10-18).
+  currencyId     BigInt  @map("currency_id")
+  amount         Decimal @db.Decimal(18, 4)
+  /// "Conversion Rate : 1 USD = n BDT" — base units per US dollar. The
+  /// invoice's own rate when it is in dollars; otherwise the workspace's rate
+  /// in force on the certificate date.
+  conversionRate Decimal @map("conversion_rate") @db.Decimal(18, 10)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  debitInvoice DebitInvoice @relation(fields: [tenantId, debitInvoiceId], references: [tenantId, id], onDelete: Restrict)
+  /// Currency is system-capable, so a single-column key plus the tenant guard.
+  currency     Currency     @relation("FreightCertificateCurrency", fields: [currencyId], references: [id], onDelete: Restrict)
+
+  createdByUser User? @relation("FreightCertificateCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("FreightCertificateUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  /// One live certificate per debit invoice: a partial unique index in the migration.
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([debitInvoiceId])
+  @@index([currencyId])
+  @@map("freight_certificate")
 }
 
 // ===========================================================================

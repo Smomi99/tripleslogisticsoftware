@@ -13,6 +13,7 @@ import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 import { DISPLAY_STATUS_TONE, money } from '@/components/accounts/format';
+import { DebitInvoiceDetail } from '@/components/accounts/invoice-detail';
 import { Button } from '@/components/ui/button';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -32,7 +33,8 @@ import { useMasterList } from '@/lib/use-master-list';
  * raised by hand with `Create New`. The row actions are the sheet's:
  * `Receive`, `Edit` and `Cancel`. Receive opens the Income sheet
  * (Design.xlsx 2026-09-27, N8's link), so the money is banked by a voucher
- * and the bank balance moves with it (§14.6).
+ * and the bank balance moves with it (§14.6). The invoice number opens the
+ * invoice in a popup, to read without leaving the list.
  */
 
 export default function DebitInvoiceListPage() {
@@ -45,6 +47,7 @@ export default function DebitInvoiceListPage() {
     DEFAULT_PAGE_SIZE,
     'desc',
   );
+  const [viewing, setViewing] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState<DebitInvoiceListRow | null>(null);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
@@ -181,6 +184,7 @@ export default function DebitInvoiceListPage() {
         getRowId={(r) => r.id}
         getCode={(r) => r.code}
         codeHeader="Debit Invoice No"
+        onCodeClick={(r) => setViewing(r.id)}
         total={list.meta.total}
         page={list.page}
         limit={list.meta.limit}
@@ -246,6 +250,8 @@ export default function DebitInvoiceListPage() {
           )
         }
       />
+
+      <DebitInvoiceDetail id={viewing} onClose={() => setViewing(null)} />
 
       {/* ------------------------------------------------- Cancel (P8) */}
       <Modal

@@ -603,6 +603,20 @@ export const FEATURES: readonly FeatureDefinition[] = [
     actions: [...MASTER, 'SEND', 'EXPORT_PDF', 'CANCEL', 'RECEIVE', 'VIEW_BUY_PRICE'],
   },
   /*
+   * The client's sample of 2026-10-18: a letter for the shipper certifying
+   * what the freight cost, made from an issued freight debit invoice. A child
+   * screen — it opens from the invoice, never from the sidebar. Its own
+   * feature because writing a letter the shipper takes to their bank is not
+   * the same trust as composing the invoice.
+   */
+  {
+    module: 'ACCOUNTS',
+    feature: 'ACCOUNTS.FREIGHT_CERTIFICATE',
+    label: 'Freight Certificate',
+    actions: ['VIEW', 'CREATE', 'EDIT', 'EXPORT_PDF'],
+    childScreen: true,
+  },
+  /*
    * MODULE_ACCOUNTS §14.2: the suppliers' invoices — the cost blocks of issued
    * debit invoices. Key unchanged since the menu called it New Credit Invoice.
    * VIEW is the list. The sheet's Edit and Delete change a debit invoice's cost

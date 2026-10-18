@@ -355,3 +355,31 @@ export async function nextDeliveryOrderNo(db: TenantDb, tenantId: bigint, year: 
   `;
   return formatDeliveryOrderNo(year, (rows[0]?.max_seq ?? 0) + 1);
 }
+
+// ---------------------------------------------------------------------------
+// Freight certificates — the client's sample of 2026-10-18
+// ---------------------------------------------------------------------------
+
+/**
+ * FC-2026-000001. The sample's "TSL-2021-201" is the client's own initials;
+ * a prefix every workspace shares cannot be one company's, so the series
+ * follows the debit invoice's shape instead.
+ */
+export const FREIGHT_CERTIFICATE_PREFIX = 'FC';
+
+export function formatFreightCertificateNo(year: number, sequence: number): string {
+  return formatDocumentNo(FREIGHT_CERTIFICATE_PREFIX, year, sequence);
+}
+
+/** MAX over every row, retired ones included: a number a bank holds is never reused. */
+export async function nextFreightCertificateNo(db: TenantDb, tenantId: bigint, year: number): Promise<string> {
+  const pattern = `${FREIGHT_CERTIFICATE_PREFIX}-${year}-%`;
+  const rows = await db.$queryRaw<{ max_seq: number | null }[]>`
+    SELECT MAX((regexp_replace(code, '^.*-', ''))::int) AS max_seq
+      FROM freight_certificate
+     WHERE tenant_id = ${tenantId}
+       AND series_year = ${year}
+       AND code LIKE ${pattern}
+  `;
+  return formatFreightCertificateNo(year, (rows[0]?.max_seq ?? 0) + 1);
+}

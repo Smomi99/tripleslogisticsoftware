@@ -14,6 +14,7 @@ import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 import { amount, PAYMENT_TONE } from '@/components/accounts/format';
+import { CreditInvoiceDetail } from '@/components/accounts/invoice-detail';
 import { Button } from '@/components/ui/button';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -34,6 +35,7 @@ import { useMasterList } from '@/lib/use-master-list';
  * The sheet's row actions: `Make Payment` (opens Expense against it — the
  * `Expense-Vendor` sheet), `Edit` and `Delete` (both change the debit invoice
  * the cost was recorded on, so they take the grant that does that there).
+ * The supplier's invoice number opens it in a popup.
  */
 export default function CreditInvoicePage() {
   const { can, authorizedRequest } = useSession();
@@ -43,6 +45,7 @@ export default function CreditInvoicePage() {
     DEFAULT_PAGE_SIZE,
     'desc',
   );
+  const [viewing, setViewing] = useState<string | null>(null);
   const [removing, setRemoving] = useState<CreditInvoiceRow | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -176,6 +179,7 @@ export default function CreditInvoicePage() {
         getRowId={(r) => r.id}
         getCode={(r) => r.supplierInvoiceNo ?? '—'}
         codeHeader="Vendor/Agent/Carrier Inv No"
+        onCodeClick={(r) => setViewing(r.id)}
         total={list.meta.total}
         page={list.page}
         limit={list.meta.limit}
@@ -233,6 +237,8 @@ export default function CreditInvoicePage() {
           )
         }
       />
+
+      <CreditInvoiceDetail id={viewing} onClose={() => setViewing(null)} />
 
       <ConfirmDialog
         open={removing !== null}

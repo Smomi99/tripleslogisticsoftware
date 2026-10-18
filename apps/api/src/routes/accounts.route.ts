@@ -5,6 +5,7 @@ import {
   type AwaitingFreightInvRow,
   awaitingFreightInvQuerySchema,
   buildMeta,
+  type CreditInvoiceDto,
   type CreditInvoiceRow,
   creditInvoiceListQuerySchema,
   type DebitInvoiceDto,
@@ -46,6 +47,8 @@ import {
   type InvoiceRow,
   invoiceDto,
   isoOf,
+  LINE_SELECT,
+  lineDto,
   loadInvoice,
   money,
   paymentCountOf,
@@ -1240,6 +1243,109 @@ accountsRouter.get('/credit-invoices', requirePermission(`${CREDIT}.VIEW`), asyn
     data,
     meta: buildMeta(query.page, query.limit, total),
   };
+  res.json(payload);
+});
+
+/**
+ * The number on the list (column C), opened: the supplier's invoice line by
+ * line, and what has been paid against it. The list's own grant, and the
+ * list's own rows — a block on an invoice that was never sent, or was
+ * cancelled, is not a credit invoice (§14.2).
+ */
+accountsRouter.get('/credit-invoices/:id', requirePermission(`${CREDIT}.VIEW`), async (req, res) => {
+  const auth = req.auth!;
+  const id = parseId(req.params.id, 'credit invoice');
+
+  const { cost, base } = await withTenant(auth.tenantId, async (db) => {
+    const [found, currency] = await Promise.all([
+      db.debitInvoiceCost.findFirst({
+        where: { id, deletedAt: null, debitInvoice: { status: 'ISSUED', deletedAt: null } },
+        select: {
+          id: true,
+          partyType: true,
+          carrierId: true,
+          agentId: true,
+          vendorId: true,
+          supplierInvoiceNo: true,
+          supplierInvoiceFile: true,
+          currencyCode: true,
+          conversionRate: true,
+          totalAmount: true,
+          totalAmountBase: true,
+          carrier: { select: { name: true } },
+          agent: { select: { name: true } },
+          vendor: { select: { name: true } },
+          lines: {
+            where: { deletedAt: null },
+            orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+            select: LINE_SELECT,
+          },
+          debitInvoice: {
+            select: {
+              id: true,
+              code: true,
+              invoiceDate: true,
+              customer: { select: { name: true } },
+              shipment: { select: { code: true } },
+            },
+          },
+          payments: {
+            where: { deletedAt: null },
+            orderBy: [{ paymentDate: 'asc' }, { id: 'asc' }],
+            select: {
+              id: true,
+              paymentDate: true,
+              amount: true,
+              amountBase: true,
+              journalEntry: { select: { id: true, code: true } },
+            },
+          },
+        },
+      }),
+      baseCurrency(db, auth.tenantId),
+    ]);
+    if (found === null) throw HttpError.notFound('Credit invoice not found.');
+    return { cost: found, base: currency };
+  });
+
+  const paid = paymentOf(cost.totalAmount, cost.payments);
+  const partyType = cost.partyType as SupplierPartyType;
+  const partyId = cost.carrierId ?? cost.agentId ?? cost.vendorId;
+  const name =
+    partyType === 'CARRIER' ? cost.carrier?.name : partyType === 'AGENT' ? cost.agent?.name : cost.vendor?.name;
+
+  const data: CreditInvoiceDto = {
+    id: cost.id.toString(),
+    supplierInvoiceNo: cost.supplierInvoiceNo,
+    supplierInvoiceFileName: cost.supplierInvoiceFile === null ? null : displayNameFromKey(cost.supplierInvoiceFile),
+    partyType,
+    partyId: partyId?.toString() ?? '',
+    partyName: name ?? '—',
+    debitInvoiceId: cost.debitInvoice.id.toString(),
+    debitInvoiceCode: cost.debitInvoice.code,
+    bookingCode: cost.debitInvoice.shipment?.code ?? null,
+    customerName: cost.debitInvoice.customer.name,
+    date: day(cost.debitInvoice.invoiceDate) ?? '',
+    currencyCode: cost.currencyCode,
+    conversionRate: cost.conversionRate.toString(),
+    baseCurrencyCode: base === null ? '' : isoOf(base),
+    lines: cost.lines.map((l) => lineDto(l, cost.conversionRate)),
+    totalAmount: money(cost.totalAmount),
+    totalAmountBase: money(cost.totalAmountBase),
+    paidAmount: money(paid.received),
+    outstandingAmount: money(paid.outstanding),
+    paymentStatus: paid.status,
+    payments: cost.payments.map((p) => ({
+      id: p.id.toString(),
+      paymentDate: day(p.paymentDate) ?? '',
+      amount: money(p.amount),
+      amountBase: money(p.amountBase),
+      journalEntryId: p.journalEntry.id.toString(),
+      journalEntryCode: p.journalEntry.code,
+    })),
+  };
+
+  const payload: ApiSuccess<CreditInvoiceDto> = { success: true, data };
   res.json(payload);
 });
 

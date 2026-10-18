@@ -765,3 +765,43 @@ figure cannot express.
 - Settling an opening (§14.6) is unchanged: Expense pays what *we owe* a vendor, carrier or agent, and
   Income receives what a *customer owes*. A vendor's or agent's *owe us* figure, and what we owe a
   customer, are still recorded by Journal (§14.13 Q8).
+
+---
+
+## 15. FREIGHT CERTIFICATE — the client's sample, 2026-10-18
+
+**The request.** On the Debit Invoice popup (the invoice number on the list opens it), beside `Edit
+invoice` and `Close`, a `Create Freight Certificate` that produces the client's sample: Ref No and DT,
+"FREIGHT CERTIFICATE", a ruled table (Shipper / Exporter Name and Address, Cartons/Bales, Commodity,
+Invoice No + Date, Exp No + Date, Bill of Lading no, LC/TT/Sales Contract No, Port of loading, Port of
+delivery, Ocean Freight & Local Charges — Figure USD and In word), "issued without any prejudice", the
+conversion rate, and "For and on behalf of" the company.
+
+**Decided with the client, 2026-10-18.**
+
+1. **Saved, with its own number.** Table `freight_certificate` (migration
+   `20261018100000_freight_certificate`), one live per debit invoice. Ref No is `FC-<year>-<n>`, per
+   workspace per year, never reused — the sample's `TSL-` is the client's initials, and a prefix every
+   workspace shares cannot be one company's.
+2. **Invoice No + Date, Exp No + Date and LC/TT/Sales Contract No are typed on the certificate.** The
+   product records them nowhere else. Everything else starts from the booking — the exporter (or the
+   customer), the cartons on the shipment advise (or the booked quantity), the commodities, the advise's
+   house BL / HAWB number, POL and POD — and stays editable, since the certificate prints what was
+   certified.
+3. **The figure is the invoice total in US dollars, never typed.** A dollar invoice states its own total at
+   its own frozen rate; any other invoice is converted from its base total at the workspace's dollar
+   rate in force on the certificate date. Worked out again on every save.
+4. **Sea and air.** On an air booking the labels read Air Freight & Local Charges, Air Waybill No, Airport
+   of loading and Airport of destination.
+
+**Rules.** Made only from an ISSUED freight invoice with a booking. A cancelled invoice's certificate can be
+read, not changed or printed. The PDF carries no letterhead — the sample is printed on the company's pad.
+
+**Permissions.** `ACCOUNTS.FREIGHT_CERTIFICATE` — VIEW, CREATE, EDIT, EXPORT_PDF. A child screen
+(`/accounts/debit-invoice/[id]/freight-certificate`), so no sidebar item. Superadmin holds it; every other
+role is granted it on the Roles matrix.
+
+**API.** `GET | POST | PATCH /api/tenant/accounts/debit-invoices/:id/freight-certificate`, and
+`GET …/freight-certificate/pdf`. Tests in `routes/ledger.test.ts` (made, numbered, one per invoice,
+changed, printed, refused without a booking, 403 without the grant, 404 from another workspace) and
+`lib/freight-certificate.test.ts`.

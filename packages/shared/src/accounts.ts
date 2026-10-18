@@ -481,6 +481,8 @@ export interface DebitInvoiceDto {
 
   recipientEmails: string[];
   receipts: DebitInvoiceReceiptDto[];
+  /** The Freight Certificate made from it, once there is one (2026-10-18). */
+  freightCertificate: { id: string; code: string } | null;
 
   issuedAt: string | null;
   sentAt: string | null;

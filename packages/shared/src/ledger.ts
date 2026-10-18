@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { LEDGER_PARTY_TYPES, type LedgerPartyType } from './accounts';
+import { type DebitInvoiceLineDto, LEDGER_PARTY_TYPES, type LedgerPartyType } from './accounts';
 import { listQuerySchema } from './api';
 
 /**
@@ -541,4 +541,45 @@ export interface CreditInvoiceRow {
   paymentStatus: keyof typeof SUPPLIER_PAYMENT_STATUS_LABEL;
   /** Removable: nothing has been paid against it. */
   deletable: boolean;
+}
+
+/** One Expense voucher's payment against a credit invoice (§14.6). */
+export interface CreditInvoicePaymentDto {
+  id: string;
+  paymentDate: string;
+  /** In the credit invoice's currency. */
+  amount: string;
+  amountBase: string;
+  journalEntryId: string;
+  journalEntryCode: string;
+}
+
+/** One credit invoice, as its number on the Credit Invoice list opens it. */
+export interface CreditInvoiceDto {
+  /** The cost block's id, as on the list. */
+  id: string;
+  supplierInvoiceNo: string | null;
+  /** The uploaded file's display name, or null when nothing is uploaded. */
+  supplierInvoiceFileName: string | null;
+  partyType: (typeof PAY_TO_PARTY_TYPES)[number];
+  partyId: string;
+  partyName: string;
+
+  /** The job it was billed on. */
+  debitInvoiceId: string;
+  debitInvoiceCode: string;
+  bookingCode: string | null;
+  customerName: string;
+  date: string;
+
+  currencyCode: string;
+  conversionRate: string;
+  baseCurrencyCode: string;
+  lines: DebitInvoiceLineDto[];
+  totalAmount: string;
+  totalAmountBase: string;
+  paidAmount: string;
+  outstandingAmount: string;
+  paymentStatus: keyof typeof SUPPLIER_PAYMENT_STATUS_LABEL;
+  payments: CreditInvoicePaymentDto[];
 }
