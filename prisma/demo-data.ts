@@ -6,8 +6,6 @@ import { hash } from '@node-rs/argon2';
 
 import { Prisma, PrismaClient } from '../apps/api/src/generated/prisma/client';
 
-import { ACC, clearAccounts, containerNo, seedAccounts } from './demo-accounts';
-
 /**
  * Demo data — a workspace with enough in it to try the product on.
  *
@@ -22,8 +20,6 @@ import { ACC, clearAccounts, containerNo, seedAccounts } from './demo-accounts';
  *   pnpm db:demo:clear          take it all out again
  *   pnpm db:demo:sheet          rebuild only the loading-type sheet's bookings
  *   pnpm db:demo:sheet:clear    take only those out
- *   pnpm db:demo:accounts       rebuild only the accounts demo (demo-accounts.ts)
- *   pnpm db:demo:accounts:clear take only that out
  *
  * The dataset is built backwards from what there is to look at:
  *
@@ -217,9 +213,6 @@ async function clear(tenantId: bigint, prefix: string = P): Promise<void> {
     );
   }
 
-  // Invoices and vouchers hang off the bookings and parties below, so they go first.
-  await clearAccounts(prisma, tenantId, prefix);
-
   // The documents first: an advise line points at the plan its cartons left on.
   const adviseIds = advises.map((a) => a.id);
   const blDraftIds = (
@@ -235,12 +228,6 @@ async function clear(tenantId: bigint, prefix: string = P): Promise<void> {
   await prisma.clpLine.deleteMany({ where: { ...t, clpId: { in: planIds } } });
   await prisma.clpBooking.deleteMany({ where: { ...t, clpId: { in: planIds } } });
   await prisma.clp.deleteMany({ where: { ...t, id: { in: planIds } } });
-
-  // Departures, arrivals and pre-alerts on demo bookings — the accounts demo
-  // makes them, and confirming one is the next step of trying a booking.
-  await prisma.shipmentMilestone.deleteMany({ where: { ...t, shipmentId: { in: shipmentIds } } });
-  await prisma.preAlert.deleteMany({ where: { ...t, shipmentId: { in: shipmentIds } } });
-  await prisma.preAlertDocument.deleteMany({ where: { ...t, shipmentId: { in: shipmentIds } } });
 
   await prisma.cargoReceiptLine.deleteMany({
     where: { ...t, receipt: { shipmentId: { in: shipmentIds } } },
@@ -1596,6 +1583,24 @@ function printSheet(): void {
 /** The CR-005 scenario's rows carry this, so it can be rebuilt on its own. */
 const EFRG = `${P}EFR-`;
 
+/** ISO 6346 — the Container Load Plan screen checks a container number's last digit. */
+function containerNo(owner: string, serial: number): string {
+  const body = `${owner}U${String(serial).padStart(6, '0')}`;
+  const value: Record<string, number> = {};
+  let n = 10;
+  for (const c of 'ABCDEFGHIJKLMNOPQRSTUVWXYZ') {
+    if (n % 11 === 0) n += 1;
+    value[c] = n;
+    n += 1;
+  }
+  let sum = 0;
+  for (let i = 0; i < 10; i += 1) {
+    const ch = body[i]!;
+    sum += (/\d/.test(ch) ? Number(ch) : value[ch]!) * 2 ** i;
+  }
+  return `${body}${(sum % 11) % 10}`;
+}
+
 /**
  * docs/CR-005-one-advise-per-efr.md, ready to click through — three examples,
  * each one quotation, each showing one thing. Booking codes read as "example,
@@ -2193,8 +2198,6 @@ async function main(): Promise<void> {
   const sheetOnly = process.argv.includes('--sheet');
   // Only the CR-005 scenario (DEMO-EFR-) — rebuild it after trying it out.
   const efrOnly = process.argv.includes('--efr');
-  // Only the accounts demo (DEMO-ACC-): invoices, vouchers and their bookings.
-  const accountsOnly = process.argv.includes('--accounts');
 
   const tenant = await prisma.tenant.findFirst({
     where: { slug: SLUG },
@@ -2207,28 +2210,15 @@ async function main(): Promise<void> {
     );
   }
 
-  const prefix = sheetOnly ? SHEET : efrOnly ? EFRG : accountsOnly ? ACC : P;
+  const prefix = sheetOnly ? SHEET : efrOnly ? EFRG : P;
   console.log(`Workspace: ${tenant.name} (${tenant.slug})`);
   console.log(`Only rows whose code starts with "${prefix}" are touched.\n`);
 
   await clear(tenant.id, prefix);
   if (clearOnly) {
     console.log(
-      sheetOnly
-        ? 'Loading-type sheet demo removed.'
-        : efrOnly
-          ? 'EFR demo removed.'
-          : accountsOnly
-            ? 'Accounts demo removed.'
-            : 'Demo data removed.',
+      sheetOnly ? 'Loading-type sheet demo removed.' : efrOnly ? 'EFR demo removed.' : 'Demo data removed.',
     );
-    return;
-  }
-
-  if (accountsOnly) {
-    const summary = await seedAccounts(prisma, tenant.id);
-    console.log(summary.join('\n'));
-    console.log('\nDone. Open Accounts → Income Statement and try both bases. Remove it with: pnpm db:demo:accounts:clear');
     return;
   }
 
@@ -2267,8 +2257,6 @@ async function main(): Promise<void> {
   console.log(`  bookings   : ${counts[6]}  (one in each state, so every worklist has rows)`);
   printSheet();
   printEfrGroups();
-  console.log('\nAccounts demo:');
-  console.log((await seedAccounts(prisma, tenant.id)).join('\n'));
   console.log('\nDone. Remove it again with: pnpm db:demo:clear');
 }
 
