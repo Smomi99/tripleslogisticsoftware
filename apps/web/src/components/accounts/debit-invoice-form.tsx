@@ -7,13 +7,9 @@ import {
   type DebitInvoiceSaveInput,
   DEBIT_INVOICE_DISPLAY_STATUS_LABEL,
   debitInvoiceSaveSchema,
-  type InvoiceLineSource,
   PAYMENT_STATUS_LABEL,
   SHIPMENT_STATUS_LABEL,
   SUPPLIER_PAYMENT_STATUS_LABEL,
-  SUPPLIER_PARTY_LABEL,
-  SUPPLIER_PARTY_TYPES,
-  type SupplierPartyType,
 } from '@ff/shared';
 import type { Route } from 'next';
 import Link from 'next/link';
@@ -28,7 +24,19 @@ import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 
-import { amount, DISPLAY_STATUS_TONE, fmt, money, previewLine } from './format';
+import {
+  type BlockDraft,
+  blankLine,
+  CostBlocksEditor,
+  costTotals,
+  type LineDraft,
+  LineGrid,
+  lineBody,
+  lineFrom,
+  nextKey,
+  withEveryType,
+} from './cost-blocks';
+import { DISPLAY_STATUS_TONE, fmt, money, previewLine } from './format';
 
 /**
  * The invoice `Make invoice` opens — the lower half of the client's
@@ -47,80 +55,10 @@ import { amount, DISPLAY_STATUS_TONE, fmt, money, previewLine } from './format';
 
 const INVOICE = 'ACCOUNTS.DEBIT_INVOICE';
 
-interface LineDraft {
-  key: string;
-  costHeadId: string;
-  containerSizeId: string;
-  costUnitId: string;
-  quantity: string;
-  unitPrice: string;
-  source: InvoiceLineSource;
-}
-
-interface BlockDraft {
-  key: string;
-  id: string | null;
-  partyType: SupplierPartyType;
-  partyId: string;
-  supplierInvoiceNo: string;
-  currencyId: string;
-  conversionRate: string;
-  lines: LineDraft[];
-  fileName: string | null;
-}
-
 export type DebitInvoiceFormMode =
   | { kind: 'freight'; shipmentId: string; prefill: DebitInvoicePrefillDto }
   | { kind: 'other' }
   | { kind: 'edit'; invoice: DebitInvoiceDto };
-
-let keySeq = 0;
-const nextKey = (): string => `k${(keySeq += 1)}`;
-
-function lineFrom(l: {
-  costHeadId: string;
-  containerSizeId?: string | null;
-  costUnitId?: string | null;
-  quantity: string;
-  unitPrice: string;
-  source?: InvoiceLineSource;
-}): LineDraft {
-  return {
-    key: nextKey(),
-    costHeadId: l.costHeadId,
-    containerSizeId: l.containerSizeId ?? '',
-    costUnitId: l.costUnitId ?? '',
-    quantity: l.quantity,
-    unitPrice: l.unitPrice,
-    source: l.source ?? 'MANUAL',
-  };
-}
-
-/** One block of each type is always drawn, in the sheet's order (B21, B30, B38). */
-function withEveryType(blocks: BlockDraft[], options: DebitInvoiceOptionsDto): BlockDraft[] {
-  const out = [...blocks];
-  for (const type of SUPPLIER_PARTY_TYPES) {
-    if (!out.some((b) => b.partyType === type)) out.push(emptyBlock(type, options));
-  }
-  return out.sort(
-    (a, b) => SUPPLIER_PARTY_TYPES.indexOf(a.partyType) - SUPPLIER_PARTY_TYPES.indexOf(b.partyType),
-  );
-}
-
-function emptyBlock(type: SupplierPartyType, options: DebitInvoiceOptionsDto): BlockDraft {
-  const base = options.baseCurrencyId ?? options.currencies[0]?.id ?? '';
-  return {
-    key: nextKey(),
-    id: null,
-    partyType: type,
-    partyId: '',
-    supplierInvoiceNo: '',
-    currencyId: base,
-    conversionRate: '1',
-    lines: [],
-    fileName: null,
-  };
-}
 
 function initialState(mode: DebitInvoiceFormMode, options: DebitInvoiceOptionsDto) {
   const today = new Date().toISOString().slice(0, 10);
@@ -191,9 +129,6 @@ function initialState(mode: DebitInvoiceFormMode, options: DebitInvoiceOptionsDt
   };
 }
 
-const blankLine = (line: LineDraft): boolean =>
-  line.costHeadId === '' && line.quantity.trim() === '' && line.unitPrice.trim() === '';
-
 export function DebitInvoiceForm({
   mode,
   options,
@@ -256,35 +191,15 @@ export function DebitInvoiceForm({
     return { total, base };
   }, [lines, conversionRate]);
 
-  const blockTotals = useMemo(
-    () =>
-      blocks.map((block) => {
-        let total = 0;
-        let base = 0;
-        for (const line of block.lines) {
-          const p = previewLine(line.quantity, line.unitPrice, block.conversionRate);
-          total += p.amount ?? 0;
-          base += p.base ?? 0;
-        }
-        return { total, base };
-      }),
-    [blocks],
-  );
-  const grandCost = blockTotals.reduce((sum, t) => sum + t.base, 0);
+  const grandCost = useMemo(() => costTotals(blocks).grandBase, [blocks]);
   const grossProfit = sellTotals.base - grandCost;
   const gpPercent = sellTotals.base > 0 ? (grossProfit / sellTotals.base) * 100 : null;
 
   // ----------------------------------------------------------- the body
 
   function body(): DebitInvoiceSaveInput {
-    const toLine = (l: LineDraft) => ({
-      costHeadId: l.costHeadId,
-      containerSizeId: l.containerSizeId === '' ? null : l.containerSizeId,
-      costUnitId: l.costUnitId === '' ? null : l.costUnitId,
-      quantity: l.quantity.trim(),
-      unitPrice: l.unitPrice.trim(),
-      source: l.source,
-    });
+    // A price-list row is a quotation's word for its own source; on the invoice it was typed.
+    const toLine = (l: LineDraft) => lineBody(l, l.source === 'AUTO' ? 'MANUAL' : l.source);
     return {
       invoiceDate,
       customerId: mode.kind === 'other' ? customerId : null,
@@ -456,9 +371,6 @@ export function DebitInvoiceForm({
     }
   }
 
-  const patchBlock = (key: string, patch: Partial<BlockDraft>) =>
-    setBlocks((current) => current.map((b) => (b.key === key ? { ...b, ...patch } : b)));
-
   const booking = mode.kind === 'freight' ? mode.prefill.booking : (invoice?.booking ?? null);
   const customerName =
     mode.kind === 'freight' ? mode.prefill.customerName : (invoice?.customerName ?? null);
@@ -607,157 +519,54 @@ export function DebitInvoiceForm({
 
       {/* ---------------------------------------------- Cost Details (B19) */}
       {showCosts && (
-        <section className="flex flex-col gap-4">
-          <div className="flex items-baseline justify-between">
-            <h3 className="text-section text-hull">Cost Details</h3>
-            <p className="text-cell text-steel">
-              What the carrier, agent and vendor charged. Never printed on the customer’s invoice.
-            </p>
-          </div>
-
-          {blocks.map((block, index) => {
-            const parties =
-              block.partyType === 'CARRIER'
-                ? options.carriers
-                : block.partyType === 'AGENT'
-                  ? options.agents
-                  : options.vendors;
-            const blockCode = currency(block.currencyId)?.code ?? '';
-            const totals = blockTotals[index] ?? { total: 0, base: 0 };
-            return (
-              <div
-                key={block.key}
-                className="rounded-manifest border border-line bg-surface shadow-manifest"
-              >
-                <div className="grid gap-3 border-b border-line px-4 py-3 sm:grid-cols-2 lg:grid-cols-4">
-                  <Field
-                    id={`party-${block.key}`}
-                    label={`Buying from ${SUPPLIER_PARTY_LABEL[block.partyType]}`}
-                  >
-                    <Select
-                      id={`party-${block.key}`}
-                      value={block.partyId}
-                      disabled={!costEditable}
-                      onChange={(e) => patchBlock(block.key, { partyId: e.target.value })}
+        <CostBlocksEditor
+          blocks={blocks}
+          onChange={setBlocks}
+          options={options}
+          editable={costEditable}
+          invoiceNo
+          description={
+            mode.kind === 'freight'
+              ? 'Pulled from the quotation’s cost details. What the carrier, agent and vendor charged — never printed on the customer’s invoice.'
+              : 'What the carrier, agent and vendor charged. Never printed on the customer’s invoice.'
+          }
+          footer={(block) => (
+            <>
+              <span className="label-manifest">Upload invoice</span>
+              {block.id === null ? (
+                <span className="text-steel">Save the invoice first, then attach the supplier’s copy.</span>
+              ) : (
+                <>
+                  {block.fileName !== null && (
+                    <button
+                      type="button"
+                      className="text-harbour hover:underline"
+                      onClick={() => void downloadFor(block)}
                     >
-                      <option value="">
-                        {block.partyType === 'AGENT' ? 'Choose an agent' : `Choose a ${SUPPLIER_PARTY_LABEL[block.partyType].toLowerCase()}`}
-                      </option>
-                      {parties.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </Select>
-                  </Field>
-                  <Field id={`cur-${block.key}`} label="Currency">
-                    <Select
-                      id={`cur-${block.key}`}
-                      value={block.currencyId}
-                      disabled={!costEditable}
-                      onChange={(e) =>
-                        patchBlock(block.key, {
-                          currencyId: e.target.value,
-                          conversionRate: rateFor(e.target.value),
-                        })
-                      }
-                    >
-                      {options.currencies.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.label}
-                        </option>
-                      ))}
-                    </Select>
-                  </Field>
-                  <Field id={`rate-${block.key}`} label={`Conversion rate (${baseCode || 'base'})`}>
-                    <Input
-                      id={`rate-${block.key}`}
-                      numeric
-                      inputMode="decimal"
-                      value={block.conversionRate}
-                      disabled={!costEditable || isBase(block.currencyId)}
-                      onChange={(e) => patchBlock(block.key, { conversionRate: e.target.value })}
-                    />
-                  </Field>
-                  <Field id={`inv-${block.key}`} label="Invoice no">
-                    <Input
-                      id={`inv-${block.key}`}
-                      value={block.supplierInvoiceNo}
-                      disabled={!costEditable}
-                      placeholder="As the supplier printed it"
-                      onChange={(e) => patchBlock(block.key, { supplierInvoiceNo: e.target.value })}
-                    />
-                  </Field>
-                </div>
-
-                <LineGrid
-                  lines={block.lines}
-                  priceLabel="Buying price"
-                  currencyCode={blockCode}
-                  rate={block.conversionRate}
-                  baseCode={baseCode}
-                  editable={costEditable}
-                  options={options}
-                  onChange={(next) => patchBlock(block.key, { lines: next })}
-                />
-
-                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line bg-paper px-4 py-2">
-                  <div className="flex flex-wrap items-center gap-3 text-cell">
-                    <span className="label-manifest">Upload invoice</span>
-                    {block.id === null ? (
-                      <span className="text-steel">Save the invoice first, then attach the supplier’s copy.</span>
-                    ) : (
-                      <>
-                        {block.fileName !== null && (
-                          <button
-                            type="button"
-                            className="text-harbour hover:underline"
-                            onClick={() => void downloadFor(block)}
-                          >
-                            {block.fileName}
-                          </button>
-                        )}
-                        {costEditable && (
-                          <label className="cursor-pointer text-harbour hover:underline">
-                            {block.fileName === null ? 'Choose file' : 'Replace'}
-                            <input
-                              type="file"
-                              className="sr-only"
-                              accept="application/pdf,image/*"
-                              onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                e.target.value = '';
-                                if (file !== undefined) void uploadFor(block, file);
-                              }}
-                            />
-                          </label>
-                        )}
-                      </>
-                    )}
-                  </div>
-                  <div className="flex flex-col items-end gap-1">
-                    <p className="font-mono text-body tabular-nums text-hull">
-                      <span className="label-manifest mr-2">Total Cost =</span>
-                      {fmt(totals.total)} {blockCode}
-                      {!isBase(block.currencyId) && (
-                        <span className="text-steel">
-                          {' '}
-                          · {fmt(totals.base)} {baseCode}
-                        </span>
-                      )}
-                    </p>
-                    <CreditInvoicePaid invoice={invoice} blockId={block.id} />
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-
-          <p className="text-right font-mono text-section tabular-nums text-hull">
-            <span className="label-manifest mr-2">Grand total cost =</span>
-            {fmt(grandCost)} {baseCode}
-          </p>
-        </section>
+                      {block.fileName}
+                    </button>
+                  )}
+                  {costEditable && (
+                    <label className="cursor-pointer text-harbour hover:underline">
+                      {block.fileName === null ? 'Choose file' : 'Replace'}
+                      <input
+                        type="file"
+                        className="sr-only"
+                        accept="application/pdf,image/*"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          e.target.value = '';
+                          if (file !== undefined) void uploadFor(block, file);
+                        }}
+                      />
+                    </label>
+                  )}
+                </>
+              )}
+              <CreditInvoicePaid invoice={invoice} blockId={block.id} />
+            </>
+          )}
+        />
       )}
 
       {/* ------------------------------------------------ Selling Price (B51) */}
@@ -966,212 +775,6 @@ export function DebitInvoiceForm({
           </div>
         </div>
       </Modal>
-    </div>
-  );
-}
-
-/**
- * One grid, as the sheet draws all four of them: Cost head · Container size ·
- * unit · QTY · price · Currency · Total Amount · Conversion Rate · Total
- * Amount (base). The currency and rate are the grid's own (§3.3), shown on
- * every row the way the sheet shows them.
- */
-function LineGrid({
-  lines,
-  priceLabel,
-  currencyCode,
-  rate,
-  baseCode,
-  editable,
-  options,
-  onChange,
-}: {
-  lines: LineDraft[];
-  priceLabel: string;
-  currencyCode: string;
-  rate: string;
-  baseCode: string;
-  editable: boolean;
-  options: DebitInvoiceOptionsDto;
-  onChange: (next: LineDraft[]) => void;
-}) {
-  const patch = (key: string, next: Partial<LineDraft>) =>
-    onChange(lines.map((l) => (l.key === key ? { ...l, ...next } : l)));
-
-  return (
-    <div>
-      {lines.length === 0 ? (
-        <p className="px-4 py-4 text-cell text-steel">
-          No lines yet.{editable ? ' Add one below.' : ''}
-        </p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-250 border-collapse">
-            <thead>
-              <tr className="border-b border-line bg-paper">
-                <th className="label-manifest px-3 py-2 text-left">Cost head</th>
-                <th className="label-manifest px-3 py-2 text-left">Container size</th>
-                <th className="label-manifest px-3 py-2 text-left">Unit</th>
-                <th className="label-manifest px-3 py-2 text-right">Qty</th>
-                <th className="label-manifest px-3 py-2 text-right">{priceLabel}</th>
-                <th className="label-manifest px-3 py-2 text-left">Currency</th>
-                <th className="label-manifest px-3 py-2 text-right">Total Amount</th>
-                <th className="label-manifest px-3 py-2 text-right">Conversion Rate</th>
-                <th className="label-manifest px-3 py-2 text-right">Total Amount ({baseCode || 'base'})</th>
-                {editable && <th className="label-manifest px-3 py-2 text-right">Action</th>}
-              </tr>
-            </thead>
-            <tbody>
-              {lines.map((line) => {
-                const p = previewLine(line.quantity, line.unitPrice, rate);
-                return (
-                  <tr key={line.key} className="border-b border-line last:border-0">
-                    <td className="px-3 py-1.5">
-                      {editable ? (
-                        <Select
-                          aria-label="Cost head"
-                          value={line.costHeadId}
-                          className="min-w-44"
-                          onChange={(e) => {
-                            const head = options.costHeads.find((h) => h.id === e.target.value);
-                            patch(line.key, { costHeadId: e.target.value, costUnitId: head?.unitId ?? '' });
-                          }}
-                        >
-                          <option value="">Choose</option>
-                          {options.costHeads.map((h) => (
-                            <option key={h.id} value={h.id}>
-                              {h.label}
-                            </option>
-                          ))}
-                        </Select>
-                      ) : (
-                        <span className="text-cell text-hull">
-                          {options.costHeads.find((h) => h.id === line.costHeadId)?.label ?? '—'}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 py-1.5">
-                      {editable ? (
-                        <Select
-                          aria-label="Container size"
-                          value={line.containerSizeId}
-                          className="min-w-28"
-                          onChange={(e) => patch(line.key, { containerSizeId: e.target.value })}
-                        >
-                          <option value="">No size</option>
-                          {options.containerSizes.map((s) => (
-                            <option key={s.id} value={s.id}>
-                              {s.label}
-                            </option>
-                          ))}
-                        </Select>
-                      ) : (
-                        <span className="text-cell text-steel">
-                          {options.containerSizes.find((s) => s.id === line.containerSizeId)?.label ?? 'No size'}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-3 py-1.5 text-cell text-steel">
-                      {options.costUnits.find((u) => u.id === line.costUnitId)?.label ??
-                        options.costHeads.find((h) => h.id === line.costHeadId)?.unitName ??
-                        '—'}
-                    </td>
-                    <td className="px-3 py-1.5 text-right">
-                      {editable ? (
-                        <Input
-                          aria-label="Quantity"
-                          inputMode="decimal"
-                          value={line.quantity}
-                          className="w-20 text-right font-mono tabular-nums"
-                          onChange={(e) => patch(line.key, { quantity: e.target.value })}
-                        />
-                      ) : (
-                        <span className="font-mono text-cell tabular-nums">{line.quantity}</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-1.5 text-right">
-                      {editable ? (
-                        <Input
-                          aria-label={priceLabel}
-                          inputMode="decimal"
-                          value={line.unitPrice}
-                          className="w-28 text-right font-mono tabular-nums"
-                          onChange={(e) => patch(line.key, { unitPrice: e.target.value, source: 'MANUAL' })}
-                        />
-                      ) : (
-                        <span className="font-mono text-cell tabular-nums">{amount(line.unitPrice)}</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-1.5 text-cell text-steel">{currencyCode || '—'}</td>
-                    <td className="px-3 py-1.5 text-right font-mono text-cell tabular-nums text-hull">
-                      {fmt(p.amount)}
-                    </td>
-                    <td className="px-3 py-1.5 text-right font-mono text-cell tabular-nums text-steel">
-                      {rate === '' ? '—' : rate}
-                    </td>
-                    <td className="px-3 py-1.5 text-right font-mono text-cell tabular-nums text-hull">
-                      {fmt(p.base)}
-                    </td>
-                    {editable && (
-                      <td className="px-3 py-1.5 text-right">
-                        <span className="inline-flex items-center gap-2">
-                          <span
-                            className={line.source === 'MANUAL' ? 'text-cell text-signal' : 'text-cell text-steel'}
-                            title={
-                              line.source === 'QUOTATION'
-                                ? 'Pulled from the quotation'
-                                : line.source === 'LOAD_PLAN'
-                                  ? 'The carrier cost the load plan allocated to this booking'
-                                  : 'Typed by hand'
-                            }
-                          >
-                            {line.source === 'QUOTATION'
-                              ? 'from quotation'
-                              : line.source === 'LOAD_PLAN'
-                                ? 'from load plan'
-                                : 'typed'}
-                          </span>
-                          <Button
-                            variant="destructive"
-                            size="inline"
-                            onClick={() => onChange(lines.filter((l) => l.key !== line.key))}
-                          >
-                            Remove
-                          </Button>
-                        </span>
-                      </td>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-      {editable && (
-        <div className="border-t border-line px-4 py-2">
-          <Button
-            variant="text"
-            size="inline"
-            onClick={() =>
-              onChange([
-                ...lines,
-                {
-                  key: nextKey(),
-                  costHeadId: '',
-                  containerSizeId: '',
-                  costUnitId: '',
-                  quantity: '1',
-                  unitPrice: '',
-                  source: 'MANUAL',
-                },
-              ])
-            }
-          >
-            + Add
-          </Button>
-        </div>
-      )}
     </div>
   );
 }

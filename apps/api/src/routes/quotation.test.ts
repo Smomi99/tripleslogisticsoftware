@@ -63,6 +63,8 @@ async function cleanup(): Promise<void> {
     'quotation_followup',
     'quotation_recipient',
     'quotation_commodity',
+    'quotation_cost_line',
+    'quotation_cost',
     'quotation_line',
     'quotation',
     'inquiry_volume',
@@ -103,6 +105,13 @@ const as = (path: string) =>
 const post = (path: string, body: object) =>
   request(app)
     .post(path)
+    .set('Authorization', `Bearer ${token}`)
+    .set('X-Tenant-Slug', SLUG)
+    .send(body);
+
+const put = (path: string, body: object) =>
+  request(app)
+    .put(path)
     .set('Authorization', `Bearer ${token}`)
     .set('X-Tenant-Slug', SLUG)
     .send(body);
@@ -436,6 +445,28 @@ describe('raising a quotation', () => {
     expect(forty.sellingPrice).toBe('5252');
   });
 
+  it('starts its Cost Details from the price list’s buying prices (2026-10-18)', async () => {
+    const res = await as(`/api/tenant/cs/quotations/${quotationId}/costs`).expect(200);
+    expect(res.body.data.costs).toBeNull();
+    const carrier = res.body.data.prefill.find((b: { partyType: string }) => b.partyType === 'CARRIER');
+    // The rate was bought from the carrier itself, in the rate's currency.
+    expect(carrier).toMatchObject({ partyId: carrierId.toString(), currencyId: currencyId.toString() });
+    const bought = carrier.lines.map((l: { containerSizeName: string; quantity: string; unitPrice: string; source: string }) => [
+      l.containerSizeName,
+      l.quantity,
+      l.unitPrice,
+      l.source,
+    ]);
+    expect(bought).toEqual(
+      expect.arrayContaining([
+        ["20' Standard", '1', '2828', 'AUTO'],
+        ["40' Standard", '2', '5252', 'AUTO'],
+      ]),
+    );
+    // The seal and document charges have no buying price on the price list.
+    expect(res.body.data.notes.join(' ')).toMatch(/local charges/);
+  });
+
   it('does the client arithmetic exactly', async () => {
     const res = await as(`/api/tenant/cs/quotations/${quotationId}`).expect(200);
     const forty = res.body.data.lines.find(
@@ -536,6 +567,24 @@ describe('sending, and revising afterwards (§5.3 rule 8)', () => {
     }).expect(409);
   });
 
+  it('changes the cost details of a sent quotation in place (2026-10-18)', async () => {
+    const res = await put(`/api/tenant/cs/quotations/${sentId}/costs`, {
+      costs: [
+        {
+          partyType: 'CARRIER',
+          partyId: carrierId.toString(),
+          currencyId: currencyId.toString(),
+          conversionRate: '129',
+          lines: [{ costHeadId: freightHeadId.toString(), quantity: '1', unitPrice: '2500' }],
+        },
+      ],
+    }).expect(200);
+    expect(res.body.data.costs).toHaveLength(1);
+    const original = await as(`/api/tenant/cs/quotations/${sentId}`).expect(200);
+    expect(original.body.data.status).toBe('SENT');
+    expect(original.body.data.revisionNo).toBe(1);
+  });
+
   it('issues a revision rather than editing what the customer holds', async () => {
     const res = await patch(`/api/tenant/cs/quotations/${sentId}`, {
       validityDate: '2026-10-31',
@@ -563,6 +612,20 @@ describe('sending, and revising afterwards (§5.3 rule 8)', () => {
     });
     // An edit that only touched the header must not issue an empty document.
     expect(rows.lines.length).toBeGreaterThan(0);
+  });
+
+  it('carries the cost details onto the revision, and freezes the old one’s', async () => {
+    const revision = await owner.quotation.findFirstOrThrow({
+      where: { tenantId, code: sentCode, revisionNo: 2 },
+      select: { id: true },
+    });
+    const res = await as(`/api/tenant/cs/quotations/${revision.id}/costs`).expect(200);
+    expect(res.body.data.costs).toHaveLength(1);
+    expect(res.body.data.costs[0].lines[0]).toMatchObject({ unitPrice: '2500', amount: '2500.0000' });
+
+    const old = await as(`/api/tenant/cs/quotations/${sentId}/costs`).expect(200);
+    expect(old.body.data.editable).toBe(false);
+    await put(`/api/tenant/cs/quotations/${sentId}/costs`, { costs: [] }).expect(409);
   });
 
   it('refuses to move the frozen rate on a sent quotation', async () => {

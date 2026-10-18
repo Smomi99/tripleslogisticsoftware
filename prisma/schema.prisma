@@ -308,6 +308,8 @@ model Tenant {
   debitInvoiceLines     DebitInvoiceLine[]
   debitInvoiceCosts     DebitInvoiceCost[]
   debitInvoiceCostLines DebitInvoiceCostLine[]
+  quotationCosts        QuotationCost[]
+  quotationCostLines    QuotationCostLine[]
   debitInvoiceReceipts  DebitInvoiceReceipt[]
   freightCertificates   FreightCertificate[]
 
@@ -524,6 +526,7 @@ model Currency {
 
   debitInvoices     DebitInvoice[]     @relation("DebitInvoiceCurrency")
   debitInvoiceCosts DebitInvoiceCost[] @relation("DebitInvoiceCostCurrency")
+  quotationCosts    QuotationCost[]    @relation("QuotationCostCurrency")
 
   freightCertificates FreightCertificate[] @relation("FreightCertificateCurrency")
 
@@ -595,6 +598,7 @@ model CostUnit {
 
   debitInvoiceLines     DebitInvoiceLine[]     @relation("DebitInvoiceLineCostUnit")
   debitInvoiceCostLines DebitInvoiceCostLine[] @relation("DebitInvoiceCostLineCostUnit")
+  quotationCostLines    QuotationCostLine[]    @relation("QuotationCostLineCostUnit")
 
   tariffLines TariffLine[] @relation("TariffLineUnit")
 
@@ -632,6 +636,7 @@ model CostHead {
 
   debitInvoiceLines     DebitInvoiceLine[]
   debitInvoiceCostLines DebitInvoiceCostLine[]
+  quotationCostLines    QuotationCostLine[]
 
   tariffLines TariffLine[]
 
@@ -716,6 +721,7 @@ model Carrier {
   clps              Clp[]              @relation("ClpCarrier")
   advises           ShipmentAdvise[]   @relation("ShipmentAdviseCarrier")
   debitInvoiceCosts DebitInvoiceCost[] @relation("DebitInvoiceCostCarrier")
+  quotationCosts    QuotationCost[]    @relation("QuotationCostCarrier")
   journalEntries    JournalEntry[]     @relation("JournalEntryCarrier")
 
   @@unique([tenantId, code])
@@ -979,6 +985,7 @@ model Vendor {
   users User[] @relation("VendorUsers")
 
   debitInvoiceCosts  DebitInvoiceCost[]  @relation("DebitInvoiceCostVendor")
+  quotationCosts     QuotationCost[]     @relation("QuotationCostVendor")
   journalEntries     JournalEntry[]      @relation("JournalEntryVendor")
   openingSettlements OpeningSettlement[] @relation("OpeningSettlementVendor")
 
@@ -1381,6 +1388,7 @@ model Agent {
   blTemplates    BlTemplate[]   @relation("BlTemplateDeliveryAgent")
 
   debitInvoiceCosts  DebitInvoiceCost[]  @relation("DebitInvoiceCostAgent")
+  quotationCosts     QuotationCost[]     @relation("QuotationCostAgent")
   journalEntries     JournalEntry[]      @relation("JournalEntryAgent")
   openingSettlements OpeningSettlement[] @relation("OpeningSettlementAgent")
 
@@ -1971,6 +1979,10 @@ model User {
   debitInvoiceCostsUpdated     DebitInvoiceCost[]     @relation("DebitInvoiceCostUpdatedBy")
   debitInvoiceCostLinesCreated DebitInvoiceCostLine[] @relation("DebitInvoiceCostLineCreatedBy")
   debitInvoiceCostLinesUpdated DebitInvoiceCostLine[] @relation("DebitInvoiceCostLineUpdatedBy")
+  quotationCostsCreated        QuotationCost[]        @relation("QuotationCostCreatedBy")
+  quotationCostsUpdated        QuotationCost[]        @relation("QuotationCostUpdatedBy")
+  quotationCostLinesCreated    QuotationCostLine[]    @relation("QuotationCostLineCreatedBy")
+  quotationCostLinesUpdated    QuotationCostLine[]    @relation("QuotationCostLineUpdatedBy")
   debitInvoiceReceiptsCreated  DebitInvoiceReceipt[]  @relation("DebitInvoiceReceiptCreatedBy")
   debitInvoiceReceiptsUpdated  DebitInvoiceReceipt[]  @relation("DebitInvoiceReceiptUpdatedBy")
   freightCertificatesCreated   FreightCertificate[]   @relation("FreightCertificateCreatedBy")
@@ -2330,6 +2342,7 @@ model ContainerSize {
 
   debitInvoiceLines     DebitInvoiceLine[]     @relation("DebitInvoiceLineContainerSize")
   debitInvoiceCostLines DebitInvoiceCostLine[] @relation("DebitInvoiceCostLineContainerSize")
+  quotationCostLines    QuotationCostLine[]    @relation("QuotationCostLineContainerSize")
 
   tariffLines TariffLine[] @relation("TariffLineContainerSize")
 
@@ -3657,6 +3670,8 @@ model Quotation {
   updatedByUser User? @relation("QuotationUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   lines       QuotationLine[]
+  /// The buying side (2026-10-18): never printed, never sent.
+  costs       QuotationCost[]
   commodities QuotationCommodity[]
   recipients  QuotationRecipient[]
   followups   QuotationFollowup[]
@@ -3765,6 +3780,112 @@ model QuotationLine {
   @@index([containerSizeId])
   @@index([currencyId])
   @@map("quotation_line")
+}
+
+/// The quotation's buying side (client, 2026-10-18): "on New debit invoice we
+/// have cost details — we want the same on the quotation", and the debit
+/// invoice's cost blocks then start from these.
+///
+/// The same shape as debit_invoice_cost — one "Buying from Carrier / Agent /
+/// Vendor" block, its currency and frozen rate, its grid — less what only a
+/// supplier's actual bill has (their invoice number and file). Internal only:
+/// the quotation PDF and the customer's email never read these tables.
+model QuotationCost {
+  tenantId    BigInt            @map("tenant_id")
+  id          BigInt            @id @default(autoincrement())
+  quotationId BigInt            @map("quotation_id")
+  sortOrder   Int               @default(0) @map("sort_order")
+  partyType   SupplierPartyType @map("party_type")
+
+  /// Exactly the one party_type names (CHECK), as on debit_invoice_cost.
+  carrierId BigInt? @map("carrier_id")
+  agentId   BigInt? @map("agent_id")
+  vendorId  BigInt? @map("vendor_id")
+
+  currencyId     BigInt  @map("currency_id")
+  currencyCode   String  @map("currency_code") @db.VarChar(10)
+  conversionRate Decimal @map("conversion_rate") @db.Decimal(18, 10)
+
+  /// "Total Cost =", in the block's currency and in base, read back from the
+  /// GENERATED line amounts.
+  totalAmount     Decimal @default(0) @map("total_amount") @db.Decimal(18, 4)
+  totalAmountBase Decimal @default(0) @map("total_amount_base") @db.Decimal(18, 4)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  quotation Quotation @relation(fields: [tenantId, quotationId], references: [tenantId, id], onDelete: Restrict)
+  carrier   Carrier?  @relation("QuotationCostCarrier", fields: [carrierId], references: [id], onDelete: Restrict)
+  agent     Agent?    @relation("QuotationCostAgent", fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict)
+  vendor    Vendor?   @relation("QuotationCostVendor", fields: [tenantId, vendorId], references: [tenantId, id], onDelete: Restrict)
+  currency  Currency  @relation("QuotationCostCurrency", fields: [currencyId], references: [id], onDelete: Restrict)
+
+  createdByUser User? @relation("QuotationCostCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("QuotationCostUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  lines QuotationCostLine[]
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([quotationId])
+  @@index([carrierId])
+  @@index([agentId])
+  @@index([vendorId])
+  @@index([currencyId])
+  @@map("quotation_cost")
+}
+
+/// One row of a quotation cost block's grid.
+model QuotationCostLine {
+  tenantId        BigInt              @map("tenant_id")
+  id              BigInt              @id @default(autoincrement())
+  quotationCostId BigInt              @map("quotation_cost_id")
+  sortOrder       Int                 @default(0) @map("sort_order")
+  /// AUTO is the price list's buy price for the charge; MANUAL was typed.
+  source          QuotationLineSource @default(MANUAL)
+
+  costHeadId   BigInt @map("cost_head_id")
+  costHeadName String @map("cost_head_name") @db.VarChar(200)
+
+  containerSizeId   BigInt? @map("container_size_id")
+  containerSizeName String? @map("container_size_name") @db.VarChar(100)
+  costUnitId        BigInt? @map("cost_unit_id")
+  unitName          String? @map("unit_name") @db.VarChar(100)
+
+  quantity  Decimal  @db.Decimal(18, 3)
+  /// "Buying price".
+  unitPrice Decimal  @map("unit_price") @db.Decimal(18, 4)
+  /// GENERATED quantity * unit_price.
+  amount    Decimal? @default(dbgenerated()) @db.Decimal(18, 4)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  cost          QuotationCost  @relation(fields: [tenantId, quotationCostId], references: [tenantId, id], onDelete: Restrict)
+  costHead      CostHead       @relation(fields: [tenantId, costHeadId], references: [tenantId, id], onDelete: Restrict)
+  containerSize ContainerSize? @relation("QuotationCostLineContainerSize", fields: [containerSizeId], references: [id], onDelete: Restrict)
+  costUnit      CostUnit?      @relation("QuotationCostLineCostUnit", fields: [costUnitId], references: [id], onDelete: Restrict)
+
+  createdByUser User? @relation("QuotationCostLineCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("QuotationCostLineUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([quotationCostId])
+  @@index([costHeadId])
+  @@index([containerSizeId])
+  @@index([costUnitId])
+  @@map("quotation_cost_line")
 }
 
 /// The commodities the quotation covers, snapshotted from the inquiry.

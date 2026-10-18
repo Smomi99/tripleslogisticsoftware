@@ -19,7 +19,6 @@ import {
   debitInvoiceSaveSchema,
   debitInvoiceSendSchema,
   INVOICEABLE_SHIPMENT_STATUSES,
-  isoCurrency,
   LEDGER_PARTY_TYPES,
   type LedgerDto,
   type LedgerPartyType,
@@ -35,7 +34,8 @@ import {
 import { Prisma } from '../generated/prisma/client';
 import { amountInWords } from '../lib/amount-in-words';
 import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
-import { type BaseCurrency, baseCurrency, resolveRates } from '../lib/currency-rate';
+import { costOptionsFor } from '../lib/cost-options';
+import { type BaseCurrency, baseCurrency } from '../lib/currency-rate';
 import {
   assertInvoiceable,
   BOOKING_SELECT,
@@ -68,7 +68,6 @@ import { HttpError } from '../lib/http-error';
 import { nextDebitInvoiceNo, seriesYearOf } from '../lib/inquiry-no';
 import { letterheadOf, logoOf } from '../lib/letterhead';
 import { logger } from '../lib/logger';
-import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import {
   emptyBalance,
   isOpen,
@@ -358,65 +357,17 @@ accountsRouter.get(
   async (req, res) => {
     const auth = req.auth!;
     const data = await withTenant(auth.tenantId, async (db): Promise<DebitInvoiceOptionsDto> => {
-      const [base, inactive] = await Promise.all([baseCurrency(db, auth.tenantId), inactiveMasters(db)]);
-      const live = { deletedAt: null, isActive: true };
-      const [currencies, costHeads, sizes, units, carriers, agents, vendors, customers] = await Promise.all([
-        db.currency.findMany({
-          where: { ...live, ...excludeInactive(inactive, 'currency') },
-          select: { id: true, currency: true },
-          orderBy: { currency: 'asc' },
-        }),
-        db.costHead.findMany({
-          where: live,
-          select: { id: true, name: true, unitId: true, unit: { select: { name: true } } },
-          orderBy: { name: 'asc' },
-        }),
-        db.containerSize.findMany({
-          where: { ...live, ...excludeInactive(inactive, 'container_size') },
-          select: { id: true, name: true },
-          orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
-        }),
-        db.costUnit.findMany({
-          where: { ...live, ...excludeInactive(inactive, 'cost_unit') },
+      const [costs, customers] = await Promise.all([
+        costOptionsFor(db, auth.tenantId),
+        db.customer.findMany({
+          where: { deletedAt: null, isActive: true },
           select: { id: true, name: true },
           orderBy: { name: 'asc' },
         }),
-        db.carrier.findMany({
-          where: { ...live, ...excludeInactive(inactive, 'carrier') },
-          select: { id: true, name: true },
-          orderBy: { name: 'asc' },
-        }),
-        db.agent.findMany({ where: live, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
-        db.vendor.findMany({ where: live, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
-        db.customer.findMany({ where: live, select: { id: true, name: true }, orderBy: { name: 'asc' } }),
       ]);
-      const rates = await resolveRates(
-        db,
-        auth.tenantId,
-        currencies.map((c) => c.id),
-      );
-      const option = (r: { id: bigint; name: string }) => ({ id: r.id.toString(), label: r.name });
       return {
-        baseCurrencyId: base?.id.toString() ?? null,
-        baseCurrencyCode: base === null ? null : isoOf(base),
-        currencies: currencies.map((c) => ({
-          id: c.id.toString(),
-          label: c.currency,
-          code: isoCurrency(c.currency),
-          rate: rates.get(c.id.toString())?.rate.toString() ?? null,
-        })),
-        costHeads: costHeads.map((h) => ({
-          id: h.id.toString(),
-          label: h.name,
-          unitId: h.unitId.toString(),
-          unitName: h.unit.name,
-        })),
-        containerSizes: sizes.map(option),
-        costUnits: units.map(option),
-        carriers: carriers.map(option),
-        agents: agents.map(option),
-        vendors: vendors.map(option),
-        customers: customers.map(option),
+        ...costs,
+        customers: customers.map((r) => ({ id: r.id.toString(), label: r.name })),
         canViewBuyPrice: canViewBuyPrice(auth),
       };
     });

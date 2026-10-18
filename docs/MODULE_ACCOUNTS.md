@@ -805,3 +805,37 @@ role is granted it on the Roles matrix.
 `GET …/freight-certificate/pdf`. Tests in `routes/ledger.test.ts` (made, numbered, one per invoice,
 changed, printed, refused without a booking, 403 without the grant, 404 from another workspace) and
 `lib/freight-certificate.test.ts`.
+
+---
+
+## 16. QUOTATION COST DETAILS — client, 2026-10-18
+
+**The request.** "On New debit invoice we have cost details. We want the same functionality on the
+quotation, and on the debit note the cost details will pull from the quotation — with edit, add and remove
+as before."
+
+**Built.**
+
+- **On the quotation:** the debit invoice's Cost Details — one "Buying from Carrier / Agent / Vendor" block
+  each, its currency and rate, its grid (cost head, size, unit, qty, buying price), Total Cost per block,
+  Grand total cost, and the Gross profit and GP % against the quotation's selling total. Tables
+  `quotation_cost` / `quotation_cost_line` (migration `20261018110000_quotation_cost`), the debit invoice's
+  shape less the supplier's invoice number and file. The web screens share one component
+  (`components/accounts/cost-blocks.tsx`), so the two cannot drift.
+- **Where an unsaved quotation's costs start:** the buy price of every freight line it pulled from the price
+  list, owed to whoever the rate was bought from (`freight_rate.purchase_source_*`), in the rate's currency;
+  and, for a quotation made from an agent's quote, that agent's own prices (the option for the quotation's
+  carrier, or its only option). The price list holds no buying price for local charges, so those are typed.
+  One block of each kind is always offered, named where the quotation says who.
+- **On the debit invoice:** `Make invoice` starts its cost blocks from the quotation's saved Cost Details, at
+  today's rate like the selling side, every line marked "from quotation" and freely edited, added to or
+  removed. Where a finalised load plan has allocated the booking's actual container cost (CR-002 §9), that
+  figure replaces the quoted one for the same cost head and size in the carrier's block. A quotation with no
+  saved costs falls back to the previous behaviour.
+
+**Rules.** Saved on its own route (`GET | PUT /api/tenant/cs/quotations/:id/costs`), so changing what the
+forwarder expects to pay never issues the customer a revision; a revision carries the cost side over, and a
+superseded revision's costs are read-only. Never printed or sent. New permission
+`CUSTOMER_SERVICE.QUOTATION.VIEW_BUY_PRICE` (column-level, as on the debit invoice), granted by the migration
+to every role that already held both `CUSTOMER_SERVICE.QUOTATION.VIEW` and
+`ACCOUNTS.DEBIT_INVOICE.VIEW_BUY_PRICE`; editing also needs `CUSTOMER_SERVICE.QUOTATION.EDIT`.

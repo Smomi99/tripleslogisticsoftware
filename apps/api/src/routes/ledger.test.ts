@@ -92,6 +92,8 @@ async function cleanup(): Promise<void> {
     'debit_invoice_line',
     'debit_invoice',
     'shipment',
+    'quotation_cost_line',
+    'quotation_cost',
     'quotation_line',
     'quotation',
     'inquiry',
@@ -874,6 +876,88 @@ describe('the opening balance, settled (§14.6)', () => {
     expect(vendor.payableBase).toBe('15000.0000');
     const ledger = await asA().get(`/receivable-payable/VENDOR/${A.vendorId}`);
     expect(ledger.body.data.entries.map((e: { kind: string }) => e.kind)).toEqual(['OPENING', 'OPENING_SETTLEMENT']);
+  });
+});
+
+describe('Quotation Cost Details, pulled by the debit invoice (2026-10-18)', () => {
+  const cs = (token: string, slug: string) => ({
+    get: (p: string) =>
+      request(app).get(`/api/tenant/cs${p}`).set('Authorization', `Bearer ${token}`).set('X-Tenant-Slug', slug),
+    put: (p: string) =>
+      request(app).put(`/api/tenant/cs${p}`).set('Authorization', `Bearer ${token}`).set('X-Tenant-Slug', slug),
+  });
+  let quotationId: string;
+  const costsBody = () => ({
+    costs: [
+      {
+        partyType: 'CARRIER',
+        partyId: A.carrierId.toString(),
+        currencyId: usd.toString(),
+        conversionRate: usdRate.toString(),
+        lines: [{ costHeadId: A.freightHead.toString(), containerSizeId: size20.toString(), quantity: '1', unitPrice: '800' }],
+      },
+      { partyType: 'AGENT', partyId: null, currencyId: usd.toString(), conversionRate: usdRate.toString(), lines: [] },
+      {
+        partyType: 'VENDOR',
+        partyId: A.vendorId.toString(),
+        currencyId: bdt.toString(),
+        conversionRate: '1',
+        lines: [{ costHeadId: A.freightHead.toString(), quantity: '1', unitPrice: '5000' }],
+      },
+    ],
+  });
+
+  beforeAll(async () => {
+    const booking = await owner.shipment.findFirstOrThrow({
+      where: { id: A.unbilledShipmentId },
+      select: { quotationId: true },
+    });
+    quotationId = booking.quotationId.toString();
+  });
+
+  it('starts unsaved, one block of each kind, the quotation’s carrier named', async () => {
+    const res = await cs(A.superToken, SLUG_A).get(`/quotations/${quotationId}/costs`);
+    expect(res.status, JSON.stringify(res.body.error ?? {})).toBe(200);
+    expect(res.body.data).toMatchObject({ costs: null, costTotalBase: null, editable: true });
+    expect(res.body.data.sellTotalBase).toBe(fixed4(D(1000).times(usdRate)));
+    expect(res.body.data.prefill.map((b: { partyType: string }) => b.partyType)).toEqual(['CARRIER', 'AGENT', 'VENDOR']);
+    expect(res.body.data.prefill[0]).toMatchObject({ partyId: A.carrierId.toString(), currencyId: usd.toString() });
+  });
+
+  it('saves in place — never a new revision — and refuses a cost owed to nobody', async () => {
+    const orphan = costsBody();
+    orphan.costs[2]!.partyId = null;
+    expect((await cs(A.superToken, SLUG_A).put(`/quotations/${quotationId}/costs`).send(orphan)).status).toBe(400);
+
+    const res = await cs(A.superToken, SLUG_A).put(`/quotations/${quotationId}/costs`).send(costsBody());
+    expect(res.status, JSON.stringify(res.body.error ?? {})).toBe(200);
+    // The empty agent block is not written.
+    expect(res.body.data.costs.map((c: { partyType: string }) => c.partyType)).toEqual(['CARRIER', 'VENDOR']);
+    expect(res.body.data.costs[0].lines[0]).toMatchObject({ amount: '800.0000', source: 'MANUAL' });
+    expect(res.body.data.costTotalBase).toBe(fixed4(D(800).times(usdRate).plus(5000)));
+    expect(res.body.data.prefill).toEqual([]);
+
+    const issued = await owner.quotation.findFirstOrThrow({ where: { id: BigInt(quotationId) }, select: { code: true } });
+    expect(await owner.quotation.count({ where: { tenantId: A.tenantId, code: issued.code } })).toBe(1);
+  });
+
+  it('is where the debit invoice’s cost side starts', async () => {
+    const res = await asA().get(`/shipments/${A.unbilledShipmentId}/debit-invoice/prefill`);
+    expect(res.status, JSON.stringify(res.body.error ?? {})).toBe(200);
+    const costs = res.body.data.costs as { partyType: string; partyId: string; lines: { unitPrice: string; source: string }[] }[];
+    expect(costs.map((c) => c.partyType)).toEqual(['CARRIER', 'VENDOR']);
+    expect(costs[0]).toMatchObject({ partyId: A.carrierId.toString() });
+    expect(costs[0]!.lines[0]).toMatchObject({ unitPrice: '800', source: 'QUOTATION' });
+    expect(costs[1]).toMatchObject({ partyId: A.vendorId.toString() });
+    expect(costs[1]!.lines[0]).toMatchObject({ unitPrice: '5000', source: 'QUOTATION' });
+  });
+
+  it('needs VIEW_BUY_PRICE, and shows workspace B nothing of A', async () => {
+    for (const token of [A.bareToken, A.clerkToken]) {
+      expect((await cs(token, SLUG_A).get(`/quotations/${quotationId}/costs`)).status).toBe(403);
+      expect((await cs(token, SLUG_A).put(`/quotations/${quotationId}/costs`).send(costsBody())).status).toBe(403);
+    }
+    expect((await cs(B.superToken, SLUG_B).get(`/quotations/${quotationId}/costs`)).status).toBe(404);
   });
 });
 

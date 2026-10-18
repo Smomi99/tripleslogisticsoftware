@@ -4,6 +4,8 @@ import {
   inquiryFollowupInputSchema,
   type InquiryFollowupDto,
   type QuotationCommodityDto,
+  type QuotationCostsDto,
+  quotationCostsSaveSchema,
   quotationCreateSchema,
   type QuotationDto,
   quotationCanChange,
@@ -29,6 +31,14 @@ import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import { nextQuotationNo, seriesYearOf } from '../lib/inquiry-no';
 import { HttpError } from '../lib/http-error';
 import { Prisma } from '../generated/prisma/client';
+import { costOptionsFor } from '../lib/cost-options';
+import {
+  copyQuotationCosts,
+  loadQuotationCosts,
+  quotationCostDto,
+  quotationCostPrefill,
+  writeQuotationCosts,
+} from '../lib/quotation-cost';
 import { pullQuotationLines } from '../lib/quotation-pull';
 import { parseId, parseRefId } from '../lib/request';
 import { queueMail } from '../lib/email-queue';
@@ -969,6 +979,15 @@ quotationRouter.patch('/quotations/:id', requirePermission(`${FEATURE}.EDIT`), a
       });
       workingId = next.id;
 
+      // The cost side is the forwarder's, not the customer's: a new revision
+      // keeps it whatever the edit was.
+      await copyQuotationCosts(db, {
+        tenantId: auth.tenantId,
+        userId: auth.userId,
+        fromQuotationId: current.id,
+        toQuotationId: workingId,
+      });
+
       // Carry the lines over, so an edit that only touches the header does not
       // silently issue an empty revision.
       if (input.lines === undefined) {
@@ -1226,6 +1245,93 @@ quotationRouter.patch('/quotations/:id', requirePermission(`${FEATURE}.EDIT`), a
  * ACCEPTED if a booking was ever raised from it — raising one is the only
  * thing that writes ACCEPTED — and SENT otherwise.
  */
+// ---------------------------------------------------------------------------
+// Cost Details (client, 2026-10-18)
+// ---------------------------------------------------------------------------
+
+/*
+ * The quotation's buying side: what the forwarder expects to pay the carrier,
+ * agent and vendor (lib/quotation-cost.ts). Its own routes rather than part of
+ * PATCH, for two reasons: it is guarded by VIEW_BUY_PRICE, which the rest of
+ * the quotation is not; and it is internal, so changing it changes nothing the
+ * customer was sent — a sent quotation's costs move in place, never as a new
+ * revision.
+ */
+
+async function costsView(db: TenantDb, auth: AuthContext, row: QuotationRow): Promise<QuotationCostsDto> {
+  const base = await baseCurrency(db, auth.tenantId);
+  if (base === null) {
+    throw new HttpError(409, 'NO_BASE_CURRENCY', 'This workspace has no base currency. Set one on Settings → Currency.');
+  }
+  const [saved, options] = await Promise.all([loadQuotationCosts(db, row.id), costOptionsFor(db, auth.tenantId)]);
+  const prefill =
+    saved.length > 0
+      ? { blocks: [], notes: [] }
+      : await quotationCostPrefill(db, { tenantId: auth.tenantId, quotationId: row.id, base, today: new Date() });
+  const costTotalBase = saved.reduce((sum, c) => sum.plus(c.totalAmountBase), new Prisma.Decimal(0));
+  const sellTotalBase = row.lines.reduce((sum, l) => sum.plus(l.billAmountLocal ?? 0), new Prisma.Decimal(0));
+  const mayEdit = auth.isSuperadmin || auth.permissions.has(`${FEATURE}.EDIT`);
+  return {
+    quotationId: row.id.toString(),
+    costs: saved.length === 0 ? null : saved.map(quotationCostDto),
+    prefill: prefill.blocks,
+    notes: prefill.notes,
+    sellTotalBase: sellTotalBase.toFixed(4),
+    costTotalBase: saved.length === 0 ? null : costTotalBase.toFixed(4),
+    // A superseded revision is history; its replacement carries the costs on.
+    editable: mayEdit && row.status !== 'SUPERSEDED',
+    options,
+  };
+}
+
+quotationRouter.get(
+  '/quotations/:id/costs',
+  requirePermission(`${FEATURE}.VIEW`),
+  requirePermission(`${FEATURE}.VIEW_BUY_PRICE`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'quotation');
+    const data = await withTenant(auth.tenantId, async (db) => costsView(db, auth, await findScoped(db, auth, id)));
+    const payload: ApiSuccess<QuotationCostsDto> = { success: true, data };
+    res.json(payload);
+  },
+);
+
+quotationRouter.put(
+  '/quotations/:id/costs',
+  requirePermission(`${FEATURE}.EDIT`),
+  requirePermission(`${FEATURE}.VIEW_BUY_PRICE`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'quotation');
+    const input = quotationCostsSaveSchema.parse(req.body);
+
+    const data = await withTenant(auth.tenantId, async (db) => {
+      const row = await findScoped(db, auth, id);
+      if (row.status === 'SUPERSEDED') {
+        throw HttpError.conflict(
+          `Revision ${row.revisionNo} of ${row.code} was replaced by a later one. Change the costs on the latest revision.`,
+        );
+      }
+      const base = await baseCurrency(db, auth.tenantId);
+      if (base === null) {
+        throw new HttpError(409, 'NO_BASE_CURRENCY', 'This workspace has no base currency. Set one on Settings → Currency.');
+      }
+      await writeQuotationCosts(db, {
+        tenantId: auth.tenantId,
+        userId: auth.userId,
+        quotationId: row.id,
+        costs: input.costs,
+        base,
+      });
+      return costsView(db, auth, row);
+    });
+
+    const payload: ApiSuccess<QuotationCostsDto> = { success: true, data };
+    res.json(payload);
+  },
+);
+
 quotationRouter.delete('/quotations/:id', requirePermission(`${FEATURE}.DELETE`), async (req, res) => {
   const auth = req.auth!;
   const id = parseId(req.params.id, 'quotation');

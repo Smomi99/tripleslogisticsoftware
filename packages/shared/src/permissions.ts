@@ -399,7 +399,12 @@ export const FEATURES: readonly FeatureDefinition[] = [
      * left the building, so it is not yet business history — MODULE_INQUIRY_
      * QUOTATION §11 Q13, answered 2026-09-29 as "a delete limited to DRAFT".
      */
-    actions: ['VIEW', 'CREATE', 'EDIT', 'DELETE', 'SEND', 'FOLLOWUP', 'EXPORT_PDF', 'VIEW_ALL'],
+    /*
+     * VIEW_BUY_PRICE (2026-10-18): the quotation's Cost Details — what the
+     * forwarder expects to pay the carrier, agent and vendor. Column-level, as
+     * on the debit invoice: reading a quotation is not reading its margin.
+     */
+    actions: ['VIEW', 'CREATE', 'EDIT', 'DELETE', 'SEND', 'FOLLOWUP', 'EXPORT_PDF', 'VIEW_ALL', 'VIEW_BUY_PRICE'],
   },
   /*
    * Column-level, like PURCHASE's VIEW_BUY_PRICE. Adding a cost head nobody
