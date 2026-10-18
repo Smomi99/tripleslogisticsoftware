@@ -31,6 +31,7 @@ import { shipmentAdviseRouter } from './shipment-advise.route';
 import { blDraftRouter } from './bl-draft.route';
 import { blPrintRouter } from './bl-print.route';
 import { accountsRouter } from './accounts.route';
+import { financialStatementsRouter } from './financial-statements.route';
 import { freightCertificateRouter } from './freight-certificate.route';
 import { ledgerRouter } from './ledger.route';
 import { customerPortalRouter } from './customer-portal.route';
@@ -119,6 +120,8 @@ tenantRouter.use('/documentation', docWorklistRouter);
 // Credit Invoice, Receivable-Payable list.
 // docs/DESIGN-UPDATE-2026-10-04.md §9: before the routers that own /accounts.
 tenantRouter.use('/accounts/income-statement', incomeStatementRouter);
+// Balance Sheet and Cash Flow Statement (Menu M15, M16), 2026-10-18.
+tenantRouter.use('/accounts', financialStatementsRouter);
 tenantRouter.use('/accounts', accountsRouter);
 // The Freight Certificate, made from a debit invoice (the client's sample of 2026-10-18).
 tenantRouter.use('/accounts', freightCertificateRouter);

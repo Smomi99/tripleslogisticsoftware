@@ -839,3 +839,42 @@ superseded revision's costs are read-only. Never printed or sent. New permission
 `CUSTOMER_SERVICE.QUOTATION.VIEW_BUY_PRICE` (column-level, as on the debit invoice), granted by the migration
 to every role that already held both `CUSTOMER_SERVICE.QUOTATION.VIEW` and
 `ACCOUNTS.DEBIT_INVOICE.VIEW_BUY_PRICE`; editing also needs `CUSTOMER_SERVICE.QUOTATION.EDIT`.
+
+---
+
+## 17. BALANCE SHEET AND CASH FLOW STATEMENT — built 2026-10-18, on our recommendation
+
+The menu names both (M15, M16) and no sheet draws them (§14.13 Q1); DESIGN-UPDATE-2026-10-04 §9 held them
+on Q21. The client's instruction of 2026-10-18 was "do all with your recommendation", so both follow the
+Income Statement's answer to Q21 — accrual as a report over the books, with a Cash switch — and the three
+statements tell one story. No migration; the existing `ACCOUNTS.BALANCE_SHEET` and
+`ACCOUNTS.CASH_FLOW_STATEMENT` features (VIEW, EXPORT).
+
+**Balance Sheet** (`lib/balance-sheet.ts`). As at a day, beside the same day a year earlier. Assets
+(Current: Cash in Hand, Cash at Bank, Accounts Receivable, Inventory, Short-Term Loans to Others, Other;
+Non-Current: Land, Buildings and Other Long-Term Assets), Liabilities (Current: Accounts Payable, Customer
+Advances, Payroll, Taxes, Other; Long-Term: Loans, Other) and Owner's Equity (Owner Investment and Drawings,
+Opening Balance Equity, Retained Earnings Brought Forward, Profit for the Year).
+
+- Every asset, liability and equity account is its posted balance to the day, mapped from the chart.
+- **Accrual** adds what the books do not hold, because an invoice does not post (§14.13 Q2): receivables on
+  issued debit invoices less what was received, payables on their cost details less what was paid, and
+  the CRM openings (at today's rate, as the Receivable-Payable list takes them) — and the matching
+  adjustment to retained earnings. Each is one side of an entry the books would have made, so the sheet
+  balances by construction.
+- **Profit for the Year** is the Income Statement's net profit (same basis) from the start of the
+  financial year to the day; Retained Earnings Brought Forward is everything earned before it.
+- A "Difference" row appears only if the two sides ever disagree.
+
+**Cash Flow Statement** (`lib/cash-flow.ts`). The direct method, read from the books, in the Income
+Statement's three columns (month, YTD, previous YTD). Cash is every sub ledger of Cash and Bank. For each
+posted voucher that moved cash, each of its other lines is where the money came from or went: classified by
+account into Operating (customers, carriers/agents/vendors, employees, operating expenses, taxes, other),
+Investing (long-term assets, loans to others, deposit interest) and Financing (owner, loans, interest
+paid). A transfer between two cash accounts moves nothing. Opening cash + net change = closing cash, by
+construction; a Difference row would mean a voucher the classification missed. Cash basis by nature, so no
+switch.
+
+Both export to Excel. Tests: the end of `routes/income-statement.test.ts`, over the Income Statement's own
+fixtures, every figure hand arithmetic (accrual and cash balance sheets, both columns, the cash flow's three
+columns reconciling to the books, permissions, a second workspace).

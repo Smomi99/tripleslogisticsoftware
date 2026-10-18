@@ -19,6 +19,7 @@ export * from './documentation';
 export * from './customer';
 export * from './price-email';
 export * from './employee';
+export * from './financial-statements';
 export * from './freight-certificate';
 export * from './freight-rate';
 export * from './inbound';
