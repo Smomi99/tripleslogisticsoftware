@@ -1269,14 +1269,30 @@ async function costsView(db: TenantDb, auth: AuthContext, row: QuotationRow): Pr
       ? { blocks: [], notes: [] }
       : await quotationCostPrefill(db, { tenantId: auth.tenantId, quotationId: row.id, base, today: new Date() });
   const costTotalBase = saved.reduce((sum, c) => sum.plus(c.totalAmountBase), new Prisma.Decimal(0));
-  const sellTotalBase = row.lines.reduce((sum, l) => sum.plus(l.billAmountLocal ?? 0), new Prisma.Decimal(0));
+  /*
+    The selling side at today's rate for each charge's currency — the rate the
+    cost blocks start on and the debit invoice converts at. Not
+    bill_amount_local: since Local Currency went (2026-09-11) the frozen rate is
+    the base's own, 1, so a USD 2,333 quotation summed to 2,333 in base. Null
+    when a charge's currency has no rate: a total missing a line looks right.
+  */
+  const sellRates = await resolveRates(db, auth.tenantId, [...new Set(row.lines.map((l) => l.currencyId))]);
+  let sellTotalBase: Prisma.Decimal | null = new Prisma.Decimal(0);
+  for (const line of row.lines) {
+    const rate = sellRates.get(line.currencyId.toString())?.rate;
+    if (rate === undefined) {
+      sellTotalBase = null;
+      break;
+    }
+    sellTotalBase = sellTotalBase.plus((line.totalAmount ?? new Prisma.Decimal(0)).times(rate));
+  }
   const mayEdit = auth.isSuperadmin || auth.permissions.has(`${FEATURE}.EDIT`);
   return {
     quotationId: row.id.toString(),
     costs: saved.length === 0 ? null : saved.map(quotationCostDto),
     prefill: prefill.blocks,
     notes: prefill.notes,
-    sellTotalBase: sellTotalBase.toFixed(4),
+    sellTotalBase: sellTotalBase === null ? null : sellTotalBase.toFixed(4),
     costTotalBase: saved.length === 0 ? null : costTotalBase.toFixed(4),
     // A superseded revision is history; its replacement carries the costs on.
     editable: mayEdit && row.status !== 'SUPERSEDED',

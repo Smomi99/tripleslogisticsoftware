@@ -618,7 +618,7 @@ export function QuotationForm({
           // A revision is another row with its own cost side.
           key={quotation.id}
           quotationId={quotation.id}
-          sellTotalBase={quotation.lines.reduce((sum, l) => sum + Number(l.billAmountLocal), 0)}
+          sellLines={quotation.lines}
         />
       )}
 

@@ -925,6 +925,22 @@ describe('Quotation Cost Details, pulled by the debit invoice (2026-10-18)', () 
     expect(res.body.data.prefill[0]).toMatchObject({ partyId: A.carrierId.toString(), currencyId: usd.toString() });
   });
 
+  it('converts the sell side at the charge currency’s rate, not the frozen one', async () => {
+    // A quotation raised since Local Currency went freezes the base's own rate, 1.
+    const where = { quotationId: BigInt(quotationId), deletedAt: null };
+    const before = await owner.quotationLine.findMany({ where, select: { id: true, conversionRate: true } });
+    await owner.quotationLine.updateMany({ where, data: { conversionRate: '1' } });
+    try {
+      const res = await cs(A.superToken, SLUG_A).get(`/quotations/${quotationId}/costs`);
+      expect(res.status, JSON.stringify(res.body.error ?? {})).toBe(200);
+      expect(res.body.data.sellTotalBase).toBe(fixed4(D(1000).times(usdRate)));
+    } finally {
+      for (const line of before) {
+        await owner.quotationLine.update({ where: { id: line.id }, data: { conversionRate: line.conversionRate } });
+      }
+    }
+  });
+
   it('saves in place — never a new revision — and refuses a cost owed to nobody', async () => {
     const orphan = costsBody();
     orphan.costs[2]!.partyId = null;
