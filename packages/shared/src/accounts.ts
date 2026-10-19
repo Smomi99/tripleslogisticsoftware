@@ -662,8 +662,11 @@ export interface QuotationCostsDto {
   prefill: QuotationCostDraftDto[];
   /** Anything the prefill could not do, said in words. */
   notes: string[];
-  /** The selling total in base, as stored, for the gross profit beside the costs. */
-  sellTotalBase: string;
+  /**
+   * The selling total in base at today's rate for each charge's currency, for
+   * the gross profit beside the costs. Null when a charge's currency has no rate.
+   */
+  sellTotalBase: string | null;
   /** Null until saved. */
   costTotalBase: string | null;
   /** Decided by the server: the grant, and a quotation that is still the live revision. */

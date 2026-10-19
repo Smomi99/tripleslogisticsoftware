@@ -1,6 +1,12 @@
 'use client';
 
-import { type QuotationCostsDto, type QuotationCostsSaveInput, quotationCostsSaveSchema } from '@ff/shared';
+import {
+  type CostOptionsDto,
+  type QuotationCostsDto,
+  type QuotationCostsSaveInput,
+  type QuotationLineDto,
+  quotationCostsSaveSchema,
+} from '@ff/shared';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -57,13 +63,45 @@ function blocksFrom(view: QuotationCostsDto): BlockDraft[] {
   return withEveryType(drafts, view.options);
 }
 
+type SellLine = Pick<QuotationLineDto, 'currencyId' | 'currencyCode' | 'totalAmount'>;
+type SellPart = { currencyId: string; code: string; total: number; rate: number };
+
+/*
+  The selling side in base, at today's rate for each charge's currency — the
+  rate each cost block starts on and the debit invoice converts at, so the gross
+  profit subtracts base from base.
+
+  Not the lines' bill amount: that is price x the quotation's frozen rate, and
+  since Local Currency went (2026-09-11) the frozen rate is the base's own, 1 —
+  so a USD 2,333 quotation read as "2,333.00 BDT".
+*/
+function sellInBase(
+  lines: SellLine[],
+  currencies: CostOptionsDto['currencies'],
+): { base: number; parts: SellPart[] } | { unrated: string } {
+  const parts = new Map<string, SellPart>();
+  for (const line of lines) {
+    let part = parts.get(line.currencyId);
+    if (part === undefined) {
+      const rate = Number(currencies.find((c) => c.id === line.currencyId)?.rate ?? '0');
+      // A total missing a charge would look right and be wrong; say so instead.
+      if (!(rate > 0)) return { unrated: line.currencyCode };
+      part = { currencyId: line.currencyId, code: line.currencyCode, total: 0, rate };
+      parts.set(line.currencyId, part);
+    }
+    part.total += Number(line.totalAmount);
+  }
+  const list = [...parts.values()];
+  return { base: list.reduce((sum, p) => sum + p.total * p.rate, 0), parts: list };
+}
+
 export function QuotationCostDetails({
   quotationId,
-  sellTotalBase,
+  sellLines,
 }: {
   quotationId: string;
-  /** The selling total in base as the quotation last saved it. */
-  sellTotalBase: number;
+  /** The charges as the quotation last saved them, in the currency each was priced in. */
+  sellLines: SellLine[];
 }) {
   const { authorizedRequest } = useSession();
   const endpoint = `/api/tenant/cs/quotations/${quotationId}/costs`;
@@ -104,8 +142,13 @@ export function QuotationCostDetails({
   if (view === null) return <p className="text-body text-steel">Loading cost details…</p>;
 
   const baseCode = view.options.baseCurrencyCode ?? '';
-  const grossProfit = sellTotalBase - grandCost;
-  const gpPercent = sellTotalBase > 0 ? (grossProfit / sellTotalBase) * 100 : null;
+  const sell = sellInBase(sellLines, view.options.currencies);
+  const sellTotalBase = 'base' in sell ? sell.base : null;
+  const grossProfit = sellTotalBase === null ? null : sellTotalBase - grandCost;
+  const gpPercent =
+    sellTotalBase !== null && grossProfit !== null && sellTotalBase > 0 ? (grossProfit / sellTotalBase) * 100 : null;
+  // Only charges priced outside the base were converted; those are worth showing the rate for.
+  const converted = 'parts' in sell ? sell.parts.filter((p) => p.currencyId !== view.options.baseCurrencyId) : [];
 
   async function save(): Promise<void> {
     const payload: QuotationCostsSaveInput = {
@@ -163,6 +206,13 @@ export function QuotationCostDetails({
             <dd className="font-mono text-section tabular-nums text-hull">
               {fmt(sellTotalBase)} <span className="text-body text-steel">{baseCode}</span>
             </dd>
+            {converted.length > 0 && (
+              <dd className="mt-0.5 font-mono text-cell tabular-nums text-steel">
+                {converted
+                  .map((p) => `${fmt(p.total)} ${p.code} × ${p.rate.toLocaleString('en-US', { maximumFractionDigits: 4 })}`)
+                  .join(' + ')}
+              </dd>
+            )}
           </div>
           <div>
             <dt className="label-manifest">Grand total cost</dt>
@@ -172,7 +222,9 @@ export function QuotationCostDetails({
           </div>
           <div>
             <dt className="label-manifest">Gross profit</dt>
-            <dd className={`font-mono text-section tabular-nums ${grossProfit < 0 ? 'text-alert' : 'text-hull'}`}>
+            <dd
+              className={`font-mono text-section tabular-nums ${grossProfit !== null && grossProfit < 0 ? 'text-alert' : 'text-hull'}`}
+            >
               {fmt(grossProfit)} <span className="text-body text-steel">{baseCode}</span>
             </dd>
           </div>
@@ -182,6 +234,12 @@ export function QuotationCostDetails({
               {gpPercent === null ? '—' : `${gpPercent.toFixed(2)}%`}
             </dd>
           </div>
+          {'unrated' in sell && (
+            <p role="alert" className="text-cell text-alert sm:col-span-4">
+              No {sell.unrated} rate on file, so the sell price cannot be shown in {baseCode}. Set one on Settings →
+              Currency.
+            </p>
+          )}
         </dl>
         {view.editable && (
           <Button onClick={() => void save()} disabled={busy}>
