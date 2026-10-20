@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import type { JournalEntryKind } from './ledger';
+
 /**
  * Accounts → Income Statement (docs/DESIGN-UPDATE-2026-10-04.md §9).
  *
@@ -91,6 +93,12 @@ export type IncomeStatementLineKey =
   | (typeof INCOME_STATEMENT_LINES)[number]['key']
   | (typeof INCOME_STATEMENT_EXTRA_LINES)[number];
 
+/** Every key a figure can be booked to: the sections' lines, then Discounts and Income Tax. */
+export const INCOME_STATEMENT_LINE_KEYS: readonly IncomeStatementLineKey[] = [
+  ...INCOME_STATEMENT_LINES.map((l) => l.key),
+  ...INCOME_STATEMENT_EXTRA_LINES,
+];
+
 const month = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Choose a month.');
 
 /**
@@ -141,4 +149,73 @@ export interface IncomeStatementDto {
   };
   yearStartMonth: number;
   rows: IncomeStatementRowDto[];
+}
+
+// ------------------------------------------------------------- breakdown
+
+/** The statement's three columns, in the order `amounts` holds them. */
+export const INCOME_STATEMENT_COLUMNS = ['CURRENT_MONTH', 'YTD', 'PREVIOUS_YTD'] as const;
+export type IncomeStatementColumn = (typeof INCOME_STATEMENT_COLUMNS)[number];
+
+export const INCOME_STATEMENT_COLUMN_LABEL: Record<IncomeStatementColumn, string> = {
+  CURRENT_MONTH: 'Current Month',
+  YTD: 'YTD',
+  PREVIOUS_YTD: 'Previous Year YTD',
+};
+
+/**
+ * One line's figure for one column, broken down into the documents it was
+ * added up from (client, 2026-10-20: a line's name opens what it is made of).
+ */
+export const incomeStatementBreakdownQuerySchema = incomeStatementQuerySchema.extend({
+  line: z.enum(INCOME_STATEMENT_LINE_KEYS),
+  column: z.enum(INCOME_STATEMENT_COLUMNS).default('CURRENT_MONTH'),
+});
+export type IncomeStatementBreakdownQuery = z.input<typeof incomeStatementBreakdownQuerySchema>;
+
+/**
+ * Where an entry comes from: an issued debit invoice (revenue), a cost block
+ * on one (job cost), a posted voucher's lines on one account, or the exchange
+ * difference a settling voucher realised.
+ */
+export const INCOME_STATEMENT_SOURCES = ['DEBIT_INVOICE', 'INVOICE_COST', 'VOUCHER', 'EXCHANGE'] as const;
+export type IncomeStatementSource = (typeof INCOME_STATEMENT_SOURCES)[number];
+
+export interface IncomeStatementEntryDto {
+  source: IncomeStatementSource;
+  /** ISO date: the invoice date, or the voucher date. */
+  date: string;
+  /** The document that opens: a debit invoice for the first two sources, a voucher for the rest. */
+  documentId: string;
+  documentCode: string;
+  /** The voucher's kind, for its link. Null on an invoice. */
+  voucherKind: JournalEntryKind | null;
+  /** The customer on an invoice, the carrier / agent / vendor on a cost, the voucher's party. */
+  partyName: string | null;
+  /** The booking an invoice or cost is for; the ledger account a voucher was posted to. */
+  reference: string | null;
+  /** The supplier's own invoice no on a cost; the voucher's description; what a settlement settled. */
+  details: string | null;
+  /** In base, signed as the line reads it: a positive figure adds to the line. */
+  amount: string;
+}
+
+export interface IncomeStatementBreakdownDto {
+  line: IncomeStatementLineKey;
+  label: string;
+  basis: IncomeStatementBasis;
+  currencyCode: string;
+  column: IncomeStatementColumn;
+  period: { from: string; to: string };
+  /** The statement's own figure for this line and column: every entry, plus what is withheld. */
+  total: string;
+  /** Subtotals by where the figure came from — an invoice source, or a ledger account. */
+  groups: { label: string; count: number; amount: string }[];
+  entries: IncomeStatementEntryDto[];
+  /**
+   * Job costs on invoices, for a viewer without ACCOUNTS.DEBIT_INVOICE.
+   * VIEW_BUY_PRICE: counted and summed, never listed (MODULE_ACCOUNTS §3.9).
+   * Null when nothing is withheld.
+   */
+  withheld: { count: number; amount: string } | null;
 }

@@ -1,11 +1,16 @@
 import {
+  INCOME_STATEMENT_COLUMNS,
   INCOME_STATEMENT_LINES,
   INCOME_STATEMENT_SECTION_TITLE,
   type IncomeStatementBasis,
+  type IncomeStatementBreakdownDto,
+  type IncomeStatementColumn,
   type IncomeStatementDto,
+  type IncomeStatementEntryDto,
   type IncomeStatementLineKey,
   type IncomeStatementRowDto,
   type IncomeStatementSection,
+  type JournalEntryKind,
 } from '@ff/shared';
 
 import { Prisma } from '../generated/prisma/client';
@@ -200,6 +205,105 @@ function service(shipmentType: string | null, loadingType: string | null): 'FCL'
 const REVENUE_BY_SERVICE = { FCL: 'REV_FCL', LCL: 'REV_LCL', AIR: 'REV_AIR' } as const;
 const COST_BY_SERVICE = { FCL: 'COST_FCL', LCL: 'COST_LCL', AIR: 'COST_AIR' } as const;
 
+/** The line an issued invoice's revenue lands on: by the booking's service, anything else Other. */
+function revenueLineOf(shipmentType: string | null, loadingType: string | null): IncomeStatementLineKey {
+  const svc = service(shipmentType, loadingType);
+  return svc === null ? 'REV_OTHER' : REVENUE_BY_SERVICE[svc];
+}
+
+/** The line a cost block lands on: agents apart, carriers and vendors as freight by service. */
+function costLineOf(partyType: string, shipmentType: string | null, loadingType: string | null): IncomeStatementLineKey {
+  if (partyType === 'AGENT') return 'COST_AGENT';
+  const svc = service(shipmentType, loadingType);
+  return svc === null ? 'COST_OTHER_JOB' : COST_BY_SERVICE[svc];
+}
+
+/** Every line revenueLineOf and costLineOf can answer: the only lines an invoice reaches. */
+const INVOICE_REVENUE_LINES = new Set<IncomeStatementLineKey>([...Object.values(REVENUE_BY_SERVICE), 'REV_OTHER']);
+const INVOICE_COST_LINES = new Set<IncomeStatementLineKey>([...Object.values(COST_BY_SERVICE), 'COST_AGENT', 'COST_OTHER_JOB']);
+
+/**
+ * A voucher that settles something: a receipt against an invoice, a payment
+ * against a supplier's cost, or a payment against an opening balance.
+ */
+const SETTLES = Prisma.sql`(
+     EXISTS (SELECT 1 FROM debit_invoice_receipt r
+              WHERE r.tenant_id = je.tenant_id AND r.journal_entry_id = je.id AND r.deleted_at IS NULL)
+  OR EXISTS (SELECT 1 FROM supplier_payment sp
+              WHERE sp.tenant_id = je.tenant_id AND sp.journal_entry_id = je.id AND sp.deleted_at IS NULL)
+  OR EXISTS (SELECT 1 FROM opening_settlement os
+              WHERE os.tenant_id = je.tenant_id AND os.journal_entry_id = je.id AND os.deleted_at IS NULL)
+)`;
+
+/** The voucher's party, whichever of the four it names. Needs je, and the four joins below. */
+const PARTY_NAME = Prisma.sql`COALESCE(cu.name, ag.name, ca.name, ve.name)`;
+const PARTY_JOINS = Prisma.sql`
+  LEFT JOIN customer cu ON cu.tenant_id = je.tenant_id AND cu.id = je.customer_id
+  LEFT JOIN agent ag    ON ag.tenant_id = je.tenant_id AND ag.id = je.agent_id
+  LEFT JOIN carrier ca  ON ca.id = je.carrier_id
+  LEFT JOIN vendor ve   ON ve.tenant_id = je.tenant_id AND ve.id = je.vendor_id`;
+
+type SettlementRow = {
+  id: bigint;
+  code: string;
+  kind: JournalEntryKind;
+  entry_date: Date;
+  party_name: string | null;
+  /** The debit invoices it received against or paid a cost of, by number. */
+  settled: string | null;
+  pl: Prisma.Decimal;
+  received: Prisma.Decimal;
+  paid: Prisma.Decimal;
+};
+
+/** Every posted voucher that received against an invoice or paid a supplier's cost, dated within `when`. */
+function settlementVouchers(db: TenantDb, tenantId: bigint, when: Prisma.Sql): Promise<SettlementRow[]> {
+  return db.$queryRaw<SettlementRow[]>`
+    SELECT je.id, je.code, je.kind::text AS kind, je.entry_date, ${PARTY_NAME} AS party_name,
+           (SELECT string_agg(d.code, ', ' ORDER BY d.code)
+              FROM debit_invoice d
+             WHERE d.tenant_id = je.tenant_id
+               AND (d.id IN (SELECT r.debit_invoice_id FROM debit_invoice_receipt r
+                              WHERE r.tenant_id = je.tenant_id AND r.journal_entry_id = je.id AND r.deleted_at IS NULL)
+                 OR d.id IN (SELECT c.debit_invoice_id FROM supplier_payment sp
+                               JOIN debit_invoice_cost c ON c.tenant_id = sp.tenant_id AND c.id = sp.debit_invoice_cost_id
+                              WHERE sp.tenant_id = je.tenant_id AND sp.journal_entry_id = je.id AND sp.deleted_at IS NULL))
+           ) AS settled,
+           (SELECT COALESCE(SUM(jl.credit - jl.debit), 0)
+              FROM journal_line jl
+              JOIN ledger_account la ON la.tenant_id = jl.tenant_id AND la.id = jl.ledger_account_id
+             WHERE jl.tenant_id = je.tenant_id AND jl.journal_entry_id = je.id AND jl.deleted_at IS NULL
+               AND la.account_type IN ('INCOME', 'EXPENSE')) AS pl,
+           (SELECT COALESCE(SUM(r.amount_base), 0) FROM debit_invoice_receipt r
+             WHERE r.tenant_id = je.tenant_id AND r.journal_entry_id = je.id AND r.deleted_at IS NULL) AS received,
+           (SELECT COALESCE(SUM(sp.amount_base), 0) FROM supplier_payment sp
+             WHERE sp.tenant_id = je.tenant_id AND sp.journal_entry_id = je.id AND sp.deleted_at IS NULL) AS paid
+      FROM journal_entry je
+      ${PARTY_JOINS}
+     WHERE je.tenant_id = ${tenantId}
+       AND je.deleted_at IS NULL
+       AND je.status = 'POSTED'
+       AND ${when}
+       AND (
+             EXISTS (SELECT 1 FROM debit_invoice_receipt r
+                      WHERE r.tenant_id = je.tenant_id AND r.journal_entry_id = je.id AND r.deleted_at IS NULL)
+          OR EXISTS (SELECT 1 FROM supplier_payment sp
+                      WHERE sp.tenant_id = je.tenant_id AND sp.journal_entry_id = je.id AND sp.deleted_at IS NULL)
+       )
+     ORDER BY je.entry_date, je.code
+  `;
+}
+
+/*
+ * The exchange difference a settlement realised. Income vouchers: cash in
+ * (pl) less the invoice base it settled. Expense vouchers: pl is the cash
+ * out, negative; adding the cost base it settled leaves what was saved.
+ * Positive is a gain, negative a loss.
+ */
+const exchangeOf = (row: SettlementRow): Prisma.Decimal => dec(row.pl).plus(dec(row.paid)).minus(dec(row.received));
+
+const day = (d: Date): string => d.toISOString().slice(0, 10);
+
 /** Three conditional sums, one per column, over a date expression. */
 function columnSums(value: Prisma.Sql, date: Prisma.Sql, periods: [Period, Period, Period]): Prisma.Sql {
   const [c, y, p] = periods;
@@ -217,7 +321,6 @@ function inAnyPeriod(date: Prisma.Sql, periods: [Period, Period, Period]): Prism
 type ColumnRow = { c0: Prisma.Decimal; c1: Prisma.Decimal; c2: Prisma.Decimal };
 type RevenueRow = ColumnRow & { shipment_type: string | null; loading_type: string | null };
 type CostRow = RevenueRow & { party_type: string };
-type SettlementRow = { entry_date: Date; pl: Prisma.Decimal; received: Prisma.Decimal; paid: Prisma.Decimal };
 
 /**
  * Every figure the statement prints, by line, before the subtotals.
@@ -241,15 +344,6 @@ export async function statementLines(
   const accrual = basis === 'ACCRUAL';
   const invoiceDate = Prisma.sql`i.invoice_date`;
   const entryDate = Prisma.sql`je.entry_date`;
-
-  const settles = Prisma.sql`(
-       EXISTS (SELECT 1 FROM debit_invoice_receipt r
-                WHERE r.tenant_id = je.tenant_id AND r.journal_entry_id = je.id AND r.deleted_at IS NULL)
-    OR EXISTS (SELECT 1 FROM supplier_payment sp
-                WHERE sp.tenant_id = je.tenant_id AND sp.journal_entry_id = je.id AND sp.deleted_at IS NULL)
-    OR EXISTS (SELECT 1 FROM opening_settlement os
-                WHERE os.tenant_id = je.tenant_id AND os.journal_entry_id = je.id AND os.deleted_at IS NULL)
-  )`;
 
   const [revenue, costs, posted, settlements] = await Promise.all([
     !accrual ? Promise.resolve<RevenueRow[]>([]) : db.$queryRaw<RevenueRow[]>`
@@ -289,44 +383,18 @@ export async function statementLines(
          AND je.status = 'POSTED'
          AND la.account_type IN ('INCOME', 'EXPENSE')
          AND ${inAnyPeriod(entryDate, periods)}
-         ${accrual ? Prisma.sql`AND NOT ${settles}` : Prisma.empty}
+         ${accrual ? Prisma.sql`AND NOT ${SETTLES}` : Prisma.empty}
        GROUP BY la.account_type, la.system_key, p.system_key
     `,
-    !accrual ? Promise.resolve<SettlementRow[]>([]) : db.$queryRaw<SettlementRow[]>`
-      SELECT je.entry_date,
-             (SELECT COALESCE(SUM(jl.credit - jl.debit), 0)
-                FROM journal_line jl
-                JOIN ledger_account la ON la.tenant_id = jl.tenant_id AND la.id = jl.ledger_account_id
-               WHERE jl.tenant_id = je.tenant_id AND jl.journal_entry_id = je.id AND jl.deleted_at IS NULL
-                 AND la.account_type IN ('INCOME', 'EXPENSE')) AS pl,
-             (SELECT COALESCE(SUM(r.amount_base), 0) FROM debit_invoice_receipt r
-               WHERE r.tenant_id = je.tenant_id AND r.journal_entry_id = je.id AND r.deleted_at IS NULL) AS received,
-             (SELECT COALESCE(SUM(sp.amount_base), 0) FROM supplier_payment sp
-               WHERE sp.tenant_id = je.tenant_id AND sp.journal_entry_id = je.id AND sp.deleted_at IS NULL) AS paid
-        FROM journal_entry je
-       WHERE je.tenant_id = ${tenantId}
-         AND je.deleted_at IS NULL
-         AND je.status = 'POSTED'
-         AND ${inAnyPeriod(entryDate, periods)}
-         AND (
-               EXISTS (SELECT 1 FROM debit_invoice_receipt r
-                        WHERE r.tenant_id = je.tenant_id AND r.journal_entry_id = je.id AND r.deleted_at IS NULL)
-            OR EXISTS (SELECT 1 FROM supplier_payment sp
-                        WHERE sp.tenant_id = je.tenant_id AND sp.journal_entry_id = je.id AND sp.deleted_at IS NULL)
-         )
-    `,
+    !accrual ? Promise.resolve<SettlementRow[]>([]) : settlementVouchers(db, tenantId, inAnyPeriod(entryDate, periods)),
   ]);
 
   for (const row of revenue) {
-    const svc = service(row.shipment_type, row.loading_type);
-    ledger.addColumns(svc === null ? 'REV_OTHER' : REVENUE_BY_SERVICE[svc], [row.c0, row.c1, row.c2]);
+    ledger.addColumns(revenueLineOf(row.shipment_type, row.loading_type), [row.c0, row.c1, row.c2]);
   }
 
   for (const row of costs) {
-    const svc = service(row.shipment_type, row.loading_type);
-    const key: IncomeStatementLineKey =
-      row.party_type === 'AGENT' ? 'COST_AGENT' : svc === null ? 'COST_OTHER_JOB' : COST_BY_SERVICE[svc];
-    ledger.addColumns(key, [row.c0, row.c1, row.c2]);
+    ledger.addColumns(costLineOf(row.party_type, row.shipment_type, row.loading_type), [row.c0, row.c1, row.c2]);
   }
 
   for (const row of posted) {
@@ -336,14 +404,8 @@ export async function statementLines(
     ledger.addColumns(key, [row.c0, row.c1, row.c2].map((v) => dec(v).times(sign)));
   }
 
-  /*
-   * The exchange difference a settlement realised. Income vouchers: cash in
-   * (pl) less the invoice base it settled. Expense vouchers: pl is the cash
-   * out, negative; adding the cost base it settled leaves what was saved.
-   */
-  const day = (d: Date) => d.toISOString().slice(0, 10);
   for (const row of settlements) {
-    const fx = dec(row.pl).plus(dec(row.paid)).minus(dec(row.received));
+    const fx = exchangeOf(row);
     if (fx.isZero()) continue;
     const date = day(row.entry_date);
     periods.forEach((p, column) => {
@@ -375,6 +437,13 @@ function percent(part: Amounts, whole: Amounts): IncomeStatementRowDto['amounts'
 }
 
 const out = (a: Amounts): IncomeStatementRowDto['amounts'] => [money(a[0]), money(a[1]), money(a[2])];
+
+/** Every line's printed label, the two outside the sections included. */
+const LABEL_OF = new Map<IncomeStatementLineKey, string>([
+  ...INCOME_STATEMENT_LINES.map((l) => [l.key, l.label] as const),
+  ['DISCOUNTS', 'Less: Discounts / Credit Notes'],
+  ['INCOME_TAX', 'Income Tax Expense'],
+]);
 
 /** The sheet's layout, top to bottom, with every subtotal it draws (C11–C91). */
 export function statementRows(ledger: Ledger): IncomeStatementRowDto[] {
@@ -411,7 +480,7 @@ export function statementRows(ledger: Ledger): IncomeStatementRowDto[] {
     section('REVENUE'),
     ...lineRows('REVENUE'),
     { kind: 'SUBTOTAL', key: 'GROSS_REVENUE', label: 'Gross Revenue', amounts: out(gross) },
-    { kind: 'LINE', key: 'DISCOUNTS', label: 'Less: Discounts / Credit Notes', amounts: out(discounts), deduction: true },
+    { kind: 'LINE', key: 'DISCOUNTS', label: LABEL_OF.get('DISCOUNTS')!, amounts: out(discounts), deduction: true },
     { kind: 'TOTAL', key: 'NET_REVENUE', label: 'Net Revenue', amounts: out(netRevenue) },
     section('DIRECT_COST'),
     ...lineRows('DIRECT_COST'),
@@ -429,7 +498,7 @@ export function statementRows(ledger: Ledger): IncomeStatementRowDto[] {
     ...lineRows('NONOP_EXPENSE'),
     { kind: 'SUBTOTAL', key: 'TOTAL_NONOP_EXPENSE', label: 'Total Non-Operating Expenses', amounts: out(nonOpExpense) },
     { kind: 'TOTAL', key: 'PROFIT_BEFORE_TAX', label: 'Profit Before Tax', amounts: out(beforeTax) },
-    { kind: 'LINE', key: 'INCOME_TAX', label: 'Income Tax Expense', amounts: out(tax) },
+    { kind: 'LINE', key: 'INCOME_TAX', label: LABEL_OF.get('INCOME_TAX')!, amounts: out(tax) },
     { kind: 'TOTAL', key: 'NET_PROFIT_AFTER_TAX', label: 'Net Profit After Tax', amounts: out(afterTax) },
     { kind: 'PERCENT', key: 'NET_PROFIT_MARGIN', label: 'Net Profit Margin %', amounts: percent(afterTax, netRevenue) },
   ];
@@ -448,5 +517,223 @@ export async function incomeStatement(
     periods: { currentMonth: periods[0], ytd: periods[1], previousYtd: periods[2] },
     yearStartMonth: input.yearStartMonth,
     rows: statementRows(ledger),
+  };
+}
+
+// -------------------------------------------------------------- breakdown
+
+type InvoiceEntryRow = {
+  id: bigint;
+  code: string;
+  invoice_date: Date;
+  amount: Prisma.Decimal;
+  shipment_type: string | null;
+  loading_type: string | null;
+  booking_code: string | null;
+  party_name: string | null;
+};
+type CostEntryRow = InvoiceEntryRow & { party_type: string; supplier_invoice_no: string | null };
+type VoucherEntryRow = {
+  id: bigint;
+  code: string;
+  kind: JournalEntryKind;
+  entry_date: Date;
+  description: string | null;
+  account_name: string;
+  party_name: string | null;
+  amount: Prisma.Decimal;
+};
+
+/**
+ * One line's figure for one column, as the documents it was added up from
+ * (client, 2026-10-20). The same sources, filters and mapping as
+ * statementLines, read row by row instead of summed, so the entries add up to
+ * the statement's figure; income-statement.test.ts checks that for every line.
+ *
+ * A voucher is one entry per account it touched on this line. Job costs need
+ * ACCOUNTS.DEBIT_INVOICE.VIEW_BUY_PRICE to be listed: without it they are
+ * counted and summed into `withheld`, so the total still agrees with a
+ * statement that already prints them as a line (MODULE_ACCOUNTS §3.9).
+ */
+export async function lineBreakdown(
+  db: TenantDb,
+  tenantId: bigint,
+  input: {
+    month: string;
+    yearStartMonth: number;
+    basis: IncomeStatementBasis;
+    line: IncomeStatementLineKey;
+    column: IncomeStatementColumn;
+    currencyCode: string;
+    viewBuyPrice: boolean;
+  },
+): Promise<IncomeStatementBreakdownDto> {
+  const { line, basis } = input;
+  const accrual = basis === 'ACCRUAL';
+  const period = periodsOf(input.month, input.yearStartMonth)[INCOME_STATEMENT_COLUMNS.indexOf(input.column)]!;
+  const within = (date: Prisma.Sql) => Prisma.sql`${date} BETWEEN ${period.from}::date AND ${period.to}::date`;
+  const invoiceDate = Prisma.sql`i.invoice_date`;
+  const entryDate = Prisma.sql`je.entry_date`;
+
+  const accounts = await db.$queryRaw<{ id: bigint; account_type: 'INCOME' | 'EXPENSE'; system_key: string | null; parent_key: string | null }[]>`
+    SELECT la.id, la.account_type::text AS account_type, la.system_key, p.system_key AS parent_key
+      FROM ledger_account la
+      LEFT JOIN ledger_account p ON p.tenant_id = la.tenant_id AND p.id = la.parent_id
+     WHERE la.tenant_id = ${tenantId}
+       AND la.account_type IN ('INCOME', 'EXPENSE')
+  `;
+  const accountIds = accounts
+    .filter((a) => lineOfAccount({ accountType: a.account_type, systemKey: a.system_key, parentKey: a.parent_key }) === line)
+    .map((a) => a.id);
+
+  const [invoices, costs, vouchers, settlements] = await Promise.all([
+    !accrual || !INVOICE_REVENUE_LINES.has(line) ? Promise.resolve<InvoiceEntryRow[]>([]) : db.$queryRaw<InvoiceEntryRow[]>`
+      SELECT i.id, i.code, i.invoice_date, i.total_amount_base AS amount,
+             s.shipment_type::text AS shipment_type, s.loading_type::text AS loading_type, s.code AS booking_code,
+             cu.name AS party_name
+        FROM debit_invoice i
+        LEFT JOIN shipment s ON s.tenant_id = i.tenant_id AND s.id = i.shipment_id
+        LEFT JOIN customer cu ON cu.tenant_id = i.tenant_id AND cu.id = i.customer_id
+       WHERE i.tenant_id = ${tenantId}
+         AND i.deleted_at IS NULL
+         AND i.status = 'ISSUED'
+         AND ${within(invoiceDate)}
+    `,
+    !accrual || !INVOICE_COST_LINES.has(line) ? Promise.resolve<CostEntryRow[]>([]) : db.$queryRaw<CostEntryRow[]>`
+      SELECT i.id, i.code, i.invoice_date, c.total_amount_base AS amount, c.party_type::text AS party_type,
+             c.supplier_invoice_no,
+             s.shipment_type::text AS shipment_type, s.loading_type::text AS loading_type, s.code AS booking_code,
+             COALESCE(ca.name, ag.name, ve.name) AS party_name
+        FROM debit_invoice_cost c
+        JOIN debit_invoice i ON i.tenant_id = c.tenant_id AND i.id = c.debit_invoice_id
+        LEFT JOIN shipment s ON s.tenant_id = i.tenant_id AND s.id = i.shipment_id
+        LEFT JOIN carrier ca ON ca.id = c.carrier_id
+        LEFT JOIN agent ag   ON ag.tenant_id = c.tenant_id AND ag.id = c.agent_id
+        LEFT JOIN vendor ve  ON ve.tenant_id = c.tenant_id AND ve.id = c.vendor_id
+       WHERE c.tenant_id = ${tenantId}
+         AND c.deleted_at IS NULL
+         AND i.deleted_at IS NULL
+         AND i.status = 'ISSUED'
+         AND ${within(invoiceDate)}
+       ORDER BY c.sort_order, c.id
+    `,
+    accountIds.length === 0 ? Promise.resolve<VoucherEntryRow[]>([]) : db.$queryRaw<VoucherEntryRow[]>`
+      SELECT je.id, je.code, je.kind::text AS kind, je.entry_date, je.description,
+             la.name AS account_name, ${PARTY_NAME} AS party_name,
+             SUM(jl.credit - jl.debit) AS amount
+        FROM journal_line jl
+        JOIN journal_entry je  ON je.tenant_id = jl.tenant_id AND je.id = jl.journal_entry_id
+        JOIN ledger_account la ON la.tenant_id = jl.tenant_id AND la.id = jl.ledger_account_id
+        ${PARTY_JOINS}
+       WHERE jl.tenant_id = ${tenantId}
+         AND jl.deleted_at IS NULL
+         AND je.deleted_at IS NULL
+         AND je.status = 'POSTED'
+         AND jl.ledger_account_id IN (${Prisma.join(accountIds)})
+         AND ${within(entryDate)}
+         ${accrual ? Prisma.sql`AND NOT ${SETTLES}` : Prisma.empty}
+       GROUP BY je.id, je.code, je.kind, je.entry_date, je.description, la.id, la.name, cu.name, ag.name, ca.name, ve.name
+    `,
+    !accrual || (line !== 'FX_GAIN' && line !== 'FX_LOSS')
+      ? Promise.resolve<SettlementRow[]>([])
+      : settlementVouchers(db, tenantId, within(entryDate)),
+  ]);
+
+  const entries: IncomeStatementEntryDto[] = [];
+  const groups = new Map<string, { count: number; amount: Prisma.Decimal }>();
+  const tally = (label: string, amount: Prisma.Decimal) => {
+    const group = groups.get(label) ?? { count: 0, amount: new Prisma.Decimal(0) };
+    groups.set(label, { count: group.count + 1, amount: group.amount.plus(amount) });
+  };
+
+  for (const row of invoices) {
+    if (revenueLineOf(row.shipment_type, row.loading_type) !== line) continue;
+    tally('Debit invoices', dec(row.amount));
+    entries.push({
+      source: 'DEBIT_INVOICE',
+      date: day(row.invoice_date),
+      documentId: row.id.toString(),
+      documentCode: row.code,
+      voucherKind: null,
+      partyName: row.party_name,
+      reference: row.booking_code,
+      details: null,
+      amount: money(dec(row.amount)),
+    });
+  }
+
+  const withheld = { count: 0, amount: new Prisma.Decimal(0) };
+  for (const row of costs) {
+    if (costLineOf(row.party_type, row.shipment_type, row.loading_type) !== line) continue;
+    if (!input.viewBuyPrice) {
+      withheld.count += 1;
+      withheld.amount = withheld.amount.plus(dec(row.amount));
+      continue;
+    }
+    tally('Costs on debit invoices', dec(row.amount));
+    entries.push({
+      source: 'INVOICE_COST',
+      date: day(row.invoice_date),
+      documentId: row.id.toString(),
+      documentCode: row.code,
+      voucherKind: null,
+      partyName: row.party_name,
+      reference: row.booking_code,
+      details: row.supplier_invoice_no,
+      amount: money(dec(row.amount)),
+    });
+  }
+
+  // credit − debit is what an income line earns; an expense line is its negative.
+  const sign = isIncomeNatured(line) ? 1 : -1;
+  for (const row of [...vouchers].sort((a, b) => a.account_name.localeCompare(b.account_name))) {
+    const amount = dec(row.amount).times(sign);
+    if (amount.isZero()) continue;
+    tally(row.account_name, amount);
+    entries.push({
+      source: 'VOUCHER',
+      date: day(row.entry_date),
+      documentId: row.id.toString(),
+      documentCode: row.code,
+      voucherKind: row.kind,
+      partyName: row.party_name,
+      reference: row.account_name,
+      details: row.description,
+      amount: money(amount),
+    });
+  }
+
+  for (const row of settlements) {
+    const fx = exchangeOf(row);
+    const amount = line === 'FX_GAIN' ? fx : fx.negated();
+    if (!amount.greaterThan(0)) continue;
+    tally('Exchange difference on settlements', amount);
+    entries.push({
+      source: 'EXCHANGE',
+      date: day(row.entry_date),
+      documentId: row.id.toString(),
+      documentCode: row.code,
+      voucherKind: row.kind,
+      partyName: row.party_name,
+      reference: null,
+      details: row.settled === null ? null : `Against ${row.settled}`,
+      amount: money(amount),
+    });
+  }
+
+  entries.sort((a, b) => a.date.localeCompare(b.date) || a.documentCode.localeCompare(b.documentCode));
+  const total = [...groups.values()].reduce((acc, g) => acc.plus(g.amount), withheld.amount);
+
+  return {
+    line,
+    label: LABEL_OF.get(line)!,
+    basis,
+    currencyCode: input.currencyCode,
+    column: input.column,
+    period,
+    total: money(total),
+    groups: [...groups].map(([label, g]) => ({ label, count: g.count, amount: money(g.amount) })),
+    entries,
+    withheld: withheld.count === 0 ? null : { count: withheld.count, amount: money(withheld.amount) },
   };
 }

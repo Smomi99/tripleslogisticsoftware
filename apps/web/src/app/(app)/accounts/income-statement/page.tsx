@@ -3,6 +3,8 @@
 import {
   INCOME_STATEMENT_BASES,
   INCOME_STATEMENT_BASIS_LABEL,
+  INCOME_STATEMENT_COLUMN_LABEL,
+  INCOME_STATEMENT_COLUMNS,
   type IncomeStatementBasis,
   type IncomeStatementDto,
   type IncomeStatementRowDto,
@@ -10,6 +12,7 @@ import {
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
+import { type BreakdownTarget, IncomeStatementBreakdown } from '@/components/accounts/income-statement-breakdown';
 import { Button } from '@/components/ui/button';
 import { Input, Select } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/form-layout';
@@ -22,7 +25,8 @@ import { useSession } from '@/lib/session';
  * Accounts → Income Statement — the client's `Income statement` sheet
  * (docs/DESIGN-UPDATE-2026-10-04.md §9): sections A–E, Current Month, YTD
  * and Previous Year YTD, on an accrual basis. Read-only; every figure is the
- * server's, and this page only lays it out.
+ * server's, and this page only lays it out. A line's name, or one of its
+ * figures, opens the documents it adds up (income-statement-breakdown.tsx).
  */
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -38,6 +42,20 @@ function thisMonth(): string {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 }
+
+/** A line with a figure in any column opens its breakdown; an empty one has nothing to show. */
+function opensBreakdown(row: IncomeStatementRowDto): boolean {
+  return row.kind === 'LINE' && row.amounts.some((a) => a !== null && Number(a) !== 0);
+}
+
+/** The column a line's name opens on: the first that has a figure, Current Month first. */
+function firstFigure(row: IncomeStatementRowDto): number {
+  return Math.max(0, row.amounts.findIndex((a) => a !== null && Number(a) !== 0));
+}
+
+/** What opens a breakdown: a quiet underline at rest, --harbour on hover. */
+const DRILL =
+  'rounded-[2px] underline-offset-4 transition-colors duration-[120ms] hover:text-harbour hover:underline hover:decoration-solid hover:decoration-harbour';
 
 /** A loss reads with its minus sign, in --alert; a deduction in brackets; an empty line as a dash. */
 function figure(value: string | null, row: IncomeStatementRowDto): { text: string; negative: boolean } {
@@ -59,8 +77,13 @@ export default function IncomeStatementPage() {
   const [pending, setPending] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [breakdown, setBreakdown] = useState<BreakdownTarget | null>(null);
 
   const query = `month=${month}&yearStartMonth=${yearStartMonth}&basis=${basis}`;
+
+  function openBreakdown(row: IncomeStatementRowDto, column: number): void {
+    setBreakdown({ line: row.key, label: row.label, column: INCOME_STATEMENT_COLUMNS[column] ?? 'CURRENT_MONTH' });
+  }
 
   useEffect(() => {
     if (!/^\d{4}-\d{2}$/.test(month)) return;
@@ -213,15 +236,41 @@ export default function IncomeStatementPage() {
                         row.kind === 'PERCENT' && 'text-steel',
                       )}
                     >
-                      <td className={cn('px-4 py-1.5', row.kind === 'LINE' ? 'pl-8 text-hull' : 'text-hull')}>{row.label}</td>
+                      <td className={cn('px-4 py-1.5', row.kind === 'LINE' ? 'pl-8 text-hull' : 'text-hull')}>
+                        {opensBreakdown(row) ? (
+                          <button
+                            type="button"
+                            aria-haspopup="dialog"
+                            onClick={() => openBreakdown(row, firstFigure(row))}
+                            className={cn(DRILL, 'text-left underline decoration-steel/60 decoration-dotted')}
+                          >
+                            {row.label}
+                          </button>
+                        ) : (
+                          row.label
+                        )}
+                      </td>
                       {row.amounts.map((amount, i) => {
                         const shown = figure(amount, row);
+                        const opens = opensBreakdown(row) && amount !== null && Number(amount) !== 0;
                         return (
                           <td
                             key={i}
                             className={cn('px-4 py-1.5 text-right font-mono tabular-nums', shown.negative && 'text-alert')}
                           >
-                            {shown.text}
+                            {opens ? (
+                              <button
+                                type="button"
+                                aria-haspopup="dialog"
+                                aria-label={`${row.label}, ${INCOME_STATEMENT_COLUMN_LABEL[INCOME_STATEMENT_COLUMNS[i]!]}: ${shown.text}`}
+                                onClick={() => openBreakdown(row, i)}
+                                className={cn(DRILL, 'tabular-nums')}
+                              >
+                                {shown.text}
+                              </button>
+                            ) : (
+                              shown.text
+                            )}
                           </td>
                         );
                       })}
@@ -246,6 +295,7 @@ export default function IncomeStatementPage() {
                   time. What the bank moved beyond the invoice&apos;s booked amount is the exchange gain or loss.
                 </li>
                 <li>Draft and cancelled invoices and vouchers are left out. Branch is not tracked, so every figure is All.</li>
+                <li>Click a line&apos;s name, or one of its figures, to see the invoices and vouchers it adds up.</li>
               </ul>
             ) : (
               <ul className="mt-2 flex list-disc flex-col gap-1 pl-5">
@@ -258,6 +308,7 @@ export default function IncomeStatementPage() {
                   not yet received or paid does not appear.
                 </li>
                 <li>Draft and cancelled vouchers are left out. Branch is not tracked, so every figure is All.</li>
+                <li>Click a line&apos;s name, or one of its figures, to see the vouchers it adds up.</li>
               </ul>
             )}
           </details>
@@ -265,6 +316,13 @@ export default function IncomeStatementPage() {
       )}
 
       {statement === null && error === null && <p className="text-body text-steel">Loading…</p>}
+
+      <IncomeStatementBreakdown
+        target={breakdown}
+        query={query}
+        onColumnChange={(column) => setBreakdown((open) => (open === null ? null : { ...open, column }))}
+        onClose={() => setBreakdown(null)}
+      />
     </div>
   );
 }
