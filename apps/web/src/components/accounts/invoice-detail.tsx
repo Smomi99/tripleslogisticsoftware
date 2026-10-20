@@ -28,7 +28,7 @@ import { amount, DISPLAY_STATUS_TONE, money, PAYMENT_TONE } from './format';
  */
 
 /** One record, fetched when its path is set. Null while closed or loading. */
-function useRecord<T>(path: string | null): { data: T | null; error: string | null } {
+export function useRecord<T>(path: string | null): { data: T | null; error: string | null } {
   const { authorizedRequest } = useSession();
   const [state, setState] = useState<{ path: string; data: T | null; error: string | null } | null>(null);
 
@@ -55,7 +55,7 @@ function useRecord<T>(path: string | null): { data: T | null; error: string | nu
 }
 
 /** Shown in place of the record until it arrives, or when it cannot. */
-function Pending({ error }: { error: string | null }) {
+export function Pending({ error }: { error: string | null }) {
   if (error === null) return <p className="text-body text-steel">Loading…</p>;
   return (
     <p role="alert" className="rounded-manifest border border-alert/30 bg-alert/5 px-3 py-2 text-body text-alert">

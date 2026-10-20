@@ -635,6 +635,43 @@ Tests: `income-statement.test.ts`, 9 cases. Every figure is hand arithmetic over
 the 500 gain and 100 loss from settlements, a workspace's own sub ledger, drafts left out, YTD and
 previous YTD, the cash basis, the export, permissions, and an empty second workspace.
 
+### 9.4 Line breakdown (client, 2026-10-20)
+
+**The request.** Clicking a line under Particulars opens a popup that breaks its amount down.
+
+**As built** (branch `feature/income-statement-breakdown`). No schema change, no migration, no new
+permission: `GET /income-statement/breakdown?month&yearStartMonth&basis&line&column` sits under the
+existing `ACCOUNTS.INCOME_STATEMENT.VIEW`.
+
+- **What opens it.** The name of any line with a figure in some column (drawn with a dotted underline),
+  or any one of its non-zero figures. The name opens the first column that has a figure, Current Month
+  first. A figure opens its own column. Subtotals, totals and percentages do not open: the statement
+  already shows what they add up.
+- **The popup** shows the line, its basis and currency, a Current Month / YTD / Previous Year YTD switch
+  with the column's dates, and the total. Then one row per document: Date · Document · Source · Party ·
+  Booking / Account · Details · Amount. Party and Details are hidden when every row is blank. When the
+  figure comes from more than one place, a strip above the table subtotals each source (debit invoices,
+  costs on debit invoices, each ledger account, exchange difference). The total matches the statement
+  figure.
+- **The rows** are the same sources §9.3 sums, read one by one: an issued invoice (customer, booking),
+  a cost block on one (carrier / agent / vendor, booking, their invoice no), a posted voucher's lines on
+  one account (party, account, description), or a settling voucher's exchange difference ("Against
+  DN-…"). Sources, filters and line mapping are shared with the statement in
+  `lib/income-statement.ts`. A test checks that every one of the 56 lines adds up to the statement
+  figure, in all three columns, on both bases.
+- **Opening a document.** An invoice number opens the existing Debit Invoice popup on top of the
+  breakdown (`ACCOUNTS.DEBIT_INVOICE.VIEW`). A voucher number opens the voucher in a new tab (that
+  voucher screen's `.VIEW`), so the statement keeps its month and basis. Without the permission, the
+  number is plain text.
+- **Buy prices (MODULE_ACCOUNTS §3.9).** Cost blocks are listed only with
+  `ACCOUNTS.DEBIT_INVOICE.VIEW_BUY_PRICE`. Without it they arrive as one row, "Job costs on N debit
+  invoices", with their sum. The statement already prints that sum as the line, so the total still
+  matches and no per-job cost is exposed.
+
+Tests: `income-statement.test.ts`, 8 more cases: every line against the statement, each of the four
+sources, the buy-price split, the cash basis, refusals (no permission, a subtotal key, an unknown
+column), and an empty second workspace.
+
 ---
 
 ## 10. REPORTS
