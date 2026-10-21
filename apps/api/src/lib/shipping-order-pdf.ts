@@ -7,7 +7,8 @@ import QRCode from 'qrcode';
  * §5.4 rule 4: "The PDF carries the tenant's letterhead, address and QR code —
  * from tenant settings, not hardcoded, exactly as the Quotation PDF." So every
  * word of the header comes in as data; nothing about one forwarder is written
- * into this file.
+ * into this file. The address came from the email signature block, which the
+ * client wants on no print (2026-10-21), so the letterhead is the name.
  *
  * §9 Q5, answered 2026-09-02: the QR is the compact offline payload, because
  * the reader is a warehouse gate in a yard with no signal.
@@ -16,7 +17,6 @@ import QRCode from 'qrcode';
 export interface ShippingOrderPdfInput {
   /** From tenant settings (§5.4 rule 4). */
   companyName: string;
-  companyAddress: string | null;
 
   soNo: string;
   bookingNo: string;
@@ -64,6 +64,9 @@ export interface ShippingOrderPdfInput {
 const HULL = '#10243A';
 const STEEL = '#6B7A88';
 const LINE = '#DDE3E3';
+/** The QR's place, top-right, in points. */
+const QR_TOP = 36;
+const QR_SIZE = 78;
 
 export async function renderShippingOrderPdf(input: ShippingOrderPdfInput): Promise<Buffer> {
   // Generated before the document opens: pdfkit's stream ends synchronously and
@@ -87,12 +90,9 @@ export async function renderShippingOrderPdf(input: ShippingOrderPdfInput): Prom
 
     // ---------------------------------------------------------- letterhead
     doc.font('Helvetica-Bold').fontSize(15).fillColor(HULL).text(input.companyName, left, 40);
-    if (input.companyAddress !== null && input.companyAddress !== '') {
-      doc.font('Helvetica').fontSize(8).fillColor(STEEL).text(input.companyAddress, { width: 320 });
-    }
 
     // The QR sits top-right, where a hand reaching for a scanner expects it.
-    doc.image(qr, right - 78, 36, { width: 78 });
+    doc.image(qr, right - QR_SIZE, QR_TOP, { width: QR_SIZE });
 
     doc.moveDown(1.2);
     doc
@@ -101,7 +101,9 @@ export async function renderShippingOrderPdf(input: ShippingOrderPdfInput): Prom
       .fillColor(HULL)
       .text('SHIPPING ORDER', left, doc.y, { width: width - 90 });
 
-    let y = doc.y + 10;
+    // Below the QR as well as the title: with only a name above it, the title
+    // alone would put the rule through the code.
+    let y = Math.max(doc.y + 10, QR_TOP + QR_SIZE + 8);
     doc.moveTo(left, y).lineTo(right, y).strokeColor(LINE).lineWidth(1).stroke();
     y += 10;
 

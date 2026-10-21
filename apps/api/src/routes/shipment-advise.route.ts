@@ -995,8 +995,6 @@ export async function adviseDocument(
   const isAir = row.shipment.shipmentType === 'AIR';
 
   const pdf = await renderShipmentAdvisePdf({
-    // The name only: the letterhead's second line is the email signature block,
-    // which the client does not want on the advise.
     companyName: head.companyName,
     adviseNo: row.code,
     bookingNo: covered.map((b) => b.code).join(', '),

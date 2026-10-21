@@ -434,11 +434,8 @@ shippingOrderRouter.get(
         },
       });
 
-      // §5.4 rule 4: the tenant's own letterhead. The signature block is where
-      // a workspace already keeps its address, so the two cannot disagree.
-      const settings = await db.notificationSetting.findFirst({
-        select: { signatureBlock: true },
-      });
+      // §5.4 rule 4: the tenant's own letterhead — its name. The email
+      // signature is never printed (client, 2026-10-21).
       const tenant = await db.tenant.findFirst({
         where: { id: auth.tenantId },
         select: { name: true },
@@ -453,7 +450,6 @@ shippingOrderRouter.get(
       const isAir = shipment.shipmentType === 'AIR';
       const pdfBuffer = await renderShippingOrderPdf({
         companyName: tenant?.name ?? 'Freight Forwarder',
-        companyAddress: settings?.signatureBlock ?? null,
         soNo: so.code,
         bookingNo: shipment.code,
         quotationNo: shipment.quotation.code,

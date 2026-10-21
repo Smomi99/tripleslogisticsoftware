@@ -15,6 +15,7 @@ import {
 } from '@ff/shared';
 
 import { signAccessToken } from '../lib/jwt';
+import { extractPdfText } from '../lib/pdf-text';
 
 /**
  * §6.5 and §6.7 — the quotation.
@@ -910,6 +911,41 @@ describe('the quotation notes (§6.6)', () => {
       });
     expect(res.status).toBe(200);
     expect((res.body as Buffer).subarray(0, 5).toString()).toBe('%PDF-');
+  });
+});
+
+describe('the printed quotation carries no email signature (2026-10-21)', () => {
+  const writeSignature = (signatureBlock: string) =>
+    request(app)
+      .put('/api/tenant/setting/notifications')
+      .set('Authorization', `Bearer ${token}`)
+      .set('X-Tenant-Slug', SLUG)
+      .send({ priceTeamEmails: '', signatureBlock, bccAddresses: '', quotationNotes: '' });
+
+  afterAll(async () => {
+    await writeSignature('');
+  });
+
+  it('leaves the signature block to the emails it was written for', async () => {
+    expect((await writeSignature('Kind regards\nZEBRA SIGNOFF LTD\nDhaka')).status).toBe(200);
+    const created = await create();
+    const { id, code } = (created.body as { data: { id: string; code: string } }).data;
+    const res = await request(app)
+      .get(`/api/tenant/cs/quotations/${id}/pdf`)
+      .set('Authorization', `Bearer ${token}`)
+      .set('X-Tenant-Slug', SLUG)
+      .buffer(true)
+      .parse((r, cb) => {
+        const chunks: Buffer[] = [];
+        r.on('data', (c: Buffer) => chunks.push(c));
+        r.on('end', () => cb(null, Buffer.concat(chunks)));
+      });
+    expect(res.status).toBe(200);
+    const text = extractPdfText(res.body as Buffer);
+    // The page reads as it should — so the signature's absence is not a blank read.
+    expect(text).toContain(code);
+    expect(text).not.toContain('ZEBRA');
+    expect(text).not.toContain('Kind regards');
   });
 });
 

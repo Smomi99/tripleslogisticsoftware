@@ -1439,7 +1439,7 @@ quotationRouter.get(
       // §6.6's logo, when the workspace has uploaded one.
       const [settings, tenant, logo, customer, inquiry] = await Promise.all([
         db.notificationSetting.findFirst({
-          select: { signatureBlock: true, quotationNotes: true },
+          select: { quotationNotes: true },
         }),
         db.tenant.findFirst({
           where: { id: auth.tenantId },
@@ -1459,7 +1459,6 @@ quotationRouter.get(
       const isAir = dto.shipmentType === 'AIR';
       const pdfBuffer = await renderQuotationPdf({
         companyName: tenant?.name ?? 'Freight Forwarder',
-        companyAddress: settings?.signatureBlock ?? null,
         logo,
         inquiryNo: dto.inquiryCode,
         inquiryDate: inquiry?.inquiryDate.toISOString().slice(0, 10) ?? null,

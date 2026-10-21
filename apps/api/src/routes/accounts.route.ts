@@ -650,7 +650,6 @@ async function invoiceDocument(
   const isBase = base !== null && row.currencyId === base.id;
   const pdf = await renderDebitInvoicePdf({
     companyName: letterhead.companyName,
-    companyAddress: letterhead.companyAddress,
     logo,
     invoiceNo: row.code,
     invoiceDate: day(row.invoiceDate) ?? '',

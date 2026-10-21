@@ -811,6 +811,29 @@ cancelling takes the charge back. A charge is refused while the account is switc
 hand arithmetic, Bank Charges is 50 on both bases, the exchange gain is still 500, and the Balance Sheet
 and Cash Flow figures follow.
 
+### 14.16 Print on the Debit Invoice popup; no email signature on any print (client, 2026-10-21)
+
+**The request.** Add Print to the debit invoice popup, as the invoice page already has it. Remove the
+email signature from every print.
+
+**As built** (branch `feature/invoice-print-no-signature`). No schema change, no migration.
+
+- **Print in the popup.** The popup's footer reads *Print · Create Freight Certificate · Edit invoice
+  · Close*. Print opens the same PDF as the invoice page's Print (`GET /debit-invoices/:id/pdf`) in a
+  new tab. It shows only with `ACCOUNTS.DEBIT_INVOICE.EXPORT_PDF`, like the page's.
+- **No email signature on a print.** The letterhead used to print the email signature block (Setting
+  → Notification → Signature) as an address under the company name. That happened on the **Debit
+  Note, Quotation, Shipping Order and Delivery Order**. It no longer does: the letterhead is now the
+  workspace name and its logo, which the BL draft and Shipment Advise already used. `letterheadOf`
+  returns the name only, and no PDF takes an address. The signature still goes at the foot of the
+  emails it was written for. The Air Waybill's issuer box is a separate setting (AWB issuer details)
+  and is unchanged.
+- The Shipping Order's title rule now sits below its QR code. With only the name above it, the rule
+  would otherwise run through the QR.
+
+Tests: `quotation.test.ts`, 1 more case: with a signature saved, the printed quotation shows its number
+but no line of the signature. With the old letterhead it fails.
+
 ---
 
 ## 15. FREIGHT CERTIFICATE — the client's sample, 2026-10-18

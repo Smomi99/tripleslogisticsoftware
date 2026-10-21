@@ -229,8 +229,8 @@ export default function NotificationSettingPage() {
         waiting for a release.
 
         Living on this screen because notification_setting is the workspace's
-        one settings row and already carries the signature the Shipping Order
-        PDF prints. The table's name is now narrower than its contents.
+        one settings row (it also carries the email signature, which no print
+        shows). The table's name is now narrower than its contents.
       */}
       <TabPanel idBase="notification" id="quotation" selected={section === 'quotation'}>
         <div className={CARD}>
