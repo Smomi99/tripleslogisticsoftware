@@ -4,6 +4,8 @@ import { Router } from 'express';
 import {
   type ApiSuccess,
   INCOME_STATEMENT_BASIS_LABEL,
+  INCOME_STATEMENT_COLUMN_LABEL,
+  INCOME_STATEMENT_COLUMNS,
   type IncomeStatementBasis,
   type IncomeStatementBreakdownDto,
   incomeStatementBreakdownQuerySchema,
@@ -89,18 +91,19 @@ incomeStatementRouter.get('/export', requirePermission(`${FEATURE}.EXPORT`), asy
 
   const book = new ExcelJS.Workbook();
   const sheet = book.addWorksheet('Income statement');
-  sheet.columns = [{ width: 46 }, { width: 18 }, { width: 18 }, { width: 18 }];
-  const { currentMonth, ytd, previousYtd } = statement.periods;
+  sheet.columns = [{ width: 46 }, ...INCOME_STATEMENT_COLUMNS.map(() => ({ width: 18 }))];
+  const { currentMonth, previousMonth, ytd, previousYtd } = statement.periods;
 
   sheet.addRow([company]).font = { bold: true, size: 13 };
   sheet.addRow(['Income statement']).font = { bold: true, size: 12 };
   sheet.addRow([`Period: ${sheetDay(currentMonth.from)} to ${sheetDay(currentMonth.to)}`]);
+  sheet.addRow([`Previous Month: ${sheetDay(previousMonth.from)} to ${sheetDay(previousMonth.to)}`]);
   sheet.addRow([`YTD: ${sheetDay(ytd.from)} to ${sheetDay(ytd.to)} · Previous Year YTD: ${sheetDay(previousYtd.from)} to ${sheetDay(previousYtd.to)}`]);
   sheet.addRow(['Branch: All']);
   sheet.addRow([`Currency: ${statement.currencyCode}`]);
   sheet.addRow([`Basis: ${INCOME_STATEMENT_BASIS_LABEL[statement.basis]}`]);
   sheet.addRow([]);
-  const header = sheet.addRow(['Particulars', 'Current Month', 'YTD', 'Previous Year YTD']);
+  const header = sheet.addRow(['Particulars', ...INCOME_STATEMENT_COLUMNS.map((c) => INCOME_STATEMENT_COLUMN_LABEL[c])]);
   header.font = { bold: true };
   header.eachCell((cell, n) => {
     cell.alignment = { horizontal: n === 1 ? 'left' : 'right' };
@@ -111,7 +114,7 @@ incomeStatementRouter.get('/export', requirePermission(`${FEATURE}.EXPORT`), asy
     const values = row.amounts.map((a) => (a === null ? null : Number(a)));
     const line = sheet.addRow([row.kind === 'LINE' ? `   ${row.label}` : row.label, ...values]);
     if (row.kind !== 'LINE') line.font = { bold: true };
-    for (let column = 2; column <= 4; column += 1) {
+    for (let column = 2; column <= INCOME_STATEMENT_COLUMNS.length + 1; column += 1) {
       const cell = line.getCell(column);
       cell.numFmt =
         row.kind === 'PERCENT'

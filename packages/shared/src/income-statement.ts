@@ -6,8 +6,8 @@ import type { JournalEntryKind } from './ledger';
  * Accounts → Income Statement (docs/DESIGN-UPDATE-2026-10-04.md §9).
  *
  * The client's `Income statement` sheet: sections A–E, their lines in the
- * sheet's order, and three columns — Current Month, YTD, Previous Year YTD.
- * How each line is filled is §9.3 of the spec; the short of it is that on
+ * sheet's order, and its three columns — Current Month, YTD, Previous Year
+ * YTD — plus Previous Month (§9.5). How each line is filled is §9.3 of the spec; the short of it is that on
  * accrual, revenue and job costs come from issued debit invoices on their
  * invoice date and everything else from posted vouchers, and on cash,
  * everything comes from posted vouchers.
@@ -127,13 +127,28 @@ export const incomeStatementQuerySchema = z.object({
 });
 export type IncomeStatementQuery = z.input<typeof incomeStatementQuerySchema>;
 
+/**
+ * The statement's columns, in the order `amounts` holds them: the sheet's
+ * three, with Previous Month beside Current Month (client, 2026-10-21).
+ * Previous Month is the calendar month before, whatever the financial year.
+ */
+export const INCOME_STATEMENT_COLUMNS = ['CURRENT_MONTH', 'PREVIOUS_MONTH', 'YTD', 'PREVIOUS_YTD'] as const;
+export type IncomeStatementColumn = (typeof INCOME_STATEMENT_COLUMNS)[number];
+
+export const INCOME_STATEMENT_COLUMN_LABEL: Record<IncomeStatementColumn, string> = {
+  CURRENT_MONTH: 'Current Month',
+  PREVIOUS_MONTH: 'Previous Month',
+  YTD: 'YTD',
+  PREVIOUS_YTD: 'Previous Year YTD',
+};
+
 /** One printed row. Amounts are base-currency strings, one per column; a percentage row holds percentages. */
 export interface IncomeStatementRowDto {
   kind: 'SECTION' | 'LINE' | 'SUBTOTAL' | 'TOTAL' | 'PERCENT';
   key: string;
   label: string;
-  /** Current Month, YTD, Previous Year YTD. Null where there is nothing to divide by. */
-  amounts: [string | null, string | null, string | null];
+  /** One per column, in INCOME_STATEMENT_COLUMNS order. Null where there is nothing to divide by. */
+  amounts: (string | null)[];
   /** A line deducted from the one above it, drawn in brackets (Discounts). */
   deduction?: boolean;
 }
@@ -144,6 +159,7 @@ export interface IncomeStatementDto {
   /** ISO dates, inclusive. */
   periods: {
     currentMonth: { from: string; to: string };
+    previousMonth: { from: string; to: string };
     ytd: { from: string; to: string };
     previousYtd: { from: string; to: string };
   };
@@ -152,16 +168,6 @@ export interface IncomeStatementDto {
 }
 
 // ------------------------------------------------------------- breakdown
-
-/** The statement's three columns, in the order `amounts` holds them. */
-export const INCOME_STATEMENT_COLUMNS = ['CURRENT_MONTH', 'YTD', 'PREVIOUS_YTD'] as const;
-export type IncomeStatementColumn = (typeof INCOME_STATEMENT_COLUMNS)[number];
-
-export const INCOME_STATEMENT_COLUMN_LABEL: Record<IncomeStatementColumn, string> = {
-  CURRENT_MONTH: 'Current Month',
-  YTD: 'YTD',
-  PREVIOUS_YTD: 'Previous Year YTD',
-};
 
 /**
  * One line's figure for one column, broken down into the documents it was

@@ -170,18 +170,38 @@ export function periodsOf(month: string, yearStartMonth: number): [Period, Perio
   return [current, ytd, previousYtd];
 }
 
+/** The calendar month before `month`, whatever the financial year: December for a January. */
+export function previousMonthOf(month: string): Period {
+  const [y, m] = month.split('-').map(Number) as [number, number];
+  const [py, pm] = m === 1 ? [y - 1, 12] : [y, m - 1];
+  return { from: iso(py, pm, 1), to: iso(py, pm, lastDay(py, pm)) };
+}
+
+/**
+ * The Income Statement's columns, in INCOME_STATEMENT_COLUMNS order: the
+ * sheet's three, with Previous Month beside Current Month (client,
+ * 2026-10-21). The Cash Flow Statement keeps the sheet's three (periodsOf).
+ */
+export function statementPeriodsOf(month: string, yearStartMonth: number): [Period, Period, Period, Period] {
+  const [current, ytd, previousYtd] = periodsOf(month, yearStartMonth);
+  return [current, previousMonthOf(month), ytd, previousYtd];
+}
+
 // ----------------------------------------------------------------- totals
 
-type Amounts = [Prisma.Decimal, Prisma.Decimal, Prisma.Decimal];
-const zero = (): Amounts => [new Prisma.Decimal(0), new Prisma.Decimal(0), new Prisma.Decimal(0)];
+/** One amount per column. */
+type Amounts = Prisma.Decimal[];
+const zero = (columns: number): Amounts => Array.from({ length: columns }, () => new Prisma.Decimal(0));
 const dec = (v: Prisma.Decimal | string | number | null): Prisma.Decimal => new Prisma.Decimal(v ?? 0);
 
 /** The statement's figures by line, one amount per column. */
 export class Ledger {
   readonly lines = new Map<IncomeStatementLineKey, Amounts>();
 
+  constructor(readonly columns: number) {}
+
   add(key: IncomeStatementLineKey, column: number, amount: Prisma.Decimal): void {
-    const row = this.lines.get(key) ?? zero();
+    const row = this.lines.get(key) ?? zero(this.columns);
     row[column] = row[column]!.plus(amount);
     this.lines.set(key, row);
   }
@@ -191,7 +211,7 @@ export class Ledger {
   }
 
   of(key: IncomeStatementLineKey): Amounts {
-    return this.lines.get(key) ?? zero();
+    return this.lines.get(key) ?? zero(this.columns);
   }
 }
 
@@ -304,21 +324,28 @@ const exchangeOf = (row: SettlementRow): Prisma.Decimal => dec(row.pl).plus(dec(
 
 const day = (d: Date): string => d.toISOString().slice(0, 10);
 
-/** Three conditional sums, one per column, over a date expression. */
-function columnSums(value: Prisma.Sql, date: Prisma.Sql, periods: [Period, Period, Period]): Prisma.Sql {
-  const [c, y, p] = periods;
-  return Prisma.sql`
-    COALESCE(SUM(${value}) FILTER (WHERE ${date} BETWEEN ${c.from}::date AND ${c.to}::date), 0) AS c0,
-    COALESCE(SUM(${value}) FILTER (WHERE ${date} BETWEEN ${y.from}::date AND ${y.to}::date), 0) AS c1,
-    COALESCE(SUM(${value}) FILTER (WHERE ${date} BETWEEN ${p.from}::date AND ${p.to}::date), 0) AS c2`;
+/** One conditional sum per column over a date expression, named c0, c1, …. */
+function columnSums(value: Prisma.Sql, date: Prisma.Sql, periods: readonly Period[]): Prisma.Sql {
+  return Prisma.join(
+    periods.map(
+      (p, i) =>
+        Prisma.sql`COALESCE(SUM(${value}) FILTER (WHERE ${date} BETWEEN ${p.from}::date AND ${p.to}::date), 0) AS ${Prisma.raw(`c${i}`)}`,
+    ),
+    ',\n',
+  );
 }
 
-function inAnyPeriod(date: Prisma.Sql, periods: [Period, Period, Period]): Prisma.Sql {
-  const [, y, p] = periods;
-  return Prisma.sql`(${date} BETWEEN ${y.from}::date AND ${y.to}::date OR ${date} BETWEEN ${p.from}::date AND ${p.to}::date)`;
+function inAnyPeriod(date: Prisma.Sql, periods: readonly Period[]): Prisma.Sql {
+  return Prisma.sql`(${Prisma.join(
+    periods.map((p) => Prisma.sql`${date} BETWEEN ${p.from}::date AND ${p.to}::date`),
+    ' OR ',
+  )})`;
 }
 
-type ColumnRow = { c0: Prisma.Decimal; c1: Prisma.Decimal; c2: Prisma.Decimal };
+type ColumnRow = Record<`c${number}`, Prisma.Decimal>;
+/** A row's columnSums, in column order. */
+const columnsOf = (row: ColumnRow, periods: readonly Period[]): Prisma.Decimal[] =>
+  periods.map((_, i) => dec(row[`c${i}`] ?? null));
 type RevenueRow = ColumnRow & { shipment_type: string | null; loading_type: string | null };
 type CostRow = RevenueRow & { party_type: string };
 
@@ -337,10 +364,10 @@ type CostRow = RevenueRow & { party_type: string };
 export async function statementLines(
   db: TenantDb,
   tenantId: bigint,
-  periods: [Period, Period, Period],
+  periods: readonly Period[],
   basis: IncomeStatementBasis = 'ACCRUAL',
 ): Promise<Ledger> {
-  const ledger = new Ledger();
+  const ledger = new Ledger(periods.length);
   const accrual = basis === 'ACCRUAL';
   const invoiceDate = Prisma.sql`i.invoice_date`;
   const entryDate = Prisma.sql`je.entry_date`;
@@ -390,18 +417,18 @@ export async function statementLines(
   ]);
 
   for (const row of revenue) {
-    ledger.addColumns(revenueLineOf(row.shipment_type, row.loading_type), [row.c0, row.c1, row.c2]);
+    ledger.addColumns(revenueLineOf(row.shipment_type, row.loading_type), columnsOf(row, periods));
   }
 
   for (const row of costs) {
-    ledger.addColumns(costLineOf(row.party_type, row.shipment_type, row.loading_type), [row.c0, row.c1, row.c2]);
+    ledger.addColumns(costLineOf(row.party_type, row.shipment_type, row.loading_type), columnsOf(row, periods));
   }
 
   for (const row of posted) {
     const key = lineOfAccount({ accountType: row.account_type, systemKey: row.system_key, parentKey: row.parent_key });
     // credit − debit is what an income line earns; an expense line is its negative.
     const sign = isIncomeNatured(key) ? 1 : -1;
-    ledger.addColumns(key, [row.c0, row.c1, row.c2].map((v) => dec(v).times(sign)));
+    ledger.addColumns(key, columnsOf(row, periods).map((v) => dec(v).times(sign)));
   }
 
   for (const row of settlements) {
@@ -422,21 +449,18 @@ export async function statementLines(
 
 const money = (v: Prisma.Decimal): string => v.toFixed(2);
 
-function sum(ledger: Ledger, keys: IncomeStatementLineKey[]): Amounts {
-  return keys.reduce<Amounts>((acc, key) => {
-    const row = ledger.of(key);
-    return [acc[0].plus(row[0]), acc[1].plus(row[1]), acc[2].plus(row[2])];
-  }, zero());
-}
+const minus = (a: Amounts, b: Amounts): Amounts => a.map((v, i) => v.minus(b[i]!));
+const plus = (a: Amounts, b: Amounts): Amounts => a.map((v, i) => v.plus(b[i]!));
 
-const minus = (a: Amounts, b: Amounts): Amounts => [a[0].minus(b[0]), a[1].minus(b[1]), a[2].minus(b[2])];
-const plus = (a: Amounts, b: Amounts): Amounts => [a[0].plus(b[0]), a[1].plus(b[1]), a[2].plus(b[2])];
+function sum(ledger: Ledger, keys: IncomeStatementLineKey[]): Amounts {
+  return keys.reduce<Amounts>((acc, key) => plus(acc, ledger.of(key)), zero(ledger.columns));
+}
 
 function percent(part: Amounts, whole: Amounts): IncomeStatementRowDto['amounts'] {
-  return part.map((p, i) => (whole[i]!.isZero() ? null : p.div(whole[i]!).times(100).toFixed(1))) as IncomeStatementRowDto['amounts'];
+  return part.map((p, i) => (whole[i]!.isZero() ? null : p.div(whole[i]!).times(100).toFixed(1)));
 }
 
-const out = (a: Amounts): IncomeStatementRowDto['amounts'] => [money(a[0]), money(a[1]), money(a[2])];
+const out = (a: Amounts): IncomeStatementRowDto['amounts'] => a.map(money);
 
 /** Every line's printed label, the two outside the sections included. */
 const LABEL_OF = new Map<IncomeStatementLineKey, string>([
@@ -460,7 +484,7 @@ export function statementRows(ledger: Ledger): IncomeStatementRowDto[] {
     kind: 'SECTION',
     key: s,
     label: INCOME_STATEMENT_SECTION_TITLE[s],
-    amounts: [null, null, null],
+    amounts: Array.from({ length: ledger.columns }, () => null),
   });
 
   const gross = sum(ledger, keysOf('REVENUE'));
@@ -509,12 +533,13 @@ export async function incomeStatement(
   tenantId: bigint,
   input: { month: string; yearStartMonth: number; basis: IncomeStatementBasis; currencyCode: string },
 ): Promise<IncomeStatementDto> {
-  const periods = periodsOf(input.month, input.yearStartMonth);
+  const periods = statementPeriodsOf(input.month, input.yearStartMonth);
   const ledger = await statementLines(db, tenantId, periods, input.basis);
+  const [currentMonth, previousMonth, ytd, previousYtd] = periods;
   return {
     currencyCode: input.currencyCode,
     basis: input.basis,
-    periods: { currentMonth: periods[0], ytd: periods[1], previousYtd: periods[2] },
+    periods: { currentMonth, previousMonth, ytd, previousYtd },
     yearStartMonth: input.yearStartMonth,
     rows: statementRows(ledger),
   };
@@ -570,7 +595,7 @@ export async function lineBreakdown(
 ): Promise<IncomeStatementBreakdownDto> {
   const { line, basis } = input;
   const accrual = basis === 'ACCRUAL';
-  const period = periodsOf(input.month, input.yearStartMonth)[INCOME_STATEMENT_COLUMNS.indexOf(input.column)]!;
+  const period = statementPeriodsOf(input.month, input.yearStartMonth)[INCOME_STATEMENT_COLUMNS.indexOf(input.column)]!;
   const within = (date: Prisma.Sql) => Prisma.sql`${date} BETWEEN ${period.from}::date AND ${period.to}::date`;
   const invoiceDate = Prisma.sql`i.invoice_date`;
   const entryDate = Prisma.sql`je.entry_date`;

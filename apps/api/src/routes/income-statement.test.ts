@@ -244,7 +244,7 @@ function api(token: string, slug: string) {
     request(app).get(`/api/tenant/accounts/income-statement${path}`).set('Authorization', `Bearer ${token}`).set('X-Tenant-Slug', slug);
 }
 
-type Row = { key: string; amounts: [string | null, string | null, string | null] };
+type Row = { key: string; amounts: (string | null)[] };
 const QUERY = '?month=2026-10&yearStartMonth=7';
 
 beforeAll(async () => {
@@ -259,7 +259,7 @@ afterAll(async () => {
 
 describe('Income Statement', () => {
   let rows: Map<string, Row['amounts']>;
-  const n = (key: string, column: 0 | 1 | 2) => Number(rows.get(key)![column]);
+  const n = (key: string, column: 0 | 1 | 2 | 3) => Number(rows.get(key)![column]);
 
   beforeAll(async () => {
     const res = await api(A.viewerToken, A.slug)(QUERY);
@@ -269,6 +269,7 @@ describe('Income Statement', () => {
       basis: 'ACCRUAL',
       periods: {
         currentMonth: { from: '2026-10-01', to: '2026-10-31' },
+        previousMonth: { from: '2026-09-01', to: '2026-09-30' },
         ytd: { from: '2026-07-01', to: '2026-10-31' },
         previousYtd: { from: '2025-07-01', to: '2025-10-31' },
       },
@@ -280,11 +281,11 @@ describe('Income Statement', () => {
     expect(n('REV_FCL', 0)).toBe(10000);
     expect(n('REV_AIR', 0)).toBe(4000);
     expect(n('REV_OTHER', 0)).toBe(0);
-    expect(n('REV_OTHER', 1)).toBe(500);
+    expect(n('REV_OTHER', 2)).toBe(500);
     expect(n('GROSS_REVENUE', 0)).toBe(14000);
     expect(n('DISCOUNTS', 0)).toBe(100);
     expect(n('NET_REVENUE', 0)).toBe(13900);
-    expect(n('REV_FCL', 2)).toBe(7000);
+    expect(n('REV_FCL', 3)).toBe(7000);
   });
 
   it("books each job's cost with its revenue: freight by service, agents apart", () => {
@@ -304,7 +305,7 @@ describe('Income Statement', () => {
     expect(n('TOTAL_OPEX', 0)).toBe(2350);
     expect(n('OPERATING_PROFIT', 0)).toBe(1550);
     expect(n('NONOP_INTEREST', 0)).toBe(0);
-    expect(n('NONOP_INTEREST', 1)).toBe(200);
+    expect(n('NONOP_INTEREST', 2)).toBe(200);
     expect(n('INCOME_TAX', 0)).toBe(400);
   });
 
@@ -320,11 +321,31 @@ describe('Income Statement', () => {
 
   it('carries the year to date and last year to date', () => {
     // + the August invoice and the September interest.
-    expect(n('NET_REVENUE', 1)).toBe(14400);
-    expect(n('PROFIT_BEFORE_TAX', 1)).toBe(2650);
-    expect(n('NET_PROFIT_AFTER_TAX', 1)).toBe(2250);
-    expect(n('GROSS_PROFIT', 2)).toBe(2000);
-    expect(n('NET_PROFIT_AFTER_TAX', 2)).toBe(2000);
+    expect(n('NET_REVENUE', 2)).toBe(14400);
+    expect(n('PROFIT_BEFORE_TAX', 2)).toBe(2650);
+    expect(n('NET_PROFIT_AFTER_TAX', 2)).toBe(2250);
+    expect(n('GROSS_PROFIT', 3)).toBe(2000);
+    expect(n('NET_PROFIT_AFTER_TAX', 3)).toBe(2000);
+  });
+
+  it('carries the month before, beside the month', () => {
+    // September holds only the fixed-deposit interest.
+    expect(n('NONOP_INTEREST', 1)).toBe(200);
+    expect(n('REV_FCL', 1)).toBe(0);
+    expect(n('NET_REVENUE', 1)).toBe(0);
+    expect(n('NET_PROFIT_AFTER_TAX', 1)).toBe(200);
+  });
+
+  it('takes the month before from the calendar, not the financial year', async () => {
+    // September, in a year that starts in September: August is in neither YTD.
+    const sep = await api(A.viewerToken, A.slug)('?month=2026-09&yearStartMonth=9');
+    expect(sep.status).toBe(200);
+    expect(sep.body.data.periods.previousMonth).toEqual({ from: '2026-08-01', to: '2026-08-31' });
+    const september = new Map((sep.body.data.rows as Row[]).map((r) => [r.key, r.amounts]));
+    expect(september.get('REV_OTHER')).toEqual(['0.00', '500.00', '0.00', '0.00']);
+    // January's month before is December of the year before.
+    const jan = await api(A.viewerToken, A.slug)('?month=2026-01');
+    expect(jan.body.data.periods.previousMonth).toEqual({ from: '2025-12-01', to: '2025-12-31' });
   });
 
   it('on a cash basis, reads only the Transaction screens: what was received and paid', async () => {
@@ -332,7 +353,7 @@ describe('Income Statement', () => {
     expect(res.status).toBe(200);
     expect(res.body.data.basis).toBe('CASH');
     const cash = new Map((res.body.data.rows as Row[]).map((r) => [r.key, r.amounts]));
-    const c = (key: string, column: 0 | 1 | 2) => Number(cash.get(key)![column]);
+    const c = (key: string, column: 0 | 1 | 2 | 3) => Number(cash.get(key)![column]);
     // Transaction → Income banked 10,500 for the FCL job; the Air invoice is unpaid.
     expect(c('REV_FCL', 0)).toBe(10500);
     expect(c('REV_AIR', 0)).toBe(0);
@@ -347,9 +368,9 @@ describe('Income Statement', () => {
     expect(c('GROSS_PROFIT', 0)).toBe(4300);
     expect(c('TOTAL_OPEX', 0)).toBe(2350);
     expect(c('NET_PROFIT_AFTER_TAX', 0)).toBe(1550);
-    expect(c('NET_PROFIT_AFTER_TAX', 1)).toBe(1750);
+    expect(c('NET_PROFIT_AFTER_TAX', 2)).toBe(1750);
     // Last year's invoice was never received, so on cash it is not revenue.
-    expect(c('NET_REVENUE', 2)).toBe(0);
+    expect(c('NET_REVENUE', 3)).toBe(0);
   });
 
   it('exports the same statement as a workbook', async () => {
@@ -373,9 +394,9 @@ describe('Income Statement', () => {
     const res = await api(B.viewerToken, B.slug)(QUERY);
     expect(res.status).toBe(200);
     const other = new Map((res.body.data.rows as Row[]).map((r) => [r.key, r.amounts]));
-    expect(other.get('NET_REVENUE')).toEqual(['0.00', '0.00', '0.00']);
-    expect(other.get('NET_PROFIT_AFTER_TAX')).toEqual(['0.00', '0.00', '0.00']);
-    expect(other.get('GROSS_PROFIT_PERCENT')).toEqual([null, null, null]);
+    expect(other.get('NET_REVENUE')).toEqual(['0.00', '0.00', '0.00', '0.00']);
+    expect(other.get('NET_PROFIT_AFTER_TAX')).toEqual(['0.00', '0.00', '0.00', '0.00']);
+    expect(other.get('GROSS_PROFIT_PERCENT')).toEqual([null, null, null, null]);
   });
 });
 
@@ -401,7 +422,7 @@ type Breakdown = {
 };
 
 describe('Income Statement breakdown', () => {
-  const COLUMNS = ['CURRENT_MONTH', 'YTD', 'PREVIOUS_YTD'] as const;
+  const COLUMNS = ['CURRENT_MONTH', 'PREVIOUS_MONTH', 'YTD', 'PREVIOUS_YTD'] as const;
   const breakdown = (token: string, slug: string, query: string) => api(token, slug)(`/breakdown${QUERY}&${query}`);
   const open = async (token: string, query: string): Promise<Breakdown> => {
     const res = await breakdown(token, A.slug, query);
@@ -490,6 +511,11 @@ describe('Income Statement breakdown', () => {
     ]);
     const loss = await open(A.viewerToken, 'line=FX_LOSS');
     expect(loss.entries.map((e) => [e.documentCode, e.details, e.amount])).toEqual([['JV-2026-4IA09', 'Against DN-2026-4IA01', '100.00']]);
+  });
+
+  it('breaks down the month before as well', async () => {
+    const interest = await open(A.viewerToken, 'line=NONOP_INTEREST&column=PREVIOUS_MONTH');
+    expect(interest.entries.map((e) => [e.documentCode, e.date, e.amount])).toEqual([['JV-2026-4IA06', '2026-09-05', '200.00']]);
   });
 
   it('on a cash basis, lists the vouchers that received the money', async () => {
