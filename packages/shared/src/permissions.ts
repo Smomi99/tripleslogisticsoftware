@@ -627,7 +627,8 @@ export const FEATURES: readonly FeatureDefinition[] = [
    * VIEW is the list. The sheet's Edit and Delete change a debit invoice's cost
    * side, so they ride on ACCOUNTS.DEBIT_INVOICE.EDIT + VIEW_BUY_PRICE — the
    * grant that already does exactly that on the invoice — rather than on a
-   * DELETE this module may not carry (CR-002). Make Payment is EXPENSE.CREATE.
+   * DELETE this module may not carry (CR-002). Create New (2026-10-21) adds a
+   * cost block, so it rides on the same grant. Make Payment is EXPENSE.CREATE.
    */
   { module: 'ACCOUNTS', feature: 'ACCOUNTS.NEW_CREDIT_INVOICE', label: 'Credit Invoice', actions: MASTER_APPROVE },
   /*

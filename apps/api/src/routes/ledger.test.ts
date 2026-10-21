@@ -800,6 +800,65 @@ describe('Credit Invoice and Make Payment (§14.2, §14.6)', () => {
     expect(cancel.status).toBe(409);
     expect(cancel.body.error.code).toBe('MONEY_PAID');
   });
+
+  it('Create New adds a supplier’s bill to an issued debit invoice and leaves its other bills alone (§14.17)', async () => {
+    // The form's lists: the cost block's lookups, and the issued invoices a bill can go on.
+    const options = await asA().get('/credit-invoices/options');
+    expect(options.status, JSON.stringify(options.body.error ?? {})).toBe(200);
+    expect(options.body.data.vendors.map((v: { id: string }) => v.id)).toContain(A.vendorId.toString());
+    const targets = await asA().get(`/credit-invoices/debit-invoices?search=${encodeURIComponent('Shafidi')}`);
+    expect(targets.status).toBe(200);
+    expect(targets.body.data).toEqual([expect.objectContaining({ id: debitInvoiceId, customerName: 'Shafidi Exports A' })]);
+    // Another workspace is offered none of them.
+    expect((await asB().get('/credit-invoices/debit-invoices')).body.data.map((t: { id: string }) => t.id)).not.toContain(debitInvoiceId);
+
+    const bill = (cost: Record<string, unknown>) =>
+      asA()
+        .post('/credit-invoices')
+        .send({
+          debitInvoiceId,
+          cost: {
+            partyType: 'VENDOR',
+            partyId: A.vendorId.toString(),
+            supplierInvoiceNo: 'KCT-77',
+            currencyId: bdt.toString(),
+            conversionRate: '1',
+            lines: [{ costHeadId: A.freightHead.toString(), quantity: '2', unitPrice: '1500' }],
+            ...cost,
+          },
+        });
+
+    const noLines = await bill({ lines: [] });
+    expect(noLines.status).toBe(400);
+    expect(JSON.stringify(noLines.body.error)).toContain('Add at least one charge.');
+    const nobody = await bill({ partyId: '' });
+    expect(nobody.status).toBe(400);
+    expect(JSON.stringify(nobody.body.error)).toContain('Choose the vendor this bill is from.');
+    const elsewhere = await asA().post('/credit-invoices').send({ debitInvoiceId: '999999999', cost: { partyType: 'VENDOR', partyId: A.vendorId.toString(), currencyId: bdt.toString(), conversionRate: '1', lines: [{ costHeadId: A.freightHead.toString(), quantity: '1', unitPrice: '1' }] } });
+    expect(elsewhere.status).toBe(400);
+    // Adding a bill changes the debit invoice's cost side: the grant that does that there.
+    expect((await as(A.clerkToken, SLUG_A).post('/credit-invoices').send({})).status).toBe(403);
+
+    const made = await bill({});
+    expect(made.status, JSON.stringify(made.body.error ?? {})).toBe(201);
+    expect(made.body.data).toMatchObject({ debitInvoiceId });
+    const id: string = made.body.data.id;
+
+    const list = await asA().get('/credit-invoices?search=KCT-77');
+    expect(list.body.data).toEqual([
+      expect.objectContaining({ id, partyName: expect.any(String), currencyCode: 'BDT', amount: '3000.0000', amountBase: '3000.0000', paymentStatus: 'UNPAID' }),
+    ]);
+    // The carrier's paid bill is exactly as it was, and the invoice's cost total takes the new one.
+    const inv = (await asA().get(`/debit-invoices/${debitInvoiceId}`)).body.data;
+    expect(inv.costs.map((c: { id: string; paymentStatus: string }) => [c.id, c.paymentStatus])).toEqual([
+      [carrierCostId, 'PAID'],
+      [id, 'UNPAID'],
+    ]);
+    expect(inv.costTotalBase).toBe(fixed4(D(800).times(usdRate).plus(3000)));
+
+    // Unpaid, it can be deleted again from the list — and is, so later tests see the books as they were.
+    expect((await asA().delete(`/credit-invoices/${id}`)).status).toBe(200);
+  });
 });
 
 describe('Receive against a debit invoice (§14.6)', () => {
