@@ -834,6 +834,41 @@ email signature from every print.
 Tests: `quotation.test.ts`, 1 more case: with a signature saved, the printed quotation shows its number
 but no line of the signature. With the old letterhead it fails.
 
+### 14.17 Credit Invoice → Create New (client, 2026-10-21)
+
+**The request.** Add a Create New option to the Credit Invoice list.
+
+**As built** (branch `feature/credit-invoice-create-new`). No schema change, no migration.
+
+- **What it makes.** A credit invoice is a cost block on an issued debit invoice (§14.2), so Create New
+  adds one block to the invoice the bill is for. It is the same block the invoice's Buying section
+  draws. **The invoice's other blocks are not touched**, paid ones included, and the new block goes
+  last. The invoice's grand total cost and gross profit follow.
+- **The form** (`/accounts/credit-invoice/new`, full page): *Find the debit invoice* (invoice no,
+  customer or booking) narrows *Debit Invoice No*, which lists the 50 newest **sent** invoices. Then
+  *Billed by* (Carrier / Agent / Vendor) and the cost block itself: supplier, currency, rate, *Invoice
+  no* and the charge grid, with its preview totals. Then *Upload Invoice* (PDF or image, optional).
+  **Save credit invoice** goes back to the list. A file that fails to upload after the save is reported,
+  and the bill stays saved.
+- **Only sent invoices.** A draft's costs are entered on the draft and become credit invoices when it
+  is sent. A cancelled invoice takes none. The API refuses both with `NOT_ISSUED`.
+- **Rules.** A supplier and at least one charge are required. Everything the invoice's cost side checks
+  still applies: the supplier must exist, and the rate is 1 for the base currency.
+- **Permission.** `ACCOUNTS.DEBIT_INVOICE.EDIT` + `VIEW_BUY_PRICE`, the grant the list's Edit and Delete
+  already ride on (§14.10), because adding a bill changes the debit invoice's cost side. The
+  **+ Create New** button and the empty state's link show only with it.
+- **API.** `GET /credit-invoices/options` (the cost block's lookups) · `GET
+  /credit-invoices/debit-invoices?search=` (the issued invoices it can go on) · `POST /credit-invoices`
+  `{ debitInvoiceId, cost }` → `{ id, debitInvoiceId, debitInvoiceCode }`. The file uploads through the
+  existing `POST /debit-invoices/:id/costs/:costId/file`. In the code, `writeCosts` now writes each block
+  through `writeCostBlock`, and `addCostBlock` writes a single one.
+
+Tests: `ledger.test.ts`, 1 more case. It covers the lookups and the invoice search, including that
+another workspace is offered none of them. It covers the refusals: no charge, no supplier, an unknown
+invoice, and a user without the grant. It adds a vendor bill, then checks that the paid carrier bill
+on the same invoice is unchanged, that the invoice's cost total includes the new bill, and that the
+new bill can be deleted from the list.
+
 ---
 
 ## 15. FREIGHT CERTIFICATE — the client's sample, 2026-10-18

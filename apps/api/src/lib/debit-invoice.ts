@@ -567,6 +567,150 @@ export async function partyIsVisible(db: TenantDb, type: SupplierPartyType, id: 
   return (await db.vendor.findFirst({ where, select: { id: true } })) !== null;
 }
 
+/** A block as stored, for what an update may and may not change once it is paid. */
+const STORED_COST_SELECT = {
+  id: true,
+  partyType: true,
+  carrierId: true,
+  agentId: true,
+  vendorId: true,
+  currencyId: true,
+  conversionRate: true,
+  supplierInvoiceNo: true,
+  payments: { where: { deletedAt: null }, select: { amount: true } },
+} satisfies Prisma.DebitInvoiceCostSelect;
+
+type StoredCost = Prisma.DebitInvoiceCostGetPayload<{ select: typeof STORED_COST_SELECT }>;
+
+/**
+ * One block written: who it is owed to, its currency and rate, its rows and
+ * its totals. `before` is the block as stored when this updates it; without
+ * it, the block is created.
+ */
+async function writeCostBlock(
+  db: TenantDb,
+  args: {
+    tenantId: bigint;
+    userId: bigint;
+    invoiceId: bigint;
+    block: InvoiceCostData;
+    sortOrder: number;
+    base: BaseCurrency;
+    before: StoredCost | undefined;
+  },
+): Promise<bigint> {
+  const { tenantId, userId, invoiceId, block, sortOrder, base, before } = args;
+  if (block.partyId === null) {
+    throw HttpError.badRequest(
+      `Choose the ${SUPPLIER_PARTY_LABEL[block.partyType].toLowerCase()} this cost is owed to.`,
+    );
+  }
+
+  const partyId = BigInt(block.partyId);
+  if (!(await partyIsVisible(db, block.partyType, partyId))) {
+    throw HttpError.badRequest(
+      `That ${SUPPLIER_PARTY_LABEL[block.partyType].toLowerCase()} is not available.`,
+    );
+  }
+
+  const currencyId = BigInt(block.currencyId);
+  const currencyCode = await currencyOf(db, currencyId);
+  const rate = rateFor(currencyId, block.conversionRate, base);
+  const lines = await resolveLines(db, block.lines);
+
+  const data = {
+    sortOrder,
+    partyType: block.partyType,
+    carrierId: block.partyType === 'CARRIER' ? partyId : null,
+    agentId: block.partyType === 'AGENT' ? partyId : null,
+    vendorId: block.partyType === 'VENDOR' ? partyId : null,
+    supplierInvoiceNo: (block.supplierInvoiceNo ?? '').trim() || null,
+    currencyId,
+    currencyCode,
+    conversionRate: rate,
+    updatedBy: userId,
+  };
+
+  let costId: bigint;
+  if (before !== undefined) {
+    costId = before.id;
+    /*
+     * §14.6: once an Expense voucher has paid against a credit invoice, who
+     * it is owed to and the currency and rate it is booked at are what the
+     * payment was measured against. Moving any of them would leave the
+     * supplier's ledger settling a figure that no longer exists.
+     */
+    if (before.payments.length > 0) {
+      const partyBefore = before.carrierId ?? before.agentId ?? before.vendorId;
+      if (
+        before.partyType !== block.partyType ||
+        partyBefore !== partyId ||
+        before.currencyId !== currencyId ||
+        !before.conversionRate.equals(rate)
+      ) {
+        throw new HttpError(
+          409,
+          'CREDIT_INVOICE_PAID',
+          `${before.supplierInvoiceNo ?? 'That supplier invoice'} has been paid against, so its supplier, ` +
+            'currency and rate can no longer change. Cancel the payment voucher first.',
+        );
+      }
+    }
+    await db.debitInvoiceCost.update({ where: { id: costId }, data });
+  } else {
+    const made = await db.debitInvoiceCost.create({
+      data: { tenantId, debitInvoiceId: invoiceId, ...data, createdBy: userId },
+      select: { id: true },
+    });
+    costId = made.id;
+  }
+
+  await db.debitInvoiceCostLine.updateMany({
+    where: { debitInvoiceCostId: costId, deletedAt: null },
+    data: { deletedAt: new Date(), isActive: false, updatedBy: userId },
+  });
+  if (lines.length > 0) {
+    await db.debitInvoiceCostLine.createMany({
+      data: lines.map((line, lineIndex) => ({
+        tenantId,
+        debitInvoiceCostId: costId,
+        sortOrder: lineIndex,
+        ...line,
+        createdBy: userId,
+        updatedBy: userId,
+      })),
+    });
+  }
+  await retotalCost(db, costId, rate);
+
+  const paidSoFar = (before?.payments ?? []).reduce((sum, p) => sum.plus(p.amount), ZERO);
+  if (paidSoFar.greaterThan(0)) {
+    const after = await db.debitInvoiceCost.findFirst({ where: { id: costId }, select: { totalAmount: true } });
+    if (after !== null && after.totalAmount.lessThan(paidSoFar)) {
+      throw new HttpError(
+        409,
+        'CREDIT_INVOICE_PAID',
+        `${block.supplierInvoiceNo ?? 'That supplier invoice'} has ${money(paidSoFar)} paid against it, ` +
+          'so it cannot come to less than that.',
+      );
+    }
+  }
+  return costId;
+}
+
+/**
+ * Adds one supplier's bill to an invoice — Credit Invoice → Create New
+ * (MODULE_ACCOUNTS §14.17). The blocks already on it stay exactly as they
+ * are, and the new one goes last. The caller retotals the invoice.
+ */
+export async function addCostBlock(
+  db: TenantDb,
+  args: { tenantId: bigint; userId: bigint; invoiceId: bigint; block: InvoiceCostData; base: BaseCurrency },
+): Promise<bigint> {
+  const count = await db.debitInvoiceCost.count({ where: { debitInvoiceId: args.invoiceId, deletedAt: null } });
+  return writeCostBlock(db, { ...args, block: { ...args.block, id: null }, sortOrder: count, before: undefined });
+}
+
 /**
  * Replace the cost side (§3.5, §5 rule 3).
  *
@@ -584,17 +728,7 @@ async function writeCosts(
 ): Promise<void> {
   const existing = await db.debitInvoiceCost.findMany({
     where: { debitInvoiceId: invoiceId, deletedAt: null },
-    select: {
-      id: true,
-      partyType: true,
-      carrierId: true,
-      agentId: true,
-      vendorId: true,
-      currencyId: true,
-      conversionRate: true,
-      supplierInvoiceNo: true,
-      payments: { where: { deletedAt: null }, select: { amount: true } },
-    },
+    select: STORED_COST_SELECT,
   });
   const existingIds = new Set(existing.map((c) => c.id.toString()));
   const byId = new Map(existing.map((c) => [c.id.toString(), c]));
@@ -606,106 +740,12 @@ async function writeCosts(
       block.lines.length === 0 &&
       (block.supplierInvoiceNo ?? '').trim() === '';
     if (block.id === null && isEmpty) continue;
-    if (block.partyId === null) {
-      throw HttpError.badRequest(
-        `Choose the ${SUPPLIER_PARTY_LABEL[block.partyType].toLowerCase()} this cost is owed to.`,
-      );
+    if (block.id !== null && !existingIds.has(block.id)) {
+      throw HttpError.badRequest('One of the cost blocks does not belong to this invoice.');
     }
-
-    const partyId = BigInt(block.partyId);
-    if (!(await partyIsVisible(db, block.partyType, partyId))) {
-      throw HttpError.badRequest(
-        `That ${SUPPLIER_PARTY_LABEL[block.partyType].toLowerCase()} is not available.`,
-      );
-    }
-
-    const currencyId = BigInt(block.currencyId);
-    const currencyCode = await currencyOf(db, currencyId);
-    const rate = rateFor(currencyId, block.conversionRate, base);
-    const lines = await resolveLines(db, block.lines);
-
-    const data = {
-      sortOrder: index,
-      partyType: block.partyType,
-      carrierId: block.partyType === 'CARRIER' ? partyId : null,
-      agentId: block.partyType === 'AGENT' ? partyId : null,
-      vendorId: block.partyType === 'VENDOR' ? partyId : null,
-      supplierInvoiceNo: (block.supplierInvoiceNo ?? '').trim() || null,
-      currencyId,
-      currencyCode,
-      conversionRate: rate,
-      updatedBy: userId,
-    };
-
-    let costId: bigint;
-    if (block.id !== null) {
-      if (!existingIds.has(block.id)) {
-        throw HttpError.badRequest('One of the cost blocks does not belong to this invoice.');
-      }
-      costId = BigInt(block.id);
-      /*
-       * §14.6: once an Expense voucher has paid against a credit invoice, who
-       * it is owed to and the currency and rate it is booked at are what the
-       * payment was measured against. Moving any of them would leave the
-       * supplier's ledger settling a figure that no longer exists.
-       */
-      const before = byId.get(block.id)!;
-      if (before.payments.length > 0) {
-        const partyBefore = before.carrierId ?? before.agentId ?? before.vendorId;
-        if (
-          before.partyType !== block.partyType ||
-          partyBefore !== partyId ||
-          before.currencyId !== currencyId ||
-          !before.conversionRate.equals(rate)
-        ) {
-          throw new HttpError(
-            409,
-            'CREDIT_INVOICE_PAID',
-            `${before.supplierInvoiceNo ?? 'That supplier invoice'} has been paid against, so its supplier, ` +
-              'currency and rate can no longer change. Cancel the payment voucher first.',
-          );
-        }
-      }
-      await db.debitInvoiceCost.update({ where: { id: costId }, data });
-    } else {
-      const made = await db.debitInvoiceCost.create({
-        data: { tenantId, debitInvoiceId: invoiceId, ...data, createdBy: userId },
-        select: { id: true },
-      });
-      costId = made.id;
-    }
+    const before = block.id === null ? undefined : byId.get(block.id);
+    const costId = await writeCostBlock(db, { tenantId, userId, invoiceId, block, sortOrder: index, base, before });
     kept.add(costId.toString());
-
-    await db.debitInvoiceCostLine.updateMany({
-      where: { debitInvoiceCostId: costId, deletedAt: null },
-      data: { deletedAt: new Date(), isActive: false, updatedBy: userId },
-    });
-    if (lines.length > 0) {
-      await db.debitInvoiceCostLine.createMany({
-        data: lines.map((line, lineIndex) => ({
-          tenantId,
-          debitInvoiceCostId: costId,
-          sortOrder: lineIndex,
-          ...line,
-          createdBy: userId,
-          updatedBy: userId,
-        })),
-      });
-    }
-    await retotalCost(db, costId, rate);
-
-    const paidSoFar = (byId.get(costId.toString())?.payments ?? []).reduce((sum, p) => sum.plus(p.amount), ZERO);
-    if (paidSoFar.greaterThan(0)) {
-      const after = await db.debitInvoiceCost.findFirst({ where: { id: costId }, select: { totalAmount: true } });
-      if (after !== null && after.totalAmount.lessThan(paidSoFar)) {
-        throw new HttpError(
-          409,
-          'CREDIT_INVOICE_PAID',
-          `${block.supplierInvoiceNo ?? 'That supplier invoice'} has ${money(paidSoFar)} paid against it, ` +
-            'so it cannot come to less than that.',
-        );
-      }
-    }
   }
 
   const dropped = [...existingIds].filter((id) => !kept.has(id)).map((id) => BigInt(id));

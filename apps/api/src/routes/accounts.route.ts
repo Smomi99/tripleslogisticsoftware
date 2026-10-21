@@ -5,9 +5,14 @@ import {
   type AwaitingFreightInvRow,
   awaitingFreightInvQuerySchema,
   buildMeta,
+  type CostOptionsDto,
+  type CreditInvoiceCreatedDto,
+  creditInvoiceCreateSchema,
   type CreditInvoiceDto,
   type CreditInvoiceRow,
   creditInvoiceListQuerySchema,
+  type CreditInvoiceTargetDto,
+  creditInvoiceTargetQuerySchema,
   type DebitInvoiceDto,
   type DebitInvoiceListRow,
   type DebitInvoiceOptionsDto,
@@ -37,6 +42,7 @@ import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
 import { costOptionsFor } from '../lib/cost-options';
 import { type BaseCurrency, baseCurrency } from '../lib/currency-rate';
 import {
+  addCostBlock,
   assertInvoiceable,
   BOOKING_SELECT,
   cancellable,
@@ -1195,6 +1201,116 @@ accountsRouter.get('/credit-invoices', requirePermission(`${CREDIT}.VIEW`), asyn
   };
   res.json(payload);
 });
+
+/*
+ * Create New (client, 2026-10-21; §14.17): a supplier's bill entered from the
+ * list, onto the issued debit invoice it is for. It adds a cost block — what
+ * the invoice's own Buying section does — so, like the list's Edit and
+ * Delete, it takes the grant that does that there. Registered before
+ * `/credit-invoices/:id`, which would otherwise read "options" as an id.
+ */
+
+/** The form's lookup lists: what a cost block draws from. */
+accountsRouter.get(
+  '/credit-invoices/options',
+  requirePermission(`${INVOICE}.EDIT`),
+  requirePermission(`${INVOICE}.VIEW_BUY_PRICE`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const data = await withTenant(auth.tenantId, (db) => costOptionsFor(db, auth.tenantId));
+    const payload: ApiSuccess<CostOptionsDto> = { success: true, data };
+    res.json(payload);
+  },
+);
+
+/**
+ * "Debit Invoice No": the issued invoices a bill can go on, newest first. A
+ * draft's costs are entered on the draft, and a cancelled invoice takes none.
+ */
+accountsRouter.get(
+  '/credit-invoices/debit-invoices',
+  requirePermission(`${INVOICE}.EDIT`),
+  requirePermission(`${INVOICE}.VIEW_BUY_PRICE`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const { search } = creditInvoiceTargetQuerySchema.parse(req.query);
+    const rows = await withTenant(auth.tenantId, (db) =>
+      db.debitInvoice.findMany({
+        where: {
+          deletedAt: null,
+          status: 'ISSUED',
+          ...(search === undefined
+            ? {}
+            : {
+                OR: [
+                  { code: { contains: search, mode: 'insensitive' } },
+                  { customer: { name: { contains: search, mode: 'insensitive' } } },
+                  { shipment: { code: { contains: search, mode: 'insensitive' } } },
+                ],
+              }),
+        },
+        orderBy: [{ invoiceDate: 'desc' }, { id: 'desc' }],
+        take: 50,
+        select: {
+          id: true,
+          code: true,
+          invoiceDate: true,
+          customer: { select: { name: true } },
+          shipment: { select: { code: true } },
+        },
+      }),
+    );
+    const data: CreditInvoiceTargetDto[] = rows.map((r) => ({
+      id: r.id.toString(),
+      code: r.code,
+      invoiceDate: day(r.invoiceDate) ?? '',
+      customerName: r.customer.name,
+      bookingCode: r.shipment?.code ?? null,
+    }));
+    const payload: ApiSuccess<CreditInvoiceTargetDto[]> = { success: true, data };
+    res.json(payload);
+  },
+);
+
+accountsRouter.post(
+  '/credit-invoices',
+  requirePermission(`${INVOICE}.EDIT`),
+  requirePermission(`${INVOICE}.VIEW_BUY_PRICE`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const input = creditInvoiceCreateSchema.parse(req.body);
+
+    const data = await withTenant(auth.tenantId, async (db): Promise<CreditInvoiceCreatedDto> => {
+      const base = await requireBase(db, auth.tenantId);
+      const invoice = await db.debitInvoice.findFirst({
+        where: { id: BigInt(input.debitInvoiceId), deletedAt: null },
+        select: { id: true, code: true, status: true },
+      });
+      if (invoice === null) throw HttpError.badRequest('That debit invoice is not available.');
+      if (invoice.status !== 'ISSUED') {
+        throw new HttpError(
+          409,
+          'NOT_ISSUED',
+          invoice.status === 'DRAFT'
+            ? `${invoice.code} is still a draft. Add the cost on the invoice itself; it becomes a credit invoice once the invoice is sent.`
+            : `${invoice.code} was cancelled and cannot take a credit invoice.`,
+        );
+      }
+      const id = await addCostBlock(db, {
+        tenantId: auth.tenantId,
+        userId: auth.userId,
+        invoiceId: invoice.id,
+        block: input.cost,
+        base,
+      });
+      await retotalInvoice(db, invoice.id);
+      return { id: id.toString(), debitInvoiceId: invoice.id.toString(), debitInvoiceCode: invoice.code };
+    });
+
+    const payload: ApiSuccess<CreditInvoiceCreatedDto> = { success: true, data };
+    res.status(201).json(payload);
+  },
+);
 
 /**
  * The number on the list (column C), opened: the supplier's invoice line by

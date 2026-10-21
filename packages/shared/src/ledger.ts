@@ -1,6 +1,12 @@
 import { z } from 'zod';
 
-import { type DebitInvoiceLineDto, LEDGER_PARTY_TYPES, type LedgerPartyType } from './accounts';
+import {
+  type DebitInvoiceLineDto,
+  invoiceCostInputSchema,
+  LEDGER_PARTY_TYPES,
+  type LedgerPartyType,
+  SUPPLIER_PARTY_LABEL,
+} from './accounts';
 import { listQuerySchema } from './api';
 
 /**
@@ -353,6 +359,38 @@ export const creditInvoiceListQuerySchema = listQuerySchema.extend({
   sortBy: z.enum(['date', 'amount']).optional(),
 });
 
+/**
+ * Credit Invoice → Create New (client, 2026-10-21; §14.17): one supplier's
+ * bill, added as a cost block to the issued debit invoice it is for. The
+ * blocks already on that invoice are left as they are.
+ */
+export const creditInvoiceCreateSchema = z.object({
+  debitInvoiceId: idString('Choose the debit invoice this bill is for.'),
+  cost: invoiceCostInputSchema.superRefine((block, ctx) => {
+    if (block.partyId === null) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['partyId'],
+        message: `Choose the ${SUPPLIER_PARTY_LABEL[block.partyType].toLowerCase()} this bill is from.`,
+      });
+    }
+    if (block.lines.length === 0) {
+      ctx.addIssue({ code: 'custom', path: ['lines'], message: 'Add at least one charge.' });
+    }
+  }),
+});
+export type CreditInvoiceCreateInput = z.input<typeof creditInvoiceCreateSchema>;
+
+/** Create New's "Debit Invoice No": the issued invoices a bill can go on. */
+export const creditInvoiceTargetQuerySchema = z.object({
+  search: z
+    .string()
+    .trim()
+    .max(100, 'That search is too long.')
+    .optional()
+    .transform((v) => (v === '' ? undefined : v)),
+});
+
 // ------------------------------------------------------------------- DTOs
 
 export interface LedgerAccountDto {
@@ -566,6 +604,22 @@ export interface CreditInvoicePaymentDto {
   amountBase: string;
   journalEntryId: string;
   journalEntryCode: string;
+}
+
+/** An issued debit invoice a supplier's bill can be added to (Create New). */
+export interface CreditInvoiceTargetDto {
+  id: string;
+  code: string;
+  invoiceDate: string;
+  customerName: string;
+  bookingCode: string | null;
+}
+
+/** What Create New made: the credit invoice, and the debit invoice it sits on. */
+export interface CreditInvoiceCreatedDto {
+  id: string;
+  debitInvoiceId: string;
+  debitInvoiceCode: string;
 }
 
 /** One credit invoice, as its number on the Credit Invoice list opens it. */

@@ -10,6 +10,7 @@ import {
 } from '@ff/shared';
 import type { Route } from 'next';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -35,9 +36,11 @@ import { useMasterList } from '@/lib/use-master-list';
  * The sheet's row actions: `Make Payment` (opens Expense against it — the
  * `Expense-Vendor` sheet), `Edit` and `Delete` (both change the debit invoice
  * the cost was recorded on, so they take the grant that does that there).
- * The supplier's invoice number opens it in a popup.
+ * The supplier's invoice number opens it in a popup. `Create New` (§14.17)
+ * adds a bill to a sent debit invoice, under the same grant.
  */
 export default function CreditInvoicePage() {
+  const router = useRouter();
   const { can, authorizedRequest } = useSession();
   const list = useMasterList<CreditInvoiceRow, 'date'>(
     '/api/tenant/accounts/credit-invoices',
@@ -130,6 +133,12 @@ export default function CreditInvoicePage() {
       <PageHeader
         title="Credit Invoice"
         description="What carriers, agents and vendors have billed on each job, and what has been paid against it."
+        action={
+          // Adding a bill changes its debit invoice's cost side: the grant Edit and Delete ride on (§14.17).
+          canChange ? (
+            <Button onClick={() => router.push('/accounts/credit-invoice/new' as Route)}>+ Create New</Button>
+          ) : null
+        }
       />
 
       <div className="flex flex-wrap items-end gap-3">
@@ -227,11 +236,17 @@ export default function CreditInvoicePage() {
           ) : (
             <EmptyState
               title="No credit invoices yet"
-              description="A supplier's invoice appears here once it is entered on a debit invoice's Buying block and that debit invoice is sent."
+              description="Add a supplier’s bill to a sent debit invoice with Create New, or on the invoice’s own Buying block."
               action={
-                <Link href={{ pathname: '/accounts/debit-invoice' }} className="text-body text-harbour hover:underline">
-                  Go to Debit Invoice
-                </Link>
+                canChange ? (
+                  <Link href={{ pathname: '/accounts/credit-invoice/new' }} className="text-body text-harbour hover:underline">
+                    Create New
+                  </Link>
+                ) : (
+                  <Link href={{ pathname: '/accounts/debit-invoice' }} className="text-body text-harbour hover:underline">
+                    Go to Debit Invoice
+                  </Link>
+                )
               }
             />
           )
