@@ -16,8 +16,8 @@ import PDFDocument from 'pdfkit';
  */
 
 export interface DebitInvoicePdfInput {
+  /** The letterhead is the name and logo; the email signature is never printed (2026-10-21). */
   companyName: string;
-  companyAddress: string | null;
   logo: Buffer | null;
 
   invoiceNo: string;
@@ -112,13 +112,6 @@ export function renderDebitInvoicePdf(input: DebitInvoicePdfInput): Promise<Buff
       }
     }
     doc.font('Helvetica-Bold').fontSize(16).fillColor(HULL).text(input.companyName, headerX, 40);
-    if (input.companyAddress !== null && input.companyAddress !== '') {
-      doc
-        .font('Helvetica')
-        .fontSize(8)
-        .fillColor(STEEL)
-        .text(input.companyAddress, headerX, doc.y, { width: 330 });
-    }
 
     let y = Math.max(doc.y, 84) + 10;
     doc.font('Helvetica-Bold').fontSize(13).fillColor(HULL).text('DEBIT NOTE', left, y, {

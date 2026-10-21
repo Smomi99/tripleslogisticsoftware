@@ -15,8 +15,8 @@ import { Prisma } from '../generated/prisma/client';
  * blocks at the foot. Solid black Helvetica throughout: their form's blue
  * Courier printed as broken dots (see INK).
  *
- * The letterhead stops at the name and logo. The address line other documents
- * print is the email signature block, and the client does not want it here.
+ * The letterhead stops at the name and logo. The email signature block is
+ * printed on no document (client, 2026-10-21).
  *
  * It says DRAFT across it until the forwarder approves it. A page that looks
  * like an original when it is not is how the wrong document gets presented at a

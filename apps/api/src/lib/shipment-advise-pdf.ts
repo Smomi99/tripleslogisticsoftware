@@ -9,8 +9,7 @@ import PDFDocument from 'pdfkit';
  *
  * The company name arrives as data, like the shipping order's — nothing about
  * one forwarder is written into this file. The letterhead stops at the name:
- * the address line other documents print is the email signature block, and the
- * client does not want it on the advise.
+ * the email signature block is printed on no document (client, 2026-10-21).
  */
 
 export interface ShipmentAdvisePdfInput {

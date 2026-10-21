@@ -181,6 +181,7 @@ export function DebitInvoiceDetail({ id, onClose }: { id: string | null; onClose
       {invoice === null ? <Pending error={error} /> : <DebitInvoiceBody invoice={invoice} />}
 
       <Footer onClose={onClose}>
+        {invoice !== null && <PrintButton invoiceId={invoice.id} />}
         {invoice !== null && <FreightCertificateLink invoice={invoice} />}
         {invoice !== null && (
           <Link href={`/accounts/debit-invoice/${invoice.id}` as Route} className="text-body text-harbour hover:underline">
@@ -189,6 +190,34 @@ export function DebitInvoiceDetail({ id, onClose }: { id: string | null; onClose
         )}
       </Footer>
     </Modal>
+  );
+}
+
+/**
+ * The debit note as printed, in a new tab — the invoice page's Print, without
+ * opening the invoice first (client, 2026-10-21).
+ */
+function PrintButton({ invoiceId }: { invoiceId: string }) {
+  const { can, authorizedObjectUrl } = useSession();
+  const [opening, setOpening] = useState(false);
+  if (!can('ACCOUNTS.DEBIT_INVOICE.EXPORT_PDF')) return null;
+
+  async function print(): Promise<void> {
+    setOpening(true);
+    try {
+      const url = await authorizedObjectUrl(`/api/tenant/accounts/debit-invoices/${invoiceId}/pdf`);
+      window.open(url, '_blank', 'noopener');
+    } catch (caught) {
+      toast.error(caught instanceof ApiError ? caught.message : 'Could not open the invoice.');
+    } finally {
+      setOpening(false);
+    }
+  }
+
+  return (
+    <Button variant="text" size="inline" className="text-body" disabled={opening} onClick={() => void print()}>
+      {opening ? 'Opening…' : 'Print'}
+    </Button>
   );
 }
 

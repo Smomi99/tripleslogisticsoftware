@@ -6,12 +6,12 @@ import PDFDocument from 'pdfkit';
  * Laid out as the `DO issue` sheet draws it: DATE, then the TO block, then
  * SUBJECT, the operator's own words, and CONTAINER NO. Every word of the
  * letterhead and of the letter arrives as data; the sheet supplies only the
- * frame, so nothing here says what a delivery order should say.
+ * frame, so nothing here says what a delivery order should say. The letterhead
+ * is the name: the email signature is never printed (client, 2026-10-21).
  */
 
 export interface DeliveryOrderPdfInput {
   companyName: string;
-  companyAddress: string | null;
   doNo: string;
   issueDate: string;
   addressee: string;
@@ -40,9 +40,6 @@ export function renderDeliveryOrderPdf(input: DeliveryOrderPdfInput): Promise<Bu
 
     // ---------------------------------------------------------- letterhead
     doc.font('Helvetica-Bold').fontSize(15).fillColor(HULL).text(input.companyName, left, 48, { width: width - 180 });
-    if (input.companyAddress !== null && input.companyAddress !== '') {
-      doc.font('Helvetica').fontSize(8).fillColor(STEEL).text(input.companyAddress, { width: width - 180 });
-    }
     doc.font('Helvetica').fontSize(6.5).fillColor(STEEL).text('DO NO', right - 170, 48, { width: 170, align: 'right' });
     doc.font('Courier-Bold').fontSize(12).fillColor(HULL).text(input.doNo, right - 170, 58, { width: 170, align: 'right' });
 
