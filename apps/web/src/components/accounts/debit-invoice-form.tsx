@@ -676,6 +676,7 @@ export function DebitInvoiceForm({
                         )}
                       </>
                     )}
+                    {r.bankChargeBase !== null && ` · Bank charge ${money(baseCode, r.bankChargeBase)}`}
                   </li>
                 ))}
               </ul>

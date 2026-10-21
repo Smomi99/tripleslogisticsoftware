@@ -1,4 +1,5 @@
 import {
+  BANK_CHARGE_ACCOUNT_KEY,
   type DebitInvoiceBookingDto,
   type DebitInvoiceCostDto,
   type DebitInvoiceDto,
@@ -192,7 +193,17 @@ export const INVOICE_SELECT = {
       amount: true,
       amountBase: true,
       createdAt: true,
-      journalEntry: { select: { id: true, code: true } },
+      journalEntry: {
+        select: {
+          id: true,
+          code: true,
+          // What the bank kept of it (§14.15): the voucher's Bank Service Charge line.
+          lines: {
+            where: { deletedAt: null, ledgerAccount: { systemKey: BANK_CHARGE_ACCOUNT_KEY } },
+            select: { debit: true, credit: true },
+          },
+        },
+      },
     },
   },
   freightCertificates: {
@@ -256,6 +267,12 @@ export interface Money3 {
   received: Prisma.Decimal;
   outstanding: Prisma.Decimal;
   status: PaymentStatus;
+}
+
+/** A receipt's bank charge, from its voucher's Bank Service Charge lines; null when none. */
+function bankChargeOf(lines: { debit: Prisma.Decimal; credit: Prisma.Decimal }[]): string | null {
+  const charge = lines.reduce((sum, l) => sum.plus(l.debit).minus(l.credit), ZERO);
+  return charge.isZero() ? null : money(charge);
 }
 
 /** §5 rule 4, derived — never stored, so it can never disagree with receipts. */
@@ -399,6 +416,7 @@ export function invoiceDto(
       recordedAt: r.createdAt.toISOString(),
       journalEntryId: r.journalEntry?.id.toString() ?? null,
       journalEntryCode: r.journalEntry?.code ?? null,
+      bankChargeBase: bankChargeOf(r.journalEntry?.lines ?? []),
     })),
     freightCertificate:
       row.freightCertificates[0] === undefined

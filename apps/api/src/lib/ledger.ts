@@ -1,5 +1,6 @@
 import {
   type AccountOptionDto,
+  BANK_CHARGE_ACCOUNT_KEY,
   CODE_PREFIX,
   DEBIT_NORMAL,
   formatCode,
@@ -504,6 +505,7 @@ export interface BuiltLine {
  *
  *   Expense    Dr each Expense Category row     Cr "Payment from"
  *   Income     Dr "Deposit to"                  Cr each Income Category row
+ *              Dr Bank Service Charge, for what the bank kept (§14.15)
  *   Transfer   Dr each "Transfer To" account    Cr "Transfer From"
  *   Journal    the rows as written
  *
@@ -545,6 +547,8 @@ export function buildLines(input: JournalEntryData, accounts: Map<string, Accoun
     throw HttpError.badRequest(`${labelOf(moneyAccount)} is not a bank or cash account.`);
   }
   const amount = dec(input.amount);
+  const charge = input.kind === 'INCOME' ? dec(input.bankCharge) : ZERO;
+  const chargeAccount = charge.isZero() ? null : bankChargeAccount(accounts, account);
   const rows = input.lines.map((l) => ({ row: account(l.ledgerAccountId, 'One of the accounts'), amount: dec(l.amount) }));
 
   for (const { row } of rows) {
@@ -562,10 +566,15 @@ export function buildLines(input: JournalEntryData, accounts: Map<string, Accoun
     }
   }
 
+  // What was earned is what reached the account plus what the bank kept of it.
+  const expected = amount.plus(charge);
   const spread = rows.reduce((s, r) => s.plus(r.amount), ZERO);
-  if (!spread.equals(amount)) {
+  if (!spread.equals(expected)) {
     throw HttpError.badRequest(
-      `The rows come to ${money(spread)} but the amount is ${money(amount)}. The difference must be nil before this can be saved.`,
+      charge.isZero()
+        ? `The rows come to ${money(spread)} but the amount is ${money(amount)}. The difference must be nil before this can be saved.`
+        : `The rows come to ${money(spread)} but the amount and the bank charge come to ${money(expected)}. ` +
+            'The difference must be nil before this can be saved.',
     );
   }
 
@@ -575,6 +584,7 @@ export function buildLines(input: JournalEntryData, accounts: Map<string, Accoun
     ...(moneyIsDebit
       ? [{ ledgerAccountId: moneyAccount.id, debit: amount, credit: ZERO }]
       : []),
+    ...(chargeAccount === null ? [] : [{ ledgerAccountId: chargeAccount.id, debit: charge, credit: ZERO }]),
     ...rows.map((r) =>
       moneyIsDebit
         ? { ledgerAccountId: r.row.id, debit: ZERO, credit: r.amount }
@@ -582,6 +592,16 @@ export function buildLines(input: JournalEntryData, accounts: Map<string, Accoun
     ),
     ...(moneyIsDebit ? [] : [{ ledgerAccountId: moneyAccount.id, debit: ZERO, credit: amount }]),
   ];
+}
+
+/** The account a bank charge is booked to: the chart's own, and it has to be switched on. */
+function bankChargeAccount(
+  accounts: Map<string, AccountRow>,
+  usable: (id: string, what: string) => AccountRow,
+): AccountRow {
+  const row = [...accounts.values()].find((a) => a.systemKey === BANK_CHARGE_ACCOUNT_KEY);
+  if (row === undefined) throw new HttpError(500, 'CHART_MISSING', `The chart has no ${BANK_CHARGE_ACCOUNT_KEY} account.`);
+  return usable(row.id.toString(), 'The bank charge account');
 }
 
 // ----------------------------------------------------------- settlements
@@ -731,9 +751,10 @@ export function serviceKeyOf(
  * The half of a save that touches a party's ledger (§14.6): pay a credit
  * invoice, bank a debit invoice, or close part of an opening balance.
  *
- * `baseAmount` is what the voucher moved through the bank, in the base. When
- * the document is itself in the base the two figures are one figure, and must
- * agree; in any other currency their ratio is simply the rate the bank gave.
+ * `baseAmount` is what the voucher moved through the bank, in the base — on
+ * income, with what the bank kept of it (§14.15). When the document is itself
+ * in the base the two figures are one figure, and must agree; in any other
+ * currency their ratio is simply the rate the bank gave.
  */
 export async function settle(
   db: TenantDb,
@@ -769,7 +790,7 @@ export async function settle(
     if (currencyId === base.id && !amount.equals(baseAmount)) {
       throw HttpError.badRequest(
         `The invoice is in ${code}, so the amount settled (${money(amount)}) and the amount ` +
-          `${kind === 'EXPENSE' ? 'paid' : 'deposited'} (${money(baseAmount)}) must be the same.`,
+          `${kind === 'EXPENSE' ? 'paid' : 'deposited with any bank charge'} (${money(baseAmount)}) must be the same.`,
       );
     }
   };
@@ -925,8 +946,13 @@ export async function unsettle(db: TenantDb, entryId: bigint, userId: bigint): P
 export async function accountsFor(db: TenantDb, input: JournalEntryData): Promise<Map<string, AccountRow>> {
   const ids = new Set<string>(input.lines.map((l) => l.ledgerAccountId));
   if (input.kind !== 'JOURNAL') ids.add(input.moneyAccountId);
+  const charged = input.kind === 'INCOME' && !dec(input.bankCharge).isZero();
   const rows = await loadAccounts(db);
-  return new Map(rows.filter((r) => ids.has(r.id.toString())).map((r) => [r.id.toString(), r]));
+  return new Map(
+    rows
+      .filter((r) => ids.has(r.id.toString()) || (charged && r.systemKey === BANK_CHARGE_ACCOUNT_KEY))
+      .map((r) => [r.id.toString(), r]),
+  );
 }
 
 /** Writes the lines of a voucher, replacing any a draft already had. */

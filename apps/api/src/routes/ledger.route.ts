@@ -1036,7 +1036,8 @@ for (const kind of Object.keys(SLUG) as JournalEntryKind[]) {
           entryDate,
           kind: input.kind,
           settlement: input.settlement,
-          baseAmount: dec(input.amount),
+          // A receipt settles what the customer sent: what reached the bank and what it kept.
+          baseAmount: input.kind === 'INCOME' ? dec(input.amount).plus(dec(input.bankCharge)) : dec(input.amount),
           base,
         });
       }

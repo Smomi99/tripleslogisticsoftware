@@ -192,6 +192,8 @@ export function VoucherForm({
    * until the bank's figure is typed in and says otherwise (§14.5).
    */
   const [rate, setRate] = useState<number | null>(null);
+  /** Receiving from a customer: what the bank kept of it, in the base (§14.15). */
+  const [bankCharge, setBankCharge] = useState('');
 
   const [pending, setPending] = useState<'save' | 'post' | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -235,6 +237,7 @@ export function VoucherForm({
   function applyDocument(doc: OpenDocumentDto | null, opts: JournalEntryOptionsDto | null = options): void {
     setDocKey(doc === null ? '' : docKeyOf(doc));
     if (doc === null) return;
+    setBankCharge('');
     setSettleAmount(exact(doc.outstanding));
     const banked =
       doc.isBaseCurrency || doc.conversionRate === null
@@ -307,12 +310,15 @@ export function VoucherForm({
   // ------------------------------------------------------ the arithmetic
 
   const moneyUnits = units(moneyAmount);
+  // Only money received from a customer carries a bank charge; anywhere else it is nil.
+  const chargeShown = kind === 'INCOME' && withParty;
+  const chargeUnits = chargeShown ? units(bankCharge) : 0;
   const rowsUnits = rows.reduce((sum, r) => sum + units(r.amount), 0);
   const [debitUnits, creditUnits] =
     kind === 'JOURNAL'
       ? [jrows.reduce((s, r) => s + units(r.debit), 0), jrows.reduce((s, r) => s + units(r.credit), 0)]
       : kind === 'INCOME'
-        ? [moneyUnits, rowsUnits]
+        ? [moneyUnits + chargeUnits, rowsUnits]
         : [rowsUnits, moneyUnits];
   const difference = debitUnits - creditUnits;
   const balanced = difference === 0 && debitUnits > 0;
@@ -321,12 +327,27 @@ export function VoucherForm({
   const overSettled =
     settles && withParty && chosenDoc !== null && units(settleAmount) > units(chosenDoc.outstanding);
   const baseMismatch =
-    settles && withParty && chosenDoc !== null && chosenDoc.isBaseCurrency && units(settleAmount) !== moneyUnits;
+    settles &&
+    withParty &&
+    chosenDoc !== null &&
+    chosenDoc.isBaseCurrency &&
+    units(settleAmount) !== moneyUnits + chargeUnits;
+  // The bank kept all of it, or more: nothing would reach the account.
+  const overCharged = chargeUnits > 0 && moneyUnits <= 0;
 
-  /** A single category row follows the amount, until someone adds a second. */
-  function setAmount(value: string): void {
+  /**
+   * A single category row follows what was earned — the amount, and any bank
+   * charge on it — until someone adds a second.
+   */
+  function setAmount(value: string, charge: number = chargeUnits): void {
     setMoneyAmount(value);
-    setRows((current) => (current.length === 1 ? [{ ...current[0]!, amount: value }] : current));
+    const earned = charge === 0 ? value : fromUnits(units(value) + charge);
+    setRows((current) => (current.length === 1 ? [{ ...current[0]!, amount: earned }] : current));
+  }
+
+  /** What the invoice says was earned, in the base: the deposit is what the bank left of it. */
+  function setEarned(earned: string): void {
+    setAmount(chargeUnits === 0 || units(earned) === 0 ? earned : fromUnits(units(earned) - chargeUnits));
   }
 
   // ------------------------------------------------------------ saving
@@ -360,6 +381,7 @@ export function VoucherForm({
             },
           }
         : {}),
+      ...(chargeUnits > 0 ? { bankCharge: bankCharge.trim() } : {}),
     };
   }
 
@@ -474,6 +496,9 @@ export function VoucherForm({
               setDocuments([]);
               setDocKey('');
               setPartyId('');
+              // Other income takes no bank charge: the row goes back to the amount alone.
+              if (chargeUnits > 0) setAmount(moneyAmount, 0);
+              setBankCharge('');
             }
           }}
         />
@@ -602,8 +627,8 @@ export function VoucherForm({
                     const value = e.target.value;
                     setSettleAmount(value);
                     // The base amount follows, at the invoice's rate or the one the bank figure set.
-                    if (chosenDoc.isBaseCurrency) setAmount(value);
-                    else if (rate !== null) setAmount(units(value) > 0 ? (Number(value) * rate).toFixed(2) : '');
+                    if (chosenDoc.isBaseCurrency) setEarned(value);
+                    else if (rate !== null) setEarned(units(value) > 0 ? (Number(value) * rate).toFixed(2) : '');
                   }}
                 />
               </Field>
@@ -643,7 +668,9 @@ export function VoucherForm({
 
       {/* ------------------------------------------------ the money account */}
       {kind !== 'JOURNAL' && (
-        <section className="grid grid-cols-1 gap-4 rounded-manifest border border-line bg-surface p-5 shadow-manifest md:grid-cols-2">
+        <section
+          className={`grid grid-cols-1 gap-4 rounded-manifest border border-line bg-surface p-5 shadow-manifest ${chargeShown ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}
+        >
           <Field id="moneyAccount" label={moneyLabel} required hint={moneyHint}>
             <AccountSelect
               id="moneyAccount"
@@ -660,7 +687,8 @@ export function VoucherForm({
             required
             hint={
               foreignDoc && units(settleAmount) > 0 && moneyUnits > 0
-                ? `What the bank ${kind === 'EXPENSE' ? 'paid out' : 'credited'}. That is ${(moneyUnits / units(settleAmount)).toFixed(4)} ${baseCode} per ${chosenDoc.currencyCode}.`
+                ? `What the bank ${kind === 'EXPENSE' ? 'paid out' : 'credited'}${chargeUnits > 0 ? ', after its charge' : ''}. ` +
+                  `That is ${((moneyUnits + chargeUnits) / units(settleAmount)).toFixed(4)} ${baseCode} per ${chosenDoc.currencyCode}.`
                 : undefined
             }
             error={baseMismatch ? `The invoice is in ${baseCode}, so this must equal the amount against it.` : undefined}
@@ -674,13 +702,35 @@ export function VoucherForm({
               onChange={(e) => {
                 const value = e.target.value;
                 setAmount(value);
-                // What the bank actually moved sets the rate; the invoice amount stays as typed.
+                // What the bank actually moved, with what it kept, sets the rate; the invoice amount stays as typed.
                 if (foreignDoc && units(value) > 0 && units(settleAmount) > 0) {
-                  setRate(Number(value) / Number(settleAmount));
+                  setRate((units(value) + chargeUnits) / units(settleAmount));
                 }
               }}
             />
           </Field>
+          {chargeShown && (
+            <Field
+              id="bankCharge"
+              label={`Bank charge (${baseCode})`}
+              hint="What the bank kept. Booked to Bank Service Charge and shown on the debit note."
+              error={overCharged ? 'The bank charge is all of what was received. Check the two amounts.' : undefined}
+            >
+              <Input
+                id="bankCharge"
+                numeric
+                inputMode="decimal"
+                value={bankCharge}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  // What was earned stays as it is; the deposit is what the bank left of it.
+                  const earned = moneyUnits + chargeUnits;
+                  setBankCharge(value);
+                  if (earned > 0) setAmount(fromUnits(earned - units(value)), units(value));
+                }}
+              />
+            </Field>
+          )}
         </section>
       )}
 
@@ -840,7 +890,13 @@ export function VoucherForm({
           ) : (
             <Button
               disabled={
-                pending !== null || !balanced || moneyAccountId === '' || partyMissing || overSettled || baseMismatch
+                pending !== null ||
+                !balanced ||
+                moneyAccountId === '' ||
+                partyMissing ||
+                overSettled ||
+                baseMismatch ||
+                overCharged
               }
               onClick={() => void save(true)}
             >
