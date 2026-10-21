@@ -840,6 +840,63 @@ describe('Receive against a debit invoice (§14.6)', () => {
     expect(inv.displayStatus).toBe('UNPAID');
     expect(inv.receipts).toEqual([]);
   });
+
+  describe('with a bank charge (§14.15)', () => {
+    // USD 1,000 sent; the bank kept BDT 500 and credited the rest.
+    const gross = () => D(1000).times(usdRate);
+    const deposited = () => fixed4(gross().minus(500));
+    const receive = (lines: { ledgerAccountId: string; amount: string }[]) =>
+      asA()
+        .post('/income')
+        .send({
+          entryDate: TODAY,
+          moneyAccountId: bank,
+          amount: deposited(),
+          bankCharge: '500',
+          lines,
+          settlement: { partyType: 'CUSTOMER', partyId: A.customerId.toString(), against: 'INVOICE', documentId: debitInvoiceId, amount: '1000' },
+        });
+
+    it('wants the rows to come to the deposit and the charge together', async () => {
+      const res = await receive([{ ledgerAccountId: account('INCOME.SERVICE.SEA_FCL'), amount: deposited() }]);
+      expect(res.status).toBe(400);
+      expect(res.body.error.message).toContain('the amount and the bank charge come to');
+    });
+
+    it('books the charge to Bank Service Charge, settles the invoice in full, and shows it on the debit note', async () => {
+      const res = await receive([{ ledgerAccountId: account('INCOME.SERVICE.SEA_FCL'), amount: fixed4(gross()) }]);
+      expect(res.status, JSON.stringify(res.body.error ?? {})).toBe(201);
+      const lines = (res.body.data.lines as { ledgerAccountId: string; debit: string; credit: string }[]).map((l) => [
+        l.ledgerAccountId,
+        l.debit,
+        l.credit,
+      ]);
+      expect(lines).toEqual([
+        [bank, deposited(), '0.0000'],
+        [account('EXPENSE.OPERATING.BANK_CHARGE'), '500.0000', '0.0000'],
+        [account('INCOME.SERVICE.SEA_FCL'), '0.0000', fixed4(gross())],
+      ]);
+
+      let inv = (await asA().get(`/debit-invoices/${debitInvoiceId}`)).body.data;
+      expect(inv.displayStatus).toBe('PAID');
+      expect(inv.receipts).toEqual([expect.objectContaining({ amount: '1000.0000', bankChargeBase: '500.0000' })]);
+
+      // Cancelled, the charge goes with the receipt.
+      expect((await asA().post(`/income/${res.body.data.id}/cancel`).send({ reason: 'Wrong account' })).status).toBe(200);
+      inv = (await asA().get(`/debit-invoices/${debitInvoiceId}`)).body.data;
+      expect(inv.receipts).toEqual([]);
+    });
+
+    it('refuses a charge while Bank Service Charge is switched off', async () => {
+      const charge = account('EXPENSE.OPERATING.BANK_CHARGE');
+      expect((await asA().post(`/chart/${charge}/toggle-status`)).body.data.isActive).toBe(false);
+      const res = await receive([{ ledgerAccountId: account('INCOME.SERVICE.SEA_FCL'), amount: fixed4(gross()) }]);
+      expect(res.status).toBe(400);
+      expect(res.body.error.message).toContain('switched off');
+      expect((await asA().post(`/chart/${charge}/toggle-status`)).body.data.isActive).toBe(true);
+      expect((await asA().get(`/debit-invoices/${debitInvoiceId}`)).body.data.receipts).toEqual([]);
+    });
+  });
 });
 
 describe('the opening balance, settled (§14.6)', () => {

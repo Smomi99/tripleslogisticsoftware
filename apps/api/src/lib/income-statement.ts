@@ -1,4 +1,5 @@
 import {
+  BANK_CHARGE_ACCOUNT_KEY,
   INCOME_STATEMENT_COLUMNS,
   INCOME_STATEMENT_LINES,
   INCOME_STATEMENT_SECTION_TITLE,
@@ -38,6 +39,8 @@ import type { TenantDb } from './tenant-client';
  * system existed), so their category lines are left out. What such a voucher
  * moved beyond the document's booked base is the exchange difference, and
  * that is real: it becomes Foreign Exchange Gain or Loss on the voucher date.
+ * A bank charge on one (MODULE_ACCOUNTS §14.15) is neither: it is the bank's
+ * fee, and counts as Bank Charges like any other.
  */
 
 // ---------------------------------------------------------------- mapping
@@ -255,6 +258,15 @@ const SETTLES = Prisma.sql`(
               WHERE os.tenant_id = je.tenant_id AND os.journal_entry_id = je.id AND os.deleted_at IS NULL)
 )`;
 
+/** A line on the Bank Service Charge account. Needs la. */
+const IS_BANK_CHARGE = Prisma.sql`COALESCE(la.system_key, '') = ${BANK_CHARGE_ACCOUNT_KEY}`;
+
+/**
+ * The lines accrual leaves out: a settling voucher's, but for its bank charge,
+ * which is a cost of its own and not part of the exchange difference.
+ */
+const SETTLEMENT_LINE = Prisma.sql`(${SETTLES} AND NOT ${IS_BANK_CHARGE})`;
+
 /** The voucher's party, whichever of the four it names. Needs je, and the four joins below. */
 const PARTY_NAME = Prisma.sql`COALESCE(cu.name, ag.name, ca.name, ve.name)`;
 const PARTY_JOINS = Prisma.sql`
@@ -293,7 +305,8 @@ function settlementVouchers(db: TenantDb, tenantId: bigint, when: Prisma.Sql): P
               FROM journal_line jl
               JOIN ledger_account la ON la.tenant_id = jl.tenant_id AND la.id = jl.ledger_account_id
              WHERE jl.tenant_id = je.tenant_id AND jl.journal_entry_id = je.id AND jl.deleted_at IS NULL
-               AND la.account_type IN ('INCOME', 'EXPENSE')) AS pl,
+               AND la.account_type IN ('INCOME', 'EXPENSE')
+               AND NOT ${IS_BANK_CHARGE}) AS pl,
            (SELECT COALESCE(SUM(r.amount_base), 0) FROM debit_invoice_receipt r
              WHERE r.tenant_id = je.tenant_id AND r.journal_entry_id = je.id AND r.deleted_at IS NULL) AS received,
            (SELECT COALESCE(SUM(sp.amount_base), 0) FROM supplier_payment sp
@@ -410,7 +423,7 @@ export async function statementLines(
          AND je.status = 'POSTED'
          AND la.account_type IN ('INCOME', 'EXPENSE')
          AND ${inAnyPeriod(entryDate, periods)}
-         ${accrual ? Prisma.sql`AND NOT ${SETTLES}` : Prisma.empty}
+         ${accrual ? Prisma.sql`AND NOT ${SETTLEMENT_LINE}` : Prisma.empty}
        GROUP BY la.account_type, la.system_key, p.system_key
     `,
     !accrual ? Promise.resolve<SettlementRow[]>([]) : settlementVouchers(db, tenantId, inAnyPeriod(entryDate, periods)),
@@ -656,7 +669,7 @@ export async function lineBreakdown(
          AND je.status = 'POSTED'
          AND jl.ledger_account_id IN (${Prisma.join(accountIds)})
          AND ${within(entryDate)}
-         ${accrual ? Prisma.sql`AND NOT ${SETTLES}` : Prisma.empty}
+         ${accrual ? Prisma.sql`AND NOT ${SETTLEMENT_LINE}` : Prisma.empty}
        GROUP BY je.id, je.code, je.kind, je.entry_date, je.description, la.id, la.name, cu.name, ag.name, ca.name, ve.name
     `,
     !accrual || (line !== 'FX_GAIN' && line !== 'FX_LOSS')

@@ -424,6 +424,12 @@ export interface DebitInvoiceReceiptDto {
   /** The Income voucher that banked it; null on a receipt from before the books. */
   journalEntryId: string | null;
   journalEntryCode: string | null;
+  /**
+   * What the bank kept of it, in the base: that voucher's Bank Service Charge
+   * line (client, 2026-10-21). Read from the books, never stored here. Null
+   * when there was none.
+   */
+  bankChargeBase: string | null;
 }
 
 /** The booking an invoice was raised against, as the invoice shows it. */

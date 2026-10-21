@@ -359,6 +359,7 @@ function DebitInvoiceBody({ invoice }: { invoice: DebitInvoiceDto }) {
                     )}
                   </>
                 )}
+                {r.bankChargeBase !== null && ` · Bank charge ${money(baseCode, r.bankChargeBase)}`}
               </li>
             ))}
           </ul>

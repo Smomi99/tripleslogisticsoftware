@@ -16,9 +16,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
  *   vouchers   rent 2,000, depreciation 300, a workspace's own "Courier" sub
  *              ledger 50, a discount 100, income tax 400 — all October;
  *              fixed-deposit interest 200 in September; a draft rent 9,999
- *   settled    the FCL invoice received as 10,500 cash (booked 10,000: a
- *              500 gain); the carrier paid 6,100 (booked 6,000: a 100 loss);
- *              their category lines are not revenue or cost a second time
+ *   settled    the FCL invoice received as 10,500 (booked 10,000: a 500
+ *              gain), of which the bank kept 50 and credited 10,450; the
+ *              carrier paid 6,100 (booked 6,000: a 100 loss). Their category
+ *              lines are not revenue or cost a second time; the bank's 50 is
+ *              a Bank Charge, not part of the gain (MODULE_ACCOUNTS §14.15)
  */
 
 const { createApp } = await import('../app');
@@ -196,8 +198,11 @@ async function makeWorld(name: string, slug: string, tag: string, withBooks: boo
     debit: bigint;
     credit: bigint;
     amount: number;
+    /** What the bank kept: a Bank Service Charge debit, out of the `debit` side. */
+    bankCharge?: number;
   }) => {
     v += 1;
+    const charge = args.bankCharge ?? 0;
     // Drafted, given its lines, then posted: the balance check runs on posting.
     const entry = await owner.journalEntry.create({
       data: {
@@ -208,8 +213,11 @@ async function makeWorld(name: string, slug: string, tag: string, withBooks: boo
     });
     await owner.journalLine.createMany({
       data: [
-        { tenantId, journalEntryId: entry.id, sortOrder: 0, ledgerAccountId: args.debit, debit: String(args.amount), credit: '0' },
-        { tenantId, journalEntryId: entry.id, sortOrder: 1, ledgerAccountId: args.credit, debit: '0', credit: String(args.amount) },
+        { tenantId, journalEntryId: entry.id, sortOrder: 0, ledgerAccountId: args.debit, debit: String(args.amount - charge), credit: '0' },
+        ...(charge === 0
+          ? []
+          : [{ tenantId, journalEntryId: entry.id, sortOrder: 1, ledgerAccountId: acct('EXPENSE.OPERATING.BANK_CHARGE'), debit: String(charge), credit: '0' }]),
+        { tenantId, journalEntryId: entry.id, sortOrder: 2, ledgerAccountId: args.credit, debit: '0', credit: String(args.amount) },
       ],
     });
     if ((args.status ?? 'POSTED') === 'POSTED') {
@@ -227,7 +235,7 @@ async function makeWorld(name: string, slug: string, tag: string, withBooks: boo
   await voucher({ kind: 'EXPENSE', date: '2026-10-15', status: 'DRAFT', debit: acct('EXPENSE.OPERATING.RENT'), credit: cash, amount: 9999 });
 
   // Settlements: the cash for what the invoices already counted.
-  const received = await voucher({ kind: 'INCOME', date: '2026-10-25', debit: cash, credit: acct('INCOME.SERVICE.SEA_FCL'), amount: 10500 });
+  const received = await voucher({ kind: 'INCOME', date: '2026-10-25', debit: cash, credit: acct('INCOME.SERVICE.SEA_FCL'), amount: 10500, bankCharge: 50 });
   await owner.debitInvoiceReceipt.create({
     data: { tenantId, debitInvoiceId: fclInvoice.id, journalEntryId: received.id, paymentDate: at('2026-10-25'), amount: '10000', amountBase: '10000' },
   });
@@ -302,28 +310,31 @@ describe('Income Statement', () => {
     expect(n('OPEX_DEPRECIATION', 0)).toBe(300);
     // A workspace's own sub ledger follows the ledger it sits under.
     expect(n('OPEX_OTHER_ADMIN', 0)).toBe(50);
-    expect(n('TOTAL_OPEX', 0)).toBe(2350);
-    expect(n('OPERATING_PROFIT', 0)).toBe(1550);
+    // + the 50 the bank kept of the FCL receipt.
+    expect(n('OPEX_BANK', 0)).toBe(50);
+    expect(n('TOTAL_OPEX', 0)).toBe(2400);
+    expect(n('OPERATING_PROFIT', 0)).toBe(1500);
     expect(n('NONOP_INTEREST', 0)).toBe(0);
     expect(n('NONOP_INTEREST', 2)).toBe(200);
     expect(n('INCOME_TAX', 0)).toBe(400);
   });
 
   it('counts a settlement once — as the invoice — and its exchange difference as gain or loss', () => {
-    // 10,500 banked against 10,000 booked; 6,100 paid against 6,000 booked.
+    // 10,500 received against 10,000 booked; 6,100 paid against 6,000 booked.
+    // The 50 the bank kept of the 10,500 is a Bank Charge, not less gain.
     expect(n('FX_GAIN', 0)).toBe(500);
     expect(n('FX_LOSS', 0)).toBe(100);
     expect(n('REV_FCL', 0)).toBe(10000);
     expect(n('COST_FCL', 0)).toBe(6000);
-    expect(n('PROFIT_BEFORE_TAX', 0)).toBe(1950);
-    expect(n('NET_PROFIT_AFTER_TAX', 0)).toBe(1550);
+    expect(n('PROFIT_BEFORE_TAX', 0)).toBe(1900);
+    expect(n('NET_PROFIT_AFTER_TAX', 0)).toBe(1500);
   });
 
   it('carries the year to date and last year to date', () => {
     // + the August invoice and the September interest.
     expect(n('NET_REVENUE', 2)).toBe(14400);
-    expect(n('PROFIT_BEFORE_TAX', 2)).toBe(2650);
-    expect(n('NET_PROFIT_AFTER_TAX', 2)).toBe(2250);
+    expect(n('PROFIT_BEFORE_TAX', 2)).toBe(2600);
+    expect(n('NET_PROFIT_AFTER_TAX', 2)).toBe(2200);
     expect(n('GROSS_PROFIT', 3)).toBe(2000);
     expect(n('NET_PROFIT_AFTER_TAX', 3)).toBe(2000);
   });
@@ -354,7 +365,7 @@ describe('Income Statement', () => {
     expect(res.body.data.basis).toBe('CASH');
     const cash = new Map((res.body.data.rows as Row[]).map((r) => [r.key, r.amounts]));
     const c = (key: string, column: 0 | 1 | 2 | 3) => Number(cash.get(key)![column]);
-    // Transaction → Income banked 10,500 for the FCL job; the Air invoice is unpaid.
+    // Transaction → Income took 10,500 for the FCL job (10,450 banked, 50 kept); the Air invoice is unpaid.
     expect(c('REV_FCL', 0)).toBe(10500);
     expect(c('REV_AIR', 0)).toBe(0);
     // Transaction → Expense paid the carrier 6,100; the agent and the airline are unpaid.
@@ -366,9 +377,10 @@ describe('Income Statement', () => {
     expect(c('FX_LOSS', 0)).toBe(0);
     expect(c('NET_REVENUE', 0)).toBe(10400);
     expect(c('GROSS_PROFIT', 0)).toBe(4300);
-    expect(c('TOTAL_OPEX', 0)).toBe(2350);
-    expect(c('NET_PROFIT_AFTER_TAX', 0)).toBe(1550);
-    expect(c('NET_PROFIT_AFTER_TAX', 2)).toBe(1750);
+    expect(c('OPEX_BANK', 0)).toBe(50);
+    expect(c('TOTAL_OPEX', 0)).toBe(2400);
+    expect(c('NET_PROFIT_AFTER_TAX', 0)).toBe(1500);
+    expect(c('NET_PROFIT_AFTER_TAX', 2)).toBe(1700);
     // Last year's invoice was never received, so on cash it is not revenue.
     expect(c('NET_REVENUE', 3)).toBe(0);
   });
@@ -496,6 +508,9 @@ describe('Income Statement breakdown', () => {
     expect(rent.entries.map((e) => e.amount)).toEqual(['2000.00']);
     const discounts = await open(A.viewerToken, 'line=DISCOUNTS');
     expect(discounts.entries.map((e) => [e.documentCode, e.amount])).toEqual([['JV-2026-4IA04', '100.00']]);
+    // The FCL receipt's own lines are the invoice's, but what the bank kept of it is listed.
+    const bankCharges = await open(A.viewerToken, 'line=OPEX_BANK');
+    expect(bankCharges.entries.map((e) => [e.documentCode, e.amount])).toEqual([['JV-2026-4IA08', '50.00']]);
   });
 
   it("shows each settlement's exchange difference against what it settled", async () => {
@@ -544,13 +559,13 @@ describe('Income Statement breakdown', () => {
 // Balance Sheet and Cash Flow Statement (2026-10-18), over the same fixtures.
 //
 //   books to 31-Oct-2026   cash: −2,000 rent −50 courier −100 discount −400 tax
-//                          +200 interest +10,500 received −6,100 paid = 2,050;
-//                          building −300 (depreciation); profit 1,750
+//                          +200 interest +10,450 received −6,100 paid = 2,000;
+//                          building −300 (depreciation); profit 1,700
 //   accrual adds           billed 10,000 + 4,000 + 500 + 7,000, received 10,000:
 //                          receivable 11,500; costed 6,000 + 1,000 + 3,000 +
 //                          5,000, paid 6,000: payable 9,000
-//   so                     earned 1,750 + 11,500 − 9,000 = 4,250: this year's
-//                          2,250 (the Income Statement's YTD) and last year's 2,000
+//   so                     earned 1,700 + 11,500 − 9,000 = 4,200: this year's
+//                          2,200 (the Income Statement's YTD) and last year's 2,000
 // ---------------------------------------------------------------------------
 
 function statement(kind: 'balance-sheet' | 'cash-flow', token: string, slug: string) {
@@ -570,16 +585,16 @@ describe('Balance Sheet', () => {
     expect(res.body.data).toMatchObject({ currencyCode: 'BDT', basis: 'ACCRUAL', balanced: true });
     expect(res.body.data.columns.map((c: { asOf: string }) => c.asOf)).toEqual(['2026-10-31', '2025-10-31']);
     const rows = byKey(res.body.data.rows);
-    expect(rows.get('CASH')).toEqual(['2050.00', '0.00']);
+    expect(rows.get('CASH')).toEqual(['2000.00', '0.00']);
     expect(rows.get('LONG_TERM_ASSETS')).toEqual(['-300.00', '0.00']);
     expect(rows.get('RECEIVABLE')).toEqual(['11500.00', '7000.00']);
-    expect(rows.get('TOTAL_ASSETS')).toEqual(['13250.00', '7000.00']);
+    expect(rows.get('TOTAL_ASSETS')).toEqual(['13200.00', '7000.00']);
     expect(rows.get('PAYABLE')).toEqual(['9000.00', '5000.00']);
     expect(rows.get('TOTAL_LIABILITIES')).toEqual(['9000.00', '5000.00']);
     // Profit for the Year is the Income Statement's accrual YTD; the rest came before.
-    expect(rows.get('PROFIT')).toEqual(['2250.00', '2000.00']);
+    expect(rows.get('PROFIT')).toEqual(['2200.00', '2000.00']);
     expect(rows.get('RETAINED')).toEqual(['2000.00', '0.00']);
-    expect(rows.get('TOTAL_LIABILITIES_AND_EQUITY')).toEqual(['13250.00', '7000.00']);
+    expect(rows.get('TOTAL_LIABILITIES_AND_EQUITY')).toEqual(['13200.00', '7000.00']);
     expect(rows.has('DIFFERENCE')).toBe(false);
   });
 
@@ -590,8 +605,8 @@ describe('Balance Sheet', () => {
     const rows = byKey(res.body.data.rows);
     expect(rows.get('RECEIVABLE')).toEqual(['0.00', '0.00']);
     expect(rows.get('PAYABLE')).toEqual(['0.00', '0.00']);
-    expect(rows.get('TOTAL_ASSETS')).toEqual(['1750.00', '0.00']);
-    expect(rows.get('PROFIT')).toEqual(['1750.00', '0.00']);
+    expect(rows.get('TOTAL_ASSETS')).toEqual(['1700.00', '0.00']);
+    expect(rows.get('PROFIT')).toEqual(['1700.00', '0.00']);
     expect(rows.get('RETAINED')).toEqual(['0.00', '0.00']);
   });
 
@@ -619,17 +634,18 @@ describe('Cash Flow Statement', () => {
     const res = await statement('cash-flow', A.viewerToken, A.slug)(QUERY);
     expect(res.status, JSON.stringify(res.body.error ?? {})).toBe(200);
     const rows = byKey(res.body.data.rows);
-    // October: 10,500 banked less the 100 discount; 6,100 to the carrier.
+    // October: 10,500 received less the 100 discount; 6,100 to the carrier;
+    // the 50 the bank kept of the receipt is an operating expense.
     expect(rows.get('OP_CUSTOMERS')).toEqual(['10400.00', '10400.00', '0.00']);
     expect(rows.get('OP_SUPPLIERS')).toEqual(['-6100.00', '-6100.00', '0.00']);
-    expect(rows.get('OP_EXPENSES')).toEqual(['-2050.00', '-2050.00', '0.00']);
+    expect(rows.get('OP_EXPENSES')).toEqual(['-2100.00', '-2100.00', '0.00']);
     expect(rows.get('OP_TAX')).toEqual(['-400.00', '-400.00', '0.00']);
-    expect(rows.get('NET_OPERATING')).toEqual(['1850.00', '1850.00', '0.00']);
+    expect(rows.get('NET_OPERATING')).toEqual(['1800.00', '1800.00', '0.00']);
     // September's deposit interest is in the year to date, not the month.
     expect(rows.get('INV_INTEREST')).toEqual(['0.00', '200.00', '0.00']);
-    expect(rows.get('NET_CHANGE')).toEqual(['1850.00', '2050.00', '0.00']);
+    expect(rows.get('NET_CHANGE')).toEqual(['1800.00', '2000.00', '0.00']);
     expect(rows.get('OPENING_CASH')).toEqual(['200.00', '0.00', '0.00']);
-    expect(rows.get('CLOSING_CASH')).toEqual(['2050.00', '2050.00', '0.00']);
+    expect(rows.get('CLOSING_CASH')).toEqual(['2000.00', '2000.00', '0.00']);
     // Depreciation moved no cash, and a draft is not in the books.
     expect(rows.has('DIFFERENCE')).toBe(false);
   });

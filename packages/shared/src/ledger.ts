@@ -46,6 +46,12 @@ export const DEBIT_NORMAL: Record<LedgerAccountType, boolean> = {
  */
 export const MONEY_LEDGER_KEYS = ['ASSET.BANK', 'ASSET.CASH'] as const;
 
+/**
+ * Where the bank's charge on money received is booked (client, 2026-10-21):
+ * the predefined Bank Service Charge account, under Operating Expense.
+ */
+export const BANK_CHARGE_ACCOUNT_KEY = 'EXPENSE.OPERATING.BANK_CHARGE';
+
 /** The four Transaction screens (Menu M9–M12). */
 export const JOURNAL_ENTRY_KINDS = ['JOURNAL', 'EXPENSE', 'INCOME', 'TRANSFER'] as const;
 export type JournalEntryKind = (typeof JOURNAL_ENTRY_KINDS)[number];
@@ -128,6 +134,8 @@ const moneyOrBlank = z
   .trim()
   .regex(/^(\d{1,14}(\.\d{1,4})?)?$/, 'Use digits, up to four decimal places.')
   .transform((v) => (v === '' ? '0' : v));
+/** A figure that may be left out or blank, meaning none. */
+const moneyOrNone = moneyOrBlank.nullish().transform((v) => v ?? '0');
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use the date picker.');
 const description = z
@@ -293,6 +301,12 @@ export const journalEntryInputSchema = z.discriminatedUnion('kind', [
     ...voucherBase,
     moneyAccountId: idString('Choose the bank or cash account it was deposited to.'),
     amount: positiveMoney,
+    /**
+     * What the bank kept of the money, in the base (client, 2026-10-21).
+     * Booked to Bank Service Charge, so the Income Category rows come to
+     * `amount` plus this, and a receipt settles the invoice in full.
+     */
+    bankCharge: moneyOrNone,
     lines: z
       .array(voucherLineSchema)
       .min(1, 'Add at least one income category.')

@@ -766,6 +766,51 @@ figure cannot express.
   Income receives what a *customer owes*. A vendor's or agent's *owe us* figure, and what we owe a
   customer, are still recorded by Journal (§14.13 Q8).
 
+### 14.15 Bank charge on Receive (client, 2026-10-21)
+
+**The request.** On Income → Receive from a customer, add an input for the bank charge. Record it on
+the debit note. The charge is a cost, saved straight to Bank Charge.
+
+**Answers given (2026-10-21).** It is an **office cost**: it shows on the debit note but does not reduce
+the invoice's gross profit or Shipment Profitability. It is typed in **BDT** (the base), as the bank
+statement shows it. **Assumed:** the customer paid in full and the charge is ours to bear, so the receipt
+settles the invoice for what the customer sent. The charge is not left outstanding on the invoice.
+
+**As built** (branch `feature/income-bank-charge`). **No schema change, no migration, no new permission.**
+
+- **The form.** Income → *Receive from a customer* gets **Bank charge (BDT)** beside Deposit to and
+  Amount (BDT). Amount (BDT) is what the bank credited. The Income Category row follows the amount plus
+  the charge, which is what was earned. Typing a charge keeps what was earned and lowers the amount
+  deposited by the charge. For an invoice in BDT, the amount settled must equal the amount plus the
+  charge. For a foreign invoice, the rate the form shows is (amount + charge) ÷ amount settled. *Other
+  income* has no bank charge field.
+- **The books.** Dr *Deposit to* (amount) · Dr **Operating Expense › Bank Service Charge**
+  (`EXPENSE.OPERATING.BANK_CHARGE`, the predefined account) · Cr each Income Category row (amount +
+  charge). The API takes `bankCharge` on an Income voucher only, as a base-currency string, blank or
+  left out for none. It refuses rows that do not come to amount + charge. It also refuses a charge while
+  Bank Service Charge is switched off on the chart. Cancelling the voucher takes the charge back with
+  everything else.
+- **The settlement.** The receipt settles the invoice for amount + charge, so a full receipt with a
+  charge still marks the invoice Paid.
+- **The debit note.** The popup's and the invoice page's *Received* list show "· Bank charge BDT …"
+  against that receipt. The figure (`bankChargeBase` on each receipt) is **read from the voucher's Bank
+  Service Charge line**, not stored on the receipt, so the debit note and the books cannot disagree.
+- **Income Statement.** On a cash basis the charge is a voucher line like any other, under **C.
+  Operating Expenses → Bank Charges**. On accrual, a settling voucher's lines are normally left out
+  (DESIGN-UPDATE §9.3) and any gap counts as exchange difference. A **bank charge on a settling voucher
+  now counts as Bank Charges** and is left out of the exchange difference. The same applies when a
+  supplier payment carries a Bank Service Charge row. That charge used to show up as part of the
+  exchange loss.
+- **Balance Sheet / Cash Flow.** Nothing to change. Cash is what reached the bank. The charge is an
+  operating expense line, so Cash Flow puts it under *Cash paid for operating expenses*.
+
+Tests: `ledger.test.ts`, 3 more cases: rows that leave out the charge are refused. The lines are Dr
+bank, Dr Bank Service Charge, Cr income; the invoice is Paid and its receipt shows the charge;
+cancelling takes the charge back. A charge is refused while the account is switched off.
+`income-statement.test.ts`: the FCL receipt in the fixture is now 10,450 banked plus a 50 charge. With
+hand arithmetic, Bank Charges is 50 on both bases, the exchange gain is still 500, and the Balance Sheet
+and Cash Flow figures follow.
+
 ---
 
 ## 15. FREIGHT CERTIFICATE — the client's sample, 2026-10-18
