@@ -6,6 +6,7 @@ import {
   INCOME_STATEMENT_COLUMN_LABEL,
   INCOME_STATEMENT_COLUMNS,
   type IncomeStatementBasis,
+  type IncomeStatementColumn,
   type IncomeStatementDto,
   type IncomeStatementRowDto,
 } from '@ff/shared';
@@ -23,8 +24,9 @@ import { useSession } from '@/lib/session';
 
 /**
  * Accounts → Income Statement — the client's `Income statement` sheet
- * (docs/DESIGN-UPDATE-2026-10-04.md §9): sections A–E, Current Month, YTD
- * and Previous Year YTD, on an accrual basis. Read-only; every figure is the
+ * (docs/DESIGN-UPDATE-2026-10-04.md §9): sections A–E, Current Month,
+ * Previous Month (§9.5), YTD and Previous Year YTD, on an accrual or cash
+ * basis. Read-only; every figure is the
  * server's, and this page only lays it out. A line's name, or one of its
  * figures, opens the documents it adds up (income-statement-breakdown.tsx).
  */
@@ -42,6 +44,14 @@ function thisMonth(): string {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 }
+
+/** Where each column's dates sit in the statement's `periods`. */
+const COLUMN_PERIOD: Record<IncomeStatementColumn, keyof IncomeStatementDto['periods']> = {
+  CURRENT_MONTH: 'currentMonth',
+  PREVIOUS_MONTH: 'previousMonth',
+  YTD: 'ytd',
+  PREVIOUS_YTD: 'previousYtd',
+};
 
 /** A line with a figure in any column opens its breakdown; an empty one has nothing to show. */
 function opensBreakdown(row: IncomeStatementRowDto): boolean {
@@ -126,7 +136,7 @@ export default function IncomeStatementPage() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Income Statement"
-        description="Profit and loss for a month, the year to date, and the same span last year."
+        description="Profit and loss for a month, the month before, the year to date, and the same span last year."
         action={
           can('ACCOUNTS.INCOME_STATEMENT.EXPORT') ? (
             <Button variant="secondary" onClick={() => void exportIt()} disabled={exporting || statement === null}>
@@ -196,19 +206,15 @@ export default function IncomeStatementPage() {
           </div>
 
           <div className={cn('overflow-x-auto rounded-manifest border border-line bg-surface shadow-manifest', pending && 'opacity-60')}>
-            <table className="w-full min-w-[720px] border-collapse text-cell">
+            <table className="w-full min-w-220 border-collapse text-cell">
               <thead className="sticky top-0 z-10">
                 <tr className="border-b border-line bg-paper">
                   <th className="label-manifest px-4 py-2 text-left">Particulars</th>
-                  {[
-                    ['Current Month', periods.currentMonth],
-                    ['YTD', periods.ytd],
-                    ['Previous Year YTD', periods.previousYtd],
-                  ].map(([label, p]) => {
-                    const span = p as { from: string; to: string };
+                  {INCOME_STATEMENT_COLUMNS.map((column) => {
+                    const span = periods[COLUMN_PERIOD[column]];
                     return (
-                      <th key={label as string} className="px-4 py-2 text-right">
-                        <span className="label-manifest block">{label as string}</span>
+                      <th key={column} className="px-4 py-2 text-right">
+                        <span className="label-manifest block">{INCOME_STATEMENT_COLUMN_LABEL[column]}</span>
                         <span className="block font-mono text-[11px] font-normal tabular-nums text-steel">
                           {sheetDay(span.from)} – {sheetDay(span.to)}
                         </span>

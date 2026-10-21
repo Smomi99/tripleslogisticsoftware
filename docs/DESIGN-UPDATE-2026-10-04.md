@@ -672,6 +672,31 @@ Tests: `income-statement.test.ts`, 8 more cases: every line against the statemen
 sources, the buy-price split, the cash basis, refusals (no permission, a subtotal key, an unknown
 column), and an empty second workspace.
 
+### 9.5 Previous Month column (client, 2026-10-21)
+
+**The request.** Show a Previous Month column beside Current Month.
+
+**As built** (branch `feature/income-statement-previous-month`). No schema change, no migration. The
+statement now has four columns, in this order: **Current Month · Previous Month · YTD · Previous Year
+YTD**.
+
+- **Previous Month** is the calendar month before the chosen one, whatever month the financial year
+  starts in. For October 2026 it is 01-Sep-2026 to 30-Sep-2026. For January it is the December
+  before. It is worked out like Current Month, on the same basis.
+- The column header shows its dates, like the others. The line breakdown (§9.4) gets a Previous
+  Month tab, and a figure in that column opens on it.
+- **Export to Excel** gets the same column, plus a "Previous Month: … to …" line in the header block.
+- The Cash Flow Statement keeps the sheet's three columns. The request named only the Income
+  Statement.
+- Code: `statementPeriodsOf` / `previousMonthOf` in `lib/income-statement.ts`. The statement's sums no
+  longer assume three columns; they take one per period. `INCOME_STATEMENT_COLUMNS` in
+  `packages/shared` sets the order. The DTO's `amounts` is one string per column, and `periods`
+  gains `previousMonth`.
+
+Tests: `income-statement.test.ts`, 3 more cases: the month before beside the month; a month before
+that falls outside both YTDs (September, in a year starting September) and January's December; and the
+breakdown on Previous Month. The every-line check now covers all four columns.
+
 ---
 
 ## 10. REPORTS
