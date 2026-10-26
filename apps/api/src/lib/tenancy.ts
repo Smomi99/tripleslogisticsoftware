@@ -85,6 +85,7 @@ export const TENANT_OWNED_MODELS = [
   'InquiryParty',
   'InquiryPartyContact',
   'InquiryRate',
+  'InquiryRateCharge',
   'InquiryVolume',
   'NotificationSetting',
   'RateLocalCharge',

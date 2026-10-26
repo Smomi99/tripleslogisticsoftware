@@ -57,6 +57,10 @@ if (inquiryFlag !== undefined) {
   const code = inquiryFlag.slice('--inquiry='.length);
   if (!/^[A-Z0-9-]{1,32}$/.test(code)) throw new Error(`Refusing an odd inquiry code: ${code}`);
   const scope = `(SELECT id FROM inquiry WHERE code = $1)`;
+  await db.$executeRawUnsafe(
+    `DELETE FROM inquiry_rate_charge WHERE inquiry_rate_id IN (SELECT id FROM inquiry_rate WHERE inquiry_id IN ${scope})`,
+    code,
+  );
   for (const table of ['inquiry_rate', 'inquiry_followup', 'inquiry_volume']) {
     await db.$executeRawUnsafe(`DELETE FROM ${table} WHERE inquiry_id IN ${scope}`, code);
   }

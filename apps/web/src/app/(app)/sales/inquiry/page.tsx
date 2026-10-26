@@ -27,6 +27,7 @@ import { AgentQuoteDrawer } from './agent-quote-drawer';
 import { CarrierPositionDrawer } from './carrier-position-drawer';
 import { FollowupDrawer } from './followup-drawer';
 import { PriceDrawer } from './price-drawer';
+import { QuoteBreakdownHover } from './quote-breakdown-hover';
 import { ViewDrawer } from './view-drawer';
 
 /**
@@ -134,7 +135,10 @@ export default function InquiryListPage() {
         r.quotedPrice === null ? (
           <span className="text-steel">—</span>
         ) : (
-          `${r.currencyCode ?? ''} ${r.quotedPrice}`.trim()
+          // Keyed on the figure: once the price moves, the breakdown is fetched again.
+          <QuoteBreakdownHover key={`${r.id}-${r.quotedPrice}`} inquiryId={r.id}>
+            {`${r.currencyCode ?? ''} ${r.quotedPrice}`.trim()}
+          </QuoteBreakdownHover>
         ),
     },
     {

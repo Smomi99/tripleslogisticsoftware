@@ -262,6 +262,7 @@ model Tenant {
   inquiryVolumes        InquiryVolume[]
   inquiryFollowups      InquiryFollowup[]
   inquiryRates          InquiryRate[]
+  inquiryRateCharges    InquiryRateCharge[]
   masterOverrides       TenantMasterOverride[]
   auditLogs             AuditLog[]
 
@@ -535,6 +536,7 @@ model Currency {
 
   openingSettlements OpeningSettlement[] @relation("OpeningSettlementCurrency")
   tariffLines TariffLine[] @relation("TariffLineCurrency")
+  inquiryRateCharges InquiryRateCharge[] @relation("InquiryRateChargeCurrency")
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -641,7 +643,8 @@ model CostHead {
   debitInvoiceCostLines DebitInvoiceCostLine[]
   quotationCostLines    QuotationCostLine[]
 
-  tariffLines TariffLine[]
+  tariffLines        TariffLine[]
+  inquiryRateCharges InquiryRateCharge[]
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -1799,6 +1802,8 @@ model User {
   addedInquiryRates         InquiryRate[]       @relation("InquiryRateAddedBy")
   createdInquiryRates       InquiryRate[]       @relation("InquiryRateCreatedBy")
   updatedInquiryRates       InquiryRate[]       @relation("InquiryRateUpdatedBy")
+  createdInquiryRateCharges InquiryRateCharge[] @relation("InquiryRateChargeCreatedBy")
+  updatedInquiryRateCharges InquiryRateCharge[] @relation("InquiryRateChargeUpdatedBy")
   changedRateProfitLogs     RateProfitLog[]     @relation("RateProfitLogChangedBy")
   permissions               UserPermission[]
 
@@ -2722,9 +2727,10 @@ model RateLocalCharge {
   costUnit      CostUnit?      @relation(fields: [costUnitId], references: [id], onDelete: Restrict)
   containerSize ContainerSize? @relation(fields: [containerSizeId], references: [id], onDelete: Restrict)
 
-  createdByUser  User?           @relation("RateLocalChargeCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
-  updatedByUser  User?           @relation("RateLocalChargeUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
-  quotationLines QuotationLine[]
+  createdByUser      User?               @relation("RateLocalChargeCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser      User?               @relation("RateLocalChargeUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  quotationLines     QuotationLine[]
+  inquiryRateCharges InquiryRateCharge[]
 
   /// Container size is part of the key: THC on a 20ft and THC on a 40ft are two
   /// legitimate lines on one rate, not a duplicate. NULL means "any size", and
@@ -3304,9 +3310,13 @@ model InquiryRate {
   inquiryId   BigInt   @map("inquiry_id")
   rateId      BigInt   @map("rate_id")
   rateLineId  BigInt   @map("rate_line_id")
-  /// The figure quoted from this line, captured when it was attached.
-  /// Snapshotted rather than joined: §4 rule 1 versions rates, so by the time
-  /// anyone reads this back the live line may belong to a superseded rate.
+  /// The line's sell price, captured when it was attached. Snapshotted
+  /// rather than joined: §4 rule 1 versions rates, so by the time anyone
+  /// reads this back the live line may belong to a superseded rate.
+  freightPrice Decimal @map("freight_price") @db.Decimal(18, 4)
+  /// The figure quoted: freight_price plus every charge below, in the rate's
+  /// currency (client, 2026-10-26). Stored, not summed on read, because the
+  /// charges are converted at the rate in force when they were chosen.
   quotedPrice Decimal  @map("quoted_price") @db.Decimal(18, 4)
   isSelected  Boolean  @default(false) @map("is_selected")
   addedBy     BigInt?  @map("added_by")
@@ -3328,11 +3338,64 @@ model InquiryRate {
   createdByUser User? @relation("InquiryRateCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User? @relation("InquiryRateUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
+  charges InquiryRateCharge[]
+
   @@unique([tenantId, inquiryId, rateLineId])
+  /// Composite target so inquiry_rate_charge stays inside the tenant (§4 rule 10).
+  @@unique([tenantId, id])
   @@index([tenantId])
   @@index([inquiryId])
   @@index([rateId])
   @@map("inquiry_rate")
+}
+
+/// The charges a quoted container carries (client, 2026-10-26): "when the user
+/// selects a container they can also select which charges to add; if an extra
+/// charge is needed they can add a new one; including the charges, the quoted
+/// price updates."
+///
+/// Only charges that are IN are stored. A row with local_charge_id is one of
+/// the purchase rate's own local charges, ticked; a row without is an extra
+/// typed on the inquiry. Cost head, currency and amount are copied in either
+/// way: the purchase rate is edited in place, and a charge already quoted must
+/// not move because the pricing team re-keyed the rate.
+model InquiryRateCharge {
+  tenantId      BigInt  @map("tenant_id")
+  id            BigInt  @id @default(autoincrement())
+  inquiryRateId BigInt  @map("inquiry_rate_id")
+  sortOrder     Int     @default(0) @map("sort_order")
+  localChargeId BigInt? @map("local_charge_id")
+  costHeadId    BigInt  @map("cost_head_id")
+  /// §4 rule 6: the charge's own currency. Converted into the rate's when
+  /// inquiry_rate.quoted_price is summed.
+  currencyId    BigInt  @map("currency_id")
+  amount        Decimal @db.Decimal(18, 4)
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant      Tenant           @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  inquiryRate InquiryRate      @relation(fields: [tenantId, inquiryRateId], references: [tenantId, id], onDelete: Restrict)
+  localCharge RateLocalCharge? @relation(fields: [tenantId, localChargeId], references: [tenantId, id], onDelete: Restrict)
+  costHead    CostHead         @relation(fields: [tenantId, costHeadId], references: [tenantId, id], onDelete: Restrict)
+  /// Currency is system-capable, so a single-column key; the §4 rule 10
+  /// trigger guards it instead.
+  currency    Currency         @relation("InquiryRateChargeCurrency", fields: [currencyId], references: [id], onDelete: Restrict)
+
+  createdByUser User? @relation("InquiryRateChargeCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("InquiryRateChargeUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([inquiryRateId])
+  @@index([localChargeId])
+  @@index([costHeadId])
+  @@index([currencyId])
+  @@map("inquiry_rate_charge")
 }
 
 /// Follow-ups against a lead — CLAUDE.md §3's "Sales Lead Follow-up" screen.

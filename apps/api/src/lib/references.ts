@@ -126,6 +126,7 @@ const TABLE_LABEL: Record<string, string> = {
   inquiry_followup: 'inquiry follow-ups',
   inquiry_party_contact: 'rate requests',
   inquiry_rate: 'inquiry rates',
+  inquiry_rate_charge: 'inquiry rate charges',
   inquiry_volume: 'inquiry volumes',
   quotation: 'quotations',
   quotation_line: 'quotation lines',
