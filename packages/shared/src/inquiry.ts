@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { listQuerySchema } from './api';
-import type { RateLineDto } from './freight-rate';
+import type { ChargeSide, LocalChargeDto, RateLineDto } from './freight-rate';
 
 /**
  * Sales — inquiry (docs/MODULE_PURCHASE_SALES.md §3.3, §5.4, §5.5).
@@ -520,6 +520,18 @@ export type InquirySortField = (typeof INQUIRY_SORT_FIELDS)[number];
 // ==========================================================================
 
 /**
+ * A rate line on offer, with the local charges that apply to its container
+ * (client, 2026-10-26): the purchase rate's charges keyed to this line's
+ * container size, and those keyed to no size at all.
+ *
+ * Local charges are cost passed through, not margin, so they are not gated
+ * the way buy price is (rate-visibility.ts).
+ */
+export interface InquiryRateMatchLineDto extends RateLineDto {
+  charges: LocalChargeDto[];
+}
+
+/**
  * A rate the Price drawer can offer for this inquiry's lane.
  *
  * Lines carry RateLineDto, so §4 rule 5's buy-price stripping applies here
@@ -535,7 +547,21 @@ export interface InquiryRateMatchDto {
   currencyCode: string;
   transitDays: number | null;
   freeDays: number | null;
-  lines: RateLineDto[];
+  lines: InquiryRateMatchLineDto[];
+}
+
+/** A charge an attached container carries. */
+export interface InquiryRateChargeDto {
+  id: string;
+  /** The purchase rate's local charge it was ticked from; null for an extra. */
+  localChargeId: string | null;
+  costHeadId: string;
+  costHeadName: string;
+  /** POL or POD on one of the rate's own charges; null on an extra. */
+  side: ChargeSide | null;
+  currencyId: string;
+  currencyCode: string;
+  amount: string;
 }
 
 /** A rate line already attached to the inquiry. */
@@ -548,20 +574,78 @@ export interface InquiryRateDto {
   carrierName: string;
   currencyCode: string;
   /**
-   * Snapshotted when attached (§3.3). §4 rule 1 versions rates, so the live
-   * line may belong to a superseded rate by the time anyone reads this back —
-   * which is the whole reason the figure is stored rather than joined.
+   * The line's sell price, snapshotted when attached (§3.3). §4 rule 1
+   * versions rates, so the live line may belong to a superseded rate by the
+   * time anyone reads this back — which is why the figure is stored.
    */
+  freightPrice: string;
+  /** freightPrice plus every charge, in this rate's currency. */
   quotedPrice: string;
+  charges: InquiryRateChargeDto[];
+  /**
+   * The rate's local charges for this container as they stand now — what the
+   * Charges editor offers to tick.
+   */
+  availableCharges: LocalChargeDto[];
   /** The one whose price the inquiry quotes. */
   isSelected: boolean;
   /** The rate it came from is no longer the live one for this lane. */
   isStale: boolean;
 }
 
+/**
+ * How an inquiry's Quoted Price is made up — what hovering it on the Live
+ * Inquiry list shows (client, 2026-10-26). The quoted rate's freight and each
+ * charge it carries. No buy price: whoever can read the list can read this.
+ */
+export interface QuoteBreakdownDto {
+  rateCode: string;
+  carrierName: string;
+  tierLabel: string;
+  currencyCode: string;
+  freightPrice: string;
+  charges: { costHeadName: string; side: ChargeSide | null; currencyCode: string; amount: string }[];
+  /** Freight plus charges, in currencyCode. */
+  quotedPrice: string;
+  /**
+   * False once a sent quotation has written its own total onto the inquiry
+   * (§5.3 rule 9) — the list then shows that figure, and this is the rate
+   * that was quoted from.
+   */
+  matchesInquiry: boolean;
+}
+
+/** Money is NUMERIC(18,4) and travels as a string (§4 rule 6). */
+const chargeAmount = z
+  .string()
+  .trim()
+  .refine((v) => /^\d{1,14}(\.\d{1,4})?$/.test(v), 'Enter an amount, e.g. 65 or 45.50.');
+
+/** A charge the rate does not carry, typed on the inquiry. */
+export const inquiryExtraChargeSchema = z.object({
+  /** Set on an extra already saved, so an edit updates it in place. */
+  id: idField.optional(),
+  costHeadId: z.string().regex(/^\d+$/, 'Choose a cost head.'),
+  currencyId: z.string().regex(/^\d+$/, 'Choose a currency.'),
+  amount: chargeAmount,
+});
+
+export type InquiryExtraChargeInput = z.input<typeof inquiryExtraChargeSchema>;
+
+/**
+ * What a container carries: which of the rate's local charges are in, and any
+ * extras. Whatever is not listed is out.
+ */
+export const inquiryRateChargesSchema = z.object({
+  localChargeIds: z.array(idField).max(50, 'Too many charges.').default([]),
+  extras: z.array(inquiryExtraChargeSchema).max(20, 'Add 20 extra charges at most.').default([]),
+});
+
+export type InquiryRateChargesInput = z.input<typeof inquiryRateChargesSchema>;
+
 export const inquiryRateAttachSchema = z.object({
-  rateLineIds: z
-    .array(z.string().regex(/^\d+$/))
+  lines: z
+    .array(inquiryRateChargesSchema.extend({ rateLineId: z.string().regex(/^\d+$/) }))
     .min(1, 'Choose at least one rate to attach.')
     .max(20, 'Attach 20 rates at most.'),
 });
@@ -573,6 +657,36 @@ export const inquiryRateSelectSchema = z.object({
 });
 
 export type InquiryRateSelectInput = z.input<typeof inquiryRateSelectSchema>;
+
+/** What an extra charge picks from. */
+export interface InquiryChargeOptionsDto {
+  costHeads: { id: string; label: string; unitName: string }[];
+  currencies: { id: string; label: string; code: string }[];
+  /** The currency a new extra starts in: the workspace base, if declared. */
+  defaultCurrencyId: string | null;
+}
+
+/**
+ * One movement in a rate line's sell price — what hovering a price on the
+ * Price drawer shows (client, 2026-10-26).
+ *
+ * The lane's history for that carrier and size, across every rate keyed for
+ * it, read from the audit trail rather than a history table of its own.
+ */
+export interface RatePriceChangeDto {
+  /** When this price took effect on the system — not the rate's valid_from. */
+  at: string;
+  rateCode: string;
+  currencyCode: string;
+  sellPrice: string;
+  /**
+   * Signed difference from the entry before it. Null on the first entry, and
+   * where the two are in different currencies.
+   */
+  change: string | null;
+  /** Null when the system wrote it, or the change predates the audit trail. */
+  changedBy: string | null;
+}
 
 /**
  * Settings → Notifications. Who hears about an Outbound lane with no rate.

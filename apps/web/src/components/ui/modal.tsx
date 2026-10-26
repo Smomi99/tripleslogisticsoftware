@@ -32,8 +32,11 @@ export function Modal({
    * "wide" is for a form §8 would otherwise send to a full page. The client
    * asked for the inquiry form as a modal; at 32rem its seventeen fields would
    * be a single scrolling column, which is worse than the page it replaced.
+   *
+   * "medium" is for a dialog whose rows carry figures side by side — the Price
+   * drawer's carrier, size, price and actions — and wrap at 32rem.
    */
-  size?: 'default' | 'wide';
+  size?: 'default' | 'medium' | 'wide';
 }) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -49,7 +52,9 @@ export function Modal({
             'fixed left-1/2 top-1/2 z-50',
             size === 'wide'
               ? 'w-[min(68rem,calc(100vw-2rem))]'
-              : 'w-[min(32rem,calc(100vw-2rem))]',
+              : size === 'medium'
+                ? 'w-[min(44rem,calc(100vw-2rem))]'
+                : 'w-[min(32rem,calc(100vw-2rem))]',
             '-translate-x-1/2 -translate-y-1/2',
             'rounded-manifest border border-line bg-surface p-5 shadow-manifest',
             'max-h-[calc(100vh-2rem)] overflow-y-auto',

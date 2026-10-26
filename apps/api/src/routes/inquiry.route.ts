@@ -11,10 +11,14 @@ import {
   inquiryFollowupInputSchema,
   inquiryInputSchema,
   inquiryListQuerySchema,
+  type InquiryChargeOptionsDto,
   type InquiryRateDto,
   inquiryRateAttachSchema,
+  inquiryRateChargesSchema,
   type InquiryRateMatchDto,
   inquiryRateSelectSchema,
+  type QuoteBreakdownDto,
+  type RatePriceChangeDto,
   type InquirySortField,
   INQUIRY_SORT_FIELDS,
   inquiryStatusInputSchema,
@@ -45,10 +49,12 @@ import { Prisma } from '../generated/prisma/client';
 import { env } from '../config/env';
 import { HttpError } from '../lib/http-error';
 import { notifyInquiry } from '../lib/inquiry-notify';
+import { appliesTo, localChargeInclude, localChargeToDto, setRateCharges } from '../lib/inquiry-rate-charges';
 import { routeAndApply, type RoutePlan } from '../lib/inquiry-routing';
 import { logger } from '../lib/logger';
 import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import { nextInquiryNo, seriesYearOf } from '../lib/inquiry-no';
+import { ratePriceHistory } from '../lib/rate-price-history';
 import { canSeeBuyPrice, visibleLine } from '../lib/rate-visibility';
 import { parseId, parseRefId } from '../lib/request';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
@@ -1811,6 +1817,9 @@ const MODES_FOR: Record<'SEA' | 'AIR', ('SEA_FCL' | 'SEA_LCL' | 'AIR')[]> = {
  * Validity follows §4 rule 2 — only rates live today, and only PUBLISHED ones.
  * A quote built on an expired or draft rate is a number the company cannot
  * honour.
+ *
+ * Each line carries the rate's local charges for its container (client,
+ * 2026-10-26), so ticking a box can offer them straight away.
  */
 inquiryRouter.get(
   '/inquiries/:id/matching-rates',
@@ -1837,8 +1846,13 @@ inquiryRouter.get(
           currency: { select: { currency: true } },
           lines: {
             where: { deletedAt: null },
-            include: { tier: { select: { code: true, label: true } } },
+            include: { tier: { select: { code: true, label: true, containerSizeId: true } } },
             orderBy: { id: 'asc' },
+          },
+          localCharges: {
+            where: { deletedAt: null },
+            include: localChargeInclude,
+            orderBy: [{ side: 'asc' }, { id: 'asc' }],
           },
         },
         orderBy: [{ carrier: { name: 'asc' } }, { code: 'asc' }],
@@ -1858,9 +1872,9 @@ inquiryRouter.get(
         currencyCode: isoCurrency(rate.currency.currency),
         transitDays: rate.transitDays,
         freeDays: rate.freeDays,
-        // §4 rule 5 — the enforcement point, not a formatting choice.
-        lines: rate.lines.map((line) =>
-          visibleLine(
+        lines: rate.lines.map((line) => ({
+          // §4 rule 5 — the enforcement point, not a formatting choice.
+          ...visibleLine(
             {
               id: line.id.toString(),
               tierId: line.tierId.toString(),
@@ -1874,7 +1888,10 @@ inquiryRouter.get(
             },
             showBuy,
           ),
-        ),
+          charges: rate.localCharges
+            .filter((charge) => appliesTo(charge, line.tier.containerSizeId))
+            .map(localChargeToDto),
+        })),
       })),
     };
     res.json(payload);
@@ -1882,7 +1899,7 @@ inquiryRouter.get(
 );
 
 const attachedInclude = {
-  rateLine: { include: { tier: { select: { label: true } } } },
+  rateLine: { include: { tier: { select: { label: true, containerSizeId: true } } } },
   rate: {
     select: {
       code: true,
@@ -1891,7 +1908,21 @@ const attachedInclude = {
       supersededById: true,
       carrier: { select: { name: true } },
       currency: { select: { currency: true } },
+      localCharges: {
+        where: { deletedAt: null },
+        include: localChargeInclude,
+        orderBy: [{ side: 'asc' }, { id: 'asc' }],
+      },
     },
+  },
+  charges: {
+    where: { deletedAt: null },
+    include: {
+      costHead: { select: { name: true } },
+      currency: { select: { currency: true } },
+      localCharge: { select: { side: true } },
+    },
+    orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
   },
 } satisfies Prisma.InquiryRateInclude;
 
@@ -1907,7 +1938,21 @@ function attachedToDto(
     tierLabel: row.rateLine.tier.label,
     carrierName: row.rate.carrier.name,
     currencyCode: isoCurrency(row.rate.currency.currency),
+    freightPrice: row.freightPrice.toFixed(4),
     quotedPrice: row.quotedPrice.toFixed(4),
+    charges: row.charges.map((charge) => ({
+      id: charge.id.toString(),
+      localChargeId: charge.localChargeId?.toString() ?? null,
+      costHeadId: charge.costHeadId.toString(),
+      costHeadName: charge.costHead.name,
+      side: charge.localCharge?.side ?? null,
+      currencyId: charge.currencyId.toString(),
+      currencyCode: isoCurrency(charge.currency.currency),
+      amount: charge.amount.toFixed(4),
+    })),
+    availableCharges: row.rate.localCharges
+      .filter((charge) => appliesTo(charge, row.rateLine.tier.containerSizeId))
+      .map(localChargeToDto),
     isSelected: row.isSelected,
     // The snapshot is still what was quoted; this only tells the user the
     // underlying rate has moved on (§4 rule 1).
@@ -1930,12 +1975,14 @@ async function syncQuotedPrice(db: TenantDb, auth: AuthContext, inquiryId: bigin
   });
 }
 
-async function attachedRates(db: TenantDb, inquiryId: bigint) {
-  return db.inquiryRate.findMany({
+async function attachedRates(db: TenantDb, inquiryId: bigint): Promise<InquiryRateDto[]> {
+  const rows = await db.inquiryRate.findMany({
     where: { inquiryId, deletedAt: null },
     include: attachedInclude,
     orderBy: [{ isSelected: 'desc' }, { id: 'asc' }],
   });
+  const today = startOfToday();
+  return rows.map((row) => attachedToDto(row, today));
 }
 
 inquiryRouter.get(
@@ -1950,14 +1997,15 @@ inquiryRouter.get(
       return attachedRates(db, id);
     });
 
-    const payload: ApiSuccess<InquiryRateDto[]> = {
-      success: true,
-      data: rows.map((row) => attachedToDto(row, startOfToday())),
-    };
+    const payload: ApiSuccess<InquiryRateDto[]> = { success: true, data: rows };
     res.json(payload);
   },
 );
 
+/**
+ * Attaches containers, each with the charges chosen for it, and quotes the
+ * total — freight plus charges (client, 2026-10-26).
+ */
 inquiryRouter.post(
   '/inquiries/:id/rates',
   requirePermission(`${FEATURE}.ATTACH_PRICE`),
@@ -1972,14 +2020,15 @@ inquiryRouter.post(
         throw HttpError.conflict(`${inquiry.code} is marked WON. Its pricing is settled.`);
       }
 
-      for (const rateLineId of input.rateLineIds) {
+      for (const requested of input.lines) {
         const line = await db.freightRateLine.findFirst({
-          where: { id: BigInt(rateLineId), deletedAt: null },
+          where: { id: BigInt(requested.rateLineId), deletedAt: null },
           select: {
             id: true,
             rateId: true,
             sellPrice: true,
-            rate: { select: { polId: true, podId: true, status: true } },
+            tier: { select: { containerSizeId: true } },
+            rate: { select: { polId: true, podId: true, status: true, currencyId: true } },
           },
         });
         if (line === null) throw HttpError.badRequest('That rate is no longer available.');
@@ -1992,36 +2041,53 @@ inquiryRouter.post(
           throw HttpError.badRequest('That rate is not published.');
         }
 
+        const freightPrice = sellPriceOf(line);
         const already = await db.inquiryRate.findFirst({
           where: { inquiryId: id, rateLineId: line.id },
           select: { id: true },
         });
-        if (already !== null) {
-          // Re-attaching something previously removed revives it rather than
-          // colliding with the unique index — §4 rule 3 leaves the row behind.
-          await db.inquiryRate.update({
-            where: { id: already.id },
-            data: {
-              deletedAt: null,
-              isActive: true,
-              quotedPrice: sellPriceOf(line),
-              updatedBy: auth.userId,
-            },
-          });
-          continue;
-        }
-        await db.inquiryRate.create({
-          data: {
-            tenantId: auth.tenantId,
-            inquiryId: id,
+        // Re-attaching something previously removed revives it rather than
+        // colliding with the unique index — §4 rule 3 leaves the row behind.
+        const attached =
+          already === null
+            ? await db.inquiryRate.create({
+                data: {
+                  tenantId: auth.tenantId,
+                  inquiryId: id,
+                  rateId: line.rateId,
+                  rateLineId: line.id,
+                  freightPrice,
+                  quotedPrice: freightPrice,
+                  addedBy: auth.userId,
+                  createdBy: auth.userId,
+                  updatedBy: auth.userId,
+                },
+                select: { id: true },
+              })
+            : await db.inquiryRate.update({
+                where: { id: already.id },
+                data: {
+                  deletedAt: null,
+                  isActive: true,
+                  freightPrice,
+                  updatedBy: auth.userId,
+                },
+                select: { id: true },
+              });
+
+        await setRateCharges(
+          db,
+          auth.tenantId,
+          auth.userId,
+          {
+            inquiryRateId: attached.id,
             rateId: line.rateId,
-            rateLineId: line.id,
-            quotedPrice: sellPriceOf(line),
-            addedBy: auth.userId,
-            createdBy: auth.userId,
-            updatedBy: auth.userId,
+            rateCurrencyId: line.rate.currencyId,
+            tierContainerSizeId: line.tier.containerSizeId,
+            freightPrice,
           },
-        });
+          requested,
+        );
       }
 
       // The cheapest line attached becomes the quoted one, so an inquiry never
@@ -2046,11 +2112,61 @@ inquiryRouter.post(
       return attachedRates(db, id);
     });
 
-    const payload: ApiSuccess<InquiryRateDto[]> = {
-      success: true,
-      data: rows.map((row) => attachedToDto(row, startOfToday())),
-    };
+    const payload: ApiSuccess<InquiryRateDto[]> = { success: true, data: rows };
     res.status(201).json(payload);
+  },
+);
+
+/**
+ * Changes what an attached container carries — ticks a charge in or out, adds
+ * or edits an extra — and re-prices it. The only way to correct a charge after
+ * attaching, since an attached rate cannot be detached.
+ */
+inquiryRouter.put(
+  '/inquiries/:id/rates/:inquiryRateId/charges',
+  requirePermission(`${FEATURE}.ATTACH_PRICE`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'inquiry');
+    const inquiryRateId = parseId(req.params.inquiryRateId, 'attached rate');
+    const input = inquiryRateChargesSchema.parse(req.body);
+
+    const rows = await withTenant(auth.tenantId, async (db) => {
+      const inquiry = await findScopedInquiry(db, auth, id);
+      if (inquiry.status === 'WON') {
+        throw HttpError.conflict(`${inquiry.code} is marked WON. Its pricing is settled.`);
+      }
+      const target = await db.inquiryRate.findFirst({
+        where: { id: inquiryRateId, inquiryId: id, deletedAt: null },
+        select: {
+          id: true,
+          rateId: true,
+          freightPrice: true,
+          rate: { select: { currencyId: true } },
+          rateLine: { select: { tier: { select: { containerSizeId: true } } } },
+        },
+      });
+      if (target === null) throw HttpError.notFound('That rate is not attached to this inquiry.');
+
+      await setRateCharges(
+        db,
+        auth.tenantId,
+        auth.userId,
+        {
+          inquiryRateId: target.id,
+          rateId: target.rateId,
+          rateCurrencyId: target.rate.currencyId,
+          tierContainerSizeId: target.rateLine.tier.containerSizeId,
+          freightPrice: target.freightPrice,
+        },
+        input,
+      );
+      await syncQuotedPrice(db, auth, id);
+      return attachedRates(db, id);
+    });
+
+    const payload: ApiSuccess<InquiryRateDto[]> = { success: true, data: rows };
+    res.json(payload);
   },
 );
 
@@ -2083,10 +2199,137 @@ inquiryRouter.post(
       return attachedRates(db, id);
     });
 
-    const payload: ApiSuccess<InquiryRateDto[]> = {
-      success: true,
-      data: rows.map((row) => attachedToDto(row, startOfToday())),
-    };
+    const payload: ApiSuccess<InquiryRateDto[]> = { success: true, data: rows };
+    res.json(payload);
+  },
+);
+
+/**
+ * Hovering Quoted Price on the Live Inquiry list (client, 2026-10-26): the
+ * quoted rate's freight and its charges. Guarded by VIEW, not ATTACH_PRICE —
+ * it explains a figure the list already shows, and carries no buy price.
+ * Null data when nothing is quoted from a rate.
+ */
+inquiryRouter.get(
+  '/inquiries/:id/quote-breakdown',
+  requirePermission(`${FEATURE}.VIEW`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'inquiry');
+
+    const data = await withTenant(auth.tenantId, async (db): Promise<QuoteBreakdownDto | null> => {
+      await findScopedInquiry(db, auth, id);
+      const [inquiry, selected] = await Promise.all([
+        db.inquiry.findFirst({ where: { id }, select: { quotedPrice: true } }),
+        db.inquiryRate.findFirst({
+          where: { inquiryId: id, deletedAt: null, isSelected: true },
+          include: attachedInclude,
+        }),
+      ]);
+      if (selected === null) return null;
+      const row = attachedToDto(selected, startOfToday());
+      return {
+        rateCode: row.rateCode,
+        carrierName: row.carrierName,
+        tierLabel: row.tierLabel,
+        currencyCode: row.currencyCode,
+        freightPrice: row.freightPrice,
+        charges: row.charges.map((c) => ({
+          costHeadName: c.costHeadName,
+          side: c.side,
+          currencyCode: c.currencyCode,
+          amount: c.amount,
+        })),
+        quotedPrice: row.quotedPrice,
+        matchesInquiry: inquiry?.quotedPrice?.equals(selected.quotedPrice) ?? false,
+      };
+    });
+
+    const payload: ApiSuccess<QuoteBreakdownDto | null> = { success: true, data };
+    res.json(payload);
+  },
+);
+
+/** What an extra charge picks from: live cost heads, visible currencies. */
+inquiryRouter.get(
+  '/inquiries/:id/charge-options',
+  requirePermission(`${FEATURE}.ATTACH_PRICE`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'inquiry');
+
+    const data = await withTenant(auth.tenantId, async (db): Promise<InquiryChargeOptionsDto> => {
+      await findScopedInquiry(db, auth, id);
+      const live = { deletedAt: null, isActive: true } as const;
+      // A shared currency switched off in Settings is an override, not a flag
+      // on the row (§7A rule 7), so the column alone would still offer it.
+      const hidden = await inactiveMasters(db);
+      const [costHeads, currencies, tenant] = await Promise.all([
+        db.costHead.findMany({
+          where: live,
+          orderBy: { name: 'asc' },
+          select: { id: true, name: true, unit: { select: { name: true } } },
+        }),
+        db.currency.findMany({
+          where: { ...live, ...excludeInactive(hidden, 'currency') },
+          orderBy: { currency: 'asc' },
+          select: { id: true, currency: true },
+        }),
+        db.tenant.findFirst({ where: { id: auth.tenantId }, select: { currencyId: true } }),
+      ]);
+      // Local charges are usually paid in the money the workspace books in.
+      const base = tenant?.currencyId ?? null;
+      return {
+        costHeads: costHeads.map((h) => ({
+          id: h.id.toString(),
+          label: h.name,
+          unitName: h.unit.name,
+        })),
+        currencies: currencies.map((c) => ({
+          id: c.id.toString(),
+          label: c.currency,
+          code: isoCurrency(c.currency),
+        })),
+        defaultCurrencyId: currencies.some((c) => c.id === base) ? base!.toString() : null,
+      };
+    });
+
+    const payload: ApiSuccess<InquiryChargeOptionsDto> = { success: true, data };
+    res.json(payload);
+  },
+);
+
+/**
+ * Hovering a price on the Price drawer (client, 2026-10-26): how this lane's
+ * price for that carrier and size has moved.
+ *
+ * Asked through the inquiry, and only for a line on the inquiry's own lane, so
+ * the hover cannot be pointed at any rate in the workspace — the sell prices
+ * of a lane the user is not pricing are the Price List's to show, under its
+ * own permission.
+ */
+inquiryRouter.get(
+  '/inquiries/:id/rate-lines/:lineId/price-history',
+  requirePermission(`${FEATURE}.ATTACH_PRICE`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const id = parseId(req.params.id, 'inquiry');
+    const lineId = parseId(req.params.lineId, 'rate line');
+
+    const entries = await withTenant(auth.tenantId, async (db) => {
+      const inquiry = await findScopedInquiry(db, auth, id);
+      const line = await db.freightRateLine.findFirst({
+        where: { id: lineId, deletedAt: null },
+        select: { rate: { select: { polId: true, podId: true } } },
+      });
+      if (line === null) throw HttpError.notFound('That rate is no longer available.');
+      if (line.rate.polId !== inquiry.polId || line.rate.podId !== inquiry.podId) {
+        throw HttpError.badRequest('That rate is for a different lane.');
+      }
+      return ratePriceHistory(db, auth.tenantId, lineId);
+    });
+
+    const payload: ApiSuccess<RatePriceChangeDto[]> = { success: true, data: entries };
     res.json(payload);
   },
 );

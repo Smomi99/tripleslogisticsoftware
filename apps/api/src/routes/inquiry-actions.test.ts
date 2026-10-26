@@ -330,7 +330,7 @@ describe('§5.5 Price — matching rates', () => {
   it('refuses a rate from another lane even though the picker filtered it out', async () => {
     const res = await as(tokenSales)
       .post(path('/rates'))
-      .send({ rateLineIds: [foreignLineId.toString()] });
+      .send({ lines: [{ rateLineId: foreignLineId.toString() }] });
     expect(res.status).toBe(400);
     expect(res.body.error.message).toBe('That rate is for a different lane.');
   });
@@ -340,7 +340,9 @@ describe('§5.5 Price — attaching writes back the quoted price', () => {
   it('selects the cheapest attached line and copies its price onto the inquiry', async () => {
     const res = await as(tokenSales)
       .post(path('/rates'))
-      .send({ rateLineIds: [rateLineDearId.toString(), rateLineCheapId.toString()] });
+      .send({
+        lines: [{ rateLineId: rateLineDearId.toString() }, { rateLineId: rateLineCheapId.toString() }],
+      });
     expect(res.status).toBe(201);
     expect(res.body.data).toHaveLength(2);
 
@@ -355,7 +357,9 @@ describe('§5.5 Price — attaching writes back the quoted price', () => {
   it('moves the quote when a different line is selected', async () => {
     await as(tokenSales)
       .post(path('/rates'))
-      .send({ rateLineIds: [rateLineCheapId.toString(), rateLineDearId.toString()] });
+      .send({
+        lines: [{ rateLineId: rateLineCheapId.toString() }, { rateLineId: rateLineDearId.toString() }],
+      });
     const attached = await as(tokenSales).get(path('/rates'));
     const dear = attached.body.data.find(
       (r: { rateLineId: string }) => r.rateLineId === rateLineDearId.toString(),
@@ -369,7 +373,7 @@ describe('§5.5 Price — attaching writes back the quoted price', () => {
   });
 
   it('snapshots the price rather than joining it (§4 rule 1)', async () => {
-    await as(tokenSales).post(path('/rates')).send({ rateLineIds: [rateLineCheapId.toString()] });
+    await as(tokenSales).post(path('/rates')).send({ lines: [{ rateLineId: rateLineCheapId.toString() }] });
     // The pricing team re-buys the lane; the attached figure must not follow.
     await owner.freightRateLine.update({
       where: { id: rateLineCheapId },
@@ -394,7 +398,7 @@ describe('§5.5 Quote', () => {
   });
 
   it('sets QUOTED once a rate is attached', async () => {
-    await as(tokenSales).post(path('/rates')).send({ rateLineIds: [rateLineCheapId.toString()] });
+    await as(tokenSales).post(path('/rates')).send({ lines: [{ rateLineId: rateLineCheapId.toString() }] });
     const res = await as(tokenSales).post(path('/quote'));
     expect(res.status).toBe(200);
     expect(res.body.data.status).toBe('QUOTED');

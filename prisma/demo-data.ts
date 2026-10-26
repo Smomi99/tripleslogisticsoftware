@@ -257,6 +257,9 @@ async function clear(tenantId: bigint, prefix: string = P): Promise<void> {
     where: { ...t, quote: { inquiryId: { in: inquiryIds } } },
   });
   await prisma.agentQuote.deleteMany({ where: { ...t, inquiryId: { in: inquiryIds } } });
+  await prisma.inquiryRateCharge.deleteMany({
+    where: { ...t, inquiryRate: { inquiryId: { in: inquiryIds } } },
+  });
   await prisma.inquiryRate.deleteMany({ where: { ...t, inquiryId: { in: inquiryIds } } });
   await prisma.inquiryFollowup.deleteMany({ where: { ...t, inquiryId: { in: inquiryIds } } });
   await prisma.inquiryPartyContact.deleteMany({ where: { ...t, inquiryId: { in: inquiryIds } } });
