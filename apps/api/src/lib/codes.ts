@@ -65,6 +65,28 @@ export type CodeTable = keyof typeof CODE_TABLES;
 export const CODE_RETRY_LIMIT = 5;
 
 /**
+ * One attempt at a create that may lose a code race, fenced so the loser can
+ * actually retry.
+ *
+ * Postgres aborts the whole transaction on any error, so a unique violation
+ * caught in the retry loops here used to leave every later statement failing
+ * with 25P02 — the "retry" could never succeed, and the user got a 500 instead
+ * of a number. A savepoint scopes the failure to this attempt: on error the
+ * transaction is rolled back to just before it and stays usable.
+ */
+export async function inSavepoint<T>(db: TenantDb, attempt: () => Promise<T>): Promise<T> {
+  await db.$executeRaw`SAVEPOINT code_attempt`;
+  try {
+    const result = await attempt();
+    await db.$executeRaw`RELEASE SAVEPOINT code_attempt`;
+    return result;
+  } catch (error) {
+    await db.$executeRaw`ROLLBACK TO SAVEPOINT code_attempt`;
+    throw error;
+  }
+}
+
+/**
  * Next code for this tenant in this table.
  *
  * Only the tenant's OWN rows are counted. A system row (tenant_id IS NULL) has

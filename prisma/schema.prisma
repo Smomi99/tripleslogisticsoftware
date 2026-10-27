@@ -259,6 +259,7 @@ model Tenant {
   salesLeads            SalesLead[]
   inquiries             Inquiry[]
   salesLeadFollowups    SalesLeadFollowup[]
+  salesLeadDocuments    SalesLeadDocument[]
   inquiryVolumes        InquiryVolume[]
   inquiryFollowups      InquiryFollowup[]
   inquiryRates          InquiryRate[]
@@ -440,6 +441,8 @@ model Port {
   agentPortCoverages  AgentPortCoverage[]
   inquiriesFromHere   Inquiry[]            @relation("InquiryPol")
   inquiriesToHere     Inquiry[]            @relation("InquiryPod")
+  salesLeadsFromHere  SalesLead[]          @relation("SalesLeadPol")
+  salesLeadsToHere    SalesLead[]          @relation("SalesLeadPod")
   ratesFromHere       FreightRate[]        @relation("FreightRatePol")
   ratesToHere         FreightRate[]        @relation("FreightRatePod")
   lanesFromHere       CarrierPortPair[]    @relation("CarrierPortPairPol")
@@ -516,6 +519,8 @@ model Currency {
   createdByUser User?     @relation("CurrencyCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User?     @relation("CurrencyUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
   inquiries     Inquiry[]
+  salesLeads         SalesLead[]
+  salesLeadFollowups SalesLeadFollowup[]
 
   openingCustomers Customer[]       @relation("CustomerOpeningCurrency")
   openingVendors   Vendor[]         @relation("VendorOpeningCurrency")
@@ -721,6 +726,7 @@ model Carrier {
   updatedByUser User? @relation("CarrierUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   inquiryParties    InquiryParty[]
+  salesLeads        SalesLead[]
   quotations        Quotation[]        @relation("QuotationCarrier")
   shipments         Shipment[]         @relation("ShipmentCarrier")
   shipmentSchedules ShipmentSchedule[] @relation("ShipmentScheduleCarrier")
@@ -1144,6 +1150,7 @@ model CommodityItem {
   createdByUser        User?                @relation("CommodityItemCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser        User?                @relation("CommodityItemUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
   inquiryCommodities   InquiryCommodity[]
+  salesLeads           SalesLead[]
   quotationCommodities QuotationCommodity[]
   shipmentCommodities  ShipmentCommodity[]
 
@@ -1216,6 +1223,8 @@ model Customer {
   createdByUser User?     @relation("CustomerCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User?     @relation("CustomerUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
   inquiries     Inquiry[]
+  salesLeadsAsExporter SalesLead[] @relation("SalesLeadExporter")
+  salesLeadsAsBuyer    SalesLead[] @relation("SalesLeadBuyer")
 
   users       User[]       @relation("CustomerUsers")
   quotations  Quotation[]
@@ -1390,6 +1399,7 @@ model Agent {
   users          User[]         @relation("AgentUsers")
   quotes         AgentQuote[]
   wonInquiries   Inquiry[]      @relation("InquiryWonAgent")
+  salesLeads     SalesLead[]
   blDrafts       BlDraft[]      @relation("BlDraftDeliveryAgent")
   blTemplates    BlTemplate[]   @relation("BlTemplateDeliveryAgent")
 
@@ -1561,6 +1571,7 @@ model Employee {
   createdByUser       User?      @relation("EmployeeCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser       User?      @relation("EmployeeUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
   inquiriesAsSalesman Inquiry[]
+  ownedSalesLeads     SalesLead[]
   customersOwned      Customer[] @relation("CustomerSalesman")
   supervisedClps      Clp[]      @relation("ClpSupervisor")
   taDaClaims          TaDaClaim[] @relation("TaDaClaimEmployee")
@@ -1793,6 +1804,8 @@ model User {
   updatedSalesLeads         SalesLead[]         @relation("SalesLeadUpdatedBy")
   createdSalesLeadFollowups SalesLeadFollowup[] @relation("SalesLeadFollowupCreatedBy")
   updatedSalesLeadFollowups SalesLeadFollowup[] @relation("SalesLeadFollowupUpdatedBy")
+  createdSalesLeadDocuments SalesLeadDocument[] @relation("SalesLeadDocumentCreatedBy")
+  updatedSalesLeadDocuments SalesLeadDocument[] @relation("SalesLeadDocumentUpdatedBy")
   createdInquiries          Inquiry[]           @relation("InquiryCreatedBy")
   updatedInquiries          Inquiry[]           @relation("InquiryUpdatedBy")
   createdInquiryVolumes     InquiryVolume[]     @relation("InquiryVolumeCreatedBy")
@@ -2351,6 +2364,7 @@ model ContainerSize {
 
   rateTiers      RateTier[]
   inquiryVolumes InquiryVolume[]
+  salesLeads     SalesLead[]
 
   localCharges    RateLocalCharge[]
   clps            Clp[]
@@ -2498,6 +2512,7 @@ model InquirySource {
   createdByUser User?     @relation("InquirySourceCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User?     @relation("InquirySourceUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
   inquiries     Inquiry[]
+  salesLeads    SalesLead[]
 
   @@unique([tenantId, code])
   @@index([tenantId])
@@ -2896,20 +2911,111 @@ enum ContactMode {
 /// §9 Q12, answered "separate table": a lead is a conversation before there is
 /// a lane, and an inquiry links back to the one it came from.
 ///
-/// SKELETON ONLY. CLAUDE.md §3 lists "New Sales Lead" and "Sales Lead
-/// Follow-up" with no wireframe, so its business fields are unspecified and are
-/// NOT invented here — see §11. The table exists now because Q12's answer makes
-/// inquiry.lead_id worth having from the start: adding that link after
-/// inquiries exist means guessing which lead each came from. The lead screens
-/// stay unbuilt until a field list arrives.
+/// client: "Triple S Logistics — FOB Sales Lead Form" (2026-10-26), menu
+/// "Sales Lead-FOB". The wireframe the skeleton waited for; transcribed in
+/// docs/SALES_LEAD_FOB.md, whose section numbers the comments below cite.
+///
+/// The fields the form added are nullable here and required by the shared
+/// schema, inquiry.goods_type_id's pattern: the leads raised before the form
+/// existed are not guessed at.
+///
+/// The three parties are each a typed name plus an optional master link (§2:
+/// "keep separate master-data links ... they may be three different
+/// companies"). A lead is usually a company that is not a customer yet, so a
+/// required link would mean creating customer records for prospects; the link
+/// is made when there is one, and must be by the time the lead is WON (§5 step
+/// 06, "link the lead to the customer").
 model SalesLead {
-  tenantId  BigInt    @map("tenant_id")
-  id        BigInt    @id @default(autoincrement())
-  code      String    @db.VarChar(32)
-  /// The company or person the conversation is with. The only business field
-  /// safe to assume; everything else awaits the wireframe.
-  name      String    @db.VarChar(200)
-  notes     String?   @db.Text
+  tenantId   BigInt @map("tenant_id")
+  id         BigInt @id @default(autoincrement())
+  /// Lead ID. FOB-2026-0001 (§1) for every lead since the form; the leads
+  /// raised before it keep the code they were given.
+  code       String @db.VarChar(32)
+  /// The year of the FOB-YYYY-NNNN series, so the next number is a lookup.
+  /// Null on the leads that predate the series.
+  seriesYear Int?   @map("series_year")
+
+  // -- §1 Lead identification ----------------------------------------------
+  leadDate     DateTime               @map("lead_date") @db.Date
+  /// Lead Source. The Inquiry Source lookup (Setting), not a list of its own:
+  /// it is the same question — where did this business come from — and the
+  /// workspace already maintains the answers.
+  sourceId     BigInt?                @map("source_id")
+  /// Lead Owner / Salesperson.
+  ownerId      BigInt?                @map("owner_id")
+  businessType SalesLeadBusinessType? @map("business_type")
+  priority     SalesLeadPriority?
+
+  // -- §2 Customer and commercial parties -----------------------------------
+  /// Exporter / Factory Name. The column the skeleton called `name`, kept so
+  /// the existing leads keep theirs.
+  name            String  @db.VarChar(200)
+  /// The exporter's customer record, once there is one.
+  customerId      BigInt? @map("customer_id")
+  exporterContact String? @map("exporter_contact") @db.VarChar(200)
+  /// Mobile / WhatsApp.
+  exporterMobile  String? @map("exporter_mobile") @db.VarChar(50)
+  exporterEmail   String? @map("exporter_email") @db.VarChar(255)
+  factoryLocation String? @map("factory_location") @db.VarChar(300)
+
+  /// Overseas Buyer / Importer.
+  buyerName       String? @map("buyer_name") @db.VarChar(200)
+  buyerCustomerId BigInt? @map("buyer_customer_id")
+  buyerCountry    String? @map("buyer_country") @db.VarChar(100)
+  buyingHouse     String? @map("buying_house") @db.VarChar(200)
+
+  /// Overseas Nominated Agent / Forwarder.
+  agentName    String? @map("agent_name") @db.VarChar(200)
+  agentId      BigInt? @map("agent_id")
+  agentCountry String? @map("agent_country") @db.VarChar(100)
+  /// Agent Contact / Email — one box on the form, so one column.
+  agentContact String? @map("agent_contact") @db.VarChar(300)
+
+  // -- §3 Shipment opportunity details --------------------------------------
+  commodityItemId    BigInt?             @map("commodity_item_id")
+  /// Shipment Mode is Sea FCL, Sea LCL or Air: the inquiry's two columns, so a
+  /// lead raises an inquiry without translating.
+  shipmentType       ShipmentType?       @map("shipment_type")
+  loadingType        LoadingType?        @map("loading_type")
+  polId              BigInt?             @map("pol_id")
+  podId              BigInt?             @map("pod_id")
+  /// Equipment Type. Sea FCL only.
+  containerSizeId    BigInt?             @map("container_size_id")
+  /// Estimated Volume, per month (§4's note: "assume the entered container
+  /// volume is monthly"). Containers for FCL, CBM for LCL, KG for Air.
+  monthlyVolume      Decimal?            @map("monthly_volume") @db.Decimal(14, 3)
+  shipmentFrequency  SalesLeadFrequency? @map("shipment_frequency")
+  firstShipmentDate  DateTime?           @map("first_shipment_date") @db.Date
+  incumbentForwarder String?             @map("incumbent_forwarder") @db.VarChar(200)
+  /// Current Shipping Line.
+  currentCarrierId   BigInt?             @map("current_carrier_id")
+  /// Shipment / Business Requirements. Was `notes` on the skeleton; renamed
+  /// rather than dropped, since what was typed there was this.
+  requirements       String?             @db.Text
+
+  // -- §4 Revenue potential and sales qualification -------------------------
+  freightControl    FreightControl? @map("freight_control")
+  status            SalesLeadStatus @default(NEW)
+  /// The currency of the per-unit figures below (§4 rule 6). The form writes
+  /// them in USD, so the API sets USD.
+  currencyId        BigInt?         @map("currency_id")
+  /// Estimated Freight Revenue per container (per CBM, per KG).
+  revenuePerUnit    Decimal?        @map("revenue_per_unit") @db.Decimal(18, 4)
+  /// Estimated Net Profit per container. May be negative.
+  profitPerUnit     Decimal?        @map("profit_per_unit") @db.Decimal(18, 4)
+  /// §6 Competitor intelligence: the market rate heard, and from whom.
+  marketRatePerUnit Decimal?        @map("market_rate_per_unit") @db.Decimal(18, 4)
+  marketRateSource  String?         @map("market_rate_source") @db.VarChar(200)
+  /// Win Probability (%), 0–100.
+  winProbability    Int?            @map("win_probability") @db.SmallInt
+  /// Set on the form, and moved by every follow-up recorded after it.
+  nextFollowupDate  DateTime?       @map("next_followup_date") @db.Date
+  /// Reason for Win / Loss.
+  outcomeReason     String?         @map("outcome_reason") @db.Text
+  /// When the lead went WON or LOST. Null while it is open; drives the
+  /// conversion figures (§7).
+  closedAt          DateTime?       @map("closed_at") @db.Timestamptz(6)
+
   isActive  Boolean   @default(true) @map("is_active")
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -2917,17 +3023,150 @@ model SalesLead {
   updatedBy BigInt?   @map("updated_by")
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
-  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  createdByUser User?  @relation("SalesLeadCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
-  updatedByUser User?  @relation("SalesLeadUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  // System-capable targets take single-column FKs, as on inquiry.
+  source         InquirySource? @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  pol            Port?          @relation("SalesLeadPol", fields: [polId], references: [id], onDelete: Restrict)
+  pod            Port?          @relation("SalesLeadPod", fields: [podId], references: [id], onDelete: Restrict)
+  containerSize  ContainerSize? @relation(fields: [containerSizeId], references: [id], onDelete: Restrict)
+  currentCarrier Carrier?       @relation(fields: [currentCarrierId], references: [id], onDelete: Restrict)
+  currency       Currency?      @relation(fields: [currencyId], references: [id], onDelete: Restrict)
+
+  // Tenant-owned targets take the composite tenant-safe FK (§4 rule 10).
+  owner         Employee?      @relation(fields: [tenantId, ownerId], references: [tenantId, id], onDelete: Restrict, map: "sales_lead_owner_id_fkey")
+  customer      Customer?      @relation("SalesLeadExporter", fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict, map: "sales_lead_customer_id_fkey")
+  buyerCustomer Customer?      @relation("SalesLeadBuyer", fields: [tenantId, buyerCustomerId], references: [tenantId, id], onDelete: Restrict, map: "sales_lead_buyer_customer_id_fkey")
+  agent         Agent?         @relation(fields: [tenantId, agentId], references: [tenantId, id], onDelete: Restrict, map: "sales_lead_agent_id_fkey")
+  commodityItem CommodityItem? @relation(fields: [tenantId, commodityItemId], references: [tenantId, id], onDelete: Restrict, map: "sales_lead_commodity_item_id_fkey")
+
+  createdByUser User? @relation("SalesLeadCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("SalesLeadUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   followups SalesLeadFollowup[]
+  documents SalesLeadDocument[]
   inquiries Inquiry[]
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
   @@index([tenantId])
+  // §7's register — newest first, filtered by status — and the follow-up
+  // screen's due list.
+  @@index([tenantId, status, leadDate])
+  @@index([tenantId, nextFollowupDate])
+  @@index([tenantId, seriesYear, code])
+  @@index([ownerId])
+  @@index([sourceId])
+  @@index([customerId])
+  @@index([buyerCustomerId])
+  @@index([agentId])
+  @@index([commodityItemId])
+  @@index([polId])
+  @@index([podId])
+  @@index([containerSizeId])
+  @@index([currentCarrierId])
+  @@index([currencyId])
   @@map("sales_lead")
+}
+
+/// §1 Business Type: whether the business is new to us. "New customers won"
+/// (§7) counts the WON leads of the first kind.
+enum SalesLeadBusinessType {
+  NEW_CUSTOMER
+  EXISTING_NEW_LANE
+  EXISTING_MORE_VOLUME
+
+  @@map("sales_lead_business_type")
+}
+
+enum SalesLeadPriority {
+  HIGH
+  MEDIUM
+  LOW
+
+  @@map("sales_lead_priority")
+}
+
+enum SalesLeadFrequency {
+  WEEKLY
+  FORTNIGHTLY
+  MONTHLY
+  QUARTERLY
+  SEASONAL
+  ONE_OFF
+
+  @@map("sales_lead_frequency")
+}
+
+/// §4 Freight Control: who decides which forwarder moves the cargo. The
+/// reason the field exists — a factory may ship 100 containers a month that
+/// the buyer's nominated forwarder controls entirely.
+enum FreightControl {
+  /// The exporter chooses ("free hand" cargo).
+  FREE_HAND
+  BUYER_NOMINATED
+  BUYING_HOUSE
+  /// Nominated through our own overseas agent.
+  AGENT_NOMINATED
+  UNKNOWN
+
+  @@map("freight_control")
+}
+
+/// §5's workflow, one status per step: capture, qualify, request rate, submit
+/// quotation, follow up, convert — and LOST, which §4's "Reason for Win /
+/// Loss" implies.
+enum SalesLeadStatus {
+  NEW
+  QUALIFIED
+  RATE_REQUESTED
+  QUOTED
+  NEGOTIATION
+  WON
+  LOST
+
+  @@map("sales_lead_status")
+}
+
+/// §6 Document attachment: "RFQ, shipment forecast, buyer nomination and
+/// previous quotations".
+enum SalesLeadDocumentKind {
+  RFQ
+  SHIPMENT_FORECAST
+  BUYER_NOMINATION
+  PREVIOUS_QUOTATION
+  OTHER
+
+  @@map("sales_lead_document_kind")
+}
+
+/// §6 Document attachment. Several per kind: a lead collects RFQs.
+model SalesLeadDocument {
+  tenantId BigInt                @map("tenant_id")
+  id       BigInt                @id @default(autoincrement())
+  leadId   BigInt                @map("lead_id")
+  kind     SalesLeadDocumentKind
+  /// The storage key, never the bytes (CLAUDE.md §2).
+  fileKey  String                @map("file_key") @db.Text
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  /// Removing an attachment soft-deletes it (§4 rule 3).
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  lead   SalesLead @relation(fields: [tenantId, leadId], references: [tenantId, id], onDelete: Restrict, map: "sales_lead_document_lead_id_fkey")
+
+  createdByUser User? @relation("SalesLeadDocumentCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("SalesLeadDocumentUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([leadId])
+  @@map("sales_lead_document")
 }
 
 /// spec §3.3: inquiry.
@@ -3412,8 +3651,17 @@ model SalesLeadFollowup {
   followupDate     DateTime    @map("followup_date") @db.Date
   contactMode      ContactMode @map("contact_mode")
   contactPerson    String?     @map("contact_person") @db.VarChar(200)
+  /// The discussion (docs/SALES_LEAD_FOB.md §6 "Lead activity history").
   notes            String?     @db.Text
   nextFollowupDate DateTime?   @map("next_followup_date") @db.Date
+  /// §6: "date, contact method, discussion, outcome and next action".
+  outcome          String?     @db.Text
+  nextAction       String?     @map("next_action") @db.VarChar(300)
+  /// §5 step 05: "record calls, emails, target rates, objections". The
+  /// customer's target, per unit, in currency_id (§4 rule 6).
+  targetRate       Decimal?    @map("target_rate") @db.Decimal(18, 4)
+  currencyId       BigInt?     @map("currency_id")
+  objections       String?     @db.Text
 
   isActive  Boolean   @default(true) @map("is_active")
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -3422,8 +3670,9 @@ model SalesLeadFollowup {
   updatedBy BigInt?   @map("updated_by")
   deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
 
-  tenant Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
-  lead   SalesLead @relation(fields: [tenantId, leadId], references: [tenantId, id], onDelete: Restrict)
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  lead     SalesLead @relation(fields: [tenantId, leadId], references: [tenantId, id], onDelete: Restrict)
+  currency Currency? @relation(fields: [currencyId], references: [id], onDelete: Restrict)
 
   createdByUser User? @relation("SalesLeadFollowupCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User? @relation("SalesLeadFollowupUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
@@ -3431,6 +3680,7 @@ model SalesLeadFollowup {
   @@index([tenantId])
   @@index([leadId])
   @@index([nextFollowupDate])
+  @@index([currencyId])
   @@map("sales_lead_followup")
 }
 

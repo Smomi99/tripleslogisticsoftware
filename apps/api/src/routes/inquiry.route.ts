@@ -56,6 +56,7 @@ import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
 import { nextInquiryNo, seriesYearOf } from '../lib/inquiry-no';
 import { ratePriceHistory } from '../lib/rate-price-history';
 import { canSeeBuyPrice, visibleLine } from '../lib/rate-visibility';
+import { progressLeadForInquiry } from '../lib/sales-lead-progress';
 import { parseId, parseRefId } from '../lib/request';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
 import { type AuthContext, authenticate } from '../middleware/authenticate';
@@ -854,6 +855,11 @@ inquiryRouter.post('/inquiries', requirePermission(`${FEATURE}.CREATE`), async (
         // Recipients are written after the row exists, since they reference it.
         // Same transaction, so a failure here takes the inquiry with it.
         await writeParties(db, auth, created.id, input);
+        // Raised from a lead: that lead's rate is now requested, and it takes
+        // this customer if it had none (docs/SALES_LEAD_FOB.md §5).
+        if (refs.leadId !== null) {
+          await progressLeadForInquiry(db, refs.leadId, refs.customerId, auth.userId);
+        }
         // §5.1 runs here rather than after the commit, so the row can never be
         // seen with a status that disagrees with its own routing.
         const plan = await routeAndApply(db, created.id);

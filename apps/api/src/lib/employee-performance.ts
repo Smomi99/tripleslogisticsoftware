@@ -329,13 +329,14 @@ export async function performanceDetail(
         where: leadWhere(s),
         orderBy: { createdAt: 'desc' },
         take: limit,
-        select: { id: true, code: true, name: true, notes: true, createdAt: true },
+        select: { id: true, code: true, name: true, requirements: true, createdAt: true },
       });
       return rows.map((r) => ({
         id: r.id.toString(),
         code: r.code,
         title: r.name,
-        subtitle: r.notes === null || r.notes === '' ? null : r.notes.slice(0, 120),
+        subtitle:
+          r.requirements === null || r.requirements === '' ? null : r.requirements.slice(0, 120),
         date: day(r.createdAt),
         href: '/sales/sales-lead',
       }));

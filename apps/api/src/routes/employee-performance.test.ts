@@ -268,7 +268,7 @@ beforeAll(async () => {
 
   // --------------------------------------------------------- sales leads
   const lead = async (code: string, name: string, createdBy: bigint, createdAt: Date) =>
-    owner.salesLead.create({ data: { tenantId, code, name, createdBy, createdAt } });
+    owner.salesLead.create({ data: { tenantId, code, name, createdBy, createdAt, leadDate: createdAt } });
   await lead('PLED-1', 'A prospect', subjectUser.id, inPeriod);
   await lead('PLED-2', 'Another prospect', subjectUser.id, inPeriod);
   await lead('PLED-3', 'An old prospect', subjectUser.id, outOfPeriod);

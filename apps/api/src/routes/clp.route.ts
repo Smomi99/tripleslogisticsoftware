@@ -62,7 +62,7 @@ import {
   plansOfBooking,
 } from '../lib/clp-participants';
 import { buildClpPdf, type ClpPrintDoc, clpPdfFilename } from '../lib/clp-print';
-import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
+import { CODE_RETRY_LIMIT, inSavepoint, isUniqueViolation } from '../lib/codes';
 import { HttpError } from '../lib/http-error';
 import { formatDocumentNo, seriesYearOf } from '../lib/inquiry-no';
 import { Prisma } from '../generated/prisma/client';
@@ -904,6 +904,38 @@ clpRouter.get('/bookings/:id/clp', requirePermission(`${FEATURE}.VIEW`), async (
   res.json(payload);
 });
 
+/**
+ * The next "CLP No" within a booking (§4.5).
+ *
+ * MAX rather than ORDER BY clp_seq DESC: Postgres sorts NULLs first when
+ * descending, and a consolidated plan from before CR-002 still sits on its
+ * booking with clp_seq NULL. Read that way, "the last plan" had no number, the
+ * next one came out as 1 again, and the insert collided with the booking's
+ * existing plan 1.
+ */
+async function nextClpSeq(db: TenantDb, shipmentId: bigint): Promise<number> {
+  const result = await db.clp.aggregate({ where: { shipmentId }, _max: { clpSeq: true } });
+  return (result._max.clpSeq ?? 0) + 1;
+}
+
+/**
+ * The next document number, CLP-2026-000001 (§4.5), for the whole workspace.
+ *
+ * Only codes in the series are counted, as every other yearly series here
+ * does (lib/inquiry-no). Reading the trailing number of every plan let other
+ * codes in — and one ending in letters failed the integer cast, so no new plan
+ * could be created at all.
+ */
+async function nextClpNo(db: TenantDb, tenantId: bigint, year: number): Promise<string> {
+  const rows = await db.$queryRaw<{ max_seq: number | null }[]>`
+    SELECT MAX((regexp_replace(code, '^.*-', ''))::int) AS max_seq
+      FROM clp
+     WHERE tenant_id = ${tenantId} AND series_year = ${year}
+       AND code ~ ${`^CLP-${year}-[0-9]+$`}
+  `;
+  return formatDocumentNo('CLP', year, (rows[0]?.max_seq ?? 0) + 1);
+}
+
 /** POST /bookings/:id/clps — §5.1's `Select Container`. */
 clpRouter.post('/bookings/:id/clps', requirePermission(`${FEATURE}.CREATE`), async (req, res) => {
   const auth = req.auth!;
@@ -949,34 +981,27 @@ clpRouter.post('/bookings/:id/clps', requirePermission(`${FEATURE}.CREATE`), asy
         number for the whole workspace. Using one for the other would make the
         second container on the tenth booking read as CLP-…-000002.
       */
-      const last = await db.clp.findFirst({
-        where: { shipmentId },
-        orderBy: { clpSeq: 'desc' },
-        select: { clpSeq: true },
-      });
-      const rows = await db.$queryRaw<{ max_seq: number | null }[]>`
-        SELECT MAX((regexp_replace(code, '^.*-', ''))::int) AS max_seq
-          FROM clp
-         WHERE tenant_id = ${auth.tenantId} AND series_year = ${year}
-      `;
-      const code = formatDocumentNo('CLP', year, (rows[0]?.max_seq ?? 0) + 1);
+      const clpSeq = await nextClpSeq(db, shipmentId);
+      const code = await nextClpNo(db, auth.tenantId, year);
 
       try {
-        return await db.clp.create({
-          data: {
-            tenantId: auth.tenantId,
-            code,
-            seriesYear: year,
-            clpSeq: (last?.clpSeq ?? 0) + 1,
-            shipmentId: booking.id,
-            shippingOrderId: null,
-            containerSizeId,
-            carrierId,
-            createdBy: auth.userId,
-            updatedBy: auth.userId,
-          },
-          select: { id: true },
-        });
+        return await inSavepoint(db, () =>
+          db.clp.create({
+            data: {
+              tenantId: auth.tenantId,
+              code,
+              seriesYear: year,
+              clpSeq,
+              shipmentId: booking.id,
+              shippingOrderId: null,
+              containerSizeId,
+              carrierId,
+              createdBy: auth.userId,
+              updatedBy: auth.userId,
+            },
+            select: { id: true },
+          }),
+        );
       } catch (error) {
         if (isUniqueViolation(error)) continue;
         throw error;
@@ -1808,71 +1833,60 @@ clpRouter.post('/clps/consolidate', requirePermission(`${FEATURE}.CREATE`), asyn
 
     let clpId: bigint | null = null;
     for (let attempt = 0; attempt < CODE_RETRY_LIMIT && clpId === null; attempt += 1) {
-      const seqRows = await db.$queryRaw<{ max_seq: number | null }[]>`
-        SELECT MAX((regexp_replace(code, '^.*-', ''))::int) AS max_seq
-          FROM clp
-         WHERE tenant_id = ${auth.tenantId} AND series_year = ${year}
-      `;
-      const code = formatDocumentNo('CLP', year, (seqRows[0]?.max_seq ?? 0) + 1);
+      const code = await nextClpNo(db, auth.tenantId, year);
 
-      let clpSeq: number | null = null;
-      if (!consolidated) {
-        const last = await db.clp.findFirst({
-          where: { shipmentId: anchor.shipmentId },
-          orderBy: { clpSeq: 'desc' },
-          select: { clpSeq: true },
-        });
-        clpSeq = (last?.clpSeq ?? 0) + 1;
-      }
+      const clpSeq = consolidated ? null : await nextClpSeq(db, anchor.shipmentId);
 
       try {
-        const created = await db.clp.create({
-          data: {
-            tenantId: auth.tenantId,
-            code,
-            seriesYear: year,
-            clpSeq,
-            // Kept in step with clp_booking for a single-booking plan, so the
-            // column CR-002 will drop later never disagrees with the table
-            // that replaces it.
-            shipmentId: consolidated ? null : anchor.shipmentId,
-            containerSizeId,
-            carrierId: anchor.carrierId,
-            /*
-              Only LCL and Consol box bookings can share a box now (rule 9), and
-              both are consolidations across customers, so both are recorded
-              as one. Which of the two it is stays on the bookings' own
-              loading type, where the register already reads it.
-              FCL_QUOTATION remains in the enum for the plans that have it,
-              and no longer describes anything that can be created. Nor does
-              a quotation grouping, so quotation_id is left empty.
-            */
-            consolidationType: consolidated ? 'LCL_CONSOLIDATION' : 'SINGLE',
-            quotationId: null,
-            finalCfsLocation: input.finalCfsLocation ?? null,
-            createdBy: auth.userId,
-            updatedBy: auth.userId,
-          },
-          select: { id: true },
-        });
+        clpId = await inSavepoint(db, async () => {
+          const created = await db.clp.create({
+            data: {
+              tenantId: auth.tenantId,
+              code,
+              seriesYear: year,
+              clpSeq,
+              // Kept in step with clp_booking for a single-booking plan, so the
+              // column CR-002 will drop later never disagrees with the table
+              // that replaces it.
+              shipmentId: consolidated ? null : anchor.shipmentId,
+              containerSizeId,
+              carrierId: anchor.carrierId,
+              /*
+                Only LCL and Consol box bookings can share a box now (rule 9), and
+                both are consolidations across customers, so both are recorded
+                as one. Which of the two it is stays on the bookings' own
+                loading type, where the register already reads it.
+                FCL_QUOTATION remains in the enum for the plans that have it,
+                and no longer describes anything that can be created. Nor does
+                a quotation grouping, so quotation_id is left empty.
+              */
+              consolidationType: consolidated ? 'LCL_CONSOLIDATION' : 'SINGLE',
+              quotationId: null,
+              finalCfsLocation: input.finalCfsLocation ?? null,
+              createdBy: auth.userId,
+              updatedBy: auth.userId,
+            },
+            select: { id: true },
+          });
 
-        /*
-          Written separately rather than as a nested create: clp_booking's
-          relation to clp is composite (tenant_id, clp_id), so Prisma will not
-          take tenantId inside a nested create — and tenant_id is not something
-          to leave to a relation here.
-        */
-        await db.clpBooking.createMany({
-          data: candidates.map((c) => ({
-            tenantId: auth.tenantId,
-            clpId: created.id,
-            shipmentId: c.shipmentId,
-            createdBy: auth.userId,
-            updatedBy: auth.userId,
-          })),
-        });
+          /*
+            Written separately rather than as a nested create: clp_booking's
+            relation to clp is composite (tenant_id, clp_id), so Prisma will not
+            take tenantId inside a nested create — and tenant_id is not something
+            to leave to a relation here.
+          */
+          await db.clpBooking.createMany({
+            data: candidates.map((c) => ({
+              tenantId: auth.tenantId,
+              clpId: created.id,
+              shipmentId: c.shipmentId,
+              createdBy: auth.userId,
+              updatedBy: auth.userId,
+            })),
+          });
 
-        clpId = created.id;
+          return created.id;
+        });
       } catch (error) {
         if (isUniqueViolation(error) && attempt < CODE_RETRY_LIMIT - 1) continue;
         throw error;

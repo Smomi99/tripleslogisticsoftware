@@ -656,6 +656,46 @@ describe('clp_seq after a cancellation', () => {
     expect(cancelled.status).toBe('CANCELLED');
     expect(cancelled.clpSeq).toBe(before.clpSeq);
   });
+
+  it('numbers past a plan that has no clp_seq', async () => {
+    /*
+      A consolidated plan from before CR-002 still sits on its booking with
+      clp_seq NULL. Postgres sorts NULLs first in a descending order, so the
+      old "ORDER BY clp_seq DESC" lookup read that plan as the last one,
+      numbered the next plan 1 again, and collided with the booking's own
+      plan 1 — a 500 for the user.
+
+      The legacy plan's code also ends in letters on purpose: the CLP number
+      used to read the trailing digits of every code in the workspace, and a
+      non-numeric one failed that cast for every new plan.
+    */
+    const numbered = await makeClp();
+    const legacy = await owner.clp.create({
+      data: {
+        tenantId,
+        code: `CLPST-${RUN}-legacy`,
+        seriesYear: 2026,
+        clpSeq: null,
+        shipmentId,
+        containerSizeId: size20,
+        carrierId,
+        createdBy: userId,
+      },
+      select: { id: true },
+    });
+    madeClps.push(legacy.id);
+    const highest = await owner.clp.findFirstOrThrow({ where: { id: numbered }, select: { clpSeq: true } });
+
+    const created = await as(tokenAll)
+      .post(`/api/tenant/ops/bookings/${shipmentId}/clps`)
+      .send({ containerSizeId: size20.toString() });
+    expect(created.status, JSON.stringify(created.body.error ?? {})).toBe(201);
+    const createdId = BigInt(created.body.data.id);
+    madeClps.push(createdId);
+
+    const row = await owner.clp.findFirstOrThrow({ where: { id: createdId }, select: { clpSeq: true } });
+    expect(row.clpSeq).toBe(highest.clpSeq! + 1);
+  });
 });
 
 // -------------------------------------------------------------- concurrency

@@ -1,54 +1,48 @@
 'use client';
 
 import {
-  CONTACT_MODES,
   CONTACT_MODE_LABEL,
-  type ContactMode,
-  type SalesLeadFollowupDto,
+  FREIGHT_CONTROL_LABEL,
+  INQUIRY_STATUS_LABEL,
+  type InquiryStatus,
+  SALES_LEAD_STATUS_LABEL,
+  type SalesLeadFollowupPayload,
 } from '@ff/shared';
+import type { Route } from 'next';
+import Link from 'next/link';
 import { use, useCallback, useEffect, useState } from 'react';
-import { toast } from 'sonner';
 
-import { Button } from '@/components/ui/button';
+import { LeadFollowupForm } from '@/components/sales/lead-followup-form';
+import { LeadProgress } from '@/components/sales/lead-progress';
 import { EmptyState } from '@/components/ui/empty-state';
-import { Field, Input, Select } from '@/components/ui/field';
 import { ChildScreenHeader } from '@/components/ui/form-layout';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 
 /**
- * Sales → Sales Lead Follow-up (CLAUDE.md §3, §8's child-screen pattern).
+ * Sales → Sales Lead-FOB → one lead's follow-up history (§8's child screen).
  *
  * Scoped to the parent by URL, headed by the parent's name, and with the Back
- * to list link §8 calls required rather than optional.
+ * to list link §8 calls required. Above the history: where the lead stands on
+ * §5's workflow, and the inquiries it has produced (§5 steps 03–06).
  */
-interface FollowupPayload {
-  lead: { id: string; code: string; name: string };
-  followups: SalesLeadFollowupDto[];
-}
-
-const today = (): string => new Date().toISOString().slice(0, 10);
+const money = (value: string | null): string =>
+  value === null
+    ? '—'
+    : Number(value).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export default function LeadFollowupPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const { authorizedList, authorizedRequest, can } = useSession();
+  const { authorizedList, can } = useSession();
 
-  const [data, setData] = useState<FollowupPayload | null>(null);
+  const [data, setData] = useState<SalesLeadFollowupPayload | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isPending, setPending] = useState(true);
-
-  const [followupDate, setFollowupDate] = useState(today);
-  const [contactMode, setContactMode] = useState<ContactMode>('CALL');
-  const [contactPerson, setContactPerson] = useState('');
-  const [notes, setNotes] = useState('');
-  const [nextFollowupDate, setNextFollowupDate] = useState('');
-  const [formError, setFormError] = useState<string | null>(null);
-  const [isSaving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     setPending(true);
     try {
-      const response = await authorizedList<FollowupPayload>(
+      const response = await authorizedList<SalesLeadFollowupPayload>(
         `/api/tenant/sales/leads/${id}/followups`,
       );
       setData(response.data);
@@ -66,33 +60,13 @@ export default function LeadFollowupPage({ params }: { params: Promise<{ id: str
     void load();
   }, [load]);
 
-  async function add(): Promise<void> {
-    setFormError(null);
-    setSaving(true);
-    try {
-      await authorizedRequest(`/api/tenant/sales/leads/${id}/followups`, {
-        method: 'POST',
-        body: { followupDate, contactMode, contactPerson, notes, nextFollowupDate },
-      });
-      toast.success('Follow-up recorded');
-      setContactPerson('');
-      setNotes('');
-      setNextFollowupDate('');
-      await load();
-    } catch (error) {
-      setFormError(
-        error instanceof ApiError ? error.message : 'Could not record the follow-up. Try again.',
-      );
-    } finally {
-      setSaving(false);
-    }
-  }
+  const lead = data?.lead ?? null;
 
   return (
     <div className="flex flex-col gap-4">
       <ChildScreenHeader
-        parentLabel="Sales lead"
-        parentName={data?.lead.name ?? 'Loading…'}
+        parentLabel={lead === null ? 'Sales lead' : `Sales lead ${lead.code}`}
+        parentName={lead?.name ?? 'Loading…'}
         title="Follow-up history"
         backHref="/sales/sales-lead"
       />
@@ -106,78 +80,74 @@ export default function LeadFollowupPage({ params }: { params: Promise<{ id: str
         </p>
       )}
 
+      {lead !== null && (
+        <>
+          <LeadProgress status={lead.status} />
+          <section
+            aria-label="Lead summary"
+            className="grid grid-cols-2 gap-x-6 gap-y-3 rounded-manifest border border-line bg-surface p-3 shadow-manifest md:grid-cols-4"
+          >
+            <Fact label="Status" value={SALES_LEAD_STATUS_LABEL[lead.status]} />
+            <Fact label="Salesperson" value={lead.ownerName ?? '—'} />
+            <Fact
+              label="Lane"
+              value={lead.polName === null ? '—' : `${lead.polName} → ${lead.podName ?? '—'}`}
+            />
+            <Fact
+              label="Freight control"
+              value={lead.freightControl === null ? '—' : FREIGHT_CONTROL_LABEL[lead.freightControl]}
+            />
+            <Fact label="Next follow-up" value={lead.nextFollowupDate ?? '—'} mono />
+            <Fact label="Est. monthly profit (USD)" value={money(lead.forecast.monthlyProfit)} mono />
+            <Fact label="Win probability" value={lead.winProbability === null ? '—' : `${lead.winProbability}%`} mono />
+            <div className="flex items-end gap-3">
+              {can('SALES.NEW_SALES_LEAD.EDIT') && (
+                <Link
+                  href={`/sales/sales-lead/${lead.id}/edit` as Route}
+                  className="text-cell text-harbour underline-offset-2 hover:text-harbour-ink hover:underline"
+                >
+                  Edit lead
+                </Link>
+              )}
+              <Link
+                href={`/sales/sales-lead/${lead.id}/documents` as Route}
+                className="text-cell text-harbour underline-offset-2 hover:text-harbour-ink hover:underline"
+              >
+                Documents ({lead.documentCount})
+              </Link>
+            </div>
+          </section>
+
+          {data !== null && data.inquiries.length > 0 && (
+            <section
+              aria-label="Inquiries raised from this lead"
+              className="rounded-manifest border border-line bg-surface p-3 shadow-manifest"
+            >
+              <p className="label-manifest">Inquiries raised from this lead</p>
+              <ul className="mt-2 flex flex-col gap-1">
+                {data.inquiries.map((inquiry) => (
+                  <li key={inquiry.id} className="flex flex-wrap gap-x-4 text-cell text-hull">
+                    <span className="font-mono tabular-nums">{inquiry.code}</span>
+                    <span className="font-mono tabular-nums text-steel">{inquiry.inquiryDate}</span>
+                    <span>{inquiry.customerName}</span>
+                    <span className="text-steel">
+                      {INQUIRY_STATUS_LABEL[inquiry.status as InquiryStatus] ?? inquiry.status}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+        </>
+      )}
+
       {can('SALES.SALES_LEAD_FOLLOWUP.CREATE') && (
         <section
           aria-label="Record a follow-up"
-          className="rounded-manifest border border-line bg-surface p-3 shadow-manifest"
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !isSaving) {
-              event.preventDefault();
-              void add();
-            }
-          }}
+          className="rounded-manifest border border-line bg-surface p-4 shadow-manifest"
         >
-          <div className="flex flex-wrap items-end gap-2">
-            <div className="w-40">
-              <Field id="followupDate" label="Date" required>
-                <Input
-                  id="followupDate"
-                  type="date"
-                  numeric
-                  value={followupDate}
-                  onChange={(e) => setFollowupDate(e.target.value)}
-                />
-              </Field>
-            </div>
-            <div className="w-36">
-              <Field id="contactMode" label="How" required>
-                <Select
-                  id="contactMode"
-                  value={contactMode}
-                  onChange={(e) => setContactMode(e.target.value as ContactMode)}
-                >
-                  {CONTACT_MODES.map((value) => (
-                    <option key={value} value={value}>
-                      {CONTACT_MODE_LABEL[value]}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            </div>
-            <div className="w-48">
-              <Field id="contactPerson" label="Who you spoke to">
-                <Input
-                  id="contactPerson"
-                  value={contactPerson}
-                  onChange={(e) => setContactPerson(e.target.value)}
-                />
-              </Field>
-            </div>
-            <div className="min-w-64 flex-1">
-              <Field id="notes" label="Notes">
-                <Input id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
-              </Field>
-            </div>
-            <div className="w-40">
-              <Field id="nextFollowupDate" label="Next follow-up">
-                <Input
-                  id="nextFollowupDate"
-                  type="date"
-                  numeric
-                  value={nextFollowupDate}
-                  onChange={(e) => setNextFollowupDate(e.target.value)}
-                />
-              </Field>
-            </div>
-            <Button type="button" onClick={() => void add()} disabled={isSaving}>
-              {isSaving ? 'Saving…' : 'Record'}
-            </Button>
-          </div>
-          {formError !== null && (
-            <p role="alert" className="mt-2 text-cell text-alert">
-              {formError}
-            </p>
-          )}
+          <h2 className="mb-3 text-section text-hull">Record a follow-up</h2>
+          <LeadFollowupForm leadId={id} onSaved={load} />
         </section>
       )}
 
@@ -194,38 +164,41 @@ export default function LeadFollowupPage({ params }: { params: Promise<{ id: str
                 <th className="label-manifest px-2.5 py-2">Date</th>
                 <th className="label-manifest px-2.5 py-2">How</th>
                 <th className="label-manifest px-2.5 py-2">Contact</th>
-                <th className="label-manifest px-2.5 py-2">Notes</th>
+                <th className="label-manifest px-2.5 py-2">Discussion</th>
+                <th className="label-manifest px-2.5 py-2">Outcome</th>
+                <th className="label-manifest px-2.5 py-2 text-right">Target rate</th>
+                <th className="label-manifest px-2.5 py-2">Objections</th>
+                <th className="label-manifest px-2.5 py-2">Next action</th>
                 <th className="label-manifest px-2.5 py-2">Next</th>
                 <th className="label-manifest px-2.5 py-2">Recorded by</th>
               </tr>
             </thead>
             <tbody>
               {(data?.followups ?? []).map((followup) => (
-                <tr
-                  key={followup.id}
-                  className="border-b border-line last:border-0 hover:bg-row-hover"
-                >
+                <tr key={followup.id} className="border-b border-line align-top last:border-0 hover:bg-row-hover">
                   <td className="px-2.5 py-2 font-mono text-cell tabular-nums text-hull">
                     {followup.followupDate}
                   </td>
                   <td className="px-2.5 py-2 text-cell text-hull">
                     {CONTACT_MODE_LABEL[followup.contactMode]}
                   </td>
-                  <td className="px-2.5 py-2 text-cell text-hull">
-                    {followup.contactPerson ?? '—'}
+                  <td className="px-2.5 py-2 text-cell text-hull">{followup.contactPerson ?? '—'}</td>
+                  <td className="max-w-xs px-2.5 py-2 text-cell text-hull">{followup.notes ?? '—'}</td>
+                  <td className="px-2.5 py-2 text-cell text-hull">{followup.outcome ?? '—'}</td>
+                  <td className="px-2.5 py-2 text-right font-mono text-cell tabular-nums text-hull">
+                    {followup.targetRate === null ? '—' : `${money(followup.targetRate)} ${followup.currency ?? ''}`}
                   </td>
-                  <td className="px-2.5 py-2 text-cell text-hull">{followup.notes ?? '—'}</td>
+                  <td className="px-2.5 py-2 text-cell text-hull">{followup.objections ?? '—'}</td>
+                  <td className="px-2.5 py-2 text-cell text-hull">{followup.nextAction ?? '—'}</td>
                   <td className="px-2.5 py-2 font-mono text-cell tabular-nums text-steel">
                     {followup.nextFollowupDate ?? '—'}
                   </td>
-                  <td className="px-2.5 py-2 text-cell text-steel">
-                    {followup.createdBy ?? '—'}
-                  </td>
+                  <td className="px-2.5 py-2 text-cell text-steel">{followup.createdBy ?? '—'}</td>
                 </tr>
               ))}
               {isPending && (
                 <tr>
-                  <td colSpan={6} className="p-6 text-center text-body text-steel">
+                  <td colSpan={10} className="p-6 text-center text-body text-steel">
                     Loading…
                   </td>
                 </tr>
@@ -234,6 +207,15 @@ export default function LeadFollowupPage({ params }: { params: Promise<{ id: str
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+function Fact({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div>
+      <p className="label-manifest">{label}</p>
+      <p className={mono === true ? 'font-mono text-body tabular-nums text-hull' : 'text-body text-hull'}>{value}</p>
     </div>
   );
 }

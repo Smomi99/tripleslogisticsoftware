@@ -370,10 +370,10 @@ export const FEATURES: readonly FeatureDefinition[] = [
    * and the first of the Menu sheet's Customer column (§2.5) to be built.
    */
   { module: 'CUSTOMER', feature: 'CUSTOMER.SHIPMENT', label: 'My Shipments', actions: ['VIEW', 'EXPORT'] },
-  // Still no wireframe for either lead screen (CLAUDE.md §3, §11). The
-  // permissions exist so the sales_lead skeleton can be gated the day a field
-  // list arrives; the screens themselves are unbuilt.
-  { module: 'SALES', feature: 'SALES.NEW_SALES_LEAD', label: 'New Sales Lead', actions: MASTER },
+  // The client's FOB Sales Lead Form, 2026-10-26 (docs/SALES_LEAD_FOB.md). The
+  // menu reads "Sales Lead-FOB" and "Sales Lead follow up"; the keys keep their
+  // original names so roles already granted them keep working.
+  { module: 'SALES', feature: 'SALES.NEW_SALES_LEAD', label: 'Sales Lead-FOB', actions: MASTER },
   { module: 'SALES', feature: 'SALES.SALES_LEAD_FOLLOWUP', label: 'Sales Lead Follow-up', actions: MASTER },
   /*
    * docs/DESIGN-UPDATE-2026-10-04.md §6 (Menu D9): the customer list as the
