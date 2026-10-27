@@ -66,6 +66,9 @@ const ROUTES: Record<string, RouteEntry> = {
   'CUSTOMER_SERVICE.QUOTATION': '/cs/quotation',
   'AGENT.INQUIRY': '/agent/inquiry',
   'SALES.NEW_SALES_LEAD': '/sales/sales-lead',
+  // The due list and activity log across every lead. A lead's own history is
+  // its child screen, /sales/sales-lead/[id]/followup.
+  'SALES.SALES_LEAD_FOLLOWUP': '/sales/sales-lead-followup',
   // docs/DESIGN-UPDATE-2026-10-04.md §6, Menu D9.
   'SALES.LOCAL_SALES': '/sales/local-sales',
   'SETTING.SEA_AIR_PORT': '/setting/port',

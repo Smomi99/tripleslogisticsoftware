@@ -29,8 +29,13 @@ export const CARGO_RECEIPT_PREFIX = 'CR';
 /** Six digits, as §3.3 writes it. Grows past six rather than wrapping. */
 const SEQUENCE_WIDTH = 6;
 
-export function formatDocumentNo(prefix: string, year: number, sequence: number): string {
-  return `${prefix}-${year}-${String(sequence).padStart(SEQUENCE_WIDTH, '0')}`;
+export function formatDocumentNo(
+  prefix: string,
+  year: number,
+  sequence: number,
+  width: number = SEQUENCE_WIDTH,
+): string {
+  return `${prefix}-${year}-${String(sequence).padStart(width, '0')}`;
 }
 
 export function formatInquiryNo(year: number, sequence: number): string {
@@ -406,4 +411,36 @@ export async function nextTaDaNo(db: TenantDb, tenantId: bigint, year: number): 
        AND code LIKE ${pattern}
   `;
   return formatTaDaNo(year, (rows[0]?.max_seq ?? 0) + 1);
+}
+
+// ---------------------------------------------------------------------------
+// Sales leads — docs/SALES_LEAD_FOB.md §1
+// ---------------------------------------------------------------------------
+
+/**
+ * The Lead ID, FOB-2026-0001: four digits, as the client's form writes it,
+ * rather than the six every other series uses.
+ */
+export const SALES_LEAD_PREFIX = 'FOB';
+const SALES_LEAD_WIDTH = 4;
+
+export function formatSalesLeadNo(year: number, sequence: number): string {
+  return formatDocumentNo(SALES_LEAD_PREFIX, year, sequence, SALES_LEAD_WIDTH);
+}
+
+/**
+ * MAX over every row, deactivated ones included: a Lead ID someone has quoted
+ * in an email is never handed to a different lead. The leads raised before the
+ * series carry no series_year and are not counted.
+ */
+export async function nextSalesLeadNo(db: TenantDb, tenantId: bigint, year: number): Promise<string> {
+  const pattern = `${SALES_LEAD_PREFIX}-${year}-%`;
+  const rows = await db.$queryRaw<{ max_seq: number | null }[]>`
+    SELECT MAX((regexp_replace(code, '^.*-', ''))::int) AS max_seq
+      FROM sales_lead
+     WHERE tenant_id = ${tenantId}
+       AND series_year = ${year}
+       AND code LIKE ${pattern}
+  `;
+  return formatSalesLeadNo(year, (rows[0]?.max_seq ?? 0) + 1);
 }

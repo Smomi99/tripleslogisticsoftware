@@ -219,8 +219,9 @@ describe('model tier registry', () => {
     // + freight_certificate (the client's sample of 2026-10-18)
     // + quotation_cost and quotation_cost_line (2026-10-18)
     // + ta_da_claim and ta_da_claim_line (2026-10-18)
-    // + inquiry_rate_charge (2026-10-26).
-    expect(known.length).toBe(116);
+    // + inquiry_rate_charge (2026-10-26)
+    // + sales_lead_document (docs/SALES_LEAD_FOB.md, 2026-10-26).
+    expect(known.length).toBe(117);
   });
 
   it('applies the caller row level security to every view', async () => {

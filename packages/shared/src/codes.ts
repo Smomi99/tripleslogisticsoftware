@@ -68,7 +68,9 @@ export const CODE_PREFIX = {
   // DESIGN-UPDATE-2026-10-04 §5: Purchase → Price List → Tariff.
   tariff: 'TRF',
 
-  // Sales
+  // Sales. The lead's own Lead ID is now the yearly FOB-2026-0001 series
+  // (lib/inquiry-no); LED is kept because the leads raised before the FOB form
+  // carry LED codes, and the prefix must never be reissued to something else.
   salesLead: 'LED',
 
   // Customer Service. The quotation itself uses the yearly series

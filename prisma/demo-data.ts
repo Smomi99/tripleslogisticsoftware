@@ -275,6 +275,9 @@ async function clear(tenantId: bigint, prefix: string = P): Promise<void> {
   await prisma.salesLeadFollowup.deleteMany({
     where: { ...t, lead: { code: { startsWith: prefix } } },
   });
+  await prisma.salesLeadDocument.deleteMany({
+    where: { ...t, lead: { code: { startsWith: prefix } } },
+  });
   await prisma.salesLead.deleteMany({ where: { ...t, ...demoCode } });
 
   await prisma.emailLog.deleteMany({ where: { ...t, templateKey: { startsWith: prefix } } });
@@ -607,23 +610,67 @@ async function seed(tenantId: bigint): Promise<void> {
   }
 
   // ------------------------------------------------------------ sales leads
+  //
+  // The FOB Sales Lead Form's fields (docs/SALES_LEAD_FOB.md), one lead at
+  // each step of its workflow, so the register, its KPIs and the follow-up
+  // due list all have something on them.
+  const usd = await prisma.currency.findFirst({
+    where: { currency: { startsWith: 'USD' }, deletedAt: null },
+    select: { id: true },
+  });
+  const hc40 = sizes.find((s) => s.code.includes('40HC')) ?? sizes[0]!;
+  const fromToday = (n: number): Date => day(daysAgo(-n));
   const leadPlan = [
-    ['LED-1', 'Rangpur Ceramics', 0, 3],
-    ['LED-2', 'Sylhet Tea Exporters', 0, 11],
-    ['LED-3', 'Barisal Jute Mills', 1, 25],
-    ['LED-4', 'Comilla Cold Storage', 3, 40],
-    ['LED-5', 'Khulna Seafood', 3, 70],
-    ['LED-6', 'Bogra Agro', 1, 150],
+    { s: 'LED-1', name: 'Rangpur Ceramics', owner: 0, ago: 3, status: 'NEW', pod: ham, volume: '4', revenue: '1350', profit: '120', prob: 20, control: 'UNKNOWN', buyer: 'Hanse Living GmbH', country: 'Germany', next: 2 },
+    { s: 'LED-2', name: 'Sylhet Tea Exporters', owner: 0, ago: 11, status: 'QUALIFIED', pod: ham, volume: '6', revenue: '1400', profit: '140', prob: 35, control: 'FREE_HAND', buyer: 'Teekontor Hamburg', country: 'Germany', next: 0 },
+    { s: 'LED-3', name: 'Barisal Jute Mills', owner: 1, ago: 25, status: 'QUOTED', pod: sin, volume: '12', revenue: '650', profit: '80', prob: 60, control: 'AGENT_NOMINATED', buyer: 'Straits Packaging Pte', country: 'Singapore', next: -2 },
+    { s: 'LED-4', name: 'Comilla Cold Storage', owner: 3, ago: 40, status: 'NEGOTIATION', pod: sin, volume: '3', revenue: '900', profit: '110', prob: 50, control: 'BUYING_HOUSE', buyer: 'Lion City Foods', country: 'Singapore', next: 5 },
+    { s: 'LED-5', name: 'Khulna Seafood', owner: 3, ago: 70, status: 'WON', pod: ham, volume: '8', revenue: '1500', profit: '160', prob: 100, control: 'FREE_HAND', buyer: 'Nordsee Fisch AG', country: 'Germany', next: null },
+    { s: 'LED-6', name: 'Bogra Agro', owner: 1, ago: 150, status: 'LOST', pod: sin, volume: '5', revenue: '700', profit: '60', prob: 0, control: 'BUYER_NOMINATED', buyer: 'Harvest Asia', country: 'Singapore', next: null },
   ] as const;
-  for (const [suffix, name, owner, ago] of leadPlan) {
+  for (const lead of leadPlan) {
+    const closed = lead.status === 'WON' || lead.status === 'LOST';
     await prisma.salesLead.create({
       data: {
         ...t,
-        code: `${P}${suffix}`,
-        name,
-        notes: 'Introduced at a trade fair. Wants indicative rates before committing.',
-        createdBy: employees[owner]!.userId,
-        createdAt: daysAgo(ago),
+        code: `${P}${lead.s}`,
+        leadDate: day(daysAgo(lead.ago)),
+        sourceId: sources[0]?.id ?? null,
+        ownerId: employees[lead.owner]!.id,
+        businessType: 'NEW_CUSTOMER',
+        priority: lead.prob >= 50 ? 'HIGH' : 'MEDIUM',
+        name: lead.name,
+        // A won lead is a customer by definition (§5 step 06).
+        customerId: lead.status === 'WON' ? customers[0]!.id : null,
+        exporterContact: 'Export Manager',
+        buyerName: lead.buyer,
+        buyerCountry: lead.country,
+        commodityItemId: commodities[0]!.id,
+        shipmentType: 'SEA',
+        loadingType: 'FCL',
+        polId: cgp.id,
+        podId: lead.pod.id,
+        containerSizeId: hc40.id,
+        monthlyVolume: lead.volume,
+        shipmentFrequency: 'MONTHLY',
+        incumbentForwarder: 'Incumbent Logistics Ltd',
+        requirements: 'Introduced at a trade fair. Wants indicative rates before committing.',
+        freightControl: lead.control,
+        status: lead.status,
+        currencyId: usd?.id ?? null,
+        revenuePerUnit: usd === null ? null : lead.revenue,
+        profitPerUnit: usd === null ? null : lead.profit,
+        winProbability: lead.prob,
+        nextFollowupDate: lead.next === null ? null : fromToday(lead.next),
+        outcomeReason:
+          lead.status === 'WON'
+            ? 'Beat the incumbent on free time at Hamburg.'
+            : lead.status === 'LOST'
+              ? 'The buyer nominated its own forwarder.'
+              : null,
+        closedAt: closed ? daysAgo(Math.max(lead.ago - 20, 1)) : null,
+        createdBy: employees[lead.owner]!.userId,
+        createdAt: daysAgo(lead.ago),
       },
     });
   }

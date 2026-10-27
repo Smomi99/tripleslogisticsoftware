@@ -94,6 +94,7 @@ export const TENANT_OWNED_MODELS = [
   'RolePermission',
   'SalesLead',
   'SalesLeadFollowup',
+  'SalesLeadDocument', // docs/SALES_LEAD_FOB.md §6: attachments to a lead
   // The shipment file (docs/MODULE_BOOKING_CARGO.md §2.1). Staff-only: a row
   // carries the customer, the exporter and the importer together, and §7 says
   // an agent never learns the customer's identity.

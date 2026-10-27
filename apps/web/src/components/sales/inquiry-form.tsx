@@ -134,18 +134,41 @@ function volumesOf(inquiry: InquiryDto | null): Record<string, VolumeCell> {
   return values;
 }
 
+/**
+ * Starting values for a NEW inquiry raised from somewhere else — a sales lead
+ * (docs/SALES_LEAD_FOB.md §5 step 03). Ignored when editing: an existing
+ * inquiry is opened as it was saved.
+ */
+export interface InquiryPrefill {
+  sourceId?: string;
+  customerId?: string;
+  shipmentType?: ShipmentType;
+  loadingType?: '' | LoadingType;
+  movementType?: MovementType;
+  polId?: string;
+  podId?: string;
+  commodityItemIds?: string[];
+  expectedShipmentDate?: string;
+  remarks?: string;
+  salesmanId?: string;
+  leadId?: string;
+}
+
 export function InquiryForm({
   inquiry,
+  prefill,
   onSaved,
   onCancel,
 }: {
   /** null raises a new inquiry; an inquiry edits that one. */
   inquiry: InquiryDto | null;
+  prefill?: InquiryPrefill;
   onSaved: (inquiry: InquiryDto) => void;
   onCancel: () => void;
 }) {
   const { authorizedRequest, authorizedList, can } = useSession();
   const isEdit = inquiry !== null;
+  const seed = isEdit ? undefined : prefill;
 
   const [options, setOptions] = useState<InquiryOptions>(EMPTY);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -156,14 +179,16 @@ export function InquiryForm({
 
   // §5.4's field order, kept as the order of this state block.
   const [inquiryDate, setInquiryDate] = useState(inquiry?.inquiryDate ?? today());
-  const [sourceId, setSourceId] = useState(inquiry?.sourceId ?? '');
-  const [shipmentType, setShipmentType] = useState<ShipmentType>(inquiry?.shipmentType ?? 'SEA');
-  const [customerId, setCustomerId] = useState(inquiry?.customerId ?? '');
-  const [movementType, setMovementType] = useState<MovementType>(
-    inquiry?.movementType ?? 'OUTBOUND',
+  const [sourceId, setSourceId] = useState(inquiry?.sourceId ?? seed?.sourceId ?? '');
+  const [shipmentType, setShipmentType] = useState<ShipmentType>(
+    inquiry?.shipmentType ?? seed?.shipmentType ?? 'SEA',
   );
-  const [polId, setPolId] = useState(inquiry?.polId ?? '');
-  const [podId, setPodId] = useState(inquiry?.podId ?? '');
+  const [customerId, setCustomerId] = useState(inquiry?.customerId ?? seed?.customerId ?? '');
+  const [movementType, setMovementType] = useState<MovementType>(
+    inquiry?.movementType ?? seed?.movementType ?? 'OUTBOUND',
+  );
+  const [polId, setPolId] = useState(inquiry?.polId ?? seed?.polId ?? '');
+  const [podId, setPodId] = useState(inquiry?.podId ?? seed?.podId ?? '');
   /**
    * §3 made commodity a multi-select, each line carrying its own HS code.
    *
@@ -174,7 +199,9 @@ export function InquiryForm({
     inquiry?.commodities.map((c) => ({
       commodityItemId: c.commodityItemId,
       hsCode: c.hsCode ?? '',
-    })) ?? [],
+    })) ??
+      seed?.commodityItemIds?.map((commodityItemId) => ({ commodityItemId, hsCode: '' })) ??
+      [],
   );
   const [goodsTypeId, setGoodsTypeId] = useState(inquiry?.goodsTypeId ?? '');
   const [weightKg, setWeightKg] = useState(inquiry?.weightKg ?? '');
@@ -183,7 +210,7 @@ export function InquiryForm({
   const [tosId, setTosId] = useState(inquiry?.tosId ?? '');
   const [modeId, setModeId] = useState(inquiry?.modeId ?? '');
   const [loadingType, setLoadingType] = useState<'' | LoadingType>(
-    inquiry?.loadingType ?? '',
+    inquiry?.loadingType ?? seed?.loadingType ?? '',
   );
   const [volumes, setVolumes] = useState<Record<string, VolumeCell>>(volumesOf(inquiry));
   // Who the inquiry goes to. Inbound offers agents, Outbound customers.
@@ -204,16 +231,17 @@ export function InquiryForm({
   const [emailsTouched, setEmailsTouched] = useState(inquiry?.notifyEmails != null);
   const [currencyId, setCurrencyId] = useState(inquiry?.currencyId ?? '');
   const [expectedShipmentDate, setExpectedShipmentDate] = useState(
-    inquiry?.expectedShipmentDate ?? '',
+    inquiry?.expectedShipmentDate ?? seed?.expectedShipmentDate ?? '',
   );
   const [validTo, setValidTo] = useState(inquiry?.validTo ?? '');
-  const [remarks, setRemarks] = useState(inquiry?.remarks ?? '');
-  const [salesmanId, setSalesmanId] = useState(inquiry?.salesmanId ?? '');
+  const [remarks, setRemarks] = useState(inquiry?.remarks ?? seed?.remarks ?? '');
+  const [salesmanId, setSalesmanId] = useState(inquiry?.salesmanId ?? seed?.salesmanId ?? '');
 
   const [extraCustomers, setExtraCustomers] = useState<LookupOption[]>([]);
   const [leads, setLeads] = useState<LookupOption[]>([]);
-  const [leadId, setLeadId] = useState(inquiry?.leadId ?? '');
+  const [leadId, setLeadId] = useState(inquiry?.leadId ?? seed?.leadId ?? '');
 
+  const hasSeededSalesman = seed?.salesmanId !== undefined && seed.salesmanId !== '';
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -224,10 +252,23 @@ export function InquiryForm({
         if (cancelled) return;
         setOptions(response.data);
         // §5.4: "Salesman defaults to the logged-in user's employee record."
-        // Only when raising — an existing inquiry keeps whoever owns it.
-        if (!isEdit && response.data.defaultSalesmanId !== null) {
+        // Only when raising — an existing inquiry keeps whoever owns it, and
+        // one raised from a lead keeps the lead's owner.
+        if (!isEdit && !hasSeededSalesman && response.data.defaultSalesmanId !== null) {
           setSalesmanId(response.data.defaultSalesmanId);
         }
+        // A prefilled commodity takes its HS code the way a picked one does.
+        setCommodities((current) =>
+          current.map((row) =>
+            row.hsCode !== ''
+              ? row
+              : {
+                  ...row,
+                  hsCode:
+                    response.data.commodities.find((c) => c.id === row.commodityItemId)?.hsCode ?? '',
+                },
+          ),
+        );
       } catch (error) {
         if (!cancelled) {
           setLoadError(error instanceof ApiError ? error.message : 'Could not load the form.');
@@ -237,7 +278,7 @@ export function InquiryForm({
     return () => {
       cancelled = true;
     };
-  }, [authorizedList, isEdit]);
+  }, [authorizedList, isEdit, hasSeededSalesman]);
 
   // §9 Q12: an inquiry records the lead it came from, when it came from one.
   useEffect(() => {
