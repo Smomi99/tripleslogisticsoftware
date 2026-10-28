@@ -87,7 +87,9 @@ before anyone has ranked it.
 
 ## 4. STEP 3 — VALIDATION RULES
 
-1. **POL and POD must both come from that carrier's own Service Port list.** This is the relation
+1. ~~**POL and POD must both come from that carrier's own Service Port list.**~~ **Changed 2026-10-28
+   (§8 Q1 answered): any port the workspace can use may be paired, still of the carrier's kind (rule 6).**
+   The original rule, kept for the record: This is the relation
    that makes the Service Port screen meaningful: you record which ports a carrier serves, then pair
    them. Enforce server-side; the dropdowns query `carrier_service_port` for that `carrier_id`, and
    the API rejects anything outside it with: *"Add London to this carrier's service ports before
@@ -169,6 +171,9 @@ pattern with different columns. If you find yourself writing a new table compone
 1. **Must POL/POD come from the carrier's Service Port list, or can any port be paired?** §4 rule 1
    assumes the former, since that is what makes the Service Port screen useful. If it's the latter,
    the Service Port screen becomes redundant and should probably be merged into this one.
+   **Answered 2026-10-28: any port.** The POL / POD dropdowns list every live port the workspace
+   can see, of the carrier's kind (seaports for MLO / NVOCC / SOC, airports for an airline), with
+   no cap. The Service Port screen stays as it is; whether to merge it is still open.
 2. **Are the ranks unique per lane?** Can two carriers both be `low_price_position = 1` on
    Chittagong → London? §4 rule 4 warns but allows. If they must be unique, the system needs a
    re-rank flow, not just a validation error.
