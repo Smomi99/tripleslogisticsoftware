@@ -12,6 +12,7 @@ export * from './business-matrix';
 export * from './agent';
 export * from './carrier';
 export * from './codes';
+export * from './copy-doc';
 export * from './commodity';
 export * from './countries';
 export * from './cost-head';

@@ -202,7 +202,7 @@ Migration `20261028120000_vgm_egm`. Route `/operation/vgm-egm`.
 
 ---
 
-## 3. COPY DOC UPLOAD (Documentation)
+## 3. COPY DOC UPLOAD (Documentation) — **built**
 
 ### 3.1 What the sheet shows
 
@@ -254,6 +254,27 @@ copy_document           (client: Copy doc upload)
 
 **Permission:** `DOCUMENTATION.COPY_DOC_UPLOAD` already exists. VIEW lists and downloads, CREATE
 uploads into an empty slot, EDIT replaces or removes.
+
+### 3.4 As built
+
+Migration `20261028140000_copy_document`. Route `/documentation/copy-doc-upload`.
+
+- **List.** Every booking that is not cancelled or rejected and has an approved schedule or an advise,
+  in both directions and modes. Mode and Direction filters narrow it, and search covers booking,
+  quotation, customer and exporter. The Action cell reads *Upload Doc · n of 9*: how many papers are
+  on file, counting what the system holds.
+- **The form** lists the nine papers in the sheet's order. Each reads *Uploaded*, *On file* (with
+  where from) or *Not on file*. The actions are Browse and upload, Upload a copy, Replace, or Remove
+  (confirmed, soft).
+  - A first copy needs CREATE. Replacing or removing needs EDIT.
+  - Removing a copy brings back what the system holds.
+- **Sources** are read by one loader and decided by one resolver, so the list's count and the form
+  cannot disagree. The House BL from BL Print is drawn when it is downloaded, as on Pre-Alert.
+- **Pre-Alert** now offers Copy Doc's house or master bill, by mode, when it has no upload of its own.
+  It reads as held elsewhere, with the note *Uploaded on Copy Doc upload*. `contentTypeOf` moved from
+  `pre-alert.route.ts` to `lib/storage.ts` for the new download routes.
+- Tests: `copy-doc.test.ts`, 9 cases, including both directions of the Pre-Alert link and two-workspace
+  isolation.
 
 ---
 

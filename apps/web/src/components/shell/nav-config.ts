@@ -132,6 +132,8 @@ const ROUTES: Record<string, RouteEntry> = {
   'DOCUMENTATION.BL_DRAFT': '/documentation/bl-draft',
   // BL Print (Menu K7) — the approved bills, to issue and print (§13).
   'DOCUMENTATION.BL_PRINT': '/documentation/bl-print',
+  // docs/DESIGN-UPDATE-2026-10-28.md §3, Menu K8.
+  'DOCUMENTATION.COPY_DOC_UPLOAD': '/documentation/copy-doc-upload',
   // Accounts (docs/MODULE_ACCOUNTS.md), Menu M3–M19.
   'ACCOUNTS.AWAITING_FREIGHT_INV': '/accounts/awaiting-freight-inv',
   'ACCOUNTS.DEBIT_INVOICE': '/accounts/debit-invoice',
