@@ -202,7 +202,9 @@ export function DebitInvoiceForm({
     const toLine = (l: LineDraft) => lineBody(l, l.source === 'AUTO' ? 'MANUAL' : l.source);
     return {
       invoiceDate,
-      customerId: mode.kind === 'other' ? customerId : null,
+      // A saved OTHER invoice still names its customer: the edit page shows it
+      // read-only, but every save of the sell side is checked for one.
+      customerId: mode.kind === 'other' || invoice?.kind === 'OTHER' ? customerId : null,
       shipmentId: null,
       currencyId,
       conversionRate: conversionRate.trim(),

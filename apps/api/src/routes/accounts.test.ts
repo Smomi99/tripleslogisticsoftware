@@ -653,6 +653,31 @@ describe('Debit Invoice list and Create New', () => {
     expect(res.body.data.booking).toBeNull();
   });
 
+  it('saves an OTHER draft again on its own page, keeping the customer it bills', async () => {
+    const list = await asA().get('/debit-invoices?status=DRAFT');
+    const id = list.body.data[0].id as string;
+    const resave = (customerId: string | null, unitPrice: string) => ({
+      invoiceDate: TODAY,
+      customerId,
+      shipmentId: null,
+      currencyId: bdt.toString(),
+      conversionRate: '1',
+      lines: [{ costHeadId: A.blHead.toString(), quantity: '1', unitPrice }],
+    });
+
+    // What the invoice page sent before the fix: the read-only customer left out.
+    const without = await asA().patch(`/debit-invoices/${id}`).send(resave(null, '2600'));
+    expect(without.status, JSON.stringify(without.body.error ?? {})).toBe(200);
+    expect(without.body.data.customerId).toBe(A.customerId.toString());
+    expect(without.body.data.totalAmount).toBe('2600.0000');
+
+    // What it sends now: the customer it shows.
+    const named = await asA().patch(`/debit-invoices/${id}`).send(resave(A.customerId.toString(), '2500'));
+    expect(named.status, JSON.stringify(named.body.error ?? {})).toBe(200);
+    expect(named.body.data.customerId).toBe(A.customerId.toString());
+    expect(named.body.data.totalAmount).toBe('2500.0000');
+  });
+
   it('lists both, newest first, with the status in one word', async () => {
     const res = await asA().get('/debit-invoices?limit=100');
     expect(res.status).toBe(200);
