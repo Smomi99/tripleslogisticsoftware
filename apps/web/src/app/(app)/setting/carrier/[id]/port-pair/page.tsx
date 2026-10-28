@@ -109,27 +109,21 @@ export default function CarrierPortPairPage() {
 
 /**
  * A lane needs two ports of the right kind, and there are two ways to have
- * none. Sending someone to the Service Port screen when the port is already
- * there is a dead end — reproduced with Maersk Line, whose only service port
- * was an airport.
+ * none: the workspace has no ports yet, or none of this carrier's kind. Any
+ * port may be paired (CR-001 Q1, answered 2026-10-28), so both are fixed on
+ * Setting → Sea-Air Port, not on the carrier's Service Port screen.
  */
 function noPortsMessage(lane: CarrierLanePorts): { title: string; description: string } {
   if (lane.excludedByType === 0) {
     return {
-      title: 'No service ports to pair',
-      description:
-        'A lane can only use ports this carrier already serves. Add them on the Service Port screen first.',
+      title: 'No ports to pair yet',
+      description: 'Add ports on Setting → Sea-Air Port, then pair them here.',
     };
   }
   const flies = lane.requiredPortType === 'AIRPORT';
-  const wanted = flies ? 'airports' : 'seaports';
-  const count =
-    lane.excludedByType === 1
-      ? `its one service port is ${flies ? 'a seaport' : 'an airport'}`
-      : `all ${lane.excludedByType} of its service ports are ${flies ? 'seaports' : 'airports'}`;
   return {
-    title: 'No usable service ports',
-    description: `This carrier's lanes run between ${wanted}, and ${count}. Add one on the Service Port screen, or correct what is there.`,
+    title: flies ? 'No airports to pair yet' : 'No seaports to pair yet',
+    description: `This carrier's lanes run between ${flies ? 'airports' : 'seaports'}, and the workspace has none. Add them on Setting → Sea-Air Port.`,
   };
 }
 

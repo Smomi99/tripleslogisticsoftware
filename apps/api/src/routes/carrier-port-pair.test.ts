@@ -50,7 +50,7 @@ let portOwnedByB: bigint;
 let cgp: bigint;
 let sin: bigint;
 let dac: bigint;
-/** A seaport nobody has added to a carrier's service ports. */
+/** A seaport nobody has added to a carrier's service ports — still pairable (Q1). */
 let unserved: bigint;
 
 function as(token: string, slug: string) {
@@ -205,26 +205,34 @@ afterAll(async () => {
 
 const lanes = (carrierId: bigint) => `/api/tenant/setting/carriers/${carrierId}/port-pairs`;
 
-describe('§4 rule 1 — a lane may only use ports the carrier serves', () => {
-  it('rejects a port that is not on the service port list, and names it', async () => {
+describe('CR-001 Q1, answered 2026-10-28 — any port may be paired, not only service ports', () => {
+  it('pairs a port that is not on the carrier service port list', async () => {
     const res = await as(tokenA, SLUG_A)
       .post(lanes(seaCarrier))
       .send({ polId: cgp.toString(), podId: unserved.toString() });
 
-    expect(res.status).toBe(400);
-    expect(res.body.error.message).toBe(
-      'Add CPP Hamburg to this carrier\'s service ports before pairing it.',
-    );
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    // Retired again, so the lanes the tests below count are only their own.
+    await owner.carrierPortPair.update({
+      where: { id: BigInt(res.body.data.id as string) },
+      data: { deletedAt: new Date(), isActive: false },
+    });
   });
 
-  it('offers only the served ports as options', async () => {
+  it('offers every usable port of the carrier kind, with no cap', async () => {
     const res = await as(tokenA, SLUG_A).get(
       `/api/tenant/setting/carriers/${seaCarrier}/lane-ports`,
     );
     expect(res.status).toBe(200);
-    const codes = res.body.data.ports.map((p: { portCode: string }) => p.portCode);
-    expect(codes.sort()).toEqual(['CPPCGP', 'CPPSIN']);
-    expect(res.body.data.excludedByType).toBe(0);
+    const codes: string[] = res.body.data.ports.map((p: { portCode: string }) => p.portCode);
+    expect(codes).toEqual(expect.arrayContaining(['CPPCGP', 'CPPSIN', 'CPPHAM']));
+    expect(codes).not.toContain('CPPDAC');
+    // The whole list: every live seaport this workspace can see, shared or its own.
+    const seaports = await owner.port.count({
+      where: { type: 'SEAPORT', deletedAt: null, isActive: true, OR: [{ tenantId: null }, { tenantId: tenantA }] },
+    });
+    expect(codes).toHaveLength(seaports);
+    expect(res.body.data.excludedByType).toBeGreaterThan(0);
   });
 });
 
@@ -250,17 +258,16 @@ describe('§4 rule 6 — ports match the carrier type', () => {
     expect(res.body.error.message).toBe('CPP Chittagong is a seaport, and this carrier flies.');
   });
 
-  it('leaves an airport out of a sea carrier lane options', async () => {
+  it('leaves the seaports out of an airline lane options', async () => {
     const res = await as(tokenA, SLUG_A).get(
       `/api/tenant/setting/carriers/${airCarrier}/lane-ports`,
     );
-    const codes = res.body.data.ports.map((p: { portCode: string }) => p.portCode);
-    // CGP is on this airline's service port list but is a seaport, so it is
-    // filtered server-side — not merely hidden in the dropdown.
-    expect(codes).toEqual(['CPPDAC']);
-    // And the screen is told WHY it is missing, so it can say something better
-    // than "add it on the Service Port screen" about a port already there.
-    expect(res.body.data.excludedByType).toBe(1);
+    const codes: string[] = res.body.data.ports.map((p: { portCode: string }) => p.portCode);
+    // Filtered server-side — not merely hidden in the dropdown.
+    expect(codes).toContain('CPPDAC');
+    expect(codes).not.toContain('CPPCGP');
+    // And the screen is told WHY ports are missing, so it can give the right advice.
+    expect(res.body.data.excludedByType).toBeGreaterThan(0);
     expect(res.body.data.requiredPortType).toBe('AIRPORT');
   });
 });
@@ -462,12 +469,9 @@ describe('§4 rule 10 — the carrier a pair points at', () => {
       .send({ polId: cgp.toString(), podId: portOwnedByB.toString() });
 
     expect(res.status).toBe(400);
-    // Not "Beta Private Port is not on the list" — A cannot see the port at
-    // all, so the message must not name it. §4 rule 1's check doubles as the
-    // scoping guard here.
-    expect(res.body.error.message).toBe(
-      "Choose a port of discharge from this carrier's service ports.",
-    );
+    // A cannot see the port at all, so the message must not name it. The
+    // usable-port lookup doubles as the scoping guard here.
+    expect(res.body.error.message).toBe('Choose a port of discharge from the list.');
   });
 
   it('keeps each workspace pair pointed at its own tenant row', async () => {

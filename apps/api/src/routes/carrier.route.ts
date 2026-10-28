@@ -938,39 +938,45 @@ function requiredPortType(carrierTypeName: string): 'SEAPORT' | 'AIRPORT' | null
 }
 
 /**
- * Resolves one end of a lane.
+ * The ports a lane may use: every port this workspace can see and has not
+ * switched off (§7A rule 7).
  *
- * §4 rule 1: a lane may only use a port this carrier is already recorded as
- * serving. That relation is what makes the Service Port screen worth keeping —
- * you say where a carrier calls, then you pair those calls into lanes.
+ * CR-001 §8 Q1, answered 2026-10-28: any port, not only the carrier's service
+ * ports. §4 rule 1 had limited the dropdown to the Service Port list, which
+ * left most carriers with one port or none to pair.
+ */
+async function lanePortWhere(db: TenantDb): Promise<Prisma.PortWhereInput> {
+  const inactive = await inactiveMasters(db);
+  return { ...excludeInactive(inactive, 'port'), deletedAt: null, isActive: true };
+}
+
+/**
+ * Resolves one end of a lane: a port the workspace can use (Q1, above), of the
+ * carrier's kind (§4 rule 6).
  */
 async function findLanePort(
   db: TenantDb,
-  carrierId: bigint,
   portId: bigint,
   wanted: 'SEAPORT' | 'AIRPORT' | null,
   label: string,
 ) {
-  const servicePort = await db.carrierServicePort.findFirst({
-    where: { carrierId, portId, deletedAt: null, isActive: true },
-    select: { port: { select: { id: true, name: true, type: true } } },
+  // The id and excludeInactive() both set `id`, so they sit in an AND.
+  const usable = await lanePortWhere(db);
+  const port = await db.port.findFirst({
+    where: { AND: [{ id: portId }, usable] },
+    select: { id: true, name: true, type: true },
   });
-  if (servicePort === null) {
-    const port = await db.port.findFirst({ where: { id: portId }, select: { name: true } });
-    throw HttpError.badRequest(
-      port === null
-        ? `Choose a ${label} from this carrier's service ports.`
-        : `Add ${port.name} to this carrier's service ports before pairing it.`,
-    );
-  }
-  if (wanted !== null && servicePort.port.type !== wanted) {
+  // Another workspace's private port is not found either, so the message
+  // must not name it.
+  if (port === null) throw HttpError.badRequest(`Choose a ${label} from the list.`);
+  if (wanted !== null && port.type !== wanted) {
     throw HttpError.badRequest(
       wanted === 'SEAPORT'
-        ? `${servicePort.port.name} is an airport, and this carrier ships by sea.`
-        : `${servicePort.port.name} is a seaport, and this carrier flies.`,
+        ? `${port.name} is an airport, and this carrier ships by sea.`
+        : `${port.name} is a seaport, and this carrier flies.`,
     );
   }
-  return servicePort.port;
+  return port;
 }
 
 /** The carrier plus the port type its lanes are limited to. */
@@ -983,7 +989,7 @@ async function findLaneCarrier(db: TenantDb, carrierId: bigint) {
   return { ...carrier, portType: requiredPortType(carrier.type.name) };
 }
 
-/** The ports a lane may use — §4 rule 1's dropdown, resolved server-side. */
+/** The ports a lane may use — the POL / POD dropdown, resolved server-side. */
 carrierRouter.get(
   '/:id/lane-ports',
   requirePermission(`${PAIR_FEATURE}.VIEW`),
@@ -993,28 +999,24 @@ carrierRouter.get(
 
     const result = await withTenant(auth.tenantId, async (db) => {
       const carrier = await findLaneCarrier(db, carrierId);
-      const rows = await db.carrierServicePort.findMany({
-        where: { carrierId, deletedAt: null, isActive: true },
-        select: {
-          port: { select: { id: true, name: true, portCode: true, country: true, type: true } },
-        },
-        orderBy: { port: { name: 'asc' } },
+      // Every usable port, with no cap: the dropdown is the whole list (Q1).
+      const rows = await db.port.findMany({
+        where: await lanePortWhere(db),
+        select: { id: true, name: true, portCode: true, country: true, type: true },
+        orderBy: [{ name: 'asc' }, { id: 'asc' }],
       });
 
       // Rule 6 is applied here rather than in the query so the screen can tell
-      // "this carrier serves nothing yet" from "everything it serves is the
-      // wrong kind of port". Those need different advice, and the second one
-      // sent users to a screen where the port was already sitting.
-      const usable = rows.filter(
-        (row) => carrier.portType === null || row.port.type === carrier.portType,
-      );
+      // "there are no ports yet" from "there are none of this carrier's kind".
+      // Those need different advice.
+      const usable = rows.filter((port) => carrier.portType === null || port.type === carrier.portType);
 
       return {
-        ports: usable.map((row) => ({
-          id: row.port.id.toString(),
-          portCode: row.port.portCode,
-          name: row.port.name,
-          country: row.port.country,
+        ports: usable.map((port) => ({
+          id: port.id.toString(),
+          portCode: port.portCode,
+          name: port.name,
+          country: port.country,
         })),
         excludedByType: rows.length - usable.length,
         requiredPortType: carrier.portType,
@@ -1117,8 +1119,8 @@ carrierRouter.post(
 
     const created = await withTenant(auth.tenantId, async (db) => {
       const carrier = await findLaneCarrier(db, carrierId);
-      const pol = await findLanePort(db, carrierId, polId, carrier.portType, 'port of loading');
-      const pod = await findLanePort(db, carrierId, podId, carrier.portType, 'port of discharge');
+      const pol = await findLanePort(db, polId, carrier.portType, 'port of loading');
+      const pod = await findLanePort(db, podId, carrier.portType, 'port of discharge');
 
       // §4 rule 3: a second row for the same lane is never what the user meant.
       // The id travels in `fields` so the screen can reopen that row for edit
@@ -1185,8 +1187,8 @@ carrierRouter.patch(
       if (existing === null) throw HttpError.notFound('Port pair not found.');
 
       const carrier = await findLaneCarrier(db, carrierId);
-      const pol = await findLanePort(db, carrierId, polId, carrier.portType, 'port of loading');
-      const pod = await findLanePort(db, carrierId, podId, carrier.portType, 'port of discharge');
+      const pol = await findLanePort(db, polId, carrier.portType, 'port of loading');
+      const pod = await findLanePort(db, podId, carrier.portType, 'port of discharge');
 
       const clash = await db.carrierPortPair.findFirst({
         where: { carrierId, polId, podId, deletedAt: null, NOT: { id: pairId } },

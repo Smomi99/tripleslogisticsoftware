@@ -208,7 +208,7 @@ export interface CarrierLanePortOption {
  */
 export interface CarrierLanePorts {
   ports: CarrierLanePortOption[];
-  /** Service ports of the wrong type for this carrier — rule 6 excluded them. */
+  /** Ports of the wrong type for this carrier — rule 6 excluded them. */
   excludedByType: number;
   /** SEAPORT for MLO/NVOCC/SOC, AIRPORT for Airline, null if unconstrained. */
   requiredPortType: 'SEAPORT' | 'AIRPORT' | null;
