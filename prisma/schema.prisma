@@ -331,6 +331,10 @@ model Tenant {
 
   customerActivities CustomerActivity[]
 
+  /// DESIGN-UPDATE-2026-10-28 §1.
+  tradeLanes     TradeLane[]
+  tradeLanePorts TradeLanePort[]
+
   @@index([slug])
   @@index([status])
   @@index([currencyId])
@@ -468,6 +472,11 @@ model Port {
 
   /// DESIGN-UPDATE-2026-10-04 §5: the tariffs charged at this POL.
   tariffs Tariff[] @relation("TariffPol")
+
+  /// DESIGN-UPDATE-2026-10-28 §1: the lanes this port is the single side of,
+  /// and the lanes it is one of the many ports of.
+  tradeLanes     TradeLane[]     @relation("TradeLaneSinglePort")
+  tradeLanePorts TradeLanePort[] @relation("TradeLaneManyPort")
 
   @@unique([tenantId, code])
   /// The natural key (tenant_id, port_code) is UNIQUE only over live rows, and
@@ -2042,6 +2051,11 @@ model User {
 
   customerActivitiesCreated CustomerActivity[] @relation("CustomerActivityCreatedBy")
   customerActivitiesUpdated CustomerActivity[] @relation("CustomerActivityUpdatedBy")
+
+  tradeLanesCreated     TradeLane[]     @relation("TradeLaneCreatedBy")
+  tradeLanesUpdated     TradeLane[]     @relation("TradeLaneUpdatedBy")
+  tradeLanePortsCreated TradeLanePort[] @relation("TradeLanePortCreatedBy")
+  tradeLanePortsUpdated TradeLanePort[] @relation("TradeLanePortUpdatedBy")
 
   @@unique([tenantId, username])
   @@unique([tenantId, email])
@@ -5970,6 +5984,86 @@ model CustomerActivity {
   @@index([customerPicId])
   @@index([tenantId, nextFollowupDate])
   @@map("customer_activity")
+}
+
+/// client: Business Matrix — one trade lane (docs/DESIGN-UPDATE-2026-10-28.md §1).
+///
+/// Outbound is one POL to many PODs (row 6: "Single POL", "Muliple POD").
+/// Inbound is the mirror image, many POLs to one POD (row 27, whose two labels
+/// are swapped). `portId` is the single side; `ports` is the many side. The
+/// matrix itself is never stored: it is counted from inquiries, quotations,
+/// load plans and invoices each time it is read.
+model TradeLane {
+  tenantId     BigInt       @map("tenant_id")
+  id           BigInt       @id @default(autoincrement())
+  /// TLN-001.
+  code         String       @db.VarChar(32)
+  /// E5 "Trade lane name", e.g. "EU Base port".
+  name         String       @db.VarChar(200)
+  /// The section the lane sits in: OUTBOUND SHIPMENT (E4) or INBOUND SHIPMENT
+  /// (E25). The sheet has no Cross Border section, so a CHECK keeps it out.
+  movementType MovementType @map("movement_type")
+  /// The POL of an outbound lane, the POD of an inbound one.
+  portId       BigInt       @map("port_id")
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  /// Port is system-capable (§7A rule 7): single column plus the guard trigger.
+  port   Port   @relation("TradeLaneSinglePort", fields: [portId], references: [id], onDelete: Restrict)
+
+  createdByUser User? @relation("TradeLaneCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("TradeLaneUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  ports TradeLanePort[]
+
+  /// The name is unique per direction over live lanes, case-insensitively: a
+  /// partial unique index in the migration.
+  @@unique([tenantId, code])
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([tenantId, movementType])
+  @@index([portId])
+  @@map("trade_lane")
+}
+
+/// client: Business Matrix — the many side of a lane, "Muliple POD" outbound
+/// and the POLs inbound. One matrix row each. Saving the lane retires these
+/// and writes them again, as tariff_line does, so the audit trail keeps the
+/// lane as it was.
+model TradeLanePort {
+  tenantId    BigInt @map("tenant_id")
+  id          BigInt @id @default(autoincrement())
+  tradeLaneId BigInt @map("trade_lane_id")
+  portId      BigInt @map("port_id")
+  /// The order the ports were chosen in, which is the order the matrix reads.
+  sortOrder   Int    @default(0) @map("sort_order")
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant    Tenant    @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  tradeLane TradeLane @relation(fields: [tenantId, tradeLaneId], references: [tenantId, id], onDelete: Restrict, map: "trade_lane_port_trade_lane_id_fkey")
+  port      Port      @relation("TradeLaneManyPort", fields: [portId], references: [id], onDelete: Restrict)
+
+  createdByUser User? @relation("TradeLanePortCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("TradeLanePortUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  /// One live row per lane per port: a partial unique index in the migration.
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([tradeLaneId])
+  @@index([portId])
+  @@map("trade_lane_port")
 }
 
 /// client: the PO grid, row 17 of both advise sheets.
