@@ -67,6 +67,8 @@ export const CODE_PREFIX = {
   freightRate: 'RATE',
   // DESIGN-UPDATE-2026-10-04 §5: Purchase → Price List → Tariff.
   tariff: 'TRF',
+  // DESIGN-UPDATE-2026-10-28 §1: Sales → Business Matrix.
+  tradeLane: 'TLN',
 
   // Sales. The lead's own Lead ID is now the yearly FOB-2026-0001 series
   // (lib/inquiry-no); LED is kept because the leads raised before the FOB form

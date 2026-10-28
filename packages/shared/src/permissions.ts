@@ -381,6 +381,17 @@ export const FEATURES: readonly FeatureDefinition[] = [
    * the sheet's Record. Editing the customer itself stays CRM.CUSTOMER's.
    */
   { module: 'SALES', feature: 'SALES.LOCAL_SALES', label: 'Local Sales', actions: ['VIEW', 'CREATE'] },
+  /*
+   * docs/DESIGN-UPDATE-2026-10-28.md §1 (Menu D10): trade lanes and the matrix
+   * counted over them. CREATE is the sheet's `add`. The figures are read, never
+   * written, so VIEW alone shows the whole matrix.
+   */
+  {
+    module: 'SALES',
+    feature: 'SALES.BUSINESS_MATRIX',
+    label: 'Business Matrix',
+    actions: ['VIEW', 'CREATE', 'EDIT', 'TOGGLE_STATUS'],
+  },
 
   // -- 3. Customer Service ---------------------------------------------------
   /*

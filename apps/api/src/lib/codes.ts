@@ -26,6 +26,7 @@ const CODE_TABLES = {
   mailSignatureLogo: 'mail_signature_logo',
   port: 'port',
   tariff: 'tariff',
+  tradeLane: 'trade_lane',
   costHead: 'cost_head',
   costUnit: 'cost_unit',
   currency: 'currency',

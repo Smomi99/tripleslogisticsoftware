@@ -71,6 +71,8 @@ const ROUTES: Record<string, RouteEntry> = {
   'SALES.SALES_LEAD_FOLLOWUP': '/sales/sales-lead-followup',
   // docs/DESIGN-UPDATE-2026-10-04.md §6, Menu D9.
   'SALES.LOCAL_SALES': '/sales/local-sales',
+  // docs/DESIGN-UPDATE-2026-10-28.md §1, Menu D10.
+  'SALES.BUSINESS_MATRIX': '/sales/business-matrix',
   'SETTING.SEA_AIR_PORT': '/setting/port',
   'SETTING.COST_HEAD': '/setting/cost-head',
   'SETTING.CURRENCY': '/setting/currency',

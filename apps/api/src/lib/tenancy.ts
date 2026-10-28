@@ -120,6 +120,8 @@ export const TENANT_OWNED_MODELS = [
   'Tariff', // DESIGN-UPDATE-2026-10-04 §5
   'TariffLine', // DESIGN-UPDATE-2026-10-04 §5
   'CustomerActivity', // DESIGN-UPDATE-2026-10-04 §6: Local Sales activity log
+  'TradeLane', // DESIGN-UPDATE-2026-10-28 §1: Business Matrix
+  'TradeLanePort', // DESIGN-UPDATE-2026-10-28 §1
   'BlDraft',
   'BlDraftContainer',
   'BlTemplate',
