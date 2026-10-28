@@ -225,6 +225,9 @@ const SYSTEM_LOOKUPS = {
     'Air-Master Coloader',
     // Added 2026-09-18 at the client's request.
     'Warehouse',
+    // Added 2026-10-28 at the client's request.
+    'C&F Agent',
+    'Trucking Company',
   ],
   /*
    * Appended only, never reordered. The seeder keys these by a code derived
