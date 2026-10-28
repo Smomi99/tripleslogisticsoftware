@@ -119,7 +119,7 @@ Migration `20261028100000_trade_lane`. Route `/sales/business-matrix`.
 
 ---
 
-## 2. UPLOAD VGM & EGM (Operation)
+## 2. UPLOAD VGM & EGM (Operation) — **built**
 
 ### 2.1 What the sheet shows
 
@@ -174,6 +174,31 @@ egm_document            (client: VGM & EGM → EGM, "Multiple file can be upload
 
 **Permission:** `OPERATION.VGM_EGM`, with VIEW · CREATE · EDIT. CREATE records a first VGM and adds an
 EGM file. EDIT changes a VGM and removes an EGM file.
+
+### 2.4 As built
+
+Migration `20261028120000_vgm_egm`. Route `/operation/vgm-egm`.
+
+- **List.** OUTBOUND bookings that are not cancelled or rejected and have an approved schedule or an
+  advise (Pre-Alert's candidates). There is a Sea / Air switch (§6 Q7), Pending / Uploaded / All views
+  and search. A sea booking shows each finalised container on its own line, with its Container no, CLP
+  No and VGM status side by side, as the milestone screens stack containers. That keeps one row per
+  booking, so the page count stays true. A booking with no finalised CLP reads *No finalised CLP yet*.
+  - **Pending** means the VGM of any container, or the EGM, is still missing. Air only waits on the EGM.
+  - Containers come from `clp_booking`, so a consolidated box shows under each of its bookings and
+    carries one VGM.
+- **VGM** (per container): *Record VGM* opens Carrier Booking No, VGM (kg), Gross Weight (kg), Name and
+  the file.
+  - Carrier Booking No opens on the one already given for the booking's other containers. Gross Weight
+    opens on the CLP's total.
+  - The API refuses a draft plan (`CLP_NOT_FINAL`), an inbound container (`NOT_OUTBOUND`), a blank
+    name, and a VGM below the gross weight. The last is a CHECK too.
+  - The first save needs CREATE, a change needs EDIT. A replaced file is removed from storage after
+    the row points at the new one, as on IGM Update.
+- **EGM** (per advise): the dialog shows BL Number, MBL Number and carrier from the advise (HAWB, MAWB
+  and Airline on air). Several files can be chosen at once and go up one by one, with progress. A copy
+  is removed with a confirmation (EDIT). The removal is soft, and the file stays.
+- Tests: `vgm-egm.test.ts`, 10 cases, including two-workspace isolation.
 
 ---
 

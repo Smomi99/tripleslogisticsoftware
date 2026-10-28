@@ -331,9 +331,11 @@ model Tenant {
 
   customerActivities CustomerActivity[]
 
-  /// DESIGN-UPDATE-2026-10-28 §1.
+  /// DESIGN-UPDATE-2026-10-28 §1–§2.
   tradeLanes     TradeLane[]
   tradeLanePorts TradeLanePort[]
+  vgms           Vgm[]
+  egmDocuments   EgmDocument[]
 
   @@index([slug])
   @@index([status])
@@ -2056,6 +2058,10 @@ model User {
   tradeLanesUpdated     TradeLane[]     @relation("TradeLaneUpdatedBy")
   tradeLanePortsCreated TradeLanePort[] @relation("TradeLanePortCreatedBy")
   tradeLanePortsUpdated TradeLanePort[] @relation("TradeLanePortUpdatedBy")
+  vgmsCreated           Vgm[]           @relation("VgmCreatedBy")
+  vgmsUpdated           Vgm[]           @relation("VgmUpdatedBy")
+  egmDocumentsCreated   EgmDocument[]   @relation("EgmDocumentCreatedBy")
+  egmDocumentsUpdated   EgmDocument[]   @relation("EgmDocumentUpdatedBy")
 
   @@unique([tenantId, username])
   @@unique([tenantId, email])
@@ -5265,6 +5271,8 @@ model Clp {
   bookings          ClpBooking[]
   adviseLines       ShipmentAdviseLine[]
   blDraftContainers BlDraftContainer[]
+  /// DESIGN-UPDATE-2026-10-28 §2: the container's VGM.
+  vgms              Vgm[]
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -5518,6 +5526,8 @@ model ShipmentAdvise {
   /// CR-005: every booking this advise covers, the one it was made from
   /// included.
   bookings ShipmentAdviseBooking[]
+  /// DESIGN-UPDATE-2026-10-28 §2: the EGM copies filed against this bill.
+  egmDocuments EgmDocument[]
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])
@@ -5847,6 +5857,82 @@ model PreAlert {
   @@index([agentId])
   @@index([sentBy])
   @@map("pre_alert")
+}
+
+/// client: VGM & EGM → VGM (docs/DESIGN-UPDATE-2026-10-28.md §2).
+///
+/// The SOLAS verified gross mass of one packed container, so it hangs off the
+/// load plan: one live row per finalised CLP. A container shared by several
+/// bookings (CR-002) has one VGM, shown under each of them. The list reads
+/// Uploaded once the file is in; until then, Pending, whatever was typed.
+model Vgm {
+  tenantId BigInt @map("tenant_id")
+  id       BigInt @id @default(autoincrement())
+  clpId    BigInt @map("clp_id")
+
+  /// B14 "Carrier Booking No". Nowhere else in the system: the carrier's own
+  /// reference, typed here.
+  carrierBookingNo String   @map("carrier_booking_no") @db.VarChar(64)
+  /// B18 "VGM": the packed container's weight, cargo and tare together, kg.
+  vgmKg            Decimal  @map("vgm_kg") @db.Decimal(18, 3)
+  /// D18 "Gross Weight": the cargo's, opening on the CLP's total.
+  grossWeightKg    Decimal? @map("gross_weight_kg") @db.Decimal(18, 3)
+  /// B21 "Name": the person who signs the declaration.
+  signatoryName    String   @map("signatory_name") @db.Text
+  /// B24 "Upload VGM file". The storage key, never the bytes (CLAUDE.md §2).
+  vgmFile          String?  @map("vgm_file") @db.Text
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  clp    Clp    @relation(fields: [tenantId, clpId], references: [tenantId, id], onDelete: Restrict, map: "vgm_clp_id_fkey")
+
+  createdByUser User? @relation("VgmCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("VgmUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  /// One live VGM per container: a partial unique index in the migration.
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([clpId])
+  @@map("vgm")
+}
+
+/// client: VGM & EGM → EGM, "Upload EGM copy" — "Multiple file can be
+/// uploaded" (J17).
+///
+/// The EGM panel names the BL Number, the MBL Number and the carrier, which
+/// the shipment advise holds, so the copies hang off the advise. Bookings that
+/// share one advise and one BL (CR-005) share its EGM. Removing a copy
+/// soft-deletes it; the file stays, as a sales lead's attachment does.
+model EgmDocument {
+  tenantId BigInt @map("tenant_id")
+  id       BigInt @id @default(autoincrement())
+  adviseId BigInt @map("advise_id")
+  /// The storage key, never the bytes (CLAUDE.md §2).
+  fileKey  String @map("file_key") @db.Text
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant Tenant         @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  advise ShipmentAdvise @relation(fields: [tenantId, adviseId], references: [tenantId, id], onDelete: Restrict, map: "egm_document_advise_id_fkey")
+
+  createdByUser User? @relation("EgmDocumentCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("EgmDocumentUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([adviseId])
+  @@map("egm_document")
 }
 
 /// client: Tarrif — "Port Tarrif , CFS Charge" (H5), read as the two types

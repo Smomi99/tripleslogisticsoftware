@@ -48,4 +48,5 @@ export * from './tariff';
 export * from './user';
 export * from './vendor';
 export * from './vessel';
+export * from './vgm-egm';
 export * from './quotation';

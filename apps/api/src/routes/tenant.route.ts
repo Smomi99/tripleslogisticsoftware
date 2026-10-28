@@ -43,6 +43,7 @@ import {
   shipmentWorklistRouter,
 } from './shipment-worklist.route';
 import { inboundRouter } from './inbound.route';
+import { vgmEgmRouter } from './vgm-egm.route';
 import { incomeStatementRouter } from './income-statement.route';
 import { milestoneRouter } from './milestone.route';
 import { localSalesRouter } from './local-sales.route';
@@ -112,6 +113,8 @@ tenantRouter.use('/ops', clpRouter);
 tenantRouter.use('/ops', opsWorklistRouter);
 // docs/DESIGN-UPDATE-2026-10-04.md §4: IGM Submission and DO Issue, inbound only.
 tenantRouter.use('/ops', inboundRouter);
+// docs/DESIGN-UPDATE-2026-10-28.md §2: Upload VGM & EGM, outbound only.
+tenantRouter.use('/ops', vgmEgmRouter);
 
 // Documentation (docs/MODULE_DOCUMENTATION.md).
 tenantRouter.use('/documentation', shipmentAdviseRouter);
