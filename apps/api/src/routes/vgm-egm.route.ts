@@ -13,6 +13,7 @@ import {
 } from '@ff/shared';
 
 import { Prisma } from '../generated/prisma/client';
+import { LIVE_MEMBERSHIP } from '../lib/advise-group';
 import { HttpError } from '../lib/http-error';
 import { milestonePicks, milestoneRows } from '../lib/milestone';
 import { parseId } from '../lib/request';
@@ -111,6 +112,8 @@ const EGM_SELECT = {
   houseBlNo: true,
   mblNo: true,
   carrier: { select: { name: true } },
+  // CR-005: one advise, one BL, several bookings — they share its EGM.
+  bookings: { where: LIVE_MEMBERSHIP, orderBy: { shipmentId: 'asc' }, select: { shipment: { select: { code: true } } } },
   egmDocuments: {
     where: { deletedAt: null },
     orderBy: { id: 'asc' },
@@ -127,6 +130,7 @@ function egmDto(row: EgmRecord): EgmDto {
     houseBlNo: row.houseBlNo,
     mblNo: row.mblNo,
     carrierName: row.carrier.name,
+    bookingCodes: row.bookings.map((b) => b.shipment.code),
     files: row.egmDocuments.map((d) => ({
       id: d.id.toString(),
       fileName: displayNameFromKey(d.fileKey),
@@ -183,6 +187,12 @@ vgmEgmRouter.get('/vgm-egm', requirePermission(`${FEATURE}.VIEW`), async (req, r
                   totalGrossWeightKg: true,
                   containerSize: { select: { name: true } },
                   vgms: { where: { deletedAt: null }, select: VGM_SELECT },
+                  // A consolidated box (CR-002) carries several bookings and one VGM.
+                  bookings: {
+                    where: { deletedAt: null, shipment: { deletedAt: null } },
+                    orderBy: { shipmentId: 'asc' },
+                    select: { shipment: { select: { code: true } } },
+                  },
                 },
               },
             },
@@ -205,6 +215,7 @@ vgmEgmRouter.get('/vgm-egm', requirePermission(`${FEATURE}.VIEW`), async (req, r
             sealNo: clp.sealNo,
             size: clp.containerSize.name,
             cargoGrossWeightKg: clp.totalGrossWeightKg?.toFixed(3) ?? null,
+            bookingCodes: clp.bookings.map((b) => b.shipment.code),
             vgm: vgm === undefined ? null : vgmDto(vgm),
           };
         });

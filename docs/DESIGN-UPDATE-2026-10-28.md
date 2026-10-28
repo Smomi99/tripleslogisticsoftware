@@ -187,6 +187,10 @@ Migration `20261028120000_vgm_egm`. Route `/operation/vgm-egm`.
   - **Pending** means the VGM of any container, or the EGM, is still missing. Air only waits on the EGM.
   - Containers come from `clp_booking`, so a consolidated box shows under each of its bookings and
     carries one VGM.
+  - **Shared is said out loud** (2026-10-28, after the DEMO-EFR bookings read Uploaded together). A
+    container or bill with more than one booking reads *Shared with …* on its line. The VGM and EGM
+    dialogs open with *One container, one VGM* or *One bill, one EGM*, naming the other bookings. The
+    save toast says where else the VGM shows.
 - **VGM** (per container): *Record VGM* opens Carrier Booking No, VGM (kg), Gross Weight (kg), Name and
   the file.
   - Carrier Booking No opens on the one already given for the booking's other containers. Gross Weight
