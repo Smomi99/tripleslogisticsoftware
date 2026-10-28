@@ -1046,6 +1046,10 @@ export interface ShipmentScheduleDto {
   cutOffDate: string | null;
   vgmDate: string | null;
   siDate: string | null;
+  /** The carrier's (airline's) booking no, client 2026-10-28. */
+  carrierBookingNo: string | null;
+  /** The uploaded file's own name, when there is one. */
+  bookingFileName: string | null;
   transitType: (typeof TRANSIT_TYPES)[number];
   proposedAt: string;
   decidedAt: string | null;
@@ -1142,6 +1146,17 @@ export const shipmentScheduleInputSchema = z
     cutOffDate: isoDateTime.nullish(),
     vgmDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use the date picker.').nullish(),
     siDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use the date picker.').nullish(),
+    carrierBookingNo: z
+      .string()
+      .trim()
+      .max(64, 'A carrier booking no is at most 64 characters.')
+      .nullish()
+      .transform((v) => (v == null || v === '' ? null : v)),
+    /**
+     * Carry the live version's booking file into this one when no new file is
+     * sent. False drops it: the operator removed it on the form.
+     */
+    keepBookingFile: z.boolean().optional(),
     transitType: z.enum(TRANSIT_TYPES),
     legs: z.array(scheduleLegInputSchema).min(1, 'A schedule needs at least one leg.'),
   })

@@ -94,6 +94,11 @@ export interface VgmContainerDto {
   size: string;
   /** The CLP's total gross weight, which Gross Weight opens on. */
   cargoGrossWeightKg: string | null;
+  /**
+   * Every booking in the container, this one included. A consolidated box
+   * (CR-002) has one VGM, so it reads the same under each of them.
+   */
+  bookingCodes: string[];
   vgm: VgmDto | null;
 }
 
@@ -114,6 +119,8 @@ export interface EgmDto {
   mblNo: string | null;
   /** K13 "carrier". */
   carrierName: string;
+  /** Every booking on the advise (CR-005). They share these copies. */
+  bookingCodes: string[];
   files: EgmFileDto[];
 }
 
@@ -127,4 +134,9 @@ export interface VgmEgmRow extends MilestoneRow {
   /** Null until the booking has a live shipment advise, which the EGM is filed against. */
   egm: EgmDto | null;
   egmStatus: VgmEgmStatus;
+  /**
+   * The Carrier Booking No on the schedule the booking sails on (the vessel
+   * schedule form, 2026-10-28). A new VGM opens on it.
+   */
+  scheduleCarrierBookingNo: string | null;
 }

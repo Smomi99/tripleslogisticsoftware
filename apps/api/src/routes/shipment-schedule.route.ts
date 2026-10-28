@@ -15,9 +15,11 @@ import { queueMail } from '../lib/email-queue';
 import { HttpError } from '../lib/http-error';
 import { parseId, parseRefId } from '../lib/request';
 import { transitionShipment } from '../lib/shipment-status';
+import { contentTypeOf, displayNameFromKey, openFile, putFile } from '../lib/storage';
 import { withTenant } from '../lib/tenant-client';
 import { authenticate } from '../middleware/authenticate';
 import { requirePermission } from '../middleware/require-permission';
+import { uploadSingle } from '../middleware/upload';
 
 /**
  * Vessel / Flight Booking (docs/MODULE_BOOKING_CARGO.md §6.4) — phase E.
@@ -79,6 +81,8 @@ function toDto(row: ScheduleRow): ShipmentScheduleDto {
     cutOffDate: row.cutOffDate === null ? null : row.cutOffDate.toISOString(),
     vgmDate: row.vgmDate === null ? null : row.vgmDate.toISOString().slice(0, 10),
     siDate: row.siDate === null ? null : row.siDate.toISOString().slice(0, 10),
+    carrierBookingNo: row.carrierBookingNo,
+    bookingFileName: row.bookingFile === null ? null : displayNameFromKey(row.bookingFile),
     transitType: row.transitType,
     proposedAt: row.proposedAt.toISOString(),
     decidedAt: row.decidedAt === null ? null : row.decidedAt.toISOString(),
@@ -154,14 +158,30 @@ shipmentScheduleRouter.get(
  *
  * The leg continuity §6.4 asks for is enforced by the shared schema, so the
  * client and the server refuse exactly the same schedules.
+ *
+ * JSON, or multipart when a booking file comes with it (client, 2026-10-28):
+ * the schedule then travels as one `payload` field beside the file, because
+ * its legs are nested and form fields are flat.
  */
 shipmentScheduleRouter.post(
   '/bookings/:id/schedules',
   requirePermission(`${FEATURE}.CREATE`),
+  uploadSingle,
   async (req, res) => {
     const auth = req.auth!;
     const shipmentId = parseId(req.params.id, 'booking');
-    const input = shipmentScheduleInputSchema.parse(req.body);
+    const file = req.file;
+    let body: unknown = req.body;
+    if (file !== undefined) {
+      const raw = (req.body as { payload?: unknown }).payload;
+      if (typeof raw !== 'string') throw HttpError.badRequest('The schedule did not come with the file.');
+      try {
+        body = JSON.parse(raw) as unknown;
+      } catch {
+        throw HttpError.badRequest('The schedule sent with the file could not be read.');
+      }
+    }
+    const input = shipmentScheduleInputSchema.parse(body);
 
     const { data, mail } = await withTenant(auth.tenantId, async (db) => {
       const shipment = await db.shipment.findFirst({
@@ -203,6 +223,19 @@ shipmentScheduleRouter.post(
         }
       }
 
+      // A version is never edited (§4.2), so the booking file the live one
+      // holds is carried into this one by key unless replaced or removed.
+      const previous = await db.shipmentSchedule.findFirst({
+        where: { shipmentId, deletedAt: null, status: { in: ['PROPOSED', 'APPROVED'] } },
+        select: { bookingFile: true },
+      });
+      const bookingFile =
+        file !== undefined
+          ? (await putFile(auth.tenantId, 'schedule', file)).key
+          : input.keepBookingFile === true
+            ? (previous?.bookingFile ?? null)
+            : null;
+
       // §4.2: supersede BEFORE inserting. The live index is partial and checked
       // per statement, so two live rows never exist even for an instant.
       await db.shipmentSchedule.updateMany({
@@ -229,6 +262,8 @@ shipmentScheduleRouter.post(
               cutOffDate: toStamp(input.cutOffDate),
               vgmDate: toDay(input.vgmDate),
               siDate: toDay(input.siDate),
+              carrierBookingNo: input.carrierBookingNo,
+              bookingFile,
               transitType: input.transitType,
               versionNo,
               status: 'PROPOSED',
@@ -335,6 +370,34 @@ shipmentScheduleRouter.post(
 
     const payload: ApiSuccess<ShipmentScheduleDto> = { success: true, data };
     res.status(201).json(payload);
+  },
+);
+
+/**
+ * GET /bookings/:id/schedules/:scheduleId/booking-file — the file uploaded with
+ * that version. Earlier versions keep theirs, so the history can be opened too.
+ */
+shipmentScheduleRouter.get(
+  '/bookings/:id/schedules/:scheduleId/booking-file',
+  requirePermission(`${FEATURE}.VIEW`),
+  async (req, res) => {
+    const auth = req.auth!;
+    const shipmentId = parseId(req.params.id, 'booking');
+    const scheduleId = parseId(req.params.scheduleId, 'schedule');
+    const key = await withTenant(auth.tenantId, async (db) => {
+      const row = await db.shipmentSchedule.findFirst({
+        where: { id: scheduleId, shipmentId, deletedAt: null },
+        select: { bookingFile: true },
+      });
+      if (row === null) throw HttpError.notFound('Schedule not found.');
+      if (row.bookingFile === null) throw HttpError.notFound('No booking file was uploaded with this schedule.');
+      return row.bookingFile;
+    });
+    const { stream, sizeBytes } = await openFile(auth.tenantId, key);
+    res.setHeader('Content-Type', contentTypeOf(key));
+    res.setHeader('Content-Length', sizeBytes);
+    res.setHeader('Content-Disposition', `attachment; filename="${displayNameFromKey(key).replace(/"/g, '')}"`);
+    stream.pipe(res);
   },
 );
 

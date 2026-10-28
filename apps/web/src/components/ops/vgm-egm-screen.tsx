@@ -57,6 +57,22 @@ export function VgmEgmScreen() {
 
 const TONE: Record<VgmEgmStatus, 'active' | 'pending'> = { PENDING: 'pending', UPLOADED: 'active' };
 
+/** The other bookings in a shared container or on a shared bill. */
+const othersThan = (codes: string[], self: string): string[] => codes.filter((c) => c !== self);
+
+/** "A", "A and B", "A, B and C". */
+function listOf(codes: string[]): string {
+  return codes.length <= 1 ? (codes[0] ?? '') : `${codes.slice(0, -1).join(', ')} and ${codes[codes.length - 1]}`;
+}
+
+/**
+ * Says up front that a save here shows on other bookings too, so a booking the
+ * user never touched reading Uploaded is expected rather than alarming.
+ */
+function SharedNotice({ children }: { children: ReactNode }) {
+  return <p className="rounded-manifest border border-harbour/30 bg-harbour/5 px-3 py-2 text-cell text-hull">{children}</p>;
+}
+
 /** One line per container, the height of a status line, so the columns stay level. */
 function ContainerLines({ row, render }: { row: VgmEgmRow; render: (c: VgmContainerDto) => ReactNode }) {
   if (row.vgmContainers.length === 0) return <span className="text-steel">—</span>;
@@ -118,6 +134,7 @@ function VgmEgmList({ mode, onMode }: { mode: ShipmentType; onMode: (m: Shipment
                 render={(c) => {
                   const done = c.vgm?.uploaded === true;
                   const allowed = c.vgm === null ? mayRecord : mayChange;
+                  const shared = othersThan(c.bookingCodes, r.bookingCode);
                   return (
                     <span className="flex items-center gap-3">
                       <Status tone={done ? 'active' : 'pending'}>{done ? 'Uploaded' : 'Pending'}</Status>
@@ -125,6 +142,14 @@ function VgmEgmList({ mode, onMode }: { mode: ShipmentType; onMode: (m: Shipment
                         <Button variant="text" size="inline" onClick={() => setRecording({ row: r, container: c })}>
                           {c.vgm === null ? 'Record VGM' : 'Change VGM'}
                         </Button>
+                      )}
+                      {shared.length > 0 && (
+                        <span
+                          className="text-cell text-steel"
+                          title={`One container, one VGM: ${c.containerNo ?? c.clpCode} also carries ${listOf(shared)}.`}
+                        >
+                          Shared with <span className="font-mono tabular-nums">{listOf(shared)}</span>
+                        </span>
                       )}
                     </span>
                   );
@@ -146,6 +171,12 @@ function VgmEgmList({ mode, onMode }: { mode: ShipmentType; onMode: (m: Shipment
             {r.egm.files.length > 0 && (
               <span className="text-cell text-steel">
                 <span className="font-mono tabular-nums">{r.egm.files.length}</span> {r.egm.files.length === 1 ? 'copy' : 'copies'}
+              </span>
+            )}
+            {othersThan(r.egm.bookingCodes, r.bookingCode).length > 0 && (
+              <span className="text-cell text-steel" title={`One bill, one EGM: ${r.egm.houseBlNo} also covers these bookings.`}>
+                Shared with{' '}
+                <span className="font-mono tabular-nums">{listOf(othersThan(r.egm.bookingCodes, r.bookingCode))}</span>
               </span>
             )}
           </div>
@@ -270,9 +301,12 @@ function VgmModal({
 }) {
   const { authorizedRequest, authorizedUpload, authorizedDownload } = useSession();
   const existing = container.vgm;
-  // A booking's containers usually travel on one carrier booking: open on the one already given.
-  const sibling = row.vgmContainers.find((c) => c.vgm !== null)?.vgm?.carrierBookingNo ?? '';
-  const [carrierBookingNo, setCarrierBookingNo] = useState(existing?.carrierBookingNo ?? sibling);
+  const shared = othersThan(container.bookingCodes, row.bookingCode);
+  // A recorded VGM keeps what it was saved with. A new one pulls the vessel
+  // schedule's Carrier Booking No, else the one the booking's other boxes carry.
+  const sibling = row.vgmContainers.find((c) => c.vgm !== null)?.vgm?.carrierBookingNo ?? null;
+  const pulled = existing === null ? (row.scheduleCarrierBookingNo ?? sibling) : null;
+  const [carrierBookingNo, setCarrierBookingNo] = useState(existing?.carrierBookingNo ?? pulled ?? '');
   const [vgmKg, setVgmKg] = useState(existing?.vgmKg ?? '');
   const [grossWeightKg, setGrossWeightKg] = useState(existing?.grossWeightKg ?? container.cargoGrossWeightKg ?? '');
   const [signatoryName, setSignatoryName] = useState(existing?.signatoryName ?? '');
@@ -308,7 +342,9 @@ function VgmModal({
           ? await authorizedRequest<VgmDto>(path, { method: 'POST', body: fields })
           : await authorizedUpload<VgmDto>(path, file, fields);
       toast.success(
-        `${container.containerNo ?? container.clpCode}: ${saved.uploaded ? 'VGM uploaded' : 'VGM saved — upload the file to mark it uploaded'}`,
+        `${container.containerNo ?? container.clpCode}: ${saved.uploaded ? 'VGM uploaded' : 'VGM saved — upload the file to mark it uploaded'}${
+          shared.length > 0 ? `. It shows on ${listOf(shared)} too.` : ''
+        }`,
       );
       onSaved();
     } catch (caught) {
@@ -334,7 +370,26 @@ function VgmModal({
           void submit();
         }}
       >
-        <Field id="vgm-booking" label="Carrier Booking No" required error={errors.carrierBookingNo}>
+        {shared.length > 0 && (
+          <SharedNotice>
+            One container, one VGM. This container also carries{' '}
+            <span className="font-mono tabular-nums">{listOf(shared)}</span>, so what you save here shows on{' '}
+            {shared.length === 1 ? 'that booking' : 'those bookings'} as well.
+          </SharedNotice>
+        )}
+        <Field
+          id="vgm-booking"
+          label="Carrier Booking No"
+          required
+          error={errors.carrierBookingNo}
+          hint={
+            pulled === null
+              ? undefined
+              : pulled === row.scheduleCarrierBookingNo
+                ? 'Pulled from the vessel schedule. Change it if this box was booked under another number.'
+                : 'From this booking’s other containers.'
+          }
+        >
           <Input id="vgm-booking" numeric value={carrierBookingNo} maxLength={64} onChange={(e) => setCarrierBookingNo(e.target.value)} />
         </Field>
         <div className="grid grid-cols-2 gap-4">
@@ -464,6 +519,7 @@ function EgmModal({
   }
 
   const isAir = row.shipmentType === 'AIR';
+  const shared = othersThan(egm.bookingCodes, row.bookingCode);
   const facts: [string, string | null][] = [
     [isAir ? 'HAWB Number' : 'BL Number', egm.houseBlNo],
     [isAir ? 'MAWB Number' : 'MBL Number', egm.mblNo],
@@ -478,9 +534,16 @@ function EgmModal({
         if (!open && progress === null) onClose();
       }}
       title={`EGM — ${row.bookingCode}`}
-      description={`Filed against ${egm.adviseCode}. Every booking on this advise shares these copies.`}
+      description={`Filed against ${egm.adviseCode}.`}
     >
       <div className="flex flex-col gap-4">
+        {shared.length > 0 && (
+          <SharedNotice>
+            One bill, one EGM. {isAir ? 'HAWB' : 'BL'} <span className="font-mono tabular-nums">{egm.houseBlNo}</span> also covers{' '}
+            <span className="font-mono tabular-nums">{listOf(shared)}</span>, so copies uploaded here show on{' '}
+            {shared.length === 1 ? 'that booking' : 'those bookings'} as well.
+          </SharedNotice>
+        )}
         <dl className="grid grid-cols-3 gap-4">
           {facts.map(([label, value]) => (
             <div key={label} className="flex flex-col gap-1">

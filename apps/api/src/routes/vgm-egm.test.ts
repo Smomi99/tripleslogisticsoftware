@@ -266,8 +266,15 @@ interface Row {
   commodity: string | null;
   vgmStatus: string | null;
   egmStatus: string;
-  vgmContainers: { clpId: string; clpCode: string; containerNo: string; cargoGrossWeightKg: string | null; vgm: { uploaded: boolean; carrierBookingNo: string } | null }[];
-  egm: { houseBlNo: string; mblNo: string | null; files: { id: string; fileName: string }[] } | null;
+  vgmContainers: {
+    clpId: string;
+    clpCode: string;
+    containerNo: string;
+    cargoGrossWeightKg: string | null;
+    bookingCodes: string[];
+    vgm: { uploaded: boolean; carrierBookingNo: string } | null;
+  }[];
+  egm: { houseBlNo: string; mblNo: string | null; bookingCodes: string[]; files: { id: string; fileName: string }[] } | null;
 }
 
 const rowsOf = (body: { data: Row[] }) => body.data;
@@ -308,6 +315,17 @@ describe('the list', () => {
     // Air has no VGM.
     const air = await api(A).get('/vgm-egm?shipmentType=AIR&view=ALL');
     expect(rowsOf(air.body)[0]).toMatchObject({ vgmStatus: null, vgmContainers: [], egm: { houseBlNo: 'VAHAWB001' } });
+  });
+});
+
+describe('the Carrier Booking No a new VGM opens on', () => {
+  it('is pulled from the schedule the booking sails on', async () => {
+    await owner.shipmentSchedule.updateMany({ where: { shipmentId: A.seaOne.id }, data: { carrierBookingNo: 'SITC-BK-77120' } });
+    const res = await api(A).get('/vgm-egm?shipmentType=SEA&view=ALL');
+    const row = (code: string) => (res.body.data as (Row & { scheduleCarrierBookingNo: string | null })[]).find((r) => r.bookingCode === code)!;
+    expect(row(A.seaOne.code).scheduleCarrierBookingNo).toBe('SITC-BK-77120');
+    // Each booking reads its own schedule, not one it shares an advise with.
+    expect(row(A.seaTwo.code).scheduleCarrierBookingNo).toBeNull();
   });
 });
 
@@ -385,6 +403,49 @@ describe('EGM', () => {
     // The second booking shares the EGM but has no container yet.
     const stillPending = await api(A).get('/vgm-egm?shipmentType=SEA&view=PENDING');
     expect(codes(stillPending.body)).toEqual([A.seaTwo.code]);
+  });
+});
+
+describe('a container or a bill shared by two bookings', () => {
+  it('names the bookings it is shared with, and reads the same under each', async () => {
+    // A consolidated box (CR-002): one container, both bookings, one VGM.
+    const like = await owner.clp.findUniqueOrThrow({ where: { id: A.clps.first }, select: { carrierId: true, containerSizeId: true, finalisedBy: true } });
+    const box = await owner.clp.create({
+      data: {
+        tenantId: A.tenantId,
+        code: `CLP-${YEAR}-5VA099`,
+        seriesYear: YEAR,
+        containerSizeId: like.containerSizeId,
+        carrierId: like.carrierId,
+        status: 'FINAL',
+        consolidationType: 'FCL_QUOTATION',
+        containerNo: 'TGHU1234990',
+        sealNo: 'SL-VA99',
+        loadDatetime: new Date(),
+        finalisedAt: new Date(),
+        finalisedBy: like.finalisedBy,
+      },
+      select: { id: true },
+    });
+    await owner.clpBooking.createMany({
+      data: [
+        { tenantId: A.tenantId, clpId: box.id, shipmentId: A.seaOne.id },
+        { tenantId: A.tenantId, clpId: box.id, shipmentId: A.seaTwo.id },
+      ],
+    });
+    await api(A).upload(`/vgm/${box.id}`, vgmBody);
+
+    const list = await api(A).get('/vgm-egm?shipmentType=SEA&view=ALL');
+    const one = rowsOf(list.body).find((r) => r.bookingCode === A.seaOne.code)!;
+    const two = rowsOf(list.body).find((r) => r.bookingCode === A.seaTwo.code)!;
+    const shared = (r: Row) => r.vgmContainers.find((c) => c.clpId === box.id.toString())!;
+    expect(shared(one).bookingCodes).toEqual([A.seaOne.code, A.seaTwo.code]);
+    expect(shared(two).vgm).toMatchObject({ uploaded: true });
+    // The containers that are its alone name only itself.
+    expect(one.vgmContainers.find((c) => c.clpId === A.clps.first.toString())!.bookingCodes).toEqual([A.seaOne.code]);
+    // One advise, one BL (CR-005): its EGM is the other booking's too.
+    expect(one.egm!.bookingCodes).toEqual([A.seaOne.code, A.seaTwo.code]);
+    expect(two.egm!.bookingCodes).toEqual([A.seaOne.code, A.seaTwo.code]);
   });
 });
 

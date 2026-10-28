@@ -4820,6 +4820,16 @@ model ShipmentSchedule {
   vgmDate    DateTime? @map("vgm_date") @db.Date
   siDate     DateTime? @map("si_date") @db.Date
 
+  /// The carrier's own reference for this booking (client, 2026-10-28, on the
+  /// Vessel schedule). Optional: a schedule is often proposed before the
+  /// carrier confirms. Airline booking no on air.
+  carrierBookingNo String? @map("carrier_booking_no") @db.VarChar(64)
+  /// The file uploaded beside it — usually the carrier's booking confirmation.
+  /// The storage key, never the bytes (CLAUDE.md §2). A new version keeps the
+  /// one before it's file unless it is replaced or removed (§4.2: a version is
+  /// never edited, so the key is carried, never moved).
+  bookingFile      String? @map("booking_file") @db.Text
+
   transitType TransitType    @map("transit_type")
   versionNo   Int            @default(1) @map("version_no")
   status      ScheduleStatus @default(PROPOSED)
