@@ -30,6 +30,7 @@ import { cargoReceiptRouter } from './cargo-receipt.route';
 import { shipmentAdviseRouter } from './shipment-advise.route';
 import { blDraftRouter } from './bl-draft.route';
 import { blPrintRouter } from './bl-print.route';
+import { copyDocRouter } from './copy-doc.route';
 import { accountsRouter } from './accounts.route';
 import { financialStatementsRouter } from './financial-statements.route';
 import { freightCertificateRouter } from './freight-certificate.route';
@@ -121,6 +122,8 @@ tenantRouter.use('/documentation', shipmentAdviseRouter);
 tenantRouter.use('/documentation', blDraftRouter);
 // BL Print (Menu K7) — MODULE_DOCUMENTATION §13.
 tenantRouter.use('/documentation', blPrintRouter);
+// docs/DESIGN-UPDATE-2026-10-28.md §3, Menu K8.
+tenantRouter.use('/documentation', copyDocRouter);
 tenantRouter.use('/documentation', docWorklistRouter);
 
 // Accounts (docs/MODULE_ACCOUNTS.md) — Awaiting Freight Inv, Debit Invoice,

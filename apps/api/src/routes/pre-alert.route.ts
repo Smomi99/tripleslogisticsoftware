@@ -40,6 +40,8 @@ import { blPrintDocument } from './bl-print.route';
  *
  * What can be attached, in order of preference:
  *   an upload       anything the operator uploaded for the booking wins
+ *   Copy Doc        a house or master bill uploaded on Copy Doc upload
+ *                   (DESIGN-UPDATE-2026-10-28 §3), so it is not uploaded twice
  *   the system's    HBL — a non-negotiable copy of the approved bill (BL
  *                   Print's COPY); Debit Note — the freight invoice as it was
  *                   sent to the customer
@@ -138,6 +140,14 @@ async function assertOutbound(
   return { code: booking.code, shipmentType: booking.shipmentType, podId: booking.podId, adviseId: pick.adviseId, plannedOn: pick.plannedOn };
 }
 
+/** The Copy Doc paper each of Pre-Alert's bills is, on sea and on air. */
+const COPY_DOC_KIND_OF: Partial<Record<PreAlertDocumentKind, 'HOUSE_BL' | 'MASTER_BL'>> = {
+  HBL: 'HOUSE_BL',
+  HAWB: 'HOUSE_BL',
+  MBL: 'MASTER_BL',
+  MAWB: 'MASTER_BL',
+};
+
 interface Resolved {
   dto: PreAlertDocumentDto;
   /** A file already in storage. */
@@ -157,6 +167,11 @@ async function resolveDocuments(
     select: { kind: true, fileKey: true },
   });
   const uploadOf = new Map(uploads.map((u) => [u.kind, u.fileKey]));
+  const copies = await db.copyDocument.findMany({
+    where: { shipmentId, deletedAt: null, kind: { in: ['HOUSE_BL', 'MASTER_BL'] } },
+    select: { kind: true, fileKey: true },
+  });
+  const copyOf = new Map(copies.map((c) => [c.kind, c.fileKey]));
   const out = new Map<PreAlertDocumentKind, Resolved>();
 
   for (const kind of PRE_ALERT_DOCUMENTS_FOR[shipmentType]) {
@@ -165,6 +180,16 @@ async function resolveDocuments(
       out.set(kind, {
         dto: { kind, source: 'UPLOAD', fileName: displayNameFromKey(uploaded), note: null },
         storageKey: uploaded,
+      });
+      continue;
+    }
+    const copyKind = COPY_DOC_KIND_OF[kind];
+    const copied = copyKind === undefined ? undefined : copyOf.get(copyKind);
+    if (copied !== undefined) {
+      out.set(kind, {
+        // Held elsewhere, so it reads as the system's: the note says where, and an upload here still wins.
+        dto: { kind, source: 'SYSTEM', fileName: displayNameFromKey(copied), note: 'Uploaded on Copy Doc upload.' },
+        storageKey: copied,
       });
       continue;
     }

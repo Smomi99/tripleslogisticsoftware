@@ -222,8 +222,9 @@ describe('model tier registry', () => {
     // + inquiry_rate_charge (2026-10-26)
     // + sales_lead_document (docs/SALES_LEAD_FOB.md, 2026-10-26)
     // + trade_lane and trade_lane_port (DESIGN-UPDATE-2026-10-28 §1)
-    // + vgm and egm_document (§2).
-    expect(known.length).toBe(121);
+    // + vgm and egm_document (§2)
+    // + copy_document (§3).
+    expect(known.length).toBe(122);
   });
 
   it('applies the caller row level security to every view', async () => {

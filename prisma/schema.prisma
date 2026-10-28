@@ -331,11 +331,12 @@ model Tenant {
 
   customerActivities CustomerActivity[]
 
-  /// DESIGN-UPDATE-2026-10-28 §1–§2.
+  /// DESIGN-UPDATE-2026-10-28 §1–§3.
   tradeLanes     TradeLane[]
   tradeLanePorts TradeLanePort[]
   vgms           Vgm[]
   egmDocuments   EgmDocument[]
+  copyDocuments  CopyDocument[]
 
   @@index([slug])
   @@index([status])
@@ -2062,6 +2063,8 @@ model User {
   vgmsUpdated           Vgm[]           @relation("VgmUpdatedBy")
   egmDocumentsCreated   EgmDocument[]   @relation("EgmDocumentCreatedBy")
   egmDocumentsUpdated   EgmDocument[]   @relation("EgmDocumentUpdatedBy")
+  copyDocumentsCreated  CopyDocument[]  @relation("CopyDocumentCreatedBy")
+  copyDocumentsUpdated  CopyDocument[]  @relation("CopyDocumentUpdatedBy")
 
   @@unique([tenantId, username])
   @@unique([tenantId, email])
@@ -4580,6 +4583,8 @@ model Shipment {
   /// DESIGN-UPDATE-2026-10-04 §3.
   preAlertDocuments PreAlertDocument[]
   preAlerts         PreAlert[]
+  /// DESIGN-UPDATE-2026-10-28 §3: Copy Doc Upload.
+  copyDocuments     CopyDocument[]
   debitInvoices  DebitInvoice[]
 
   clpBookings ClpBooking[] @relation("ClpBookingShipment")
@@ -5933,6 +5938,66 @@ model EgmDocument {
   @@index([tenantId])
   @@index([adviseId])
   @@map("egm_document")
+}
+
+/// client: Copy doc upload — the nine rows of the upload form (C16–C24), in
+/// the sheet's order. On air the first two are the house and master air
+/// waybills.
+enum CopyDocumentKind {
+  /// C16 "House bill of lading" (HAWB on air).
+  HOUSE_BL
+  /// C17 "Master Bill of lading" (MAWB on air).
+  MASTER_BL
+  /// C18 "CO": certificate of origin.
+  CO
+  /// C19 "Commercal Invoice".
+  COMMERCIAL_INVOICE
+  /// C20 "Packing list".
+  PACKING_LIST
+  /// C21 "GSP": the GSP certificate of origin.
+  GSP
+  /// C22 "EXP": the export permit form.
+  EXP
+  /// C23 "IGM".
+  IGM
+  /// C24 "Delivery Order".
+  DELIVERY_ORDER
+
+  @@map("copy_document_kind")
+}
+
+/// client: Copy doc upload — "Shipping Documens upload" (G3),
+/// docs/DESIGN-UPDATE-2026-10-28.md §3. A copy of one of a booking's shipping
+/// papers, for sea and air, inbound and outbound. One live file per booking
+/// per kind; uploading again replaces it, and removing one soft-deletes it.
+/// Where the system already holds the paper (an approved BL, IGM Update's
+/// file, an issued DO), the screen shows that until a copy is uploaded here.
+model CopyDocument {
+  tenantId   BigInt           @map("tenant_id")
+  id         BigInt           @id @default(autoincrement())
+  shipmentId BigInt           @map("shipment_id")
+  kind       CopyDocumentKind
+  /// The storage key, never the bytes (CLAUDE.md §2).
+  fileKey    String           @map("file_key") @db.Text
+
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?   @map("created_by")
+  updatedBy BigInt?   @map("updated_by")
+  deletedAt DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  shipment Shipment @relation(fields: [tenantId, shipmentId], references: [tenantId, id], onDelete: Restrict, map: "copy_document_shipment_id_fkey")
+
+  createdByUser User? @relation("CopyDocumentCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User? @relation("CopyDocumentUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  /// One live file per booking per kind: a partial unique index in the migration.
+  @@unique([tenantId, id])
+  @@index([tenantId])
+  @@index([shipmentId])
+  @@map("copy_document")
 }
 
 /// client: Tarrif — "Port Tarrif , CFS Charge" (H5), read as the two types

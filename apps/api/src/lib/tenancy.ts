@@ -124,6 +124,7 @@ export const TENANT_OWNED_MODELS = [
   'TradeLanePort', // DESIGN-UPDATE-2026-10-28 §1
   'Vgm', // DESIGN-UPDATE-2026-10-28 §2: one per finalised container
   'EgmDocument', // DESIGN-UPDATE-2026-10-28 §2: the EGM copies of a bill
+  'CopyDocument', // DESIGN-UPDATE-2026-10-28 §3: Copy Doc Upload
   'BlDraft',
   'BlDraftContainer',
   'BlTemplate',
