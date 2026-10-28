@@ -1,8 +1,10 @@
 'use client';
 
 import { SCHEDULE_STATUS_LABEL, type ShipmentScheduleDto } from '@ff/shared';
+import { toast } from 'sonner';
 
 import { Status } from '@/components/ui/status';
+import { useSession } from '@/lib/session';
 
 /**
  * A proposed schedule, in full.
@@ -60,6 +62,8 @@ export function ScheduleDetail({
   /** Air legs carry a flight number and time where sea carries vessel and voyage. */
   isAir: boolean;
 }) {
+  const { authorizedDownload } = useSession();
+  const fileName = schedule.bookingFileName;
   return (
     <div className="flex flex-col gap-3">
       <dl className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
@@ -76,12 +80,35 @@ export function ScheduleDetail({
                 ['SI', day(schedule.siDate)],
               ] as [string, string][])),
           ['Proposed', moment(schedule.proposedAt)],
+          [isAir ? 'Airline Booking No' : 'Carrier Booking No', schedule.carrierBookingNo ?? '—'],
         ].map(([label, value]) => (
           <div key={label}>
             <dt className="label-manifest">{label}</dt>
             <dd className="font-mono text-body tabular-nums text-hull">{value}</dd>
           </div>
         ))}
+        <div>
+          <dt className="label-manifest">Booking confirmation</dt>
+          <dd className="text-body text-hull">
+            {fileName === null ? (
+              '—'
+            ) : (
+              <button
+                type="button"
+                className="max-w-full truncate text-left text-harbour hover:underline"
+                title={fileName}
+                onClick={() =>
+                  void authorizedDownload(
+                    `/api/tenant/cs/bookings/${schedule.shipmentId}/schedules/${schedule.id}/booking-file`,
+                    fileName,
+                  ).catch(() => toast.error('Could not download the booking file.'))
+                }
+              >
+                {fileName}
+              </button>
+            )}
+          </dd>
+        </div>
       </dl>
 
       <div className="overflow-x-auto rounded-manifest border border-line">

@@ -118,7 +118,7 @@ export function ScheduleScreen({
   /** Inside §6.3's file, which already names the booking and shows the way back. */
   embedded?: boolean;
 }) {
-  const { authorizedRequest, can } = useSession();
+  const { authorizedRequest, authorizedUpload, can } = useSession();
   const router = useRouter();
 
   const [context, setContext] = useState<Context | null>(null);
@@ -133,6 +133,11 @@ export function ScheduleScreen({
   const [cutOffDate, setCutOffDate] = useState('');
   const [vgmDate, setVgmDate] = useState('');
   const [siDate, setSiDate] = useState('');
+  const [carrierBookingNo, setCarrierBookingNo] = useState('');
+  /** A new file chosen on the form. */
+  const [bookingFile, setBookingFile] = useState<File | null>(null);
+  /** The live version's file, carried into the next version unless removed. */
+  const [keptFileName, setKeptFileName] = useState<string | null>(null);
   const [legs, setLegs] = useState<DraftLeg[]>([newLeg()]);
 
   const load = useCallback(async () => {
@@ -222,22 +227,25 @@ export function ScheduleScreen({
 
     setPending(true);
     try {
-      await authorizedRequest<ShipmentScheduleDto>(
-        `/api/tenant/cs/bookings/${shipmentId}/schedules`,
-        {
-          method: 'POST',
-          body: {
-            carrierId,
-            transitType,
-            cutOffDate: toIso(cutOffDate) ?? null,
-            // Never sent on air: the API refuses them there, so a value left
-            // in state from a sea booking must not travel.
-            vgmDate: isAir || vgmDate === '' ? null : vgmDate,
-            siDate: isAir || siDate === '' ? null : siDate,
-            legs: asInput(),
-          },
-        },
-      );
+      const path = `/api/tenant/cs/bookings/${shipmentId}/schedules`;
+      const body = {
+        carrierId,
+        transitType,
+        cutOffDate: toIso(cutOffDate) ?? null,
+        // Never sent on air: the API refuses them there, so a value left
+        // in state from a sea booking must not travel.
+        vgmDate: isAir || vgmDate === '' ? null : vgmDate,
+        siDate: isAir || siDate === '' ? null : siDate,
+        carrierBookingNo: carrierBookingNo.trim() === '' ? null : carrierBookingNo.trim(),
+        keepBookingFile: bookingFile === null && keptFileName !== null,
+        legs: asInput(),
+      };
+      // With a file, the schedule travels as one field beside it: its legs are nested.
+      if (bookingFile === null) {
+        await authorizedRequest<ShipmentScheduleDto>(path, { method: 'POST', body });
+      } else {
+        await authorizedUpload<ShipmentScheduleDto>(path, bookingFile, { payload: JSON.stringify(body) });
+      }
       toast.success(
         live === null
           ? 'Schedule proposed. The customer has been notified.'
@@ -287,6 +295,9 @@ export function ScheduleScreen({
     setCutOffDate(forInput(live.cutOffDate));
     setVgmDate(live.vgmDate === null ? '' : live.vgmDate.slice(0, 10));
     setSiDate(live.siDate === null ? '' : live.siDate.slice(0, 10));
+    setCarrierBookingNo(live.carrierBookingNo ?? '');
+    setKeptFileName(live.bookingFileName);
+    setBookingFile(null);
     setLegs(
       live.legs.map((leg) => ({
         key: `leg-${(legSeed += 1)}`,
@@ -471,6 +482,44 @@ export function ScheduleScreen({
               </Field>
             </>
           )}
+          {/* Client, 2026-10-28: the carrier's booking no and its file, both optional. */}
+          <Field id="carrierBookingNo" label={isAir ? 'Airline Booking No' : 'Carrier Booking No'}>
+            <Input
+              id="carrierBookingNo"
+              numeric
+              maxLength={64}
+              value={carrierBookingNo}
+              disabled={!canPropose}
+              onChange={(e) => setCarrierBookingNo(e.target.value)}
+            />
+          </Field>
+          <Field
+            id="bookingFile"
+            label="Booking confirmation"
+            hint={
+              bookingFile !== null
+                ? `Will upload: ${bookingFile.name}`
+                : keptFileName !== null
+                  ? `Keeps ${keptFileName} from v${live?.versionNo ?? ''}. Choose a file to replace it.`
+                  : 'The carrier’s booking confirmation. PDF, JPG, PNG or Word.'
+            }
+          >
+            <div className="flex flex-col gap-1">
+              <input
+                id="bookingFile"
+                type="file"
+                accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
+                disabled={!canPropose}
+                onChange={(e) => setBookingFile(e.target.files?.[0] ?? null)}
+                className="text-body text-hull file:mr-3 file:rounded-manifest file:border file:border-line file:bg-surface file:px-3 file:py-1.5 file:text-body file:text-hull"
+              />
+              {bookingFile === null && keptFileName !== null && canPropose && (
+                <Button variant="destructive" size="inline" className="self-start" onClick={() => setKeptFileName(null)}>
+                  Don’t keep {keptFileName}
+                </Button>
+              )}
+            </div>
+          </Field>
         </div>
       </section>
 

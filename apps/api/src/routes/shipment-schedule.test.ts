@@ -2657,3 +2657,60 @@ describe('the direct list screens (client decision, 2026-09-03)', () => {
     });
   });
 });
+
+describe('the carrier booking no and its file (client, 2026-10-28)', () => {
+  const path = (id: bigint) => `/api/tenant/cs/bookings/${id}/schedules`;
+  const withFile = (id: bigint, sent: Record<string, unknown>, filename: string) =>
+    as(token)
+      .post(path(id))
+      .field('payload', JSON.stringify(sent))
+      .attach('file', Buffer.from('%PDF-1.4 booking'), { filename, contentType: 'application/pdf' });
+  type Saved = { data: { id: string; carrierBookingNo: string | null; bookingFileName: string | null } };
+
+  it('takes both with the schedule, in one request', async () => {
+    const id = await makeBooking();
+    const res = await withFile(id, { ...body('DIRECT', oneLeg()), carrierBookingNo: ' CMA-BK-55120 ' }, 'cma-confirmation.pdf');
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect((res.body as Saved).data).toMatchObject({ carrierBookingNo: 'CMA-BK-55120', bookingFileName: 'cma-confirmation.pdf' });
+
+    const file = await as(token).get(`${path(id)}/${(res.body as Saved).data.id}/booking-file`);
+    expect(file.status).toBe(200);
+    expect(file.headers['content-type']).toMatch(/application\/pdf/);
+  });
+
+  it('keeps both optional, and a blank booking no is none', async () => {
+    const id = await makeBooking();
+    const res = await as(token).post(path(id)).send({ ...body('DIRECT', oneLeg()), carrierBookingNo: '   ' });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect((res.body as Saved).data).toMatchObject({ carrierBookingNo: null, bookingFileName: null });
+    const none = await as(token).get(`${path(id)}/${(res.body as Saved).data.id}/booking-file`);
+    expect(none.status).toBe(404);
+  });
+
+  it('carries the file into the next version, or drops it when told to', async () => {
+    const id = await makeBooking();
+    const first = await withFile(id, { ...body('DIRECT', oneLeg()), carrierBookingNo: 'BK-1' }, 'first.pdf');
+    expect(first.status, JSON.stringify(first.body)).toBe(201);
+
+    const kept = await as(token).post(path(id)).send({ ...body('DIRECT', oneLeg()), carrierBookingNo: 'BK-1', keepBookingFile: true });
+    expect((kept.body as Saved).data.bookingFileName).toBe('first.pdf');
+
+    const replaced = await withFile(id, { ...body('DIRECT', oneLeg()), keepBookingFile: true }, 'second.pdf');
+    expect((replaced.body as Saved).data.bookingFileName).toBe('second.pdf');
+
+    const dropped = await as(token).post(path(id)).send({ ...body('DIRECT', oneLeg()), keepBookingFile: false });
+    expect((dropped.body as Saved).data.bookingFileName).toBeNull();
+
+    // §4.2: the earlier versions keep the file they were saved with.
+    const firstFile = await as(token).get(`${path(id)}/${(first.body as Saved).data.id}/booking-file`);
+    expect(firstFile.status).toBe(200);
+  });
+
+  it('refuses a file sent without its schedule', async () => {
+    const id = await makeBooking();
+    const res = await as(token)
+      .post(path(id))
+      .attach('file', Buffer.from('%PDF-1.4'), { filename: 'lonely.pdf', contentType: 'application/pdf' });
+    expect(res.status).toBe(400);
+  });
+});
