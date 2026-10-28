@@ -825,7 +825,9 @@ export async function retotalInvoice(db: TenantDb, invoiceId: bigint): Promise<v
  * The sell side of a save: header fields and the Selling Price grid.
  *
  * `customerId` only moves on an OTHER invoice — a freight invoice bills the
- * booking's customer, and a form cannot redirect it.
+ * booking's customer, and a form cannot redirect it. On an OTHER invoice an
+ * absent one keeps the customer it already bills: `Create New` refuses a
+ * header without one, so only a re-save can leave it out.
  */
 export async function saveSellSide(
   db: TenantDb,
@@ -853,13 +855,14 @@ export async function saveSellSide(
   };
 
   if (kind === 'OTHER') {
-    if (input.customerId === null) throw HttpError.badRequest('Choose the customer to bill.');
-    const customer = await db.customer.findFirst({
-      where: { id: BigInt(input.customerId), deletedAt: null },
-      select: { id: true },
-    });
-    if (customer === null) throw HttpError.badRequest('That customer is not available.');
-    header.customerId = customer.id;
+    if (input.customerId !== null) {
+      const customer = await db.customer.findFirst({
+        where: { id: BigInt(input.customerId), deletedAt: null },
+        select: { id: true },
+      });
+      if (customer === null) throw HttpError.badRequest('That customer is not available.');
+      header.customerId = customer.id;
+    }
 
     // §3.2: an OTHER invoice may name a booking, for reference only.
     if (input.shipmentId === null) {
