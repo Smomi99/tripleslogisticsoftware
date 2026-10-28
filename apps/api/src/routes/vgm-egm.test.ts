@@ -318,6 +318,17 @@ describe('the list', () => {
   });
 });
 
+describe('the Carrier Booking No a new VGM opens on', () => {
+  it('is pulled from the schedule the booking sails on', async () => {
+    await owner.shipmentSchedule.updateMany({ where: { shipmentId: A.seaOne.id }, data: { carrierBookingNo: 'SITC-BK-77120' } });
+    const res = await api(A).get('/vgm-egm?shipmentType=SEA&view=ALL');
+    const row = (code: string) => (res.body.data as (Row & { scheduleCarrierBookingNo: string | null })[]).find((r) => r.bookingCode === code)!;
+    expect(row(A.seaOne.code).scheduleCarrierBookingNo).toBe('SITC-BK-77120');
+    // Each booking reads its own schedule, not one it shares an advise with.
+    expect(row(A.seaTwo.code).scheduleCarrierBookingNo).toBeNull();
+  });
+});
+
 describe('VGM', () => {
   it('keeps a container Pending until the file is in', async () => {
     const typed = await api(A, A.recorderToken).post(`/vgm/${A.clps.first}`, vgmBody);

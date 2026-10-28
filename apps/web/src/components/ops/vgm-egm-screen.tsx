@@ -302,9 +302,11 @@ function VgmModal({
   const { authorizedRequest, authorizedUpload, authorizedDownload } = useSession();
   const existing = container.vgm;
   const shared = othersThan(container.bookingCodes, row.bookingCode);
-  // A booking's containers usually travel on one carrier booking: open on the one already given.
-  const sibling = row.vgmContainers.find((c) => c.vgm !== null)?.vgm?.carrierBookingNo ?? '';
-  const [carrierBookingNo, setCarrierBookingNo] = useState(existing?.carrierBookingNo ?? sibling);
+  // A recorded VGM keeps what it was saved with. A new one pulls the vessel
+  // schedule's Carrier Booking No, else the one the booking's other boxes carry.
+  const sibling = row.vgmContainers.find((c) => c.vgm !== null)?.vgm?.carrierBookingNo ?? null;
+  const pulled = existing === null ? (row.scheduleCarrierBookingNo ?? sibling) : null;
+  const [carrierBookingNo, setCarrierBookingNo] = useState(existing?.carrierBookingNo ?? pulled ?? '');
   const [vgmKg, setVgmKg] = useState(existing?.vgmKg ?? '');
   const [grossWeightKg, setGrossWeightKg] = useState(existing?.grossWeightKg ?? container.cargoGrossWeightKg ?? '');
   const [signatoryName, setSignatoryName] = useState(existing?.signatoryName ?? '');
@@ -375,7 +377,19 @@ function VgmModal({
             {shared.length === 1 ? 'that booking' : 'those bookings'} as well.
           </SharedNotice>
         )}
-        <Field id="vgm-booking" label="Carrier Booking No" required error={errors.carrierBookingNo}>
+        <Field
+          id="vgm-booking"
+          label="Carrier Booking No"
+          required
+          error={errors.carrierBookingNo}
+          hint={
+            pulled === null
+              ? undefined
+              : pulled === row.scheduleCarrierBookingNo
+                ? 'Pulled from the vessel schedule. Change it if this box was booked under another number.'
+                : 'From this booking’s other containers.'
+          }
+        >
           <Input id="vgm-booking" numeric value={carrierBookingNo} maxLength={64} onChange={(e) => setCarrierBookingNo(e.target.value)} />
         </Field>
         <div className="grid grid-cols-2 gap-4">

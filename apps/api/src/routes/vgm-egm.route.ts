@@ -163,8 +163,9 @@ vgmEgmRouter.get('/vgm-egm', requirePermission(`${FEATURE}.VIEW`), async (req, r
     );
     const ids = found.picks.map((p) => p.shipmentId);
     const adviseIds = found.picks.flatMap((p) => (p.adviseId === null ? [] : [p.adviseId]));
+    const scheduleIds = found.picks.flatMap((p) => (p.scheduleId === null ? [] : [p.scheduleId]));
 
-    const [base, commodities, boxes, advises] = await Promise.all([
+    const [base, commodities, boxes, advises, schedules] = await Promise.all([
       milestoneRows(db, 'DEPARTED', found.picks),
       db.shipmentCommodity.findMany({
         where: { shipmentId: { in: ids } },
@@ -198,9 +199,12 @@ vgmEgmRouter.get('/vgm-egm', requirePermission(`${FEATURE}.VIEW`), async (req, r
             },
           }),
       db.shipmentAdvise.findMany({ where: { id: { in: adviseIds } }, select: EGM_SELECT }),
+      // The schedule the booking sails on: its Carrier Booking No is what a new VGM opens on.
+      db.shipmentSchedule.findMany({ where: { id: { in: scheduleIds } }, select: { id: true, carrierBookingNo: true } }),
     ]);
 
     const adviseOf = new Map(advises.map((a) => [a.id.toString(), a]));
+    const bookingNoOf = new Map(schedules.map((s) => [s.id.toString(), s.carrierBookingNo]));
     const pickOf = new Map(found.picks.map((p) => [p.shipmentId.toString(), p]));
 
     const withStages: VgmEgmRow[] = base.map((row) => {
@@ -219,6 +223,7 @@ vgmEgmRouter.get('/vgm-egm', requirePermission(`${FEATURE}.VIEW`), async (req, r
             vgm: vgm === undefined ? null : vgmDto(vgm),
           };
         });
+      const scheduleId = pickOf.get(row.shipmentId)?.scheduleId;
       const adviseId = pickOf.get(row.shipmentId)?.adviseId;
       const advise = adviseId == null ? undefined : adviseOf.get(adviseId.toString());
       const names = commodities.filter((c) => c.shipmentId.toString() === row.shipmentId).map((c) => c.commodityItem.name);
@@ -233,6 +238,7 @@ vgmEgmRouter.get('/vgm-egm', requirePermission(`${FEATURE}.VIEW`), async (req, r
             : 'PENDING',
         egm: advise === undefined ? null : egmDto(advise),
         egmStatus: advise !== undefined && advise.egmDocuments.length > 0 ? 'UPLOADED' : 'PENDING',
+        scheduleCarrierBookingNo: scheduleId == null ? null : (bookingNoOf.get(scheduleId.toString()) ?? null),
       };
     });
     return { rows: withStages, total: found.total };

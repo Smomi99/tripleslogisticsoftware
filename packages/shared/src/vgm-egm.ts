@@ -134,4 +134,9 @@ export interface VgmEgmRow extends MilestoneRow {
   /** Null until the booking has a live shipment advise, which the EGM is filed against. */
   egm: EgmDto | null;
   egmStatus: VgmEgmStatus;
+  /**
+   * The Carrier Booking No on the schedule the booking sails on (the vessel
+   * schedule form, 2026-10-28). A new VGM opens on it.
+   */
+  scheduleCarrierBookingNo: string | null;
 }
