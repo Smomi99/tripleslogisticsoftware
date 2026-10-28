@@ -221,8 +221,9 @@ describe('model tier registry', () => {
     // + ta_da_claim and ta_da_claim_line (2026-10-18)
     // + inquiry_rate_charge (2026-10-26)
     // + sales_lead_document (docs/SALES_LEAD_FOB.md, 2026-10-26)
-    // + trade_lane and trade_lane_port (DESIGN-UPDATE-2026-10-28 §1).
-    expect(known.length).toBe(119);
+    // + trade_lane and trade_lane_port (DESIGN-UPDATE-2026-10-28 §1)
+    // + vgm and egm_document (§2).
+    expect(known.length).toBe(121);
   });
 
   it('applies the caller row level security to every view', async () => {

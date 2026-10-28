@@ -122,6 +122,8 @@ export const TENANT_OWNED_MODELS = [
   'CustomerActivity', // DESIGN-UPDATE-2026-10-04 §6: Local Sales activity log
   'TradeLane', // DESIGN-UPDATE-2026-10-28 §1: Business Matrix
   'TradeLanePort', // DESIGN-UPDATE-2026-10-28 §1
+  'Vgm', // DESIGN-UPDATE-2026-10-28 §2: one per finalised container
+  'EgmDocument', // DESIGN-UPDATE-2026-10-28 §2: the EGM copies of a bill
   'BlDraft',
   'BlDraftContainer',
   'BlTemplate',

@@ -114,7 +114,9 @@ const ROUTES: Record<string, RouteEntry> = {
   'CUSTOMER_SERVICE.PRE_ALERT': '/cs/pre-alert',
   'OPERATION.CARGO_RECEIPT': '/operation/cargo-receipt',
   'OPERATION.CONTAINER_LOAD_PLAN': '/operation/container-load-plan',
-  // docs/DESIGN-UPDATE-2026-10-04.md §4, Menu I7–I8: inbound bookings only.
+  // docs/DESIGN-UPDATE-2026-10-28.md §2, Menu I7: outbound bookings only.
+  'OPERATION.VGM_EGM': '/operation/vgm-egm',
+  // docs/DESIGN-UPDATE-2026-10-04.md §4, Menu I8–I9: inbound bookings only.
   'OPERATION.IGM_SUBMISSION': '/operation/igm-submission',
   'OPERATION.DO_ISSUE': '/operation/do-issue',
   /*

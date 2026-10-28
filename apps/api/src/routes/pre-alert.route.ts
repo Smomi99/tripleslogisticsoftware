@@ -24,7 +24,7 @@ import { HttpError } from '../lib/http-error';
 import { logger } from '../lib/logger';
 import { day, milestonePicks, milestoneRows } from '../lib/milestone';
 import { parseId } from '../lib/request';
-import { displayNameFromKey, openFile, putFile, removeFile } from '../lib/storage';
+import { contentTypeOf, displayNameFromKey, openFile, putFile, removeFile } from '../lib/storage';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
 import { authenticate } from '../middleware/authenticate';
 import { requirePermission } from '../middleware/require-permission';
@@ -341,15 +341,6 @@ preAlertRouter.get(
     stream.pipe(res);
   },
 );
-
-function contentTypeOf(fileName: string): string {
-  if (/\.pdf$/i.test(fileName)) return 'application/pdf';
-  if (/\.jpe?g$/i.test(fileName)) return 'image/jpeg';
-  if (/\.png$/i.test(fileName)) return 'image/png';
-  if (/\.docx$/i.test(fileName)) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-  if (/\.doc$/i.test(fileName)) return 'application/msword';
-  return 'application/octet-stream';
-}
 
 /**
  * The sheet's `Send`: the ticked documents to the chosen agent's addresses,

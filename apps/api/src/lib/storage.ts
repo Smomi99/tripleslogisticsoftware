@@ -61,6 +61,16 @@ const EXTENSION_BY_MIME: Record<string, string> = {
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
 };
 
+/** The type to serve a stored file as, read from the extension putFile gave it. */
+export function contentTypeOf(fileName: string): string {
+  if (/\.pdf$/i.test(fileName)) return 'application/pdf';
+  if (/\.jpe?g$/i.test(fileName)) return 'image/jpeg';
+  if (/\.png$/i.test(fileName)) return 'image/png';
+  if (/\.docx$/i.test(fileName)) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  if (/\.doc$/i.test(fileName)) return 'application/msword';
+  return 'application/octet-stream';
+}
+
 export function assertUploadAllowed(mimeType: string, sizeBytes: number): void {
   if (!ALLOWED_MIME.has(mimeType)) {
     throw HttpError.badRequest('Upload a PDF, Word document, JPG or PNG.');

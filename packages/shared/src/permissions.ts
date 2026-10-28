@@ -536,6 +536,12 @@ export const FEATURES: readonly FeatureDefinition[] = [
     actions: CLP,
   },
   { module: 'OPERATION', feature: 'OPERATION.STUFFING', label: 'Stuffing', actions: MASTER },
+  /*
+   * docs/DESIGN-UPDATE-2026-10-28.md §2 (Menu I7): a VGM per container and the
+   * EGM copies per bill, outbound only. CREATE records a first VGM or adds an
+   * EGM file; EDIT changes a VGM or removes a file, as IGM Update splits them.
+   */
+  { module: 'OPERATION', feature: 'OPERATION.VGM_EGM', label: 'Upload VGM & EGM', actions: ['VIEW', 'CREATE', 'EDIT'] },
   { module: 'OPERATION', feature: 'OPERATION.IGM_SUBMISSION', label: 'IGM Submission', actions: MASTER },
   { module: 'OPERATION', feature: 'OPERATION.DO_ISSUE', label: 'DO Issue', actions: MASTER },
 
