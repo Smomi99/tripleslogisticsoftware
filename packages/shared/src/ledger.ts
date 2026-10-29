@@ -452,6 +452,48 @@ export interface BankAccountDto {
   isActive: boolean;
 }
 
+/**
+ * `Ledger` on Account Set up (client, 2026-10-28): one bank account's posted
+ * vouchers over a period — a day range, a month or a year, which the screen
+ * turns into the two days — with its balance before, after, and running.
+ */
+export const bankAccountLedgerQuerySchema = z
+  .object({ from: isoDate, to: isoDate })
+  .refine((q) => q.from <= q.to, { message: 'The start date is after the end date.', path: ['to'] });
+export type BankAccountLedgerQuery = z.input<typeof bankAccountLedgerQuerySchema>;
+
+export interface BankAccountLedgerEntryDto {
+  journalEntryId: string;
+  code: string;
+  kind: JournalEntryKind;
+  date: string;
+  partyName: string | null;
+  /** The voucher's other side: where the money came from, or went. */
+  particulars: string;
+  description: string | null;
+  /** Money in. */
+  debit: string;
+  /** Money out. */
+  credit: string;
+  /** The account's balance after this voucher. */
+  balance: string;
+}
+
+export interface BankAccountLedgerDto {
+  account: BankAccountDto;
+  /** The workspace's base: what the books are kept in. */
+  currencyCode: string | null;
+  from: string;
+  to: string;
+  /** The balance at the start of `from`. */
+  opening: string;
+  entries: BankAccountLedgerEntryDto[];
+  totalDebit: string;
+  totalCredit: string;
+  /** The balance at the end of `to`. */
+  closing: string;
+}
+
 /** An account as a picker offers it: "Cost of Service › Sea Freight-FCL". */
 export interface AccountOptionDto {
   id: string;

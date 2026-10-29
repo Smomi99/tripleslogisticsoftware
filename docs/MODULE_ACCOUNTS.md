@@ -693,6 +693,8 @@ unusable checkbox in the matrix is worse than an absent one.
 | GET / POST · PATCH · POST | `/banks` · `/banks/:id` · `/banks/:id/toggle-status` | `BANK_SETUP.*` |
 | GET / POST · PATCH · POST | `/bank-accounts` · `/bank-accounts/:id` · `…/toggle-status` | `ACCOUNT_SETUP.*` |
 | GET | `/bank-accounts/banks` | `ACCOUNT_SETUP.VIEW` — Select Bank / Branch |
+| GET | `/bank-accounts/:id/ledger?from&to` | `ACCOUNT_SETUP.VIEW` — the account's Ledger (§20) |
+| GET | `/bank-accounts/:id/ledger/export?from&to` | `ACCOUNT_SETUP.EXPORT` — the same, to Excel (§20) |
 | GET / POST | `/journal`, `/expense`, `/income`, `/internal-transfer` | that screen's `.VIEW` / `.CREATE` |
 | GET · POST | `/<screen>/:id` · `/<screen>/:id/cancel` | `.VIEW` · `.CANCEL` |
 | POST / GET | `/<screen>/:id/file` | `.CREATE` / `.VIEW` |
@@ -1116,3 +1118,49 @@ already holds. No schema change, no migration, no new numbering, no new permissi
 Tests: `routes/accounts.test.ts`, "Money receipt", 3 cases. One reads the PDF of a dollar invoice's part
 payment. One covers refusing a voucher with no payer and a cancelled one. One covers permission and
 workspace isolation.
+
+---
+
+## 20. ACCOUNT SET UP → LEDGER — client, 2026-10-28
+
+**The request.** *"On Account Set up, in Action, please add Ledger so that I can easily check my amount's
+breakdown. It can also be filtered by date, month and year."*
+
+**As built.** No schema change and no migration. One new permission: `ACCOUNTS.ACCOUNT_SETUP.EXPORT`, for
+the export below (`pnpm db:seed` adds it; give it to the roles that should have it).
+
+- **Where.** A *Ledger* action on every Account Set up row. It opens
+  `/accounts/account-setup/[id]/ledger`, a child page with *Back to list* (CLAUDE.md §8). The route is
+  `GET /bank-accounts/:id/ledger?from&to`, under `ACCOUNTS.ACCOUNT_SETUP.VIEW`: whoever sees the account
+  and its Balance may see what makes the Balance up.
+- **The period.**
+  - *By month* is the default, this month. It runs from the 1st to the last day of the month.
+  - *By year* is a calendar year, 1 Jan to 31 Dec, chosen from the last ten.
+  - *Date range* takes a From and a To date, both inclusive.
+
+  The screen turns each choice into the two days. The server takes `from` and `to`, and refuses a From
+  after the To.
+- **The figures.** Four tiles: the opening balance (as at the start of the period), money in, money out,
+  and the closing balance. The table then reads like a bank book:
+  - The *Opening balance* row first.
+  - One row per posted voucher: Date · Voucher No · Type · Party · Particulars (the voucher's other
+    side, e.g. *Operating Expense › Office Rent*) · Description · Debit (in) · Credit (out) · Balance
+    after it.
+  - The *Closing balance* row, with the period's totals.
+
+  A bank account is an asset, so a debit is money in. The voucher no opens the voucher in a new tab, so
+  the ledger keeps its period, given that voucher screen's `.VIEW`.
+- **Export to Excel** (`GET /bank-accounts/:id/ledger/export?from&to`, `ACCOUNT_SETUP.EXPORT`). The same
+  ledger for the same period, laid out as the screen lays it out. Above the table: company, *Ledger -
+  {account}*, the account line, the period and the currency. Dates and amounts are real Excel dates and
+  numbers, so the sheet sorts, filters and sums. The button shows only with the grant.
+- **What counts.** Posted vouchers only, as the Balance column counts them. Drafts and cancelled
+  vouchers never moved the account. The closing balance at the end of the period is the Balance column's
+  figure, when nothing is dated after it.
+
+Tests: `routes/ledger.test.ts`, "a bank account's ledger", 4 cases, on a fresh account with vouchers in
+three months:
+- a month between its opening and closing, leaving out a draft and a cancelled voucher
+- a year, and a day range, with the year's closing equal to the list's Balance
+- the export, read back cell by cell, refused to a user who has only VIEW
+- refusals: a backwards range, a missing date, no permission, another workspace

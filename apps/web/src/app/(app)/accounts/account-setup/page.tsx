@@ -1,6 +1,7 @@
 'use client';
 
 import { type BankAccountDto, type BankDto, bankAccountInputSchema } from '@ff/shared';
+import type { Route } from 'next';
 import Link from 'next/link';
 import { type FormEvent, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
@@ -25,7 +26,8 @@ import { useMasterList } from '@/lib/use-master-list';
  * Set up; Bank Address, Swift No, Routing number and IBAN No are that
  * branch's, shown rather than typed again. Each account is also a sub ledger
  * under Asset → Bank on the chart ("Bank Asia Ltd-878"), which is what the
- * Expense, Income and Transfer vouchers pay from and deposit to.
+ * Expense, Income and Transfer vouchers pay from and deposit to. `Ledger`
+ * opens that account's vouchers by month, year or date range (2026-10-28).
  */
 const ENDPOINT = '/api/tenant/accounts/bank-accounts';
 
@@ -130,6 +132,12 @@ export default function AccountSetupPage() {
         isPending={list.isPending}
         actions={(row) => (
           <>
+            <Link
+              href={`/accounts/account-setup/${row.id}/ledger` as Route}
+              className="text-cell font-medium text-harbour transition-colors duration-[120ms] hover:text-harbour-ink hover:underline underline-offset-2"
+            >
+              Ledger
+            </Link>
             {can('ACCOUNTS.ACCOUNT_SETUP.EDIT') && (
               <Button
                 variant="text"
