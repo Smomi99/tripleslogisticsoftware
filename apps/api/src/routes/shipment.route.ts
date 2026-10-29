@@ -769,9 +769,12 @@ shipmentRouter.post('/bookings', requirePermission(`${FEATURE}.CREATE`), async (
     const quotationId = parseRefId(input.quotationId, 'quotation');
     const quotation = await db.quotation.findFirst({
       where: { id: quotationId, deletedAt: null },
-      select: { id: true, shipmentType: true, customerId: true, status: true },
+      select: { id: true, code: true, shipmentType: true, customerId: true, status: true },
     });
     if (quotation === null) throw HttpError.notFound('Quotation not found.');
+    if (quotation.status === 'CANCELLED') {
+      throw new HttpError(409, 'QUOTATION_CANCELLED', `${quotation.code} was cancelled, so nothing can be booked on it.`);
+    }
 
     // §5.2 rule 1: no unique on quotation_id. One quotation with several
     // exporters yields several bookings, so this is deliberately unguarded.

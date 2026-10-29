@@ -1928,6 +1928,7 @@ model User {
   createdAgentQuotes          AgentQuote[]          @relation("AgentQuoteCreatedBy")
   updatedAgentQuotes          AgentQuote[]          @relation("AgentQuoteUpdatedBy")
   quotationsSent              Quotation[]           @relation("QuotationSentBy")
+  quotationsCancelled         Quotation[]           @relation("QuotationCancelledBy")
   quotationsCreated           Quotation[]           @relation("QuotationCreatedBy")
   quotationsUpdated           Quotation[]           @relation("QuotationUpdatedBy")
   quotationLinesCreated       QuotationLine[]       @relation("QuotationLineCreatedBy")
@@ -3987,6 +3988,12 @@ model Quotation {
   sentAt DateTime?       @map("sent_at") @db.Timestamptz(6)
   sentBy BigInt?         @map("sent_by")
 
+  /// Cancel quotation (client, 2026-10-29): who, when and why, as a cancelled
+  /// booking and debit invoice record it. The reason is required (CHECK).
+  cancelledAt  DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  cancelledBy  BigInt?   @map("cancelled_by")
+  cancelReason String?   @map("cancel_reason") @db.Text
+
   isActive  Boolean   @default(true) @map("is_active")
   createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -4013,8 +4020,9 @@ model Quotation {
 
   sourceAgentQuote AgentQuote? @relation(fields: [tenantId, sourceAgentQuoteId], references: [tenantId, id], onDelete: Restrict, map: "quotation_source_agent_quote_id_fkey")
 
-  sentByUser    User? @relation("QuotationSentBy", fields: [sentBy], references: [id], onDelete: Restrict)
-  createdByUser User? @relation("QuotationCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  sentByUser      User? @relation("QuotationSentBy", fields: [sentBy], references: [id], onDelete: Restrict)
+  cancelledByUser User? @relation("QuotationCancelledBy", fields: [cancelledBy], references: [id], onDelete: Restrict)
+  createdByUser   User? @relation("QuotationCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User? @relation("QuotationUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
 
   lines       QuotationLine[]
@@ -4037,6 +4045,7 @@ model Quotation {
   @@index([customerId])
   @@index([carrierId])
   @@index([status])
+  @@index([cancelledBy])
   @@map("quotation")
 }
 
@@ -4329,6 +4338,9 @@ enum QuotationStatus {
   EXPIRED
   /// Replaced by a later revision (§5.3 rule 8). Kept, never deleted.
   SUPERSEDED
+  /// Withdrawn with a reason, so the inquiry can be quoted again (client,
+  /// 2026-10-29). Kept, never deleted; its number is not reused.
+  CANCELLED
 
   @@map("quotation_status")
 }

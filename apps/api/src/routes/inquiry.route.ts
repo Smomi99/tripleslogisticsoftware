@@ -165,10 +165,11 @@ const inquiryInclude = {
   /*
    * §6.2's Quotation column. One row at most: the live issue, since
    * quotation_live_revision_key allows only one non-superseded revision per
-   * number, and an inquiry is quoted once.
+   * number, and an inquiry is quoted once — or again, once its quotation is
+   * cancelled (2026-10-29), which then no longer answers it.
    */
   quotations: {
-    where: { deletedAt: null, status: { not: 'SUPERSEDED' } },
+    where: { deletedAt: null, status: { notIn: ['SUPERSEDED', 'CANCELLED'] } },
     orderBy: { id: 'desc' },
     take: 1,
     select: { id: true, code: true, revisionNo: true, status: true },

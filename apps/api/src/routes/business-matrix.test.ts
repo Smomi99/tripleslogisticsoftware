@@ -118,7 +118,7 @@ async function makeWorld(name: string, slug: string, tag: string): Promise<World
   await inquiry('INBOUND', ports.anr, ports.ctg, `${YEAR}-03-13`);
   await inquiry('CROSS_BORDER', ports.ctg, ports.anr, `${YEAR}-03-12`);
 
-  const quotation = async (code: string, revisionNo: number, status: 'DRAFT' | 'SENT' | 'SUPERSEDED' | 'ACCEPTED') =>
+  const quotation = async (code: string, revisionNo: number, status: 'DRAFT' | 'SENT' | 'SUPERSEDED' | 'ACCEPTED' | 'CANCELLED') =>
     owner.quotation.create({
       data: {
         tenantId,
@@ -136,13 +136,17 @@ async function makeWorld(name: string, slug: string, tag: string): Promise<World
         localCurrencyId: bdt,
         conversionRate: '1',
         status,
+        ...(status === 'CANCELLED' ? { cancelledAt: new Date(), cancelReason: 'Quoted again.' } : {}),
       },
       select: { id: true },
     });
-  // One quotation, revised once: it is one quotation. A draft is none.
+  // One quotation, revised once: it is one quotation. A draft is none, and
+  // nor is a number withdrawn after a revision (cancelled, 2026-10-29).
   await quotation(`QTN-${YEAR}-7${tag}01`, 1, 'SUPERSEDED');
   const accepted = await quotation(`QTN-${YEAR}-7${tag}01`, 2, 'ACCEPTED');
   await quotation(`QTN-${YEAR}-7${tag}02`, 1, 'DRAFT');
+  await quotation(`QTN-${YEAR}-7${tag}03`, 1, 'SUPERSEDED');
+  await quotation(`QTN-${YEAR}-7${tag}03`, 2, 'CANCELLED');
 
   const booking = await owner.shipment.create({
     data: {
@@ -274,7 +278,7 @@ describe('a trade lane', () => {
     expect(res.body.data).toHaveLength(1);
     const [antwerp, rotterdam] = res.body.data[0].rows as Row[];
     // Three outbound inquiries, not the Cross Border one. One quotation, not
-    // its superseded revision or the draft. A 40' and a 20' that are final,
+    // its superseded revision, the draft, or the cancelled number. A 40' and a 20' that are final,
     // not the draft plan. The issued invoice, not the draft.
     expect(antwerp).toMatchObject({ pol: { id: A.ports.ctg.toString() }, pod: { id: A.ports.anr.toString() }, inquiries: 3, quotations: 1, teus: '3.00', revenue: '4000.0000' });
     expect(rotterdam).toMatchObject({ inquiries: 1, quotations: 0, teus: '0.00', revenue: '0.0000' });

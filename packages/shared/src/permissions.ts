@@ -415,7 +415,11 @@ export const FEATURES: readonly FeatureDefinition[] = [
      * forwarder expects to pay the carrier, agent and vendor. Column-level, as
      * on the debit invoice: reading a quotation is not reading its margin.
      */
-    actions: ['VIEW', 'CREATE', 'EDIT', 'DELETE', 'SEND', 'FOLLOWUP', 'EXPORT_PDF', 'VIEW_ALL', 'VIEW_BUY_PRICE'],
+    /*
+     * CANCEL (2026-10-29): withdraw a quotation the customer has, with a
+     * reason, so the inquiry can be quoted again. History, unlike DELETE.
+     */
+    actions: ['VIEW', 'CREATE', 'EDIT', 'DELETE', 'CANCEL', 'SEND', 'FOLLOWUP', 'EXPORT_PDF', 'VIEW_ALL', 'VIEW_BUY_PRICE'],
   },
   /*
    * Column-level, like PURCHASE's VIEW_BUY_PRICE. Adding a cost head nobody

@@ -8,7 +8,9 @@ import {
   quotationCostsSaveSchema,
   quotationCreateSchema,
   type QuotationDto,
+  quotationCanCancel,
   quotationCanChange,
+  quotationCancelSchema,
   type QuotationLineDto,
   type QuotationListItemDto,
   quotationListQuerySchema,
@@ -234,6 +236,12 @@ function toDto(row: QuotationRow): QuotationDto {
       row.status,
       row.shipments.map((b) => b.status),
     ),
+    cancellable: quotationCanCancel(
+      row.status,
+      row.shipments.map((b) => b.status),
+    ),
+    cancelledAt: row.cancelledAt?.toISOString() ?? null,
+    cancelReason: row.cancelReason,
 
     commodities: row.commodities.map<QuotationCommodityDto>((c) => ({
       id: c.id.toString(),
@@ -836,6 +844,10 @@ quotationRouter.get('/quotations', requirePermission(`${FEATURE}.VIEW`), async (
       row.status,
       row.shipments.map((b) => b.status),
     ),
+    cancellable: quotationCanCancel(
+      row.status,
+      row.shipments.map((b) => b.status),
+    ),
     bookingCount: row.shipments.filter((b) => b.status !== 'CANCELLED').length,
   }));
 
@@ -1295,7 +1307,8 @@ async function costsView(db: TenantDb, auth: AuthContext, row: QuotationRow): Pr
     sellTotalBase: sellTotalBase === null ? null : sellTotalBase.toFixed(4),
     costTotalBase: saved.length === 0 ? null : costTotalBase.toFixed(4),
     // A superseded revision is history; its replacement carries the costs on.
-    editable: mayEdit && row.status !== 'SUPERSEDED',
+    // A cancelled one is history too (2026-10-29).
+    editable: mayEdit && row.status !== 'SUPERSEDED' && row.status !== 'CANCELLED',
     options,
   };
 }
@@ -1328,6 +1341,9 @@ quotationRouter.put(
         throw HttpError.conflict(
           `Revision ${row.revisionNo} of ${row.code} was replaced by a later one. Change the costs on the latest revision.`,
         );
+      }
+      if (row.status === 'CANCELLED') {
+        throw HttpError.conflict(`${row.code} was cancelled, so its costs stay as they were.`);
       }
       const base = await baseCurrency(db, auth.tenantId);
       if (base === null) {
@@ -1409,6 +1425,101 @@ quotationRouter.delete('/quotations/:id', requirePermission(`${FEATURE}.DELETE`)
           : { id: restored.id.toString(), revisionNo: restored.revisionNo, status: restored.status },
     },
   };
+  res.json(payload);
+});
+
+/**
+ * The inquiry a cancelled quotation answered, quotable again (client,
+ * 2026-10-29: "so that we can quote from the inquiry again").
+ *
+ * §5.3 rule 9 made it QUOTED when the quotation was sent, and the status
+ * follows the document. So it goes back to where pricing left it — PRICED
+ * with a rate picked, RFQ_SENT if agents were asked, else OPEN — with the
+ * picked rate's price as its quoted price again, as Price writes it (§5.5).
+ *
+ * Only from QUOTED, and only when no other sent quotation still answers it.
+ * WON, LOST, EXPIRED and CANCELLED say something the quotation did not.
+ */
+async function reopenInquiry(db: TenantDb, userId: bigint, inquiryId: bigint): Promise<void> {
+  const inquiry = await db.inquiry.findFirst({ where: { id: inquiryId, deletedAt: null }, select: { status: true } });
+  if (inquiry?.status !== 'QUOTED') return;
+  const answered = await db.quotation.count({
+    where: { inquiryId, deletedAt: null, status: { in: ['SENT', 'ACCEPTED', 'REJECTED', 'EXPIRED'] } },
+  });
+  if (answered > 0) return;
+
+  const [selected, agents] = await Promise.all([
+    db.inquiryRate.findFirst({ where: { inquiryId, deletedAt: null, isSelected: true }, select: { quotedPrice: true } }),
+    db.inquiryParty.count({ where: { inquiryId, agentId: { not: null } } }),
+  ]);
+  await db.inquiry.update({
+    where: { id: inquiryId },
+    data: {
+      status: selected !== null ? 'PRICED' : agents > 0 ? 'RFQ_SENT' : 'OPEN',
+      quotedPrice: selected?.quotedPrice ?? null,
+      updatedBy: userId,
+    },
+  });
+}
+
+/**
+ * POST /api/tenant/cs/quotations/:id/cancel — `Cancel quotation` (client,
+ * 2026-10-29).
+ *
+ * A quotation the customer has been sent is history, so it is never deleted
+ * (§11 Q13): it is cancelled, with a reason, and keeps its number. Only the
+ * live issue cancels (quotationCanCancel). A draft is deleted instead, an
+ * earlier revision is already history, and an accepted one waits until every
+ * booking raised from it is cancelled — the rule that locks its price.
+ */
+quotationRouter.post('/quotations/:id/cancel', requirePermission(`${FEATURE}.CANCEL`), async (req, res) => {
+  const auth = req.auth!;
+  const id = parseId(req.params.id, 'quotation');
+  const input = quotationCancelSchema.parse(req.body);
+
+  const data = await withTenant(auth.tenantId, async (db) => {
+    const current = await findScoped(db, auth, id);
+    const label = current.revisionNo > 1 ? `${current.code} revision ${current.revisionNo}` : current.code;
+    if (current.status === 'CANCELLED') {
+      throw new HttpError(409, 'ALREADY_CANCELLED', `${label} was already cancelled.`);
+    }
+    if (current.status === 'DRAFT') {
+      throw new HttpError(
+        409,
+        'DRAFT',
+        current.revisionNo > 1
+          ? `${label} is a draft nobody has been sent. Delete it to go back to revision ${current.revisionNo - 1}, then cancel that.`
+          : `${label} is a draft nobody has been sent. Delete it instead.`,
+      );
+    }
+    if (current.status === 'SUPERSEDED') {
+      throw new HttpError(409, 'SUPERSEDED', `${label} was replaced by a later revision. Cancel the latest one.`);
+    }
+    if (!quotationCanCancel(current.status, current.shipments.map((b) => b.status))) {
+      const live = current.shipments.filter((b) => b.status !== 'CANCELLED').map((b) => b.code);
+      throw new HttpError(
+        409,
+        'BOOKINGS_LIVE',
+        `${label} is booked on ${live.join(', ')}. Cancel ${live.length === 1 ? 'that booking' : 'those bookings'} first.`,
+      );
+    }
+
+    await db.quotation.update({
+      where: { id: current.id },
+      data: {
+        status: 'CANCELLED',
+        cancelledAt: new Date(),
+        cancelledBy: auth.userId,
+        cancelReason: input.reason,
+        updatedBy: auth.userId,
+      },
+    });
+    await reopenInquiry(db, auth.userId, current.inquiryId);
+    return toDto(await findScoped(db, auth, id));
+  });
+
+  // No recordAudit: the table's trigger writes the status change as UPDATE.
+  const payload: ApiSuccess<QuotationDto> = { success: true, data };
   res.json(payload);
 });
 
@@ -1511,6 +1622,7 @@ quotationRouter.get(
             ? ''
             : amountInWords(dto.totalAmountUsd ?? '0', dto.totalCurrencyCode)),
         notes: quotationNotes(settings?.quotationNotes),
+        cancelled: dto.status === 'CANCELLED',
       });
 
       return { pdf: pdfBuffer, code: dto.code };

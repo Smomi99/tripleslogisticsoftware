@@ -323,6 +323,24 @@ When the business is won through an agent, the user picks the winning agent on t
    (MODULE_BOOKING_CARGO §5.6).
    Quotation numbers do not get reused.
 9. On send: status → `SENT`, inquiry → `QUOTED`, PDF generated and attached, `email_log` written.
+10. **Cancel quotation** (client, 2026-10-29: *"so that we can quote from the inquiry again"*).
+    - **What can be cancelled.** A quotation the customer has been sent is cancelled with a reason,
+      not deleted. It keeps its number and stays readable, and its PDF prints watermarked
+      *CANCELLED*. Only the live issue cancels: `SENT`, `REJECTED`, `EXPIRED`, or `ACCEPTED` once
+      every booking raised from it is cancelled.
+    - **What cannot.** A draft is deleted instead (Q13). An earlier revision is already history.
+    - **The inquiry.** If it says `QUOTED` and no other sent quotation still answers it, it goes back
+      to where pricing left it: `PRICED` when a rate is picked, `RFQ_SENT` when agents were asked,
+      else `OPEN`. The picked rate's price becomes its quoted price again. Its Quotation column clears
+      and **Quote** appears on it again. A new quotation takes a new number.
+    - **Locked once cancelled.** It cannot be edited, sent, have its costs changed or be booked on.
+      The Business Matrix does not count its number.
+    - **Built as:**
+      - `POST /cs/quotations/:id/cancel { reason }` under the new
+        `CUSTOMER_SERVICE.QUOTATION.CANCEL`;
+      - migrations `20261029100000_quotation_cancelled_status` and `20261029100100_quotation_cancel`
+        (`cancelled_at`, `cancelled_by`, `cancel_reason`, and a CHECK that a cancel has a reason);
+      - *Cancel* on the Quotation List and *Cancel quotation* on the quotation.
 
 ### 5.4 Currency
 
@@ -524,6 +542,8 @@ wrong number on a customer-facing document.
     a draft *revision* discards that edit: the issue it superseded goes back to `SENT`, or to
     `ACCEPTED` if a booking was ever raised from it, and the next revision takes the next unused
     number.
+    **Extended 2026-10-29:** a quotation that has been sent is now *cancelled* instead, with a reason
+    and a `CANCELLED` status, so its inquiry can be quoted again (§5.3 rule 10).
 14. **What names the freight on a quotation?** The price table prices the box but does not name the
     charge: `freight_rate` carries no cost head, only `rate_local_charge` does. So auto-pull can
     name the Seal, ENS and HBL lines and cannot name the Ocean Freight line. It is asked on the

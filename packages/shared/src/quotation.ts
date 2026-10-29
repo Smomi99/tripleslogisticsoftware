@@ -19,6 +19,7 @@ export const QUOTATION_STATUSES = [
   'REJECTED',
   'EXPIRED',
   'SUPERSEDED',
+  'CANCELLED',
 ] as const;
 export type QuotationStatus = (typeof QUOTATION_STATUSES)[number];
 
@@ -29,6 +30,7 @@ export const QUOTATION_STATUS_LABEL: Record<QuotationStatus, string> = {
   REJECTED: 'Rejected',
   EXPIRED: 'Expired',
   SUPERSEDED: 'Superseded',
+  CANCELLED: 'Cancelled',
 };
 
 export const TRANSIT_TYPES = ['DIRECT', 'INDIRECT'] as const;
@@ -66,6 +68,26 @@ export function quotationCanChange(
   if (quotationIsEditable(status)) return true;
   return status === 'ACCEPTED' && bookingStatuses.every((s) => s === 'CANCELLED');
 }
+
+/**
+ * Whether a quotation may be cancelled, so its inquiry can be quoted again
+ * (client, 2026-10-29).
+ *
+ * Only the live issue of a number, once it has gone to the customer: a DRAFT
+ * is deleted instead (§11 Q13), a SUPERSEDED revision is history, and an
+ * ACCEPTED one is being worked on while any booking raised from it is live —
+ * the rule quotationCanChange already draws.
+ */
+export function quotationCanCancel(status: string, bookingStatuses: readonly string[]): boolean {
+  if (status === 'SENT' || status === 'REJECTED' || status === 'EXPIRED') return true;
+  return status === 'ACCEPTED' && bookingStatuses.every((s) => s === 'CANCELLED');
+}
+
+/** `Cancel quotation`: a reason is required, as for a booking or an invoice. */
+export const quotationCancelSchema = z.object({
+  reason: z.string().trim().min(1, 'Say why this quotation is being cancelled.').max(2000, 'That reason is too long.'),
+});
+export type QuotationCancelInput = z.input<typeof quotationCancelSchema>;
 
 /** A booking raised from a quotation, as the quotation shows it. */
 export interface QuotationBookingDto {
@@ -188,6 +210,10 @@ export interface QuotationDto {
   bookings: QuotationBookingDto[];
   /** quotationCanChange, decided by the server so the screen cannot drift. */
   editable: boolean;
+  /** quotationCanCancel, likewise. */
+  cancellable: boolean;
+  cancelledAt: string | null;
+  cancelReason: string | null;
 
   commodities: QuotationCommodityDto[];
   lines: QuotationLineDto[];
@@ -218,6 +244,8 @@ export interface QuotationListItemDto {
   totalCurrencyCode: string | null;
   /** quotationCanChange: whether the list offers Edit. */
   editable: boolean;
+  /** quotationCanCancel, decided by the server. */
+  cancellable: boolean;
   /** Bookings raised from this revision that are still live — cancelled ones left out. */
   bookingCount: number;
 }
