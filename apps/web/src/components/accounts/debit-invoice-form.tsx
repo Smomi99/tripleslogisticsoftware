@@ -37,6 +37,7 @@ import {
   withEveryType,
 } from './cost-blocks';
 import { DISPLAY_STATUS_TONE, fmt, money, previewLine } from './format';
+import { useMoneyReceipt } from './money-receipt';
 
 /**
  * The invoice `Make invoice` opens — the lower half of the client's
@@ -155,6 +156,7 @@ export function DebitInvoiceForm({
   const [busy, setBusy] = useState<'save' | 'send' | 'cancel' | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
+  const moneyReceipt = useMoneyReceipt();
 
   const isNew = invoice === null;
   const canEdit = isNew
@@ -679,6 +681,21 @@ export function DebitInvoiceForm({
                       </>
                     )}
                     {r.bankChargeBase !== null && ` · Bank charge ${money(baseCode, r.bankChargeBase)}`}
+                    {/* What the customer is handed for this money (client, 2026-10-28). */}
+                    {r.journalEntryId !== null && can('ACCOUNTS.INCOME.VIEW') && (
+                      <>
+                        {' · '}
+                        <Button
+                          variant="text"
+                          size="inline"
+                          className="font-sans"
+                          disabled={moneyReceipt.opening !== null}
+                          onClick={() => void moneyReceipt.open(r.journalEntryId!)}
+                        >
+                          {moneyReceipt.opening === r.journalEntryId ? 'Opening…' : 'Money receipt'}
+                        </Button>
+                      </>
+                    )}
                   </li>
                 ))}
               </ul>

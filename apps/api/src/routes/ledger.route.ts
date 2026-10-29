@@ -28,11 +28,13 @@ import {
   ledgerAccountRenameSchema,
   LEDGER_ACCOUNT_TYPE_LABEL,
   LEDGER_ACCOUNT_TYPES,
+  MONEY_LEDGER_KEYS,
   type OpenDocumentDto,
   openDocumentsQuerySchema,
 } from '@ff/shared';
 
 import { Prisma } from '../generated/prisma/client';
+import { amountInWords } from '../lib/amount-in-words';
 import { CODE_RETRY_LIMIT, isUniqueViolation, nextCode } from '../lib/codes';
 import { type BaseCurrency, baseCurrency, resolveRates } from '../lib/currency-rate';
 import { day, dec, describeLines, isoOf, money, paymentOf } from '../lib/debit-invoice';
@@ -67,7 +69,9 @@ import {
   unsettle,
   writeLines,
 } from '../lib/ledger';
+import { letterheadOf, logoOf } from '../lib/letterhead';
 import { excludeInactive, inactiveMasters } from '../lib/master-visibility';
+import { receiptDay, renderMoneyReceiptPdf } from '../lib/money-receipt-pdf';
 import { parseId } from '../lib/request';
 import { displayNameFromKey, openFile, putFile, removeFile } from '../lib/storage';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
@@ -1128,6 +1132,111 @@ for (const kind of Object.keys(SLUG) as JournalEntryKind[]) {
     stream.pipe(res);
   });
 }
+
+// ------------------------------------------- Money receipt (client, 2026-10-28)
+
+/** Who paid, at the address their CRM record holds. */
+async function payerAddress(db: TenantDb, party: NonNullable<JournalEntryDto['party']>): Promise<string | null> {
+  const id = BigInt(party.id);
+  const select = { address: true } as const;
+  switch (party.type) {
+    case 'CUSTOMER':
+      return (await db.customer.findFirst({ where: { id }, select }))?.address ?? null;
+    case 'AGENT':
+      return (await db.agent.findFirst({ where: { id }, select }))?.address ?? null;
+    case 'VENDOR':
+      return (await db.vendor.findFirst({ where: { id }, select }))?.address ?? null;
+    case 'CARRIER':
+      return (await db.carrier.findFirst({ where: { id }, select: { officeAddress: true } }))?.officeAddress ?? null;
+  }
+}
+
+const MONEY_KEYS: ReadonlySet<string> = new Set(MONEY_LEDGER_KEYS);
+
+/**
+ * `Money receipt` (client, 2026-10-28): on a debit invoice once money is
+ * received and saved, and on the Income voucher that received it. One per
+ * voucher, numbered with its own RV no. Only for money received from someone
+ * and still in the books.
+ */
+ledgerRouter.get('/income/:id/money-receipt', requirePermission('ACCOUNTS.INCOME.VIEW'), async (req, res) => {
+  const auth = req.auth!;
+  const id = parseId(req.params.id, 'income');
+
+  const { pdf, filename } = await withTenant(auth.tenantId, async (db) => {
+    const row = await loadEntry(db, id, 'INCOME');
+    if (row.status !== 'POSTED') {
+      throw new HttpError(409, 'NOT_POSTED', `${row.code} was cancelled, so it has no money receipt.`);
+    }
+    const party = entryParty(row);
+    if (party === null) {
+      throw new HttpError(409, 'NO_PAYER', `${row.code} names no one it was received from, so there is no one to give a receipt to.`);
+    }
+
+    const receipt = row.receipts[0];
+    const opening = row.openingSettlements[0];
+    const deposited = row.lines.filter((l) => l.debit.greaterThan(0)).map((l) => l.ledgerAccountId);
+    const [letterhead, logo, base, address, invoice, accounts] = await Promise.all([
+      letterheadOf(db, auth.tenantId),
+      logoOf(db, auth.tenantId),
+      baseCurrency(db, auth.tenantId),
+      payerAddress(db, party),
+      receipt === undefined
+        ? Promise.resolve(null)
+        : db.debitInvoice.findFirst({
+            where: { id: receipt.debitInvoice.id },
+            select: { code: true, invoiceDate: true, shipment: { select: { code: true } } },
+          }),
+      db.ledgerAccount.findMany({
+        where: { id: { in: deposited } },
+        select: { name: true, systemKey: true, parent: { select: { name: true, systemKey: true } } },
+      }),
+    ]);
+
+    // Where the money went in: the voucher's Cash and Bank lines (a bank charge is not one).
+    const paidBy = accounts
+      .filter((a) => MONEY_KEYS.has(a.systemKey ?? '') || MONEY_KEYS.has(a.parent?.systemKey ?? ''))
+      .map((a) => (a.systemKey === 'ASSET.CASH' || a.parent?.systemKey === 'ASSET.CASH' ? 'Cash' : `Bank — ${a.name}`))
+      .filter((v, i, all) => all.indexOf(v) === i)
+      .join(', ');
+
+    // What the payer paid, in what they paid it in: an invoice's currency, an opening's, else the books'.
+    const baseCode = base === null ? 'BDT' : isoOf(base);
+    const settled =
+      receipt !== undefined
+        ? { currencyCode: receipt.debitInvoice.currencyCode, amount: money(receipt.amount) }
+        : opening !== undefined
+          ? { currencyCode: opening.currencyCode, amount: money(opening.amount) }
+          : { currencyCode: baseCode, amount: money(row.totalAmount) };
+
+    const pdf = await renderMoneyReceiptPdf({
+      companyName: letterhead.companyName,
+      logo,
+      receiptNo: row.code,
+      receiptDate: day(row.entryDate) ?? '',
+      receivedFrom: party.name,
+      address,
+      currencyCode: settled.currencyCode,
+      amount: settled.amount,
+      amountInWords: amountInWords(settled.amount, settled.currencyCode),
+      baseEquivalent: settled.currencyCode === baseCode ? null : { baseCurrencyCode: baseCode, amount: money(row.totalAmount) },
+      paidBy: paidBy === '' ? '—' : paidBy,
+      against:
+        invoice !== null
+          ? `Debit Note ${invoice.code} dated ${receiptDay(day(invoice.invoiceDate) ?? '')}`
+          : opening !== undefined
+            ? 'Opening balance'
+            : null,
+      bookingNo: invoice?.shipment?.code ?? null,
+      description: row.description,
+    });
+    return { pdf, filename: `money-receipt-${row.code}.pdf` };
+  });
+
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+  res.send(pdf);
+});
 
 // ------------------------------------------------ the Journal's draft (§14.4)
 

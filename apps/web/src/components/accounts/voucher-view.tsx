@@ -22,6 +22,7 @@ import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 
 import { amount, money } from './format';
+import { useMoneyReceipt } from './money-receipt';
 import { VoucherForm } from './voucher-form';
 import { VOUCHER_SLUG, VOUCHER_STATUS_TONE } from './voucher-list';
 
@@ -29,7 +30,8 @@ import { VOUCHER_SLUG, VOUCHER_STATUS_TONE } from './voucher-list';
  * One voucher, as the books hold it (§14.4). A posted voucher is never edited:
  * it is cancelled with a reason, which also takes back whatever it paid or
  * banked against a party's invoice, and entered again. A draft journal opens
- * in its form, to finish and agree.
+ * in its form, to finish and agree. A posted Income voucher received from
+ * someone prints their money receipt (client, 2026-10-28).
  */
 export function VoucherView({ kind, id }: { kind: JournalEntryKind; id: string }) {
   const { authorizedRequest, authorizedDownload, can } = useSession();
@@ -40,6 +42,7 @@ export function VoucherView({ kind, id }: { kind: JournalEntryKind; id: string }
   const [cancelling, setCancelling] = useState(false);
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
+  const receipt = useMoneyReceipt();
 
   const load = useCallback(async () => {
     try {
@@ -166,6 +169,11 @@ export function VoucherView({ kind, id }: { kind: JournalEntryKind; id: string }
           </div>
           <div className="flex items-center gap-3">
             <Status tone={VOUCHER_STATUS_TONE[entry.status]}>{JOURNAL_ENTRY_STATUS_LABEL[entry.status]}</Status>
+            {kind === 'INCOME' && entry.status === 'POSTED' && entry.party !== null && can('ACCOUNTS.INCOME.VIEW') && (
+              <Button variant="secondary" disabled={receipt.opening !== null} onClick={() => void receipt.open(entry.id)}>
+                {receipt.opening !== null ? 'Opening…' : 'Money receipt'}
+              </Button>
+            )}
             {entry.status === 'DRAFT' && can('ACCOUNTS.JOURNAL.APPROVE') && (
               <Button disabled={busy} onClick={() => void agree()}>
                 Save & agreed
