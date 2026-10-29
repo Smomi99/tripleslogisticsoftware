@@ -28,7 +28,7 @@ const BASE = '/api/tenant/documentation/copy-docs';
  * Documentation → Copy Doc upload — the client's `Copy doc upload` sheet,
  * "Shipping Documens upload" (docs/DESIGN-UPDATE-2026-10-28.md §3). Sea and
  * air, inbound and outbound in one list, as the sheet's two sample rows are;
- * `Upload Doc` opens the nine papers.
+ * `Upload Doc` opens the papers: the sheet's nine, and the client's two additions.
  */
 export function CopyDocScreen() {
   const { can } = useSession();
@@ -161,7 +161,7 @@ export function CopyDocScreen() {
   );
 }
 
-/** The upload form (C16–E24): nine rows, each "browse and upload". */
+/** The upload form (C16–E24, plus two): a row per paper, each "browse and upload". */
 function CopyDocModal({ row, onClose }: { row: CopyDocRow; onClose: () => void }) {
   const { can, authorizedRequest, authorizedUpload, authorizedDownload } = useSession();
   const mayCreate = can(`${FEATURE}.CREATE`);

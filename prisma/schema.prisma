@@ -5972,6 +5972,10 @@ enum CopyDocumentKind {
   IGM
   /// C24 "Delivery Order".
   DELIVERY_ORDER
+  /// Added by the client, 2026-10-28: the C&F agent's certificate.
+  CNF_CERTIFICATE
+  /// Added by the client, 2026-10-28: the bank's encashment certificate.
+  ENCASHMENT_CERTIFICATE
 
   @@map("copy_document_kind")
 }

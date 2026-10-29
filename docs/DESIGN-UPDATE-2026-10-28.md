@@ -284,6 +284,16 @@ Migration `20261028140000_copy_document`. Route `/documentation/copy-doc-upload`
 - Tests: `copy-doc.test.ts`, 9 cases, including both directions of the Pre-Alert link and two-workspace
   isolation.
 
+### 3.5 Two more papers (client, 2026-10-28)
+
+**The request.** Add upload options for *C & F certificate* and *Encashment certificate*.
+
+**As built.** Migration `20261028180000_copy_document_cnf_encashment` adds `CNF_CERTIFICATE` and
+`ENCASHMENT_CERTIFICATE` to `copy_document_kind`, after Delivery Order. The form lists them after the
+sheet's nine, as *C&F certificate* and *Encashment certificate*, on sea and air alike. Nothing else in
+the system holds either, so each reads *Not on file — Upload a copy* until one is uploaded. Upload,
+replace, remove and permissions are the other papers'. The list's count is now *n of 11*.
+
 ---
 
 ## 4. INQUIRY REGISTER (Report) — not built
