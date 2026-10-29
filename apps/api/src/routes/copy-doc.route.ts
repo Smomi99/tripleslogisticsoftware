@@ -32,7 +32,8 @@ import { blPrintDocument } from './bl-print.route';
  *
  * The list is every booking that has an approved schedule or an advise, sea
  * and air, inbound and outbound — the sheet's two sample rows are a sea export
- * and an air import. `Upload Doc` opens the nine papers (C16–C24).
+ * and an air import. `Upload Doc` opens the nine papers (C16–C24), and the two
+ * the client added on 2026-10-28 (C&F certificate, Encashment certificate).
  *
  * What a paper shows, in order of preference:
  *   a copy uploaded here    always wins
@@ -55,7 +56,7 @@ interface Booking {
   movementType: MovementType;
 }
 
-/** Everything the nine papers could be drawn from, for one booking. */
+/** Everything the papers could be drawn from, for one booking. */
 interface Sources {
   uploads: Map<CopyDocumentKind, { key: string; at: Date; by: string | null }>;
   preAlertHouse: string | null;

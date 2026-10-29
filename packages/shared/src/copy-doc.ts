@@ -8,10 +8,10 @@ import { MILESTONE_SORT_FIELDS, type MilestoneRow } from './milestone';
  * Documentation → Copy Doc upload (docs/DESIGN-UPDATE-2026-10-28.md §3). The
  * sheet `Copy doc upload`, titled "Shipping Documens upload": a booking row
  * for sea and air, inbound and outbound, and `Upload Doc` opening nine papers,
- * each "browse and upload".
+ * each "browse and upload" — and two more the client added on 2026-10-28.
  */
 
-/** C16–C24, in the sheet's order. */
+/** C16–C24, in the sheet's order, then the client's two additions (2026-10-28). */
 export const COPY_DOCUMENT_KINDS = [
   'HOUSE_BL',
   'MASTER_BL',
@@ -22,6 +22,8 @@ export const COPY_DOCUMENT_KINDS = [
   'EXP',
   'IGM',
   'DELIVERY_ORDER',
+  'CNF_CERTIFICATE',
+  'ENCASHMENT_CERTIFICATE',
 ] as const;
 export type CopyDocumentKind = (typeof COPY_DOCUMENT_KINDS)[number];
 
@@ -35,6 +37,8 @@ const LABEL: Record<CopyDocumentKind, string> = {
   EXP: 'EXP form',
   IGM: 'IGM',
   DELIVERY_ORDER: 'Delivery order',
+  CNF_CERTIFICATE: 'C&F certificate',
+  ENCASHMENT_CERTIFICATE: 'Encashment certificate',
 };
 
 /** On air the bills are air waybills. */
@@ -85,7 +89,7 @@ export interface CopyDocRow extends MilestoneRow {
   /** M6 "MBL No". */
   mblNo: string | null;
   movementType: MovementType;
-  /** How many of the nine are on file, uploaded or held by the system. */
+  /** How many of the papers are on file, uploaded or held by the system. */
   onFile: number;
 }
 
