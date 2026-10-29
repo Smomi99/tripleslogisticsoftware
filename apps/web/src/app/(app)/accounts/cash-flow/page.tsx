@@ -1,9 +1,16 @@
 'use client';
 
-import type { CashFlowDto } from '@ff/shared';
+import {
+  CASH_FLOW_BREAKDOWN_LINES,
+  CASH_FLOW_COLUMN_LABEL,
+  CASH_FLOW_COLUMNS,
+  type CashFlowColumn,
+  type CashFlowDto,
+} from '@ff/shared';
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
+import { StatementBreakdown, type StatementBreakdownTarget } from '@/components/accounts/statement-breakdown';
 import { sheetDay, StatementTable } from '@/components/accounts/statement-table';
 import { Button } from '@/components/ui/button';
 import { Input, Select } from '@/components/ui/field';
@@ -15,8 +22,13 @@ import { useSession } from '@/lib/session';
  * Accounts → Cash Flow Statement (Menu M16). Where the cash and bank money
  * came from and went to, by the direct method, for a month, the financial year
  * to date and the same span a year before — the Income Statement's columns.
- * Read-only; every figure is the server's (lib/cash-flow.ts).
+ * Read-only; every figure is the server's (lib/cash-flow.ts). A line's name or
+ * figure opens the vouchers it is made of (client, 2026-10-28).
  */
+
+/** The flows, and the cash at either end; the section totals are the lines above them. */
+const OPENS: ReadonlySet<string> = new Set(CASH_FLOW_BREAKDOWN_LINES);
+const COLUMN_OPTIONS = CASH_FLOW_COLUMNS.map((c) => [c, CASH_FLOW_COLUMN_LABEL[c]] as const);
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
@@ -33,6 +45,7 @@ export default function CashFlowPage() {
   const [pending, setPending] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [breakdown, setBreakdown] = useState<StatementBreakdownTarget<CashFlowColumn> | null>(null);
 
   const query = `month=${month}&yearStartMonth=${yearStartMonth}`;
 
@@ -140,6 +153,8 @@ export default function CashFlowPage() {
             ]}
             rows={statement.rows}
             pending={pending}
+            opens={(row) => OPENS.has(row.key)}
+            onOpen={(row, i) => setBreakdown({ line: row.key, label: row.label, column: CASH_FLOW_COLUMNS[i] ?? 'CURRENT_MONTH' })}
           />
 
           <details className="rounded-manifest border border-line bg-surface px-4 py-3 text-body text-steel">
@@ -156,12 +171,22 @@ export default function CashFlowPage() {
                 Opening cash plus the net change always equals closing cash. A Difference row would mean a voucher the
                 classification missed.
               </li>
+              <li>Click a line, or any of its figures, to see the vouchers it is made of.</li>
             </ul>
           </details>
         </>
       )}
 
       {statement === null && error === null && <p className="text-body text-steel">Loading…</p>}
+
+      <StatementBreakdown
+        target={breakdown}
+        path="/api/tenant/accounts/cash-flow/breakdown"
+        query={query}
+        columns={COLUMN_OPTIONS}
+        onColumnChange={(column) => setBreakdown((open) => (open === null ? null : { ...open, column }))}
+        onClose={() => setBreakdown(null)}
+      />
     </div>
   );
 }

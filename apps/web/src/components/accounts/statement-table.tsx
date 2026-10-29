@@ -9,6 +9,9 @@ import { cn } from '@/lib/utils';
  * — the Balance Sheet's and the Cash Flow Statement's (the Income Statement
  * keeps its own, for its percentage rows). Every figure is the server's; this
  * only lays them out, in the Income Statement's style.
+ *
+ * A row `opens` says has a breakdown: its name and each non-zero figure are
+ * buttons, as on the Income Statement (client, 2026-10-28).
  */
 
 const SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -18,6 +21,10 @@ export function sheetDay(iso: string): string {
   const [y, m, d] = iso.split('-');
   return `${d}-${SHORT[Number(m) - 1]}-${y}`;
 }
+
+/** What opens a breakdown: a quiet underline at rest, --harbour on hover. */
+const DRILL =
+  'rounded-[2px] underline-offset-4 transition-colors duration-[120ms] hover:text-harbour hover:underline hover:decoration-solid hover:decoration-harbour';
 
 /** A negative figure reads with its minus sign, in --alert; an empty line as a dash. */
 function figure(value: string | null, row: StatementRowDto): { text: string; negative: boolean } {
@@ -32,11 +39,21 @@ export function StatementTable({
   columns,
   rows,
   pending = false,
+  opens,
+  onOpen,
 }: {
   columns: { label: string; sub: string }[];
   rows: StatementRowDto[];
   pending?: boolean;
+  /** Which rows have a breakdown. */
+  opens?: (row: StatementRowDto) => boolean;
+  /** Opens a row's breakdown on a column, by index. */
+  onOpen?: (row: StatementRowDto, column: number) => void;
 }) {
+  const figures = (row: StatementRowDto) => row.amounts.map((a) => a !== null && Number(a) !== 0);
+  const drills = (row: StatementRowDto) =>
+    opens !== undefined && onOpen !== undefined && opens(row) && figures(row).some(Boolean);
+
   return (
     <div className={cn('overflow-x-auto rounded-manifest border border-line bg-surface shadow-manifest', pending && 'opacity-60')}>
       <table className="w-full min-w-[640px] border-collapse text-cell">
@@ -77,16 +94,41 @@ export function StatementTable({
                 )}
               >
                 <td className={cn('px-4 py-1.5', row.kind === 'LINE' ? 'pl-8' : '', row.kind === 'CHECK' ? 'text-alert' : 'text-hull')}>
-                  {row.label}
+                  {drills(row) ? (
+                    <button
+                      type="button"
+                      aria-haspopup="dialog"
+                      // The name opens the first column with a figure.
+                      onClick={() => onOpen!(row, Math.max(0, figures(row).indexOf(true)))}
+                      className={cn(DRILL, 'text-left underline decoration-steel/60 decoration-dotted', row.kind === 'TOTAL' && 'uppercase')}
+                    >
+                      {row.label}
+                    </button>
+                  ) : (
+                    row.label
+                  )}
                 </td>
                 {row.amounts.map((amount, i) => {
                   const shown = figure(amount, row);
+                  const opensHere = drills(row) && figures(row)[i] === true;
                   return (
                     <td
                       key={i}
                       className={cn('px-4 py-1.5 text-right font-mono tabular-nums', shown.negative && 'text-alert')}
                     >
-                      {shown.text}
+                      {opensHere ? (
+                        <button
+                          type="button"
+                          aria-haspopup="dialog"
+                          aria-label={`${row.label}, ${columns[i]?.label ?? ''} ${columns[i]?.sub ?? ''}: ${shown.text}`}
+                          onClick={() => onOpen!(row, i)}
+                          className={cn(DRILL, 'tabular-nums')}
+                        >
+                          {shown.text}
+                        </button>
+                      ) : (
+                        shown.text
+                      )}
                     </td>
                   );
                 })}

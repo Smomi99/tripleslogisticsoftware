@@ -1,16 +1,20 @@
 import {
+  CASH_FLOW_COLUMNS,
   CASH_FLOW_LINES,
   CASH_FLOW_SECTION_TITLE,
   CASH_FLOW_SECTIONS,
+  type CashFlowBreakdownLine,
+  type CashFlowColumn,
   type CashFlowDto,
   type CashFlowLineKey,
   type CashFlowSection,
-  MONEY_LEDGER_KEYS,
+  type StatementBreakdownDto,
   type StatementRowDto,
 } from '@ff/shared';
 
 import { Prisma } from '../generated/prisma/client';
 import { type Period, periodsOf } from './income-statement';
+import { Breakdown, chartAccounts, isCash, isCashAccount, voucherRows } from './statement-breakdown';
 import type { TenantDb } from './tenant-client';
 
 /**
@@ -93,16 +97,6 @@ export function cashFlowLineOf(account: { accountType: string; systemKey: string
 }
 
 // ---------------------------------------------------------------- figures
-
-const MONEY = Prisma.join(MONEY_LEDGER_KEYS.map((k) => Prisma.sql`${k}`));
-
-/**
- * A line on a Cash or Bank sub ledger (or on the ledger itself). COALESCEd: a
- * workspace's own account has no system key and a ledger has no parent, and
- * `NULL IN (…)` is NULL — which NOT would leave NULL, and drop the line.
- */
-const isCash = (account: Prisma.Sql, parent: Prisma.Sql) =>
-  Prisma.sql`(COALESCE(${account}.system_key, '') IN (${MONEY}) OR COALESCE(${parent}.system_key, '') IN (${MONEY}))`;
 
 /** Cash and bank together, at the end of a day (null: before anything). */
 async function cashOn(db: TenantDb, tenantId: bigint, endOfDay: string): Promise<Prisma.Decimal> {
@@ -233,4 +227,62 @@ export async function cashFlowStatement(
     periods: { currentMonth: periods[0], ytd: periods[1], previousYtd: periods[2] },
     rows,
   };
+}
+
+// -------------------------------------------------------------- breakdown
+
+const OPENING_LABEL = 'Cash and Bank at the Beginning of the Period';
+const CLOSING_LABEL = 'Cash and Bank at the End of the Period';
+
+/**
+ * One line's figure in one column, as what it is made of (client, 2026-10-28).
+ *
+ * A flow is the vouchers that moved cash in the period, each by its lines on
+ * the accounts the line maps — the same rows cashFlowLines adds up. The cash
+ * at either end of the period is every voucher on a Cash or Bank account to
+ * that day, by account.
+ */
+export async function cashFlowBreakdown(
+  db: TenantDb,
+  tenantId: bigint,
+  input: { month: string; yearStartMonth: number; line: CashFlowBreakdownLine; column: CashFlowColumn; currencyCode: string },
+): Promise<StatementBreakdownDto> {
+  const { line } = input;
+  const periods = periodsOf(input.month, input.yearStartMonth);
+  const index = CASH_FLOW_COLUMNS.indexOf(input.column);
+  const period = periods[index]!;
+  const chart = await chartAccounts(db, tenantId);
+  const out = new Breakdown();
+  const head = { line, currencyCode: input.currencyCode, basis: null, column: input.column };
+
+  if (line === 'OPENING_CASH' || line === 'CLOSING_CASH') {
+    const asOf = line === 'OPENING_CASH' ? dayBefore(period.from) : period.to;
+    const cash = chart.filter(isCashAccount);
+    const rows = await voucherRows(db, tenantId, { accountIds: cash.map((a) => a.id), from: null, to: asOf, movedCash: false });
+    out.addVouchers(rows, new Map(cash.map((a) => [a.id.toString(), a])), () => true);
+    return out.dto({
+      ...head,
+      label: line === 'OPENING_CASH' ? OPENING_LABEL : CLOSING_LABEL,
+      period: { from: null, to: asOf },
+      total: await cashOn(db, tenantId, asOf),
+      notes: ['Every posted voucher on a Cash or Bank account to the day, by account.'],
+    });
+  }
+
+  const mapped = chart.filter(
+    (a) => !isCashAccount(a) && cashFlowLineOf({ accountType: a.accountType, systemKey: a.systemKey, parentKey: a.parentKey }) === line,
+  );
+  const [rows, lines] = await Promise.all([
+    voucherRows(db, tenantId, { accountIds: mapped.map((a) => a.id), from: period.from, to: period.to, movedCash: true }),
+    cashFlowLines(db, tenantId, periods),
+  ]);
+  // A line's credit − debit is the cash it brought in (the statement's sign).
+  out.addVouchers(rows, new Map(mapped.map((a) => [a.id.toString(), a])), () => false);
+  return out.dto({
+    ...head,
+    label: CASH_FLOW_LINES.find((l) => l.key === line)!.label,
+    period,
+    total: lines.get(line)?.[index] ?? ZERO,
+    notes: ['Each voucher that moved a Cash or Bank account, by where the money came from or went: a positive figure came in.'],
+  });
 }

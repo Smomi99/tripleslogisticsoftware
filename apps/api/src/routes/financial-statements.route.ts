@@ -3,17 +3,20 @@ import { Router } from 'express';
 
 import {
   type ApiSuccess,
+  balanceSheetBreakdownQuerySchema,
   type BalanceSheetDto,
   balanceSheetQuerySchema,
+  cashFlowBreakdownQuerySchema,
   type CashFlowDto,
   cashFlowQuerySchema,
   INCOME_STATEMENT_BASIS_LABEL,
   isoCurrency,
+  type StatementBreakdownDto,
   type StatementRowDto,
 } from '@ff/shared';
 
-import { balanceSheet } from '../lib/balance-sheet';
-import { cashFlowStatement } from '../lib/cash-flow';
+import { balanceSheet, balanceSheetBreakdown } from '../lib/balance-sheet';
+import { cashFlowBreakdown, cashFlowStatement } from '../lib/cash-flow';
 import { baseCurrency } from '../lib/currency-rate';
 import { letterheadOf } from '../lib/letterhead';
 import { withTenant } from '../lib/tenant-client';
@@ -23,10 +26,12 @@ import { requirePermission } from '../middleware/require-permission';
 /**
  * Accounts → Balance Sheet and Cash Flow Statement (Menu M15, M16).
  *
- *   GET /balance-sheet           the position on a day, and a year before
- *   GET /balance-sheet/export    the same as an Excel workbook
- *   GET /cash-flow               the cash flows of a month, YTD and last YTD
- *   GET /cash-flow/export        the same as an Excel workbook
+ *   GET /balance-sheet            the position on a day, and a year before
+ *   GET /balance-sheet/breakdown  one figure, as what it is made of
+ *   GET /balance-sheet/export     the same as an Excel workbook
+ *   GET /cash-flow                the cash flows of a month, YTD and last YTD
+ *   GET /cash-flow/breakdown      one figure, as the vouchers it is made of
+ *   GET /cash-flow/export         the same as an Excel workbook
  *
  * Read-only, on the existing ACCOUNTS.BALANCE_SHEET and
  * ACCOUNTS.CASH_FLOW_STATEMENT features (VIEW, EXPORT). How each figure is
@@ -109,6 +114,28 @@ financialStatementsRouter.get('/balance-sheet', requirePermission(`${BALANCE}.VI
   res.json(payload);
 });
 
+/**
+ * A figure on the statement opens this (client, 2026-10-28). Suppliers' costs
+ * are listed only with ACCOUNTS.DEBIT_INVOICE.VIEW_BUY_PRICE (MODULE_ACCOUNTS
+ * §3.9); without it they arrive counted and summed.
+ */
+financialStatementsRouter.get('/balance-sheet/breakdown', requirePermission(`${BALANCE}.VIEW`), async (req, res) => {
+  const auth = req.auth!;
+  const query = balanceSheetBreakdownQuerySchema.parse(req.query);
+  const viewBuyPrice = auth.isSuperadmin || auth.permissions.has('ACCOUNTS.DEBIT_INVOICE.VIEW_BUY_PRICE');
+  const data = await withTenant(auth.tenantId, async (db) => {
+    const base = await baseCurrency(db, auth.tenantId);
+    return balanceSheetBreakdown(db, auth.tenantId, {
+      ...query,
+      currencyCode: base === null ? 'Base' : isoCurrency(base.currency),
+      base,
+      viewBuyPrice,
+    });
+  });
+  const payload: ApiSuccess<StatementBreakdownDto> = { success: true, data };
+  res.json(payload);
+});
+
 financialStatementsRouter.get('/balance-sheet/export', requirePermission(`${BALANCE}.EXPORT`), async (req, res) => {
   const auth = req.auth!;
   const query = balanceSheetQuerySchema.parse(req.query);
@@ -146,6 +173,18 @@ financialStatementsRouter.get('/cash-flow', requirePermission(`${CASH_FLOW}.VIEW
   const query = cashFlowQuerySchema.parse(req.query);
   const { statement } = await buildCashFlow(auth.tenantId, query);
   const payload: ApiSuccess<CashFlowDto> = { success: true, data: statement };
+  res.json(payload);
+});
+
+/** A figure on the statement opens this (client, 2026-10-28). */
+financialStatementsRouter.get('/cash-flow/breakdown', requirePermission(`${CASH_FLOW}.VIEW`), async (req, res) => {
+  const auth = req.auth!;
+  const query = cashFlowBreakdownQuerySchema.parse(req.query);
+  const data = await withTenant(auth.tenantId, async (db) => {
+    const base = await baseCurrency(db, auth.tenantId);
+    return cashFlowBreakdown(db, auth.tenantId, { ...query, currencyCode: base === null ? 'Base' : isoCurrency(base.currency) });
+  });
+  const payload: ApiSuccess<StatementBreakdownDto> = { success: true, data };
   res.json(payload);
 });
 

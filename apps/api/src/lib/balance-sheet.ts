@@ -1,17 +1,27 @@
 import {
+  BALANCE_SHEET_COLUMNS,
   BALANCE_SHEET_LINES,
+  type BalanceSheetColumn,
   type BalanceSheetDto,
   type BalanceSheetGroup,
   type BalanceSheetLineKey,
+  INCOME_STATEMENT_BASIS_LABEL,
+  INCOME_STATEMENT_LINES,
   type IncomeStatementBasis,
+  type IncomeStatementLineKey,
+  type IncomeStatementSection,
+  LEDGER_PARTY_LABEL,
+  type LedgerPartyType,
+  type StatementBreakdownDto,
   type StatementRowDto,
 } from '@ff/shared';
 
 import { Prisma } from '../generated/prisma/client';
 import { type BaseCurrency, resolveRates } from './currency-rate';
 import { toBase } from './debit-invoice';
-import { statementLines, statementRows } from './income-statement';
+import { type Ledger, statementLines, statementRows } from './income-statement';
 import { openingMovements } from './receivable-payable';
+import { Breakdown, chartAccounts, shown, voucherRows } from './statement-breakdown';
 import type { TenantDb } from './tenant-client';
 
 /**
@@ -106,23 +116,66 @@ export function yearStartOf(isoDay: string, yearStartMonth: number): string {
 // ---------------------------------------------------------------- figures
 
 type Figures = Map<BalanceSheetLineKey, Prisma.Decimal>;
+type AccountType = 'ASSET' | 'LIABILITY' | 'EQUITY' | 'INCOME' | 'EXPENSE';
 
-/** Every line's figure on one day, before the subtotals. */
-export async function positionOn(
+/** An issued invoice to the day, and what was received against it by then. */
+interface InvoiceOwing {
+  id: bigint;
+  code: string;
+  invoiceDate: Date;
+  customerName: string | null;
+  bookingCode: string | null;
+  billed: Prisma.Decimal;
+  received: Prisma.Decimal;
+}
+
+/** A supplier's cost on an issued invoice to the day, and what was paid on it by then. */
+interface CostOwing {
+  invoiceId: bigint;
+  invoiceCode: string;
+  invoiceDate: Date;
+  partyName: string | null;
+  bookingCode: string | null;
+  supplierInvoiceNo: string | null;
+  costed: Prisma.Decimal;
+  paid: Prisma.Decimal;
+}
+
+/** A party's CRM opening on one side, in base, and what vouchers settled of it by the day. */
+interface OpeningOwing {
+  partyType: LedgerPartyType;
+  partyId: bigint;
+  side: 'RECEIVABLE' | 'PAYABLE';
+  date: Date;
+  owed: Prisma.Decimal;
+  settled: Prisma.Decimal;
+}
+
+/** Everything one day's figures are added up from — itemised, so a breakdown reads the same rows. */
+interface Position {
+  asOf: string;
+  accounts: { id: bigint; accountType: AccountType; systemKey: string | null; parentKey: string | null; debit: Prisma.Decimal; credit: Prisma.Decimal }[];
+  /** What the income and expense lines add up to: the books' profit to date. */
+  bookProfit: Prisma.Decimal;
+  /** What the books do not hold — null on the cash basis. */
+  accrual: { invoices: InvoiceOwing[]; costs: CostOwing[]; openings: OpeningOwing[] } | null;
+  /** The financial year to the day, and the Income Statement's figures for it. */
+  year: { from: string; to: string };
+  ledger: Ledger;
+  profitForYear: Prisma.Decimal;
+}
+
+async function positionParts(
   db: TenantDb,
   tenantId: bigint,
   asOf: string,
   input: { basis: IncomeStatementBasis; yearStartMonth: number; base: BaseCurrency | null },
-): Promise<Figures> {
-  const figures: Figures = new Map();
-  const add = (key: BalanceSheetLineKey, amount: Prisma.Decimal) =>
-    figures.set(key, (figures.get(key) ?? ZERO).plus(amount));
-
+): Promise<Position> {
   // ------------------------------------------------------------ the books
-  const accounts = await db.$queryRaw<
-    { account_type: 'ASSET' | 'LIABILITY' | 'EQUITY' | 'INCOME' | 'EXPENSE'; system_key: string | null; parent_key: string | null; debit: unknown; credit: unknown }[]
+  const books = await db.$queryRaw<
+    { id: bigint; account_type: AccountType; system_key: string | null; parent_key: string | null; debit: unknown; credit: unknown }[]
   >`
-    SELECT la.account_type::text AS account_type, la.system_key, p.system_key AS parent_key,
+    SELECT la.id, la.account_type::text AS account_type, la.system_key, p.system_key AS parent_key,
            COALESCE(SUM(jl.debit), 0) AS debit, COALESCE(SUM(jl.credit), 0) AS credit
       FROM journal_line jl
       JOIN journal_entry je  ON je.tenant_id = jl.tenant_id AND je.id = jl.journal_entry_id
@@ -133,47 +186,54 @@ export async function positionOn(
        AND je.deleted_at IS NULL
        AND je.status = 'POSTED'
        AND je.entry_date <= ${asOf}::date
-     GROUP BY la.account_type, la.system_key, p.system_key
+     GROUP BY la.id, la.account_type, la.system_key, p.system_key
   `;
-
-  // What the income and expense lines add up to: the books' profit to date.
-  let bookProfit = ZERO;
-  for (const row of accounts) {
-    const debit = dec(row.debit);
-    const credit = dec(row.credit);
-    if (row.account_type === 'INCOME' || row.account_type === 'EXPENSE') {
-      bookProfit = bookProfit.plus(credit.minus(debit));
-      continue;
-    }
-    const line = balanceLineOf({ accountType: row.account_type, systemKey: row.system_key, parentKey: row.parent_key });
-    // An asset reads debit − credit; a liability or equity account credit − debit.
-    add(line, row.account_type === 'ASSET' ? debit.minus(credit) : credit.minus(debit));
-  }
+  const accounts = books.map((r) => ({
+    id: r.id,
+    accountType: r.account_type,
+    systemKey: r.system_key,
+    parentKey: r.parent_key,
+    debit: dec(r.debit),
+    credit: dec(r.credit),
+  }));
+  const bookProfit = accounts
+    .filter((a) => a.accountType === 'INCOME' || a.accountType === 'EXPENSE')
+    .reduce((sum, a) => sum.plus(a.credit.minus(a.debit)), ZERO);
 
   // ------------------------------------------------- what the books do not hold
-  let earned = bookProfit;
+  let accrual: Position['accrual'] = null;
   if (input.basis === 'ACCRUAL') {
-    const [sums] = await db.$queryRaw<{ billed: unknown; received: unknown; costed: unknown; paid: unknown }[]>`
-      SELECT
-        (SELECT COALESCE(SUM(i.total_amount_base), 0) FROM debit_invoice i
-          WHERE i.tenant_id = ${tenantId} AND i.deleted_at IS NULL AND i.status = 'ISSUED'
-            AND i.invoice_date <= ${asOf}::date) AS billed,
-        (SELECT COALESCE(SUM(r.amount_base), 0) FROM debit_invoice_receipt r
-           JOIN debit_invoice i ON i.tenant_id = r.tenant_id AND i.id = r.debit_invoice_id
-          WHERE r.tenant_id = ${tenantId} AND r.deleted_at IS NULL AND i.deleted_at IS NULL AND i.status = 'ISSUED'
-            AND i.invoice_date <= ${asOf}::date AND r.payment_date <= ${asOf}::date) AS received,
-        (SELECT COALESCE(SUM(c.total_amount_base), 0) FROM debit_invoice_cost c
-           JOIN debit_invoice i ON i.tenant_id = c.tenant_id AND i.id = c.debit_invoice_id
-          WHERE c.tenant_id = ${tenantId} AND c.deleted_at IS NULL AND i.deleted_at IS NULL AND i.status = 'ISSUED'
-            AND i.invoice_date <= ${asOf}::date) AS costed,
-        (SELECT COALESCE(SUM(sp.amount_base), 0) FROM supplier_payment sp
-           JOIN debit_invoice_cost c ON c.tenant_id = sp.tenant_id AND c.id = sp.debit_invoice_cost_id
-           JOIN debit_invoice i ON i.tenant_id = c.tenant_id AND i.id = c.debit_invoice_id
-          WHERE sp.tenant_id = ${tenantId} AND sp.deleted_at IS NULL AND c.deleted_at IS NULL AND i.deleted_at IS NULL
-            AND i.status = 'ISSUED' AND i.invoice_date <= ${asOf}::date AND sp.payment_date <= ${asOf}::date) AS paid
-    `;
-    const receivable = dec(sums?.billed).minus(dec(sums?.received));
-    const payable = dec(sums?.costed).minus(dec(sums?.paid));
+    const [invoices, costs] = await Promise.all([
+      db.$queryRaw<{ id: bigint; code: string; invoice_date: Date; customer_name: string | null; booking_code: string | null; billed: unknown; received: unknown }[]>`
+        SELECT i.id, i.code, i.invoice_date, cu.name AS customer_name, s.code AS booking_code,
+               i.total_amount_base AS billed,
+               (SELECT COALESCE(SUM(r.amount_base), 0) FROM debit_invoice_receipt r
+                 WHERE r.tenant_id = i.tenant_id AND r.debit_invoice_id = i.id AND r.deleted_at IS NULL
+                   AND r.payment_date <= ${asOf}::date) AS received
+          FROM debit_invoice i
+          LEFT JOIN customer cu ON cu.tenant_id = i.tenant_id AND cu.id = i.customer_id
+          LEFT JOIN shipment s  ON s.tenant_id = i.tenant_id AND s.id = i.shipment_id
+         WHERE i.tenant_id = ${tenantId} AND i.deleted_at IS NULL AND i.status = 'ISSUED'
+           AND i.invoice_date <= ${asOf}::date
+      `,
+      db.$queryRaw<{ invoice_id: bigint; invoice_code: string; invoice_date: Date; party_name: string | null; booking_code: string | null; supplier_invoice_no: string | null; costed: unknown; paid: unknown }[]>`
+        SELECT i.id AS invoice_id, i.code AS invoice_code, i.invoice_date,
+               COALESCE(ca.name, ag.name, ve.name) AS party_name, s.code AS booking_code, c.supplier_invoice_no,
+               c.total_amount_base AS costed,
+               (SELECT COALESCE(SUM(sp.amount_base), 0) FROM supplier_payment sp
+                 WHERE sp.tenant_id = c.tenant_id AND sp.debit_invoice_cost_id = c.id AND sp.deleted_at IS NULL
+                   AND sp.payment_date <= ${asOf}::date) AS paid
+          FROM debit_invoice_cost c
+          JOIN debit_invoice i ON i.tenant_id = c.tenant_id AND i.id = c.debit_invoice_id
+          LEFT JOIN shipment s ON s.tenant_id = i.tenant_id AND s.id = i.shipment_id
+          LEFT JOIN carrier ca ON ca.id = c.carrier_id
+          LEFT JOIN agent ag   ON ag.tenant_id = c.tenant_id AND ag.id = c.agent_id
+          LEFT JOIN vendor ve  ON ve.tenant_id = c.tenant_id AND ve.id = c.vendor_id
+         WHERE c.tenant_id = ${tenantId} AND c.deleted_at IS NULL AND i.deleted_at IS NULL AND i.status = 'ISSUED'
+           AND i.invoice_date <= ${asOf}::date
+         ORDER BY i.invoice_date, i.code, c.sort_order, c.id
+      `,
+    ]);
 
     // The CRM openings, and what vouchers settled against them by the day.
     const movements = await openingMovements(db);
@@ -181,10 +241,7 @@ export async function positionOn(
       input.base === null
         ? new Map<string, { rate: Prisma.Decimal }>()
         : await resolveRates(db, tenantId, [...new Set(movements.map((m) => m.currencyId.toString()))].map(BigInt));
-    let owedToUs = ZERO;
-    let owedByUs = ZERO;
-    let settledToUs = ZERO;
-    let settledByUs = ZERO;
+    const openings = new Map<string, OpeningOwing>();
     for (const m of movements) {
       const rate =
         input.base !== null && m.currencyId === input.base.id
@@ -193,22 +250,41 @@ export async function positionOn(
       // A currency with no rate on file cannot be stated in base; the list says so, and here it is left out.
       if (rate === undefined) continue;
       const base = toBase(m.amount, rate);
+      const at = `${m.key}:${m.side}`;
+      const [partyType, partyId] = m.key.split(':') as [LedgerPartyType, string];
+      const row = openings.get(at) ?? { partyType, partyId: BigInt(partyId), side: m.side, date: m.date, owed: ZERO, settled: ZERO };
       if (m.settlement === null) {
-        if (m.side === 'RECEIVABLE') owedToUs = owedToUs.plus(base);
-        else owedByUs = owedByUs.plus(base);
+        row.owed = row.owed.plus(base);
+        row.date = m.date;
       } else if (m.date.toISOString().slice(0, 10) <= asOf) {
         // A settlement movement is negative; what it settled is its negation.
-        if (m.side === 'RECEIVABLE') settledToUs = settledToUs.minus(base);
-        else settledByUs = settledByUs.minus(base);
+        row.settled = row.settled.minus(base);
       }
+      openings.set(at, row);
     }
 
-    add('RECEIVABLE', receivable.plus(owedToUs).minus(settledToUs));
-    add('PAYABLE', payable.plus(owedByUs).minus(settledByUs));
-    add('OPENING_EQUITY', owedToUs.minus(owedByUs));
-    // Revenue and cost as the invoices earned them, not as the cash arrived;
-    // and an opening settled is a debt collected, not income.
-    earned = bookProfit.plus(receivable).minus(payable).minus(settledToUs).plus(settledByUs);
+    accrual = {
+      invoices: invoices.map((r) => ({
+        id: r.id,
+        code: r.code,
+        invoiceDate: r.invoice_date,
+        customerName: r.customer_name,
+        bookingCode: r.booking_code,
+        billed: dec(r.billed),
+        received: dec(r.received),
+      })),
+      costs: costs.map((r) => ({
+        invoiceId: r.invoice_id,
+        invoiceCode: r.invoice_code,
+        invoiceDate: r.invoice_date,
+        partyName: r.party_name,
+        bookingCode: r.booking_code,
+        supplierInvoiceNo: r.supplier_invoice_no,
+        costed: dec(r.costed),
+        paid: dec(r.paid),
+      })),
+      openings: [...openings.values()],
+    };
   }
 
   // ---------------------------------------------- the year's profit, and before
@@ -216,11 +292,59 @@ export async function positionOn(
   const year = { from, to: asOf };
   const ledger = await statementLines(db, tenantId, [year, year, year], input.basis);
   const net = statementRows(ledger).find((r) => r.key === 'NET_PROFIT_AFTER_TAX')?.amounts[0] ?? '0';
-  const profitForYear = new Prisma.Decimal(net ?? '0');
-  add('PROFIT', profitForYear);
-  add('RETAINED', earned.minus(profitForYear));
+  return { asOf, accounts, bookProfit, accrual, year, ledger, profitForYear: new Prisma.Decimal(net ?? '0') };
+}
 
+/** The accrual figures, summed: invoices and openings, each side. */
+function accrualSums(accrual: NonNullable<Position['accrual']>) {
+  const sum = <T>(rows: T[], f: (r: T) => Prisma.Decimal) => rows.reduce((acc, r) => acc.plus(f(r)), ZERO);
+  const side = (s: 'RECEIVABLE' | 'PAYABLE') => accrual.openings.filter((o) => o.side === s);
+  return {
+    receivable: sum(accrual.invoices, (i) => i.billed.minus(i.received)),
+    payable: sum(accrual.costs, (c) => c.costed.minus(c.paid)),
+    owedToUs: sum(side('RECEIVABLE'), (o) => o.owed),
+    owedByUs: sum(side('PAYABLE'), (o) => o.owed),
+    settledToUs: sum(side('RECEIVABLE'), (o) => o.settled),
+    settledByUs: sum(side('PAYABLE'), (o) => o.settled),
+  };
+}
+
+function figuresOf(position: Position): Figures {
+  const figures: Figures = new Map();
+  const add = (key: BalanceSheetLineKey, amount: Prisma.Decimal) =>
+    figures.set(key, (figures.get(key) ?? ZERO).plus(amount));
+
+  for (const a of position.accounts) {
+    if (a.accountType === 'INCOME' || a.accountType === 'EXPENSE') continue;
+    const line = balanceLineOf({ accountType: a.accountType, systemKey: a.systemKey, parentKey: a.parentKey });
+    // An asset reads debit − credit; a liability or equity account credit − debit.
+    add(line, a.accountType === 'ASSET' ? a.debit.minus(a.credit) : a.credit.minus(a.debit));
+  }
+
+  let earned = position.bookProfit;
+  if (position.accrual !== null) {
+    const s = accrualSums(position.accrual);
+    add('RECEIVABLE', s.receivable.plus(s.owedToUs).minus(s.settledToUs));
+    add('PAYABLE', s.payable.plus(s.owedByUs).minus(s.settledByUs));
+    add('OPENING_EQUITY', s.owedToUs.minus(s.owedByUs));
+    // Revenue and cost as the invoices earned them, not as the cash arrived;
+    // and an opening settled is a debt collected, not income.
+    earned = position.bookProfit.plus(s.receivable).minus(s.payable).minus(s.settledToUs).plus(s.settledByUs);
+  }
+
+  add('PROFIT', position.profitForYear);
+  add('RETAINED', earned.minus(position.profitForYear));
   return figures;
+}
+
+/** Every line's figure on one day, before the subtotals. */
+export async function positionOn(
+  db: TenantDb,
+  tenantId: bigint,
+  asOf: string,
+  input: { basis: IncomeStatementBasis; yearStartMonth: number; base: BaseCurrency | null },
+): Promise<Figures> {
+  return figuresOf(await positionParts(db, tenantId, asOf, input));
 }
 
 // ------------------------------------------------------------------- rows
@@ -303,4 +427,219 @@ export async function balanceSheet(
     rows,
     balanced,
   };
+}
+
+// -------------------------------------------------------------- breakdown
+
+/** "2026-10-31" → "31-Oct-2026", the statements' date style. */
+function sheetDay(iso: string): string {
+  const [y, m, d] = iso.split('-');
+  return `${d}-${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][Number(m) - 1]}-${y}`;
+}
+
+/** The parties the openings belong to, for their names and codes. */
+async function openingParties(db: TenantDb, openings: OpeningOwing[]): Promise<Map<string, { code: string; name: string }>> {
+  const ids = (type: LedgerPartyType) => [...new Set(openings.filter((o) => o.partyType === type).map((o) => o.partyId))];
+  const select = { id: true, code: true, name: true } as const;
+  const [customers, agents, vendors] = await Promise.all([
+    ids('CUSTOMER').length === 0 ? [] : db.customer.findMany({ where: { id: { in: ids('CUSTOMER') } }, select }),
+    ids('AGENT').length === 0 ? [] : db.agent.findMany({ where: { id: { in: ids('AGENT') } }, select }),
+    ids('VENDOR').length === 0 ? [] : db.vendor.findMany({ where: { id: { in: ids('VENDOR') } }, select }),
+  ]);
+  return new Map([
+    ...customers.map((c) => [`CUSTOMER:${c.id}`, c] as const),
+    ...agents.map((a) => [`AGENT:${a.id}`, a] as const),
+    ...vendors.map((v) => [`VENDOR:${v.id}`, v] as const),
+  ]);
+}
+
+/**
+ * One line's figure in one column, as what it is made of (client, 2026-10-28).
+ *
+ * Read from the same itemised rows the statement adds up (positionParts), so
+ * the total is the statement's figure and the rows add up to it:
+ *
+ *   every line           the posted vouchers on the accounts it maps, since the
+ *                        books began — the oldest summed once there are many
+ *   Receivable, Payable  + each issued invoice, or supplier's cost on one, that
+ *                        is not settled by the day; and each opening not yet
+ *                        settled (accrual)
+ *   Opening Equity       + each opening as CRM holds it (accrual)
+ *   Profit for the Year  the Income Statement for the year to the day, section
+ *                        by section
+ *   Retained Earnings    how it is worked out: all profit to the day, less the
+ *                        year's
+ *
+ * Suppliers' costs need ACCOUNTS.DEBIT_INVOICE.VIEW_BUY_PRICE to be listed,
+ * as on the Income Statement's breakdown (MODULE_ACCOUNTS §3.9).
+ */
+export async function balanceSheetBreakdown(
+  db: TenantDb,
+  tenantId: bigint,
+  input: {
+    asOf: string;
+    yearStartMonth: number;
+    basis: IncomeStatementBasis;
+    line: BalanceSheetLineKey;
+    column: BalanceSheetColumn;
+    currencyCode: string;
+    base: BaseCurrency | null;
+    viewBuyPrice: boolean;
+  },
+): Promise<StatementBreakdownDto> {
+  const { line } = input;
+  const asOf = BALANCE_SHEET_COLUMNS.indexOf(input.column) === 0 ? input.asOf : yearBefore(input.asOf);
+  const [position, chart] = await Promise.all([positionParts(db, tenantId, asOf, input), chartAccounts(db, tenantId)]);
+  const out = new Breakdown();
+  const notes: string[] = [];
+
+  // ------------------------------------------------------------ the books
+  const mapped = chart.filter(
+    (a) => a.accountType !== 'INCOME' && a.accountType !== 'EXPENSE' && balanceLineOf({ ...a, accountType: a.accountType }) === line,
+  );
+  const vouchers = await voucherRows(db, tenantId, { accountIds: mapped.map((a) => a.id), from: null, to: asOf, movedCash: false });
+  out.addVouchers(vouchers, new Map(mapped.map((a) => [a.id.toString(), a])), (a) => a.accountType === 'ASSET');
+
+  // ------------------------------------------------- what the books do not hold
+  const accrual = position.accrual;
+  if (accrual !== null && (line === 'RECEIVABLE' || line === 'PAYABLE' || line === 'OPENING_EQUITY')) {
+    const parties = await openingParties(db, accrual.openings);
+    const opening = (o: OpeningOwing, group: string, amount: Prisma.Decimal, details: string) => {
+      const party = parties.get(`${o.partyType}:${o.partyId}`);
+      out.add(group, {
+        source: 'OPENING',
+        date: o.date.toISOString().slice(0, 10),
+        documentCode: party?.code ?? null,
+        partyType: o.partyType,
+        partyId: o.partyId.toString(),
+        partyName: party?.name ?? null,
+        reference: `${LEDGER_PARTY_LABEL[o.partyType]} opening balance`,
+        details,
+        amount,
+      });
+    };
+    const settledNote = (o: OpeningOwing) =>
+      o.settled.isZero() ? 'Opening balance from CRM' : `Opening ${shown(o.owed)}, settled ${shown(o.settled)}`;
+
+    if (line === 'RECEIVABLE') {
+      for (const i of accrual.invoices) {
+        out.add('Issued debit invoices, not yet received', {
+          source: 'DEBIT_INVOICE',
+          date: i.invoiceDate.toISOString().slice(0, 10),
+          documentId: i.id.toString(),
+          documentCode: i.code,
+          partyName: i.customerName,
+          reference: i.bookingCode,
+          details: i.received.isZero() ? null : `Billed ${shown(i.billed)}, received ${shown(i.received)}`,
+          amount: i.billed.minus(i.received),
+        });
+      }
+      for (const o of accrual.openings.filter((x) => x.side === 'RECEIVABLE')) {
+        opening(o, 'Opening balances still owed to us', o.owed.minus(o.settled), settledNote(o));
+      }
+    }
+
+    if (line === 'PAYABLE') {
+      for (const c of accrual.costs) {
+        const amount = c.costed.minus(c.paid);
+        if (!input.viewBuyPrice) {
+          out.withhold(amount);
+          continue;
+        }
+        out.add("Suppliers' costs on issued invoices, not yet paid", {
+          source: 'INVOICE_COST',
+          date: c.invoiceDate.toISOString().slice(0, 10),
+          documentId: c.invoiceId.toString(),
+          documentCode: c.invoiceCode,
+          partyName: c.partyName,
+          reference: c.bookingCode,
+          details: [c.supplierInvoiceNo, c.paid.isZero() ? null : `Cost ${shown(c.costed)}, paid ${shown(c.paid)}`]
+            .filter((x) => x !== null)
+            .join(' · ') || null,
+          amount,
+        });
+      }
+      for (const o of accrual.openings.filter((x) => x.side === 'PAYABLE')) {
+        opening(o, 'Opening balances we still owe', o.owed.minus(o.settled), settledNote(o));
+      }
+    }
+
+    if (line === 'OPENING_EQUITY') {
+      // The other side of every opening, as CRM holds it: what was owed when the books began.
+      for (const o of accrual.openings) {
+        if (o.side === 'RECEIVABLE') opening(o, 'Opening balances owed to us', o.owed, 'Owed to us when the books began');
+        else opening(o, 'Opening balances we owed', o.owed.negated(), 'Owed by us when the books began');
+      }
+    }
+  }
+
+  // ---------------------------------------------- the year's profit, and before
+  const span = `${sheetDay(position.year.from)} to ${sheetDay(position.year.to)}`;
+  const basisLabel = INCOME_STATEMENT_BASIS_LABEL[input.basis].toLowerCase();
+
+  if (line === 'PROFIT') {
+    for (const part of profitSections(position.ledger)) {
+      out.add('Income Statement', { source: 'FIGURE', reference: part.label, details: span, amount: part.amount });
+    }
+    notes.push(
+      `The Income Statement's ${basisLabel} net profit after tax, ${span}. Open the Income Statement to see each line's documents.`,
+    );
+  }
+
+  if (line === 'RETAINED') {
+    const earned = 'Profit earned to the day';
+    out.add(earned, {
+      source: 'FIGURE',
+      reference: 'Income less expenses on posted vouchers',
+      details: `Every voucher to ${sheetDay(asOf)}`,
+      amount: position.bookProfit,
+    });
+    if (accrual !== null) {
+      const s = accrualSums(accrual);
+      out.add(earned, { source: 'FIGURE', reference: 'Add: still owed by customers on issued invoices', details: 'Revenue earned, not yet received', amount: s.receivable });
+      out.add(earned, { source: 'FIGURE', reference: 'Less: still owed to suppliers on issued invoices', details: 'Costs incurred, not yet paid', amount: s.payable.negated() });
+      out.add(earned, { source: 'FIGURE', reference: 'Less: opening balances collected', details: 'A debt collected, not income', amount: s.settledToUs.negated() });
+      out.add(earned, { source: 'FIGURE', reference: 'Add: opening balances paid', details: 'A debt paid, not an expense', amount: s.settledByUs });
+    }
+    out.add('Less: Profit for the Year', {
+      source: 'FIGURE',
+      reference: 'Less: Profit for the Year',
+      details: `${span}, shown on its own line`,
+      amount: position.profitForYear.negated(),
+    });
+    notes.push(`Everything earned before ${sheetDay(position.year.from)}: all profit to the day, less this financial year's.`);
+  }
+
+  if (input.basis === 'ACCRUAL' && accrual !== null && accrual.openings.length > 0 && (line === 'RECEIVABLE' || line === 'PAYABLE' || line === 'OPENING_EQUITY')) {
+    notes.push("Opening balances carry no fixed rate, so a foreign-currency one is converted at today's rate.");
+  }
+
+  const label = BALANCE_SHEET_LINES.find((l) => l.key === line)!.label;
+  return out.dto({
+    line,
+    label,
+    currencyCode: input.currencyCode,
+    basis: input.basis,
+    column: input.column,
+    period: { from: null, to: asOf },
+    total: figuresOf(position).get(line) ?? ZERO,
+    notes,
+  });
+}
+
+/** Net profit after tax as the Income Statement builds it, section by section, unrounded. */
+function profitSections(ledger: Ledger): { label: string; amount: Prisma.Decimal }[] {
+  const section = (s: IncomeStatementSection) =>
+    INCOME_STATEMENT_LINES.filter((l) => l.section === s).reduce(
+      (sum, l) => sum.plus(ledger.of(l.key as IncomeStatementLineKey)[0]!),
+      ZERO,
+    );
+  return [
+    { label: 'Net Revenue', amount: section('REVENUE').minus(ledger.of('DISCOUNTS')[0]!) },
+    { label: 'Less: Total Direct Cost', amount: section('DIRECT_COST').negated() },
+    { label: 'Less: Total Operating Expenses', amount: section('OPEX').negated() },
+    { label: 'Add: Total Non-Operating Income', amount: section('NONOP_INCOME') },
+    { label: 'Less: Total Non-Operating Expenses', amount: section('NONOP_EXPENSE').negated() },
+    { label: 'Less: Income Tax Expense', amount: ledger.of('INCOME_TAX')[0]!.negated() },
+  ];
 }

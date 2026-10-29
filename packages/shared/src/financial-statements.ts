@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
+import type { LedgerPartyType } from './accounts';
 import { INCOME_STATEMENT_BASES, type IncomeStatementBasis } from './income-statement';
+import type { JournalEntryKind } from './ledger';
 
 /**
  * Accounts → Balance Sheet and Cash Flow Statement (Menu M15, M16).
@@ -73,6 +75,27 @@ export const balanceSheetQuerySchema = z.object({
 });
 export type BalanceSheetQuery = z.input<typeof balanceSheetQuerySchema>;
 
+/** The two columns, in order: the day asked for, and the same day a year before. */
+export const BALANCE_SHEET_COLUMNS = ['AS_AT', 'YEAR_EARLIER'] as const;
+export type BalanceSheetColumn = (typeof BALANCE_SHEET_COLUMNS)[number];
+
+export const BALANCE_SHEET_COLUMN_LABEL: Record<BalanceSheetColumn, string> = {
+  AS_AT: 'As at',
+  YEAR_EARLIER: 'A year earlier',
+};
+
+export const BALANCE_SHEET_LINE_KEYS = BALANCE_SHEET_LINES.map((l) => l.key) as [
+  BalanceSheetLineKey,
+  ...BalanceSheetLineKey[],
+];
+
+/** One line's figure in one column, as what it is made of (client, 2026-10-28). */
+export const balanceSheetBreakdownQuerySchema = balanceSheetQuerySchema.extend({
+  line: z.enum(BALANCE_SHEET_LINE_KEYS),
+  column: z.enum(BALANCE_SHEET_COLUMNS).default('AS_AT'),
+});
+export type BalanceSheetBreakdownQuery = z.input<typeof balanceSheetBreakdownQuerySchema>;
+
 export interface BalanceSheetDto {
   currencyCode: string;
   basis: IncomeStatementBasis;
@@ -130,4 +153,91 @@ export interface CashFlowDto {
     previousYtd: { from: string; to: string };
   };
   rows: StatementRowDto[];
+}
+
+/** The three columns, in order — the Income Statement's, less Previous Month. */
+export const CASH_FLOW_COLUMNS = ['CURRENT_MONTH', 'YTD', 'PREVIOUS_YTD'] as const;
+export type CashFlowColumn = (typeof CASH_FLOW_COLUMNS)[number];
+
+export const CASH_FLOW_COLUMN_LABEL: Record<CashFlowColumn, string> = {
+  CURRENT_MONTH: 'Current Month',
+  YTD: 'YTD',
+  PREVIOUS_YTD: 'Previous Year YTD',
+};
+
+/** Every line a figure of opens on: the flows, and the cash at either end of the period. */
+export const CASH_FLOW_BREAKDOWN_LINES = [
+  ...(CASH_FLOW_LINES.map((l) => l.key) as [CashFlowLineKey, ...CashFlowLineKey[]]),
+  'OPENING_CASH',
+  'CLOSING_CASH',
+] as const;
+export type CashFlowBreakdownLine = (typeof CASH_FLOW_BREAKDOWN_LINES)[number];
+
+export const cashFlowBreakdownQuerySchema = cashFlowQuerySchema.extend({
+  line: z.enum(CASH_FLOW_BREAKDOWN_LINES),
+  column: z.enum(CASH_FLOW_COLUMNS).default('CURRENT_MONTH'),
+});
+export type CashFlowBreakdownQuery = z.input<typeof cashFlowBreakdownQuerySchema>;
+
+// ===========================================================================
+// A figure's breakdown — both statements (client, 2026-10-28)
+// ===========================================================================
+
+/**
+ * What an entry is:
+ *
+ *   VOUCHER        a posted voucher's lines on one account
+ *   DEBIT_INVOICE  an issued invoice, for what the customer still owes on it
+ *   INVOICE_COST   a supplier's cost on one, for what is still owed to them
+ *   OPENING        a party's opening balance from CRM
+ *   EARLIER        older vouchers, summed into one row so the list stays short
+ *   FIGURE         an amount worked out rather than posted (Profit for the
+ *                  Year by Income Statement section; how Retained Earnings is made)
+ */
+export const STATEMENT_ENTRY_SOURCES = ['VOUCHER', 'DEBIT_INVOICE', 'INVOICE_COST', 'OPENING', 'EARLIER', 'FIGURE'] as const;
+export type StatementEntrySource = (typeof STATEMENT_ENTRY_SOURCES)[number];
+
+export interface StatementEntryDto {
+  source: StatementEntrySource;
+  /** ISO date: the voucher's, the invoice's, the opening's. Null on a figure. */
+  date: string | null;
+  /** What opens: a voucher, or a debit invoice. Null on the rest. */
+  documentId: string | null;
+  /** The voucher or invoice no; an opening's party code. */
+  documentCode: string | null;
+  /** The voucher's kind, for its link. */
+  voucherKind: JournalEntryKind | null;
+  /** An opening's party, for its ledger on Receivable-Payable. */
+  partyType: LedgerPartyType | null;
+  partyId: string | null;
+  partyName: string | null;
+  /** The ledger account a voucher was posted to; the booking an invoice is for; a figure's name. */
+  reference: string | null;
+  /** The voucher's description; how much of an invoice or opening is already settled. */
+  details: string | null;
+  /** In base, signed as the line reads it: a positive figure adds to the line. */
+  amount: string;
+}
+
+export interface StatementBreakdownDto {
+  line: string;
+  label: string;
+  currencyCode: string;
+  /** The Balance Sheet's basis. Null on the Cash Flow Statement, which has no switch. */
+  basis: IncomeStatementBasis | null;
+  column: string;
+  /** A balance is taken on a day, so `from` is null; a flow is over a span. */
+  period: { from: string | null; to: string };
+  /** The statement's own figure for this line and column. */
+  total: string;
+  /** Subtotals by where the figure came from: each ledger account, invoices, openings. */
+  groups: { label: string; count: number; amount: string }[];
+  entries: StatementEntryDto[];
+  /**
+   * Suppliers' costs on invoices, for a viewer without ACCOUNTS.DEBIT_INVOICE.
+   * VIEW_BUY_PRICE: counted and summed, never listed (MODULE_ACCOUNTS §3.9).
+   */
+  withheld: { count: number; amount: string } | null;
+  /** How the figure is made, a sentence each, when it is not plain from the rows. */
+  notes: string[];
 }
