@@ -107,8 +107,16 @@ export const SHIPMENT_TRANSITIONS: Record<ShipmentStatus, readonly ShipmentStatu
   VESSEL_PROPOSED: ['VESSEL_PROPOSED', 'APPROVED_FOR_SHIPMENT', 'REJECTED', 'CANCELLED'],
   // C/S proposes a new version; §4.2 keeps the rejected one.
   REJECTED: ['VESSEL_PROPOSED', 'CANCELLED'],
-  // §5.4 rule 3: inbound skips the shipping order entirely.
-  APPROVED_FOR_SHIPMENT: ['SO_ISSUED', 'SO_SKIPPED', 'CANCELLED'],
+  /*
+   * §5.4 rule 3: inbound skips the shipping order entirely.
+   *
+   * VESSEL_PROPOSED is not in §5.1's table. Client decision 2026-10-29: the
+   * sailing may change once the customer has approved it — the S/O cancelled
+   * for a wrong vessel is the usual way here — and the new sailing goes back
+   * to the customer to approve again, every PO with it. Without this a
+   * cancelled S/O could only be reissued on the vessel that was wrong.
+   */
+  APPROVED_FOR_SHIPMENT: ['SO_ISSUED', 'SO_SKIPPED', 'VESSEL_PROPOSED', 'CANCELLED'],
   /*
    * The two APPROVED_FOR_SHIPMENT entries are not in §5.1's table, and are
    * required by §5.4 rule 2: "Issuing is a one-way action; a mistake is

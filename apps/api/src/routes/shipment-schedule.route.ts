@@ -2,8 +2,10 @@ import { Router } from 'express';
 
 import {
   type ApiSuccess,
+  canTransition,
   CODE_PREFIX,
   describeApproval,
+  SHIPMENT_STATUS_LABEL,
   shipmentApprovalSchema,
   type ShipmentScheduleDto,
   shipmentScheduleInputSchema,
@@ -156,6 +158,10 @@ shipmentScheduleRouter.get(
  *   3. the booking transitions to VESSEL_PROPOSED through §5.1's service;
  *   4. the customer is notified.
  *
+ * An approved sailing may change too (client, 2026-10-29), once no S/O is
+ * live on it: the customer approved the old vessel, not this one, so every
+ * PO goes back to PENDING and the new sailing waits for their decision.
+ *
  * The leg continuity §6.4 asks for is enforced by the shared schema, so the
  * client and the server refuse exactly the same schedules.
  *
@@ -189,12 +195,27 @@ shipmentScheduleRouter.post(
         select: {
           id: true,
           code: true,
+          status: true,
           shipmentType: true,
           customerId: true,
           customer: { select: { name: true } },
         },
       });
       if (shipment === null) throw HttpError.notFound('Booking not found.');
+
+      // Refused before anything is written or stored, so a booking that cannot
+      // take a new sailing is left exactly as it was — its file included.
+      // transitionShipment checks again below, in the same transaction.
+      if (!canTransition(shipment.status, 'VESSEL_PROPOSED')) {
+        throw new HttpError(
+          409,
+          'SCHEDULE_LOCKED',
+          shipment.status === 'SO_ISSUED'
+            ? `${shipment.code} has a shipping order issued on this sailing. Cancel the S/O first, then ` +
+              'change the vessel: the new sailing goes to the customer to approve again.'
+            : `${shipment.code} is ${SHIPMENT_STATUS_LABEL[shipment.status]}, so its sailing can no longer change.`,
+        );
+      }
 
       /*
        * §9 Q4, answered 2026-09-03: VGM and SI dates are sea only.
@@ -242,6 +263,22 @@ shipmentScheduleRouter.post(
         where: { shipmentId, deletedAt: null, status: { in: ['PROPOSED', 'APPROVED'] } },
         data: { status: 'SUPERSEDED', updatedBy: auth.userId },
       });
+
+      // The customer decided on the sailing being replaced. Each PO waits for
+      // their word on this one (§5.3), so none ships on an approval it never had.
+      if (shipment.status === 'APPROVED_FOR_SHIPMENT') {
+        await db.shipmentPo.updateMany({
+          where: { shipmentId, deletedAt: null },
+          data: {
+            approvalStatus: 'PENDING',
+            approvedBy: null,
+            approvedAt: null,
+            approvedOnBehalf: false,
+            rejectionComments: null,
+            updatedBy: auth.userId,
+          },
+        });
+      }
 
       const highest = await db.shipmentSchedule.aggregate({
         where: { shipmentId },
@@ -299,8 +336,8 @@ shipmentScheduleRouter.post(
         throw new HttpError(500, 'CODE_EXHAUSTED', 'Could not allocate a schedule number.');
       }
 
-      // §5.1's service, not a status write. BOOKING_RECEIVED and REJECTED both
-      // lead here; anything else is refused with the reason.
+      // §5.1's service, not a status write. BOOKING_RECEIVED, REJECTED and
+      // APPROVED_FOR_SHIPMENT lead here, and a live proposal loops.
       await transitionShipment(db, {
         shipmentId,
         to: 'VESSEL_PROPOSED',

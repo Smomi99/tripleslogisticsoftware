@@ -274,6 +274,7 @@ VESSEL_PROPOSED        → APPROVED_FOR_SHIPMENT   (customer approves)
 VESSEL_PROPOSED        → REJECTED                (customer rejects, comments mandatory)
 REJECTED               → VESSEL_PROPOSED         (C/S proposes a new version)
 APPROVED_FOR_SHIPMENT  → SO_ISSUED | SO_SKIPPED
+APPROVED_FOR_SHIPMENT  → VESSEL_PROPOSED         (C/S changes the sailing — client, 2026-10-29)
 SO_ISSUED | SO_SKIPPED → PART_RECEIVED | CARGO_RECEIVED
 PART_RECEIVED          → PART_RECEIVED | CARGO_RECEIVED | SHORT_CLOSED
 any                    → CANCELLED               (privileged, reason mandatory)
@@ -281,6 +282,18 @@ any                    → CANCELLED               (privileged, reason mandatory
 
 Every transition writes to `audit_log` with actor and timestamp. Reject anything not on this list
 with a clear error. The Action button on the Booking List is derived from status, never stored.
+
+**Changing an approved sailing** (client, 2026-10-29). Once the customer has approved, the sailing may
+still change as long as no S/O is live on it. The usual case is an S/O cancelled for a wrong vessel
+(§5.4 rule 2). Saving the new schedule:
+
+- supersedes the approved version (§4.2);
+- puts every PO back to `PENDING`, because the customer approved the old vessel, not this one;
+- moves the booking to `VESSEL_PROPOSED`;
+- sends the new sailing to the customer, as any proposal is sent.
+
+The S/O is issued again once they approve. While an S/O is issued the sailing is locked. The save is
+refused with *"Cancel the S/O first"*, and the screen does not offer it.
 
 ### 5.2 Booking
 

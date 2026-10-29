@@ -1097,6 +1097,77 @@ describe('the shipping order (§4.3, §5.4, §6.6)', () => {
   });
 });
 
+describe('changing an approved sailing (client, 2026-10-29)', () => {
+  it('re-proposes after the S/O is cancelled: every PO waits on the customer again', async () => {
+    const { id, poIds } = await approved(2);
+    const first = await as(token).post(`/api/tenant/cs/bookings/${id}/shipping-order`).send({});
+    expect(first.status).toBe(201);
+    const cancelled = await as(token)
+      .post(`/api/tenant/cs/bookings/${id}/shipping-order/cancel`)
+      .send({ reason: 'Wrong vessel on the order.' });
+    expect(cancelled.status).toBe(200);
+
+    // The vessel the customer did not approve.
+    const other = await owner.vessel.create({
+      data: { tenantId, code: `SC-VSL-${id}`, name: 'MV Replacement', carrierId },
+      select: { id: true },
+    });
+    const legs = oneLeg().map((l) => ({ ...l, vesselId: other.id.toString(), voyageNo: 'V200' }));
+    const res = await as(token).post(`/api/tenant/cs/bookings/${id}/schedules`).send(body('DIRECT', legs));
+    expect(res.status, JSON.stringify(res.body.error ?? {})).toBe(201);
+
+    const booking = await owner.shipment.findFirstOrThrow({ where: { id }, select: { status: true } });
+    expect(booking.status).toBe('VESSEL_PROPOSED');
+    const versions = await owner.shipmentSchedule.findMany({
+      where: { shipmentId: id },
+      orderBy: { versionNo: 'asc' },
+      select: { versionNo: true, status: true },
+    });
+    expect(versions).toEqual([
+      { versionNo: 1, status: 'SUPERSEDED' },
+      { versionNo: 2, status: 'PROPOSED' },
+    ]);
+    const pos = await owner.shipmentPo.findMany({
+      where: { shipmentId: id },
+      select: { approvalStatus: true, approvedBy: true, approvedAt: true },
+    });
+    expect(pos).toEqual([
+      { approvalStatus: 'PENDING', approvedBy: null, approvedAt: null },
+      { approvalStatus: 'PENDING', approvedBy: null, approvedAt: null },
+    ]);
+
+    // An S/O waits for the new decision, then carries the new vessel.
+    expect((await as(token).post(`/api/tenant/cs/bookings/${id}/shipping-order`).send({})).status).toBe(409);
+    const approval = await as(token)
+      .post(`/api/tenant/cs/bookings/${id}/approval`)
+      .send({ decisions: poIds.map((po) => ({ poId: po.toString(), decision: 'APPROVED' })), onBehalfOfCustomer: true });
+    expect(approval.status, JSON.stringify(approval.body.error ?? {})).toBe(200);
+    expect(approval.body.data.shipmentStatus).toBe('APPROVED_FOR_SHIPMENT');
+    const second = await as(token).post(`/api/tenant/cs/bookings/${id}/shipping-order`).send({});
+    expect(second.status, JSON.stringify(second.body.error ?? {})).toBe(201);
+    const order = await owner.shippingOrder.findFirstOrThrow({
+      where: { shipmentId: id, status: { not: 'CANCELLED' } },
+      select: { firstVesselName: true },
+    });
+    expect(order.firstVesselName).toBe('MV Replacement');
+  });
+
+  it('refuses while an S/O is live on the sailing, and writes nothing', async () => {
+    const { id } = await approved(1);
+    expect((await as(token).post(`/api/tenant/cs/bookings/${id}/shipping-order`).send({})).status).toBe(201);
+
+    const res = await as(token).post(`/api/tenant/cs/bookings/${id}/schedules`).send(body('DIRECT', oneLeg()));
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('SCHEDULE_LOCKED');
+    expect(res.body.error.message).toContain('Cancel the S/O first');
+
+    const versions = await owner.shipmentSchedule.findMany({ where: { shipmentId: id }, select: { status: true } });
+    expect(versions).toEqual([{ status: 'APPROVED' }]);
+    const po = await owner.shipmentPo.findFirstOrThrow({ where: { shipmentId: id }, select: { approvalStatus: true } });
+    expect(po.approvalStatus).toBe('APPROVED');
+  });
+});
+
 describe('cargo receipt (§4.4, §5.5, §6.7)', () => {
   interface Grid {
     cargoLineId: string;
