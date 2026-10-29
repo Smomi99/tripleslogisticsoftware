@@ -93,7 +93,12 @@ async function makeWorld(name: string, slug: string, tag: string, withBooks: boo
     'ACCOUNTS.CASH_FLOW_STATEMENT.VIEW',
     'ACCOUNTS.CASH_FLOW_STATEMENT.EXPORT',
   ]);
-  const costViewer = await user(`USR-C${tag}`, ['ACCOUNTS.INCOME_STATEMENT.VIEW', 'ACCOUNTS.DEBIT_INVOICE.VIEW_BUY_PRICE']);
+  const costViewer = await user(`USR-C${tag}`, [
+    'ACCOUNTS.INCOME_STATEMENT.VIEW',
+    'ACCOUNTS.BALANCE_SHEET.VIEW',
+    'ACCOUNTS.CASH_FLOW_STATEMENT.VIEW',
+    'ACCOUNTS.DEBIT_INVOICE.VIEW_BUY_PRICE',
+  ]);
   const bare = await user(`USR-B${tag}`, []);
   const world = { slug, viewerToken: viewer.token, costToken: costViewer.token, bareToken: bare.token };
   if (!withBooks) return world;
@@ -655,5 +660,244 @@ describe('Cash Flow Statement', () => {
     const other = await statement('cash-flow', B.viewerToken, B.slug)(QUERY);
     expect(other.status).toBe(200);
     expect(byKey(other.body.data.rows).get('CLOSING_CASH')).toEqual(['0.00', '0.00', '0.00']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A figure's breakdown on the Balance Sheet and the Cash Flow Statement
+// (client, 2026-10-28): what each amount is made of, over the same fixtures.
+// ---------------------------------------------------------------------------
+
+type StatementEntry = {
+  source: string;
+  date: string | null;
+  documentCode: string | null;
+  voucherKind: string | null;
+  partyType: string | null;
+  partyName: string | null;
+  reference: string | null;
+  details: string | null;
+  amount: string;
+};
+type StatementBreakdown = {
+  total: string;
+  period: { from: string | null; to: string };
+  entries: StatementEntry[];
+  withheld: { count: number; amount: string } | null;
+  groups: { label: string; count: number; amount: string }[];
+};
+
+/** Every row and anything withheld add up to the total, which is the statement's figure. */
+function expectAddsUp(data: StatementBreakdown, figure: string | null | undefined, where: string): void {
+  expect(data.total, where).toBe(figure);
+  const listed = data.entries.reduce((acc, e) => acc + Number(e.amount), 0) + Number(data.withheld?.amount ?? 0);
+  expect(listed.toFixed(2), where).toBe(data.total);
+}
+
+describe('Balance Sheet breakdown', () => {
+  const AS_AT = '?asOf=2026-10-31&yearStartMonth=7';
+  const open = async (token: string, query: string): Promise<StatementBreakdown> => {
+    const res = await statement('balance-sheet', token, A.slug)(`/breakdown${AS_AT}&${query}`);
+    expect(res.status, JSON.stringify(res.body.error ?? {})).toBe(200);
+    return res.body.data as StatementBreakdown;
+  };
+
+  it('adds up to the statement, for every line and both columns, on both bases', async () => {
+    for (const basis of ['ACCRUAL', 'CASH'] as const) {
+      const sheet = await statement('balance-sheet', A.viewerToken, A.slug)(`${AS_AT}&basis=${basis}`);
+      const lines = (sheet.body.data.rows as (StatementRow & { kind: string })[]).filter((r) => r.kind === 'LINE');
+      expect(lines).toHaveLength(18);
+      for (const row of lines) {
+        for (const [i, column] of (['AS_AT', 'YEAR_EARLIER'] as const).entries()) {
+          for (const token of [A.costToken, A.viewerToken]) {
+            const where = `${basis} ${row.key} ${column}`;
+            const res = await statement('balance-sheet', token, A.slug)(`/breakdown${AS_AT}&basis=${basis}&line=${row.key}&column=${column}`);
+            expect(res.status, where).toBe(200);
+            expectAddsUp(res.body.data as StatementBreakdown, row.amounts[i], where);
+          }
+        }
+      }
+    }
+  }, 120_000);
+
+  it('lists cash as every voucher on the cash accounts, to the day', async () => {
+    const cash = await open(A.viewerToken, 'line=CASH');
+    expect(cash.period).toEqual({ from: null, to: '2026-10-31' });
+    expect(cash.entries.map((e) => [e.date, e.documentCode, e.reference, e.amount])).toEqual([
+      ['2026-09-05', 'JV-2026-4IA06', 'Cash › Cash on Hand', '200.00'],
+      ['2026-10-12', 'JV-2026-4IA01', 'Cash › Cash on Hand', '-2000.00'],
+      ['2026-10-21', 'JV-2026-4IA03', 'Cash › Cash on Hand', '-50.00'],
+      ['2026-10-22', 'JV-2026-4IA04', 'Cash › Cash on Hand', '-100.00'],
+      ['2026-10-25', 'JV-2026-4IA08', 'Cash › Cash on Hand', '10450.00'],
+      ['2026-10-26', 'JV-2026-4IA09', 'Cash › Cash on Hand', '-6100.00'],
+      ['2026-10-30', 'JV-2026-4IA05', 'Cash › Cash on Hand', '-400.00'],
+    ]);
+    expect(cash.entries[0]).toMatchObject({ source: 'VOUCHER', voucherKind: 'INCOME' });
+    // The draft rent 9,999 is not in the books.
+    const building = await open(A.viewerToken, 'line=LONG_TERM_ASSETS');
+    expect(building.entries.map((e) => [e.documentCode, e.amount])).toEqual([['JV-2026-4IA02', '-300.00']]);
+  });
+
+  it('lists receivables as the invoices still owed on, to the day', async () => {
+    const now = await open(A.viewerToken, 'line=RECEIVABLE');
+    // DN01 was received in full; the draft and the cancelled one never counted.
+    expect(now.entries.map((e) => [e.source, e.documentCode, e.partyName, e.reference, e.amount])).toEqual([
+      ['DEBIT_INVOICE', 'DN-2026-4IA06', 'Exporter IA', 'BKG-2026-4IA03', '7000.00'],
+      ['DEBIT_INVOICE', 'DN-2026-4IA03', 'Exporter IA', null, '500.00'],
+      ['DEBIT_INVOICE', 'DN-2026-4IA02', 'Exporter IA', 'BKG-2026-4IA02', '4000.00'],
+    ]);
+    expect(now.groups).toEqual([{ label: 'Issued debit invoices, not yet received', count: 3, amount: '11500.00' }]);
+    const before = await open(A.viewerToken, 'line=RECEIVABLE&column=YEAR_EARLIER');
+    expect(before.period.to).toBe('2025-10-31');
+    expect(before.entries.map((e) => [e.documentCode, e.amount])).toEqual([['DN-2026-4IA06', '7000.00']]);
+    // On the cash basis an invoice is nothing until money moves.
+    const cash = await open(A.viewerToken, 'line=RECEIVABLE&basis=CASH');
+    expect(cash).toMatchObject({ total: '0.00', entries: [] });
+  });
+
+  it("lists suppliers' costs only with the buy-price grant, and sums them without it", async () => {
+    const hidden = await open(A.viewerToken, 'line=PAYABLE');
+    expect(hidden.entries).toEqual([]);
+    // The FCL carrier was paid in full, so three are owed on.
+    expect(hidden.withheld).toEqual({ count: 3, amount: '9000.00' });
+    const shown = await open(A.costToken, 'line=PAYABLE');
+    expect(shown.withheld).toBeNull();
+    expect(shown.entries.map((e) => [e.source, e.documentCode, e.partyName, e.amount])).toEqual([
+      ['INVOICE_COST', 'DN-2026-4IA06', 'Line IA', '5000.00'],
+      ['INVOICE_COST', 'DN-2026-4IA01', 'Agent IA', '1000.00'],
+      ['INVOICE_COST', 'DN-2026-4IA02', 'Line IA', '3000.00'],
+    ]);
+  });
+
+  it("splits Profit for the Year by the Income Statement's sections", async () => {
+    const profit = await open(A.viewerToken, 'line=PROFIT');
+    expect(profit.total).toBe('2200.00');
+    expect(profit.entries.map((e) => [e.source, e.reference, e.amount])).toEqual([
+      ['FIGURE', 'Net Revenue', '14400.00'],
+      ['FIGURE', 'Less: Total Direct Cost', '-10000.00'],
+      ['FIGURE', 'Less: Total Operating Expenses', '-2400.00'],
+      ['FIGURE', 'Add: Total Non-Operating Income', '700.00'],
+      ['FIGURE', 'Less: Total Non-Operating Expenses', '-100.00'],
+      ['FIGURE', 'Less: Income Tax Expense', '-400.00'],
+    ]);
+    expect(profit.entries[0]!.details).toBe('01-Jul-2026 to 31-Oct-2026');
+  });
+
+  it('shows how Retained Earnings is worked out', async () => {
+    const retained = await open(A.viewerToken, 'line=RETAINED');
+    expect(retained.total).toBe('2000.00');
+    expect(retained.entries.map((e) => [e.reference, e.amount])).toEqual([
+      ['Income less expenses on posted vouchers', '1700.00'],
+      ['Add: still owed by customers on issued invoices', '11500.00'],
+      ['Less: still owed to suppliers on issued invoices', '-9000.00'],
+      ['Less: Profit for the Year', '-2200.00'],
+    ]);
+    expect(retained.groups).toEqual([
+      { label: 'Profit earned to the day', count: 3, amount: '4200.00' },
+      { label: 'Less: Profit for the Year', count: 1, amount: '-2200.00' },
+    ]);
+  });
+
+  it('lists the CRM openings: owed, still owed, and their other side in equity', async () => {
+    const tenant = await owner.tenant.findUniqueOrThrow({ where: { slug: A.slug }, select: { id: true, currencyId: true } });
+    const sector = await owner.industrySector.findFirstOrThrow({ where: { tenantId: tenant.id }, select: { id: true } });
+    await owner.customer.create({
+      data: {
+        tenantId: tenant.id, code: 'CUS-IAOPEN', name: 'Opening Trader IA', country: 'Bangladesh', customerType: 'TRADER', businessArea: 'BOTH',
+        industrySectorId: sector.id, customerOwe: '1500', weOwe: '800', openingCurrencyId: tenant.currencyId,
+      },
+    });
+
+    const receivable = await open(A.viewerToken, 'line=RECEIVABLE');
+    expect(receivable.entries.filter((e) => e.source === 'OPENING')).toEqual([
+      expect.objectContaining({ documentCode: 'CUS-IAOPEN', partyType: 'CUSTOMER', partyName: 'Opening Trader IA', amount: '1500.00' }),
+    ]);
+    expect(receivable.total).toBe('13000.00');
+    const payable = await open(A.viewerToken, 'line=PAYABLE');
+    expect(payable.entries.map((e) => [e.source, e.partyName, e.amount])).toEqual([['OPENING', 'Opening Trader IA', '800.00']]);
+    const equity = await open(A.viewerToken, 'line=OPENING_EQUITY');
+    expect(equity.entries.map((e) => [e.details, e.amount])).toEqual([
+      ['Owed to us when the books began', '1500.00'],
+      ['Owed by us when the books began', '-800.00'],
+    ]);
+    expect(equity.total).toBe('700.00');
+
+    // Still the statement's figures, line by line.
+    const sheet = byKey((await statement('balance-sheet', A.viewerToken, A.slug)(AS_AT)).body.data.rows);
+    for (const line of ['RECEIVABLE', 'PAYABLE', 'OPENING_EQUITY', 'RETAINED'] as const) {
+      expectAddsUp(await open(A.costToken, `line=${line}`), sheet.get(line)?.[0], line);
+    }
+  });
+
+  it('refuses a user without the permission, a total, and an unknown column; shows another workspace nothing', async () => {
+    const breakdown = (token: string, slug: string, query: string) => statement('balance-sheet', token, slug)(`/breakdown${AS_AT}&${query}`);
+    expect((await breakdown(A.bareToken, A.slug, 'line=CASH')).status).toBe(403);
+    expect((await breakdown(A.viewerToken, A.slug, 'line=TOTAL_ASSETS')).status).toBe(400);
+    expect((await breakdown(A.viewerToken, A.slug, 'line=CASH&column=LAST_WEEK')).status).toBe(400);
+    for (const line of ['CASH', 'RECEIVABLE', 'PAYABLE', 'PROFIT']) {
+      const res = await breakdown(B.viewerToken, B.slug, `line=${line}`);
+      expect(res.status).toBe(200);
+      expect(res.body.data).toMatchObject({ total: '0.00', entries: [], withheld: null });
+    }
+  });
+});
+
+describe('Cash Flow Statement breakdown', () => {
+  const open = async (query: string): Promise<StatementBreakdown> => {
+    const res = await statement('cash-flow', A.viewerToken, A.slug)(`/breakdown${QUERY}&${query}`);
+    expect(res.status, JSON.stringify(res.body.error ?? {})).toBe(200);
+    return res.body.data as StatementBreakdown;
+  };
+
+  it('adds up to the statement, for every line it opens and every column', async () => {
+    const flows = await statement('cash-flow', A.viewerToken, A.slug)(QUERY);
+    const rows = (flows.body.data.rows as (StatementRow & { kind: string })[]).filter(
+      (r) => r.kind === 'LINE' || r.key === 'CLOSING_CASH',
+    );
+    expect(rows).toHaveLength(14);
+    for (const row of rows) {
+      for (const [i, column] of (['CURRENT_MONTH', 'YTD', 'PREVIOUS_YTD'] as const).entries()) {
+        expectAddsUp(await open(`line=${row.key}&column=${column}`), row.amounts[i], `${row.key} ${column}`);
+      }
+    }
+  }, 60_000);
+
+  it('lists each voucher that moved cash, by where the money came from', async () => {
+    const customers = await open('line=OP_CUSTOMERS');
+    expect(customers.period).toEqual({ from: '2026-10-01', to: '2026-10-31' });
+    expect(customers.entries.map((e) => [e.documentCode, e.reference, e.amount])).toEqual([
+      ['JV-2026-4IA04', 'Discount', '-100.00'],
+      ['JV-2026-4IA08', 'Income on Service › Sea Freight-FCL', '10500.00'],
+    ]);
+    // The 50 the bank kept of the receipt is an operating expense; depreciation moved no cash.
+    const expenses = await open('line=OP_EXPENSES');
+    expect(expenses.entries.map((e) => [e.documentCode, e.amount])).toEqual([
+      ['JV-2026-4IA01', '-2000.00'],
+      ['JV-2026-4IA03', '-50.00'],
+      ['JV-2026-4IA08', '-50.00'],
+    ]);
+    const interest = await open('line=INV_INTEREST&column=YTD');
+    expect(interest.entries.map((e) => [e.date, e.documentCode, e.amount])).toEqual([['2026-09-05', 'JV-2026-4IA06', '200.00']]);
+  });
+
+  it('lists the cash at either end of the period by its vouchers, to the day', async () => {
+    const opening = await open('line=OPENING_CASH');
+    expect(opening.period).toEqual({ from: null, to: '2026-09-30' });
+    expect(opening.entries.map((e) => [e.documentCode, e.amount])).toEqual([['JV-2026-4IA06', '200.00']]);
+    const closing = await open('line=CLOSING_CASH');
+    expect(closing.total).toBe('2000.00');
+    expect(closing.groups).toEqual([{ label: 'Cash › Cash on Hand', count: 7, amount: '2000.00' }]);
+  });
+
+  it('refuses a user without the permission and a total; shows another workspace nothing', async () => {
+    const breakdown = (token: string, slug: string, query: string) => statement('cash-flow', token, slug)(`/breakdown${QUERY}&${query}`);
+    expect((await breakdown(A.bareToken, A.slug, 'line=OP_CUSTOMERS')).status).toBe(403);
+    expect((await breakdown(A.viewerToken, A.slug, 'line=NET_OPERATING')).status).toBe(400);
+    expect((await breakdown(A.viewerToken, A.slug, 'line=OP_CUSTOMERS&column=PREVIOUS_MONTH')).status).toBe(400);
+    for (const line of ['OP_CUSTOMERS', 'CLOSING_CASH']) {
+      const res = await breakdown(B.viewerToken, B.slug, `line=${line}&column=YTD`);
+      expect(res.status).toBe(200);
+      expect(res.body.data).toMatchObject({ total: '0.00', entries: [] });
+    }
   });
 });

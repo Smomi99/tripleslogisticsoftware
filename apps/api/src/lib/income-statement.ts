@@ -268,8 +268,8 @@ const IS_BANK_CHARGE = Prisma.sql`COALESCE(la.system_key, '') = ${BANK_CHARGE_AC
 const SETTLEMENT_LINE = Prisma.sql`(${SETTLES} AND NOT ${IS_BANK_CHARGE})`;
 
 /** The voucher's party, whichever of the four it names. Needs je, and the four joins below. */
-const PARTY_NAME = Prisma.sql`COALESCE(cu.name, ag.name, ca.name, ve.name)`;
-const PARTY_JOINS = Prisma.sql`
+export const PARTY_NAME = Prisma.sql`COALESCE(cu.name, ag.name, ca.name, ve.name)`;
+export const PARTY_JOINS = Prisma.sql`
   LEFT JOIN customer cu ON cu.tenant_id = je.tenant_id AND cu.id = je.customer_id
   LEFT JOIN agent ag    ON ag.tenant_id = je.tenant_id AND ag.id = je.agent_id
   LEFT JOIN carrier ca  ON ca.id = je.carrier_id

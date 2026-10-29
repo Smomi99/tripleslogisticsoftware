@@ -1,6 +1,10 @@
 'use client';
 
 import {
+  BALANCE_SHEET_COLUMN_LABEL,
+  BALANCE_SHEET_COLUMNS,
+  BALANCE_SHEET_LINE_KEYS,
+  type BalanceSheetColumn,
   type BalanceSheetDto,
   INCOME_STATEMENT_BASES,
   INCOME_STATEMENT_BASIS_LABEL,
@@ -9,6 +13,7 @@ import {
 import { useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
+import { StatementBreakdown, type StatementBreakdownTarget } from '@/components/accounts/statement-breakdown';
 import { sheetDay, StatementTable } from '@/components/accounts/statement-table';
 import { Button } from '@/components/ui/button';
 import { Input, Select } from '@/components/ui/field';
@@ -21,8 +26,13 @@ import { useSession } from '@/lib/session';
  * Accounts → Balance Sheet (Menu M15). The position on a day — assets,
  * liabilities and owner's equity — beside the same day a year before, on the
  * Income Statement's two bases. Read-only; every figure is the server's
- * (lib/balance-sheet.ts).
+ * (lib/balance-sheet.ts). A line's name or figure opens what it is made of
+ * (client, 2026-10-28).
  */
+
+/** Every line opens; the subtotals and totals are the lines above them. */
+const OPENS: ReadonlySet<string> = new Set(BALANCE_SHEET_LINE_KEYS);
+const COLUMN_OPTIONS = BALANCE_SHEET_COLUMNS.map((c) => [c, BALANCE_SHEET_COLUMN_LABEL[c]] as const);
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
@@ -40,6 +50,7 @@ export default function BalanceSheetPage() {
   const [pending, setPending] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [breakdown, setBreakdown] = useState<StatementBreakdownTarget<BalanceSheetColumn> | null>(null);
 
   const query = `asOf=${asOf}&yearStartMonth=${yearStartMonth}&basis=${basis}`;
 
@@ -155,6 +166,8 @@ export default function BalanceSheetPage() {
             columns={statement.columns.map((c) => ({ label: c.label, sub: sheetDay(c.asOf) }))}
             rows={statement.rows}
             pending={pending}
+            opens={(row) => row.kind === 'LINE' && OPENS.has(row.key)}
+            onOpen={(row, i) => setBreakdown({ line: row.key, label: row.label, column: BALANCE_SHEET_COLUMNS[i] ?? 'AS_AT' })}
           />
 
           <details className="rounded-manifest border border-line bg-surface px-4 py-3 text-body text-steel">
@@ -183,12 +196,22 @@ export default function BalanceSheetPage() {
                 </li>
               )}
               <li>Opening balances carry no fixed rate, so a foreign-currency one is converted at today&apos;s rate.</li>
+              <li>Click a line, or any of its figures, to see the vouchers, invoices and opening balances it is made of.</li>
             </ul>
           </details>
         </>
       )}
 
       {statement === null && error === null && <p className="text-body text-steel">Loading…</p>}
+
+      <StatementBreakdown
+        target={breakdown}
+        path="/api/tenant/accounts/balance-sheet/breakdown"
+        query={query}
+        columns={COLUMN_OPTIONS}
+        onColumnChange={(column) => setBreakdown((open) => (open === null ? null : { ...open, column }))}
+        onClose={() => setBreakdown(null)}
+      />
     </div>
   );
 }

@@ -982,6 +982,72 @@ Both export to Excel. Tests: the end of `routes/income-statement.test.ts`, over 
 fixtures, every figure hand arithmetic (accrual and cash balance sheets, both columns, the cash flow's three
 columns reconciling to the books, permissions, a second workspace).
 
+### 17.1 A figure's breakdown (client, 2026-10-28)
+
+**The request.** *"On the balance sheet when I click on the amount it will pop up the breakdown of the
+amount, so that I can track. Same for the Cash Flow Statement."*
+
+**As built.** The Income Statement's breakdown (DESIGN-UPDATE-2026-10-04 §9.4) is the pattern. No schema
+change, no migration, no new permission:
+
+- `GET /balance-sheet/breakdown?asOf&yearStartMonth&basis&line&column` (`column` is `AS_AT` or
+  `YEAR_EARLIER`) sits under `ACCOUNTS.BALANCE_SHEET.VIEW`.
+- `GET /cash-flow/breakdown?month&yearStartMonth&line&column` (`CURRENT_MONTH`, `YTD`, `PREVIOUS_YTD`)
+  sits under `ACCOUNTS.CASH_FLOW_STATEMENT.VIEW`.
+
+**What opens it.** The name of a line with a figure (dotted underline), or any of its non-zero figures.
+On the Balance Sheet that is every line. On the Cash Flow Statement it is every flow, plus the cash at the
+beginning and end of the period. Subtotals and totals do not open, because the statement already shows
+what they add up.
+
+**The popup** shows the line, the basis (Balance Sheet only) and the currency. A switch moves between the
+statement's columns, next to the column's day or dates and the total. Then one row per document: Date ·
+Document · Source · Party · Account / Booking · Details · Amount. When the figure comes from more than
+one place, a strip above the table subtotals each source. The total is the statement's own figure, and
+the rows add up to it.
+
+**The rows**, read from the same itemised rows the statement adds up. `positionOn` in
+`lib/balance-sheet.ts` is now built from `positionParts`: per account, per invoice, per supplier cost,
+per opening.
+
+| Line | Rows |
+|---|---|
+| Every Balance Sheet line | The posted vouchers on the accounts it maps, since the books began, one row per voucher per account. |
+| Accounts Receivable (accrual) | Also each issued invoice not received in full by the day ("Billed …, received …"), and each customer, agent or vendor opening not yet settled. |
+| Accounts Payable (accrual) | Also each supplier's cost on an issued invoice not paid in full, and each opening we still owe. |
+| Opening Balance Equity (accrual) | Also every opening as CRM holds it: owed to us is positive, owed by us negative. |
+| Profit for the Year | The Income Statement for the financial year to the day, section by section: Net Revenue, less Direct Cost, less Operating Expenses, plus Non-Operating Income, less Non-Operating Expenses, less Income Tax. |
+| Retained Earnings Brought Forward | How it is worked out. Income less expenses on posted vouchers, plus (accrual) what customers still owe on invoices, less what suppliers are still owed, less openings collected, plus openings paid. Then less Profit for the Year. |
+| A cash flow line | Each voucher that moved a Cash or Bank account in the period, by its lines on the accounts the line maps. |
+| Opening / closing cash | Every voucher on a Cash or Bank account to that day, by account. |
+
+- **Long lists.** A balance runs from the day the books began, so at most 500 vouchers are listed: the
+  most recent. Any older ones are summed into one *Brought forward* row. Subtotals still count every
+  voucher.
+- **Opening a document.** A voucher number opens the voucher in a new tab (that voucher screen's
+  `.VIEW`). An invoice number opens the Debit Invoice popup on top of the breakdown
+  (`ACCOUNTS.DEBIT_INVOICE.VIEW`). An opening's party code opens that party's ledger on
+  Receivable-Payable in a new tab (`ACCOUNTS.RECEIVABLE_PAYABLE.VIEW`). Without the permission, the
+  number is plain text.
+- **Buy prices (§3.9).** Suppliers' costs are listed only with `ACCOUNTS.DEBIT_INVOICE.VIEW_BUY_PRICE`.
+  Without it they arrive as one row with their count and sum. The total still matches, and no per-job
+  cost is shown.
+- **Code.**
+  - `lib/statement-breakdown.ts` holds what both statements share: the chart's labels, the voucher query
+    and the row and subtotal builder. `isCash` moved there from `lib/cash-flow.ts`.
+  - The popup is `components/accounts/statement-breakdown.tsx`. `StatementTable` gained `opens` and
+    `onOpen`.
+
+Tests:
+
+- `routes/income-statement.test.ts`, 12 more cases. Every Balance Sheet line in both columns, on both
+  bases, with and without the buy-price grant, adds up to the statement. So does every Cash Flow line in
+  all three columns. Further cases cover cash by voucher, receivables by invoice, the buy-price split,
+  Profit for the Year by section, how Retained Earnings is made, CRM openings on both sides and in
+  equity, opening and closing cash, refusals (no permission, a total, an unknown column) and an empty
+  second workspace.
+- `lib/statement-breakdown.test.ts` covers the *Brought forward* row.
+
 ---
 
 ## 18. TA/DA — built 2026-10-18, on our recommendation
