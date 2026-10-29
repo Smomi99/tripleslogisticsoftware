@@ -8,7 +8,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { useSession } from '@/lib/session';
 
-import { buildNav, HIDDEN_FROM_SIDEBAR, isOnRoute } from './nav-config';
+import { buildNav, isOnRoute } from './nav-config';
 
 /*
  * §12 sidebar: 240px, --hull, collapsible to 64px, module groups collapsible,
@@ -36,9 +36,7 @@ export function Sidebar() {
       buildNav()
         .map((group) => ({
           ...group,
-          items: group.items.filter(
-            (item) => !HIDDEN_FROM_SIDEBAR.has(item.feature) && item.viewPermissions.every((p) => can(p)),
-          ),
+          items: group.items.filter((item) => item.viewPermissions.every((p) => can(p))),
         }))
         .filter((group) => group.items.length > 0),
     [can],
