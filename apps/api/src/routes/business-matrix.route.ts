@@ -137,6 +137,11 @@ async function figuresFor(
               FROM quotation q
              WHERE q.tenant_id = ${tenantId} AND q.deleted_at IS NULL AND q.status <> 'DRAFT'
                AND q.movement_type = p.direction AND q.pol_id = p.pol_id AND q.pod_id = p.pod_id
+               -- A cancelled number was withdrawn (2026-10-29): the inquiry's
+               -- new quotation is the one that counts, not both.
+               AND NOT EXISTS (SELECT 1 FROM quotation c
+                                WHERE c.tenant_id = q.tenant_id AND c.code = q.code
+                                  AND c.deleted_at IS NULL AND c.status = 'CANCELLED')
                ${within(Prisma.sql`q.quotation_date`, period)}
            ) AS quotations,
            (SELECT COALESCE(SUM(cs.teu_factor), 0)

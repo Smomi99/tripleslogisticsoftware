@@ -1562,3 +1562,154 @@ describe('deleting a draft (MODULE_INQUIRY_QUOTATION §11 Q13)', () => {
     expect((await as(url(draft.id)).expect(200)).body.data.status).toBe('DRAFT');
   });
 });
+
+describe('cancelling a quotation (client, 2026-10-29)', () => {
+  /*
+   * "So that we can quote from the inquiry again." A fresh inquiry, because
+   * the shared one carries other tests' sent quotations, and an inquiry still
+   * answered by one of them is rightly left Quoted.
+   */
+  const url = (id: string) => `/api/tenant/cs/quotations/${id}`;
+  const send = (id: string) =>
+    post(`${url(id)}/send`, { recipients: [{ email: 'buyer@customer.test', kind: 'TO' }] }).expect(200);
+  let n = 0;
+  async function freshInquiry(): Promise<bigint> {
+    n += 1;
+    const { id } = await owner.inquiry.create({
+      data: {
+        tenantId,
+        code: `INQ-2026-0009${50 + n}`,
+        seriesYear: 2026,
+        inquiryDate: new Date('2026-08-27'),
+        sourceId: (await owner.inquirySource.findFirstOrThrow({ where: { tenantId }, select: { id: true } })).id,
+        shipmentType: 'SEA',
+        customerId: (await owner.customer.findFirstOrThrow({ where: { tenantId }, select: { id: true } })).id,
+        movementType: 'OUTBOUND',
+        polId: (await owner.port.findFirstOrThrow({ where: { tenantId, code: 'QPOL' }, select: { id: true } })).id,
+        podId: (await owner.port.findFirstOrThrow({ where: { tenantId, code: 'QPOD' }, select: { id: true } })).id,
+        status: 'OPEN',
+      },
+      select: { id: true },
+    });
+    return id;
+  }
+  const quote = (inquiry: bigint) =>
+    post('/api/tenant/cs/quotations', {
+      inquiryId: inquiry.toString(),
+      carrierId: carrierId.toString(),
+      localCurrencyId: currencyId.toString(),
+      quotationDate: '2026-08-27',
+      validityDate: '2026-09-30',
+      freightCostHeadId: freightHeadId.toString(),
+    }).expect(201);
+  const inquiryOf = async (id: bigint) =>
+    (
+      await request(app)
+        .get(`/api/tenant/sales/inquiries/${id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .set('X-Tenant-Slug', SLUG)
+        .expect(200)
+    ).body.data as { status: string; quotedPrice: string | null; quotation: { id: string; code: string } | null };
+
+  it('cancels a sent quotation with its reason, and the inquiry can be quoted again', async () => {
+    const inquiry = await freshInquiry();
+    const q = (await quote(inquiry)).body.data as { id: string; code: string };
+    await send(q.id);
+    expect((await inquiryOf(inquiry)).status).toBe('QUOTED');
+
+    await post(`${url(q.id)}/cancel`, { reason: '  ' }).expect(400);
+    const res = await post(`${url(q.id)}/cancel`, { reason: 'Customer changed the commodity.' }).expect(200);
+    expect(res.body.data).toMatchObject({
+      status: 'CANCELLED',
+      cancelReason: 'Customer changed the commodity.',
+      cancellable: false,
+      editable: false,
+    });
+    expect(res.body.data.cancelledAt).not.toBeNull();
+
+    // Back where pricing left it: nothing was picked and no agent was asked.
+    const reopened = await inquiryOf(inquiry);
+    expect(reopened).toMatchObject({ status: 'OPEN', quotedPrice: null, quotation: null });
+
+    // Quoted afresh, under a new number; the inquiry names the new one.
+    const again = (await quote(inquiry)).body.data as { id: string; code: string };
+    expect(again.code).not.toBe(q.code);
+    expect((await inquiryOf(inquiry)).quotation?.id).toBe(again.id);
+  });
+
+  it('keeps the cancelled one readable and printable, and changes nothing on it', async () => {
+    const q = (await quote(await freshInquiry())).body.data as { id: string };
+    await send(q.id);
+    await post(`${url(q.id)}/cancel`, { reason: 'Raised on the wrong lane.' }).expect(200);
+
+    const pdf = await request(app)
+      .get(`${url(q.id)}/pdf`)
+      .set('Authorization', `Bearer ${token}`)
+      .set('X-Tenant-Slug', SLUG)
+      .buffer(true)
+      .parse((r, done) => {
+        const chunks: Buffer[] = [];
+        r.on('data', (c: Buffer) => chunks.push(c));
+        r.on('end', () => done(null, Buffer.concat(chunks)));
+      })
+      .expect(200);
+    expect(extractPdfText(pdf.body as Buffer)).toContain('CANCELLED');
+
+    await patch(url(q.id), { validityDate: '2026-12-31' }).expect(409);
+    await post(`${url(q.id)}/send`, { recipients: [{ email: 'buyer@customer.test', kind: 'TO' }] }).expect(409);
+    await put(`${url(q.id)}/costs`, { costs: [] }).expect(409);
+    await post(`${url(q.id)}/cancel`, { reason: 'Again.' }).expect(409);
+
+    const header = await owner.quotation.findFirstOrThrow({
+      where: { id: BigInt(q.id) },
+      select: { carrierId: true, polId: true, podId: true },
+    });
+    const booking = await post('/api/tenant/cs/bookings', {
+      quotationId: q.id,
+      carrierId: header.carrierId.toString(),
+      polId: header.polId.toString(),
+      podId: header.podId.toString(),
+      cargoLines: [],
+    });
+    expect(booking.status).toBe(409);
+    expect(booking.body.error.code).toBe('QUOTATION_CANCELLED');
+  });
+
+  it('refuses a draft, an earlier revision, and an accepted one with a live booking', async () => {
+    const draft = (await quote(await freshInquiry())).body.data as { id: string };
+    const toDraft = await post(`${url(draft.id)}/cancel`, { reason: 'Wrong inquiry.' }).expect(409);
+    expect(toDraft.body.error.message).toContain('Delete it instead');
+
+    const sent = (await quote(await freshInquiry())).body.data as { id: string };
+    await send(sent.id);
+    await patch(url(sent.id), { validityDate: '2026-10-31' }).expect(200);
+    const earlier = await post(`${url(sent.id)}/cancel`, { reason: 'Old one.' }).expect(409);
+    expect(earlier.body.error.message).toContain('Cancel the latest one');
+
+    const booked = (await quote(await freshInquiry())).body.data as { id: string; code: string };
+    await send(booked.id);
+    const header = await owner.quotation.findFirstOrThrow({
+      where: { id: BigInt(booked.id) },
+      select: { customerId: true, carrierId: true, polId: true, podId: true },
+    });
+    await owner.shipment.create({
+      data: { tenantId, code: `BKG-${booked.code}`, seriesYear: 2026, quotationId: BigInt(booked.id), shipmentType: 'SEA', ...header },
+    });
+    await owner.quotation.update({ where: { id: BigInt(booked.id) }, data: { status: 'ACCEPTED' } });
+    const live = await post(`${url(booked.id)}/cancel`, { reason: 'Changed mind.' }).expect(409);
+    expect(live.body.error.code).toBe('BOOKINGS_LIVE');
+    expect(live.body.error.message).toContain(`BKG-${booked.code}`);
+  });
+
+  it('needs CANCEL, which EDIT does not carry', async () => {
+    const q = (await quote(await freshInquiry())).body.data as { id: string };
+    await send(q.id);
+    await request(app)
+      .post(`${url(q.id)}/cancel`)
+      .set('Authorization', `Bearer ${tokenNoPdf}`)
+      .set('X-Tenant-Slug', SLUG)
+      .send({ reason: 'Not mine to cancel.' })
+      .expect(403);
+    expect((await as(url(q.id)).expect(200)).body.data.status).toBe('SENT');
+  });
+});

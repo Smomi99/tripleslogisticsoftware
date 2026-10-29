@@ -21,6 +21,7 @@ import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 
+import { CancelQuotationDialog } from './cancel-quotation-dialog';
 import { FollowupDrawer } from './followup-drawer';
 
 /**
@@ -42,6 +43,7 @@ const TONE: Record<QuotationStatus, 'active' | 'pending' | 'inactive' | 'overdue
   REJECTED: 'overdue',
   EXPIRED: 'inactive',
   SUPERSEDED: 'inactive',
+  CANCELLED: 'inactive',
 };
 
 /** "1450.5" -> "1,450.50", so a column of prices lines up (§12). */
@@ -72,6 +74,7 @@ export default function QuotationListPage() {
   const [followingUp, setFollowingUp] = useState<QuotationListItemDto | null>(null);
   const [toDelete, setToDelete] = useState<QuotationListItemDto | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [toCancel, setToCancel] = useState<QuotationListItemDto | null>(null);
   // Bumped after a delete so the page reloads without moving off it.
   const [reload, setReload] = useState(0);
 
@@ -332,7 +335,11 @@ export default function QuotationListPage() {
                   variant="text"
                   size="inline"
                   disabled
-                  title="Available once the quotation has been sent"
+                  title={
+                    row.status === 'CANCELLED'
+                      ? 'This quotation was cancelled. Quote the inquiry again to book it.'
+                      : 'Available once the quotation has been sent'
+                  }
                 >
                   Booking <span className="font-mono tabular-nums">({row.bookingCount})</span>
                 </Button>
@@ -343,11 +350,26 @@ export default function QuotationListPage() {
                 Delete
               </Button>
             )}
+            {/* Anything sent is cancelled instead, so the inquiry can be quoted again (2026-10-29). */}
+            {can('CUSTOMER_SERVICE.QUOTATION.CANCEL') && row.cancellable && (
+              <Button variant="destructive" size="inline" onClick={() => setToCancel(row)}>
+                Cancel
+              </Button>
+            )}
           </span>
         )}
       />
 
       <FollowupDrawer quotation={followingUp} onClose={() => setFollowingUp(null)} />
+
+      <CancelQuotationDialog
+        quotation={toCancel}
+        onClose={() => setToCancel(null)}
+        onCancelled={() => {
+          setToCancel(null);
+          setReload((n) => n + 1);
+        }}
+      />
 
       <ConfirmDialog
         open={toDelete !== null}

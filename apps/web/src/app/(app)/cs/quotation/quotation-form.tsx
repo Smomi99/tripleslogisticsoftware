@@ -21,6 +21,7 @@ import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 
+import { CancelQuotationDialog } from './cancel-quotation-dialog';
 import { QuotationCostDetails } from './quotation-costs';
 
 /**
@@ -127,6 +128,7 @@ export function QuotationForm({
   // The server decides (quotationCanChange): a draft, a sent offer, or an
   // accepted one whose bookings were all cancelled (MODULE_BOOKING_CARGO §5.6).
   const editable = quotation.editable && can('CUSTOMER_SERVICE.QUOTATION.EDIT');
+  const [cancelling, setCancelling] = useState(false);
   const liveBookings = quotation.bookings.filter((b) => b.status !== 'CANCELLED');
   const [lines, setLines] = useState<LineDraft[]>(quotation.lines.map(toDraft));
   const [validityDate, setValidityDate] = useState(quotation.validityDate ?? '');
@@ -388,6 +390,25 @@ export function QuotationForm({
 
   return (
     <div className="flex flex-col gap-5">
+      {/* A cancelled quotation stays readable; the inquiry is quoted afresh (2026-10-29). */}
+      {quotation.status === 'CANCELLED' && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-manifest border border-alert/30 bg-alert/5 px-3 py-2 text-body text-hull">
+          <p>
+            <span className="font-medium text-alert">Cancelled</span>
+            {quotation.cancelledAt !== null && <span className="font-mono tabular-nums"> {quotation.cancelledAt.slice(0, 10)}</span>}
+            {quotation.cancelReason !== null && <> — {quotation.cancelReason}</>}
+          </p>
+          {can('CUSTOMER_SERVICE.QUOTATION.CREATE') && (
+            <Link
+              href={{ pathname: '/cs/quotation/new', query: { inquiryId: quotation.inquiryId } }}
+              className="text-body text-harbour hover:underline"
+            >
+              Quote {quotation.inquiryCode} again
+            </Link>
+          )}
+        </div>
+      )}
+
       {/* ------------------------------------------------- the header block */}
       <section className="rounded-manifest border border-line bg-surface p-5 shadow-manifest">
         <div className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
@@ -656,6 +677,11 @@ export function QuotationForm({
               Print quotation
             </Button>
           )}
+          {quotation.cancellable && can('CUSTOMER_SERVICE.QUOTATION.CANCEL') && (
+            <Button variant="destructive" onClick={() => setCancelling(true)}>
+              Cancel quotation
+            </Button>
+          )}
           {quotation.status === 'SENT' && (
             <p className="text-cell text-steel">
               Sent {quotation.sentAt?.slice(0, 10)}. Editing it now issues revision{' '}
@@ -698,6 +724,15 @@ export function QuotationForm({
           </p>
         )}
       </section>
+
+      <CancelQuotationDialog
+        quotation={cancelling ? quotation : null}
+        onClose={() => setCancelling(false)}
+        onCancelled={(next) => {
+          setCancelling(false);
+          onSaved(next);
+        }}
+      />
     </div>
   );
 }

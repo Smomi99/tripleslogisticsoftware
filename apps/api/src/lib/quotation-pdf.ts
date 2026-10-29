@@ -72,11 +72,15 @@ export interface QuotationPdfInput {
 
   /** §6.6's standing notes, the tenant's own or the product default. */
   notes: string[];
+
+  /** A cancelled quotation still prints, watermarked, so it is never mistaken for a live price. */
+  cancelled: boolean;
 }
 
 const HULL = '#10243A';
 const STEEL = '#6B7A88';
 const LINE = '#DDE3E3';
+const ALERT = '#B3403A';
 
 export function renderQuotationPdf(input: QuotationPdfInput): Promise<Buffer> {
   return new Promise<Buffer>((resolve, reject) => {
@@ -89,6 +93,28 @@ export function renderQuotationPdf(input: QuotationPdfInput): Promise<Buffer> {
     const left = doc.page.margins.left;
     const right = doc.page.width - doc.page.margins.right;
     const width = right - left;
+
+    // The debit invoice's watermark, for the same reason: a withdrawn price
+    // that reads as a live one is the way this page does real damage.
+    const watermark = (): void => {
+      if (!input.cancelled) return;
+      // text() moves the cursor; the page's own content starts where it was.
+      const { x, y } = doc;
+      doc.save();
+      doc
+        .rotate(-35, { origin: [doc.page.width / 2, doc.page.height / 2] })
+        .font('Helvetica-Bold')
+        .fontSize(90)
+        .fillColor(ALERT)
+        .opacity(0.12)
+        .text('CANCELLED', 0, doc.page.height / 2 - 50, { width: doc.page.width, align: 'center' });
+      doc.restore();
+      doc.opacity(1);
+      doc.x = x;
+      doc.y = y;
+    };
+    watermark();
+    doc.on('pageAdded', watermark);
 
     // ---------------------------------------------------------- letterhead
     let headerX = left;
