@@ -29,6 +29,7 @@ const { createApp } = await import('../app');
 const { env } = await import('../config/env');
 const { PrismaClient, Prisma } = await import('../generated/prisma/client');
 const { signAccessToken } = await import('../lib/jwt');
+const { extractPdfText } = await import('../lib/pdf-text');
 
 const owner = new PrismaClient({
   adapter: new PrismaPg({ connectionString: env.DATABASE_URL }),
@@ -815,5 +816,72 @@ describe('who may see what', () => {
     const rp = await asB().get('/receivable-payable?limit=100&openOnly=false');
     const names = rp.body.data.map((r: { partyName: string }) => r.partyName);
     expect(names.some((n: string) => n.endsWith(' A'))).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Money receipt (client, 2026-10-28): printed from the Income voucher that
+// received the money. Last, because it cancels a receipt.
+// ---------------------------------------------------------------------------
+
+describe('Money receipt', () => {
+  const receiptOf = (id: string, token = A.superToken, slug = SLUG_A) =>
+    as(token, slug)
+      .get(`/income/${id}/money-receipt`)
+      .buffer(true)
+      .parse((res, cb) => {
+        const parts: Buffer[] = [];
+        res.on('data', (c: Buffer) => parts.push(c));
+        res.on('end', () => cb(null, Buffer.concat(parts)));
+      });
+  const figure = (v: InstanceType<typeof Prisma.Decimal>) =>
+    Number(v.toFixed(2)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const receipts = async () =>
+    (await asA().get(`/debit-invoices/${invoiceId}`)).body.data.receipts as { journalEntryId: string; journalEntryCode: string }[];
+
+  it('prints who paid, how much in the invoice’s currency, how, and against what', async () => {
+    const [first] = await receipts();
+    const res = await receiptOf(first!.journalEntryId);
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/application\/pdf/);
+    expect(res.headers['content-disposition']).toContain(`money-receipt-RV-${YEAR}-000001.pdf`);
+
+    const text = extractPdfText(res.body as Buffer);
+    expect(text).toContain('MONEY RECEIPT');
+    expect(text).toContain(`RV-${YEAR}-000001`);
+    expect(text).toContain('Shafidi Exports A');
+    expect(text).toContain('US Dollars One thousand only');
+    expect(text).toContain('USD 1,000.00');
+    // Received in dollars, booked in taka at the invoice's frozen rate.
+    expect(text).toContain(`= BDT ${figure(D(1000).times(usdRate))}`);
+    expect(text).toContain('Cash');
+    expect(text).toContain(`Debit Note DN-${YEAR}-000001 dated `);
+    expect(text).toContain(A.shipmentCode);
+  });
+
+  it('refuses a voucher that names no payer, and one that was cancelled', async () => {
+    const options = (await asA().get('/vouchers/options')).body.data as {
+      moneyAccounts: { id: string; systemKey: string | null }[];
+      accounts: { id: string; systemKey: string | null }[];
+    };
+    const cash = options.moneyAccounts.find((a) => a.systemKey === 'ASSET.CASH.ON_HAND')!.id;
+    const other = options.accounts.find((a) => (a.systemKey ?? '').startsWith('INCOME.OTHER.'))!.id;
+    const loose = await asA()
+      .post('/income')
+      .send({ entryDate: TODAY, moneyAccountId: cash, amount: '100', lines: [{ ledgerAccountId: other, amount: '100' }] });
+    expect(loose.status, JSON.stringify(loose.body.error ?? {})).toBe(201);
+    const nobody = await receiptOf(loose.body.data.id);
+    expect(nobody.status).toBe(409);
+
+    const [, second] = await receipts();
+    const cancelled = await asA().post(`/income/${second!.journalEntryId}/cancel`).send({ reason: 'Bounced cheque' });
+    expect(cancelled.status, JSON.stringify(cancelled.body.error ?? {})).toBe(200);
+    expect((await receiptOf(second!.journalEntryId)).status).toBe(409);
+  });
+
+  it('needs the Income screen, and shows workspace B nothing of A', async () => {
+    const [first] = await receipts();
+    expect((await receiptOf(first!.journalEntryId, A.bareToken)).status).toBe(403);
+    expect((await receiptOf(first!.journalEntryId, B.superToken, SLUG_B)).status).toBe(404);
   });
 });

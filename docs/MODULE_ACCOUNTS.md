@@ -1080,3 +1080,39 @@ the claim page. Tests: `routes/ledger.test.ts`, "TA/DA claims".
 
 Not built, for the client to ask for: a per-day DA rate table by designation or city, receipts uploaded per
 line, and a link from a claim to the booking it was for.
+
+---
+
+## 19. MONEY RECEIPT — client, 2026-10-28
+
+**The request.** *"On the debit invoice, when we receive and save, please add a button named Money receipt.
+It will print the money receipt."*
+
+No sheet draws a money receipt. So it carries what a receipt conventionally does, and only what the record
+already holds. No schema change, no migration, no new numbering, no new permission.
+
+- **Where.** A *Money receipt* button appears in two places:
+  - On the Income voucher, which is where saving **Receive** lands.
+  - Beside each receipt in the debit invoice's *Received* list.
+
+  Both open the same PDF in a new tab: `GET /accounts/income/:id/money-receipt`, under
+  `ACCOUNTS.INCOME.VIEW` (whoever may see the voucher may print its receipt).
+- **One per Income voucher**, numbered with the voucher's own RV no. A part payment gets its own receipt.
+- **What it prints** (`lib/money-receipt-pdf.ts`, laid out like the Debit Invoice):
+  - The letterhead (name and logo), *MONEY RECEIPT*, Receipt No and Date.
+  - *Received with thanks from*: the voucher's party, at their CRM address.
+  - *The sum of*: the amount in words.
+  - *Paid by*: *Cash*, or *Bank — {account}* — the voucher's Cash or Bank lines.
+  - *Against*: *Debit Note DN-… dated …*, or *Opening balance*. Then the booking no and the voucher's
+    description, when there are any.
+  - The amount in figures, boxed.
+  - Signature lines: *Payer's signature* and *For {company}, Authorised signature*.
+- **The amount** is what the payer paid, in what they paid it in. Against an invoice, that is the
+  invoice's currency. Against an opening, the opening's. Otherwise, the books' base currency. When that
+  is not the base, the box adds what the books took it in at (*= BDT …*).
+- **Refused** (409) for a cancelled voucher, and for one that names no one it was received from. Another
+  workspace's voucher is not found (404).
+
+Tests: `routes/accounts.test.ts`, "Money receipt", 3 cases. One reads the PDF of a dollar invoice's part
+payment. One covers refusing a voucher with no payer and a cancelled one. One covers permission and
+workspace isolation.
