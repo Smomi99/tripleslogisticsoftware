@@ -725,7 +725,8 @@ export const FEATURES: readonly FeatureDefinition[] = [
     module: 'ACCOUNTS',
     feature: 'ACCOUNTS.ACCOUNT_SETUP',
     label: 'Account Set up',
-    actions: ['VIEW', 'CREATE', 'EDIT', 'TOGGLE_STATUS'],
+    // EXPORT: an account's Ledger to Excel (2026-10-28).
+    actions: ['VIEW', 'CREATE', 'EDIT', 'TOGGLE_STATUS', 'EXPORT'],
   },
 
   // -- 7. Setting ------------------------------------------------------------

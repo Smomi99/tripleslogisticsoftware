@@ -1,9 +1,12 @@
+import ExcelJS from 'exceljs';
 import { Router } from 'express';
 
 import {
   type ApiSuccess,
   type BankAccountDto,
   bankAccountInputSchema,
+  type BankAccountLedgerDto,
+  bankAccountLedgerQuerySchema,
   bankAccountListQuerySchema,
   type BankDto,
   bankInputSchema,
@@ -39,6 +42,7 @@ import { CODE_RETRY_LIMIT, isUniqueViolation, nextCode } from '../lib/codes';
 import { type BaseCurrency, baseCurrency, resolveRates } from '../lib/currency-rate';
 import { day, dec, describeLines, isoOf, money, paymentOf } from '../lib/debit-invoice';
 import { HttpError } from '../lib/http-error';
+import { PARTY_JOINS, PARTY_NAME } from '../lib/income-statement';
 import {
   accountOption,
   accountsSummary,
@@ -708,6 +712,199 @@ ledgerRouter.post('/bank-accounts/:id/toggle-status', requirePermission(`${ACCOU
   });
   const payload: ApiSuccess<{ isActive: boolean }> = { success: true, data: { isActive } };
   res.json(payload);
+});
+
+/**
+ * `Ledger` on Account Set up (client, 2026-10-28: "so that I can easily check
+ * my amount's breakdown, filtered by date, month or year"). One account's
+ * posted vouchers from `from` to `to`, oldest first, each with what it put in
+ * or took out and the balance after it — between the balance before the
+ * period and the balance at its end. Drafts and cancelled vouchers never
+ * moved the account, so they are not here.
+ *
+ * A bank account is an asset: debit is money in, credit money out.
+ */
+async function bankLedger(
+  db: TenantDb,
+  tenantId: bigint,
+  id: bigint,
+  query: { from: string; to: string },
+): Promise<BankAccountLedgerDto> {
+  const found = await db.bankAccount.findFirst({ where: { id, deletedAt: null }, select: BANK_ACCOUNT_SELECT });
+  if (found === null) throw HttpError.notFound('Bank account not found.');
+  const ledgerId = found.ledgerAccountId;
+
+  const [totals, base, before, rows] = await Promise.all([
+    accountTotals(db, tenantId),
+    baseCurrency(db, tenantId),
+    db.$queryRaw<{ balance: unknown }[]>`
+      SELECT COALESCE(SUM(jl.debit - jl.credit), 0) AS balance
+        FROM journal_line jl
+        JOIN journal_entry je ON je.tenant_id = jl.tenant_id AND je.id = jl.journal_entry_id
+       WHERE jl.tenant_id = ${tenantId}
+         AND jl.ledger_account_id = ${ledgerId}
+         AND jl.deleted_at IS NULL
+         AND je.deleted_at IS NULL
+         AND je.status = 'POSTED'
+         AND je.entry_date < ${query.from}::date
+    `,
+    db.$queryRaw<
+      { id: bigint; code: string; kind: JournalEntryKind; entry_date: Date; description: string | null; party_name: string | null; particulars: string | null; debit: unknown; credit: unknown }[]
+    >`
+      SELECT je.id, je.code, je.kind::text AS kind, je.entry_date, je.description, ${PARTY_NAME} AS party_name,
+             (SELECT string_agg(DISTINCT CASE WHEN op.id IS NULL THEN oa.name ELSE op.name || ' › ' || oa.name END, ', '
+                                ORDER BY CASE WHEN op.id IS NULL THEN oa.name ELSE op.name || ' › ' || oa.name END)
+                FROM journal_line ol
+                JOIN ledger_account oa ON oa.tenant_id = ol.tenant_id AND oa.id = ol.ledger_account_id
+                LEFT JOIN ledger_account op ON op.tenant_id = oa.tenant_id AND op.id = oa.parent_id
+               WHERE ol.tenant_id = je.tenant_id
+                 AND ol.journal_entry_id = je.id
+                 AND ol.deleted_at IS NULL
+                 AND ol.ledger_account_id <> ${ledgerId}) AS particulars,
+             SUM(jl.debit) AS debit, SUM(jl.credit) AS credit
+        FROM journal_line jl
+        JOIN journal_entry je ON je.tenant_id = jl.tenant_id AND je.id = jl.journal_entry_id
+        ${PARTY_JOINS}
+       WHERE jl.tenant_id = ${tenantId}
+         AND jl.ledger_account_id = ${ledgerId}
+         AND jl.deleted_at IS NULL
+         AND je.deleted_at IS NULL
+         AND je.status = 'POSTED'
+         AND je.entry_date BETWEEN ${query.from}::date AND ${query.to}::date
+       GROUP BY je.id, je.code, je.kind, je.entry_date, je.description, cu.name, ag.name, ca.name, ve.name
+       ORDER BY je.entry_date, je.code, je.id
+    `,
+  ]);
+
+  const opening = dec(String(before[0]?.balance ?? 0));
+  let balance = opening;
+  let totalDebit = new Prisma.Decimal(0);
+  let totalCredit = new Prisma.Decimal(0);
+  const entries = rows.map((r) => {
+    const debit = dec(String(r.debit));
+    const credit = dec(String(r.credit));
+    balance = balance.plus(debit).minus(credit);
+    totalDebit = totalDebit.plus(debit);
+    totalCredit = totalCredit.plus(credit);
+    return {
+      journalEntryId: r.id.toString(),
+      code: r.code,
+      kind: r.kind,
+      date: day(r.entry_date) ?? '',
+      partyName: r.party_name,
+      particulars: r.particulars ?? '—',
+      description: r.description,
+      debit: money(debit),
+      credit: money(credit),
+      balance: money(balance),
+    };
+  });
+
+  return {
+    account: bankAccountDto(found, totals),
+    currencyCode: base === null ? null : isoOf(base),
+    from: query.from,
+    to: query.to,
+    opening: money(opening),
+    entries,
+    totalDebit: money(totalDebit),
+    totalCredit: money(totalCredit),
+    closing: money(balance),
+  };
+}
+
+ledgerRouter.get('/bank-accounts/:id/ledger', requirePermission(`${ACCOUNT}.VIEW`), async (req, res) => {
+  const auth = req.auth!;
+  const id = parseId(req.params.id, 'bank account');
+  const query = bankAccountLedgerQuerySchema.parse(req.query);
+  const data = await withTenant(auth.tenantId, (db) => bankLedger(db, auth.tenantId, id, query));
+  const payload: ApiSuccess<BankAccountLedgerDto> = { success: true, data };
+  res.json(payload);
+});
+
+const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** "2026-02-01" → "01-Feb-2026", the statements' date style. */
+const sheetDay = (iso: string): string => {
+  const [y, m, d] = iso.split('-');
+  return `${d}-${SHORT_MONTHS[Number(m) - 1]}-${y}`;
+};
+
+/** The same ledger as a workbook, laid out as the screen lays it out (2026-10-28). */
+ledgerRouter.get('/bank-accounts/:id/ledger/export', requirePermission(`${ACCOUNT}.EXPORT`), async (req, res) => {
+  const auth = req.auth!;
+  const id = parseId(req.params.id, 'bank account');
+  const query = bankAccountLedgerQuerySchema.parse(req.query);
+  const { ledger, company } = await withTenant(auth.tenantId, async (db) => ({
+    ledger: await bankLedger(db, auth.tenantId, id, query),
+    company: (await letterheadOf(db, auth.tenantId)).companyName,
+  }));
+
+  const book = new ExcelJS.Workbook();
+  const sheet = book.addWorksheet('Ledger');
+  sheet.columns = [12, 18, 16, 26, 36, 36, 16, 16, 18].map((width) => ({ width }));
+  const a = ledger.account;
+  sheet.addRow([company]).font = { bold: true, size: 13 };
+  sheet.addRow([`Ledger - ${a.ledgerName}`]).font = { bold: true, size: 12 };
+  sheet.addRow([`${a.accountName} · A/C ${a.accountNo} · ${a.bankName}, ${a.branch}`]);
+  sheet.addRow([`Period: ${sheetDay(ledger.from)} to ${sheetDay(ledger.to)}`]);
+  sheet.addRow([`Currency: ${ledger.currencyCode ?? 'Base'}`]);
+  sheet.addRow([]);
+
+  const head = sheet.addRow(['Date', 'Voucher No', 'Type', 'Party', 'Particulars', 'Description', 'Debit (in)', 'Credit (out)', 'Balance']);
+  head.font = { bold: true };
+  head.eachCell((cell, n) => {
+    cell.alignment = { horizontal: n === 1 || n >= 7 ? 'right' : 'left' };
+    cell.border = { bottom: { style: 'thin' } };
+  });
+
+  // Real dates and numbers, so the sheet sorts, filters and sums.
+  const date = (iso: string) => new Date(`${iso}T00:00:00.000Z`);
+  const figure = (v: string) => Number(v);
+  const format = (row: ExcelJS.Row) => {
+    row.getCell(1).numFmt = 'dd-mmm-yyyy';
+    for (const n of [7, 8, 9]) {
+      row.getCell(n).numFmt = '#,##0.00;[Red]-#,##0.00';
+      row.getCell(n).alignment = { horizontal: 'right' };
+    }
+  };
+
+  const opening = sheet.addRow([date(ledger.from), 'Opening balance', null, null, null, null, null, null, figure(ledger.opening)]);
+  opening.font = { bold: true };
+  format(opening);
+  for (const e of ledger.entries) {
+    format(
+      sheet.addRow([
+        date(e.date),
+        e.code,
+        JOURNAL_ENTRY_KIND_LABEL[e.kind],
+        e.partyName ?? '',
+        e.particulars,
+        e.description ?? '',
+        Number(e.debit) === 0 ? null : figure(e.debit),
+        Number(e.credit) === 0 ? null : figure(e.credit),
+        figure(e.balance),
+      ]),
+    );
+  }
+  const closing = sheet.addRow([
+    date(ledger.to),
+    'Closing balance',
+    null,
+    null,
+    null,
+    null,
+    figure(ledger.totalDebit),
+    figure(ledger.totalCredit),
+    figure(ledger.closing),
+  ]);
+  closing.font = { bold: true };
+  closing.eachCell((cell) => (cell.border = { top: { style: 'thin' } }));
+  format(closing);
+
+  const name = a.ledgerName.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '').toLowerCase();
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="ledger-${name}-${ledger.from}-to-${ledger.to}.xlsx"`);
+  res.send(Buffer.from(await book.xlsx.writeBuffer()));
 });
 
 // ===========================================================================

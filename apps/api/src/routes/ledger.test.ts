@@ -275,6 +275,8 @@ async function makeWorld(name: string, slug: string, tag: string): Promise<World
       'ACCOUNTS.JOURNAL.CREATE',
       'ACCOUNTS.INCOME.VIEW',
       'ACCOUNTS.INCOME.CREATE',
+      // Sees an account's ledger, may not export it.
+      'ACCOUNTS.ACCOUNT_SETUP.VIEW',
     ]),
     bareToken: await token(bareId, false, []),
     customerId: customer.id,
@@ -1454,5 +1456,139 @@ describe('who may see what', () => {
       .post('/expense')
       .send({ entryDate: TODAY, moneyAccountId: bank, amount: '1', lines: [{ ledgerAccountId: bank, amount: '1' }] });
     expect(cross.status).toBe(400);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// `Ledger` on Account Set up (client, 2026-10-28): one bank account's
+// vouchers over a period. A fresh account, so only these vouchers are on it:
+//
+//   15-Jan-2025  journal   in  10,000  (opening balance)
+//   10-Feb-2025  expense   out  3,000  (rent)
+//   20-Feb-2025  income    in   5,000  (deposit interest)
+//   25-Feb-2025  journal   in  99,999  — a draft, never posted
+//   26-Feb-2025  expense   out    777  — posted, then cancelled
+//   05-Mar-2025  transfer  out  1,000  (to cash)
+// ---------------------------------------------------------------------------
+
+describe('a bank account’s ledger (Account Set up → Ledger)', () => {
+  let accountId: string;
+  let ledgerId: string;
+  const ledger = (query: string, token = A.superToken, slug = SLUG_A, id = accountId) =>
+    as(token, slug).get(`/bank-accounts/${id}/ledger?${query}`);
+
+  beforeAll(async () => {
+    const branch = await asA().post('/banks').send({ bankName: 'City Bank PLC', branch: 'Gulshan' });
+    expect(branch.status, JSON.stringify(branch.body.error ?? {})).toBe(201);
+    const acct = await asA().post('/bank-accounts').send({ accountName: 'Triple S Logistics', accountNo: '1103456789', bankId: branch.body.data.id });
+    expect(acct.status, JSON.stringify(acct.body.error ?? {})).toBe(201);
+    accountId = acct.body.data.id;
+    ledgerId = acct.body.data.ledgerAccountId;
+    await refreshOptions();
+
+    const posted = async (path: string, body: object) => {
+      const res = await asA().post(path).send(body);
+      expect(res.status, JSON.stringify(res.body.error ?? {})).toBe(201);
+      return res.body.data as { id: string };
+    };
+    await posted('/journal', {
+      entryDate: '2025-01-15',
+      description: 'Opening balance of the City Bank account',
+      post: true,
+      lines: [
+        { ledgerAccountId: ledgerId, debit: '10000', credit: '' },
+        { ledgerAccountId: account('EQUITY.OWNER.OPENING_BALANCE'), debit: '', credit: '10000' },
+      ],
+    });
+    await posted('/expense', { entryDate: '2025-02-10', moneyAccountId: ledgerId, amount: '3000', lines: [{ ledgerAccountId: account('EXPENSE.OPERATING.RENT'), amount: '3000' }] });
+    await posted('/income', { entryDate: '2025-02-20', moneyAccountId: ledgerId, amount: '5000', lines: [{ ledgerAccountId: account('INCOME.OTHER.FIXED_DEPOSIT'), amount: '5000' }] });
+    await posted('/journal', {
+      entryDate: '2025-02-25',
+      lines: [
+        { ledgerAccountId: ledgerId, debit: '99999', credit: '' },
+        { ledgerAccountId: account('EQUITY.OWNER.OPENING_BALANCE'), debit: '', credit: '99999' },
+      ],
+    });
+    const wrong = await posted('/expense', { entryDate: '2025-02-26', moneyAccountId: ledgerId, amount: '777', lines: [{ ledgerAccountId: account('EXPENSE.OPERATING.RENT'), amount: '777' }] });
+    expect((await asA().post(`/expense/${wrong.id}/cancel`).send({ reason: 'Entered twice' })).status).toBe(200);
+    await posted('/internal-transfer', { entryDate: '2025-03-05', moneyAccountId: ledgerId, amount: '1000', lines: [{ ledgerAccountId: cash, amount: '1000' }] });
+  });
+
+  it('lists a month between the balance before it and the balance at its end', async () => {
+    const res = await ledger('from=2025-02-01&to=2025-02-28');
+    expect(res.status, JSON.stringify(res.body.error ?? {})).toBe(200);
+    const data = res.body.data;
+    expect(data.account).toMatchObject({ id: accountId, ledgerName: 'City Bank PLC-789', accountNo: '1103456789' });
+    expect(data).toMatchObject({ currencyCode: 'BDT', from: '2025-02-01', to: '2025-02-28', opening: '10000.0000' });
+    // The draft and the cancelled voucher never moved the account.
+    expect(data.entries.map((e: { date: string; kind: string; particulars: string; debit: string; credit: string; balance: string }) => [e.date, e.kind, e.particulars, e.debit, e.credit, e.balance])).toEqual([
+      ['2025-02-10', 'EXPENSE', 'Operating Expense › Office Rent', '0.0000', '3000.0000', '7000.0000'],
+      ['2025-02-20', 'INCOME', 'Other Income › Fixed Deposit', '5000.0000', '0.0000', '12000.0000'],
+    ]);
+    expect(data).toMatchObject({ totalDebit: '5000.0000', totalCredit: '3000.0000', closing: '12000.0000' });
+  });
+
+  it('takes a year, and a day range, the same way', async () => {
+    const year = (await ledger('from=2025-01-01&to=2025-12-31')).body.data;
+    expect(year.opening).toBe('0.0000');
+    expect(year.entries.map((e: { kind: string; particulars: string }) => [e.kind, e.particulars])).toEqual([
+      ['JOURNAL', 'Business Owner Contribution and Drawing › Opening Balance Equity'],
+      ['EXPENSE', 'Operating Expense › Office Rent'],
+      ['INCOME', 'Other Income › Fixed Deposit'],
+      ['TRANSFER', 'Cash › Cash on Hand'],
+    ]);
+    expect(year.closing).toBe('11000.0000');
+    // The closing of the year is the balance Account Set up shows.
+    const list = (await asA().get('/bank-accounts?limit=100')).body.data as { id: string; balance: string }[];
+    expect(list.find((a) => a.id === accountId)!.balance).toBe('11000.0000');
+
+    const days = (await ledger('from=2025-02-15&to=2025-03-31')).body.data;
+    expect(days.opening).toBe('7000.0000');
+    expect(days.entries.map((e: { code: string; balance: string }) => e.balance)).toEqual(['12000.0000', '11000.0000']);
+    const empty = (await ledger('from=2024-01-01&to=2024-12-31')).body.data;
+    expect(empty).toMatchObject({ opening: '0.0000', entries: [], closing: '0.0000' });
+  });
+
+  it('exports the same ledger to Excel, with real dates and numbers', async () => {
+    const res = await as(A.superToken, SLUG_A)
+      .get(`/bank-accounts/${accountId}/ledger/export?from=2025-02-01&to=2025-02-28`)
+      .buffer(true)
+      .parse((r, done) => {
+        const chunks: Buffer[] = [];
+        r.on('data', (c: Buffer) => chunks.push(c));
+        r.on('end', () => done(null, Buffer.concat(chunks)));
+      });
+    expect(res.status).toBe(200);
+    expect(res.headers['content-disposition']).toContain('ledger-city-bank-plc-789-2025-02-01-to-2025-02-28.xlsx');
+
+    const { default: ExcelJS } = await import('exceljs');
+    const bytes = res.body as Buffer;
+    const book = new ExcelJS.Workbook();
+    // ExcelJS wants the bytes themselves: the slice this Buffer is a view over.
+    await book.xlsx.load(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer);
+    const sheet = book.getWorksheet('Ledger')!;
+    const values = (n: number) => (sheet.getRow(n).values as unknown[]).slice(1);
+    expect(values(2)).toEqual(['Ledger - City Bank PLC-789']);
+    expect(values(4)).toEqual(['Period: 01-Feb-2025 to 28-Feb-2025']);
+    expect(values(7)).toEqual(['Date', 'Voucher No', 'Type', 'Party', 'Particulars', 'Description', 'Debit (in)', 'Credit (out)', 'Balance']);
+    expect(values(8)[1]).toBe('Opening balance');
+    expect(values(8)[8]).toBe(10000);
+    expect(values(9)).toEqual([new Date('2025-02-10T00:00:00.000Z'), expect.stringMatching(/^PV-2025-/), 'Expense', '', 'Operating Expense › Office Rent', '', undefined, 3000, 7000]);
+    expect(values(10).slice(6)).toEqual([5000, undefined, 12000]);
+    expect(values(11)).toEqual([new Date('2025-02-28T00:00:00.000Z'), 'Closing balance', undefined, undefined, undefined, undefined, 5000, 3000, 12000]);
+
+    // Seeing the ledger is Account Set up's VIEW; taking it away as a file is its own grant.
+    expect((await ledger('from=2025-02-01&to=2025-02-28', A.clerkToken)).status).toBe(200);
+    const clerk = await as(A.clerkToken, SLUG_A).get(`/bank-accounts/${accountId}/ledger/export?from=2025-02-01&to=2025-02-28`);
+    expect(clerk.status).toBe(403);
+  });
+
+  it('refuses a backwards range, a user without Account Set up, and another workspace', async () => {
+    const backwards = await ledger('from=2025-03-01&to=2025-02-01');
+    expect(backwards.status).toBe(400);
+    expect(JSON.stringify(backwards.body.error.fields)).toContain('The start date is after the end date.');
+    expect((await ledger('from=2025-02-01')).status).toBe(400);
+    expect((await ledger('from=2025-02-01&to=2025-02-28', A.bareToken)).status).toBe(403);
+    expect((await ledger('from=2025-02-01&to=2025-02-28', B.superToken, SLUG_B)).status).toBe(404);
   });
 });
