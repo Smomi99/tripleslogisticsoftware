@@ -1,10 +1,13 @@
 'use client';
 
 import {
+  canTransition,
   checkLegContinuity,
   LEGS_ALLOWED,
   type ScheduleLegInput,
+  SHIPMENT_STATUS_LABEL,
   type ShipmentScheduleDto,
+  type ShipmentStatus,
   TRANSIT_TYPES,
 } from '@ff/shared';
 import Link from 'next/link';
@@ -32,6 +35,10 @@ import { useSession } from '@/lib/session';
  * physically happen — and §6.4 says it should not reach the customer. They are
  * checked live from the same function the API refuses with, so the screen and
  * the server never disagree about what is valid.
+ *
+ * Whether the sailing may change at all is the same: the booking's status
+ * rules, read from @ff/shared. An approved sailing may (client, 2026-10-29),
+ * and goes back to the customer; one with an S/O issued on it may not.
  */
 
 interface Options {
@@ -43,7 +50,7 @@ interface Options {
 interface Context {
   id: string;
   code: string;
-  status: string;
+  status: ShipmentStatus;
   shipmentType: 'SEA' | 'AIR';
   transitType: 'DIRECT' | 'INDIRECT' | null;
   carrierId: string;
@@ -276,7 +283,10 @@ export function ScheduleScreen({
     return <p className="text-body text-steel">Loading…</p>;
   }
 
-  const canPropose = can('CUSTOMER_SERVICE.SCHEDULE.CREATE');
+  const mayPropose = can('CUSTOMER_SERVICE.SCHEDULE.CREATE');
+  // The server refuses the rest; the screen does not offer them.
+  const sailingOpen = canTransition(context.status, 'VESSEL_PROPOSED');
+  const canPropose = mayPropose && sailingOpen;
 
   /*
     The one the customer is looking at, and the ones they are not.
@@ -361,6 +371,14 @@ export function ScheduleScreen({
           ))}
         </dl>
       </section>
+
+      {mayPropose && !sailingOpen && (
+        <p className="rounded-manifest border border-line bg-paper px-3 py-2 text-body text-hull">
+          {context.status === 'SO_ISSUED'
+            ? 'A shipping order is issued on this sailing, so it cannot change here. Cancel the S/O on the booking first; the new sailing then goes to the customer to approve again.'
+            : `${context.code} is ${SHIPMENT_STATUS_LABEL[context.status]}, so its sailing can no longer change.`}
+        </p>
+      )}
 
       {/* ------------------------------------- what is with the customer now */}
       {live !== null && (
@@ -701,6 +719,14 @@ export function ScheduleScreen({
           </ul>
         )}
       </section>
+
+      {/* The customer said yes to the sailing being replaced, not to this one. */}
+      {canPropose && context.status === 'APPROVED_FOR_SHIPMENT' && live !== null && (
+        <p className="rounded-manifest border border-signal/30 bg-signal/5 px-3 py-2 text-body text-hull">
+          The customer approved v{live.versionNo}. Saving a new sailing sends it to them to approve again, and every PO
+          goes back to pending until they do. The S/O is issued after that.
+        </p>
+      )}
 
       {formError !== null && (
         <p role="alert" className="rounded-manifest border border-alert/30 bg-alert/5 px-3 py-2 text-body text-alert">

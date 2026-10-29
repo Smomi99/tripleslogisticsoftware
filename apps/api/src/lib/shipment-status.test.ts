@@ -49,7 +49,9 @@ const SPEC: Record<ShipmentStatus, ShipmentStatus[]> = {
   // by having the customer reject it first.
   VESSEL_PROPOSED: ['VESSEL_PROPOSED', 'APPROVED_FOR_SHIPMENT', 'REJECTED'],
   REJECTED: ['VESSEL_PROPOSED'],
-  APPROVED_FOR_SHIPMENT: ['SO_ISSUED', 'SO_SKIPPED'],
+  // VESSEL_PROPOSED is not in §5.1's table. Client decision 2026-10-29: an
+  // approved sailing may change, and goes back to the customer to approve.
+  APPROVED_FOR_SHIPMENT: ['SO_ISSUED', 'SO_SKIPPED', 'VESSEL_PROPOSED'],
   // The APPROVED_FOR_SHIPMENT entries come from §5.4 rule 2 rather than §5.1's
   // table: cancelling an issued S/O has to leave the booking somewhere one can
   // be issued from, or "cancelled and reissued" is impossible.
