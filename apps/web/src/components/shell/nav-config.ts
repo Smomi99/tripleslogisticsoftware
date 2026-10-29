@@ -227,16 +227,6 @@ export interface NavGroup {
   items: NavItem[];
 }
 
-/**
- * Screens built and routed but kept out of the sidebar, at the client's word.
- * The page, its permission and its breadcrumb are untouched, so it still opens
- * from a link; taking a key out of this set puts it back on the menu.
- */
-export const HIDDEN_FROM_SIDEBAR: ReadonlySet<string> = new Set([
-  // Upload VGM & EGM (DESIGN-UPDATE-2026-10-28 §2), hidden 2026-10-28.
-  'OPERATION.VGM_EGM',
-]);
-
 /** Menu order follows §3, which MODULES already encodes. */
 export function buildNav(): NavGroup[] {
   return MODULES.map((module) => ({

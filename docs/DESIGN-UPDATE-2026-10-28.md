@@ -179,9 +179,9 @@ EGM file. EDIT changes a VGM and removes an EGM file.
 
 Migration `20261028120000_vgm_egm`. Route `/operation/vgm-egm`.
 
-**Hidden from the sidebar** at the client's request (2026-10-28), by `HIDDEN_FROM_SIDEBAR` in
-`nav-config.ts`. The page, its permission and its API are unchanged, and it still opens from
-`/operation/vgm-egm`.
+**On the sidebar.** The client asked for it to be hidden on 2026-10-28 and back on 2026-10-29. It is
+under Operation again, for anyone holding `OPERATION.VGM_EGM.VIEW`. The `HIDDEN_FROM_SIDEBAR` set that
+hid it was removed with it, since nothing else is hidden.
 
 - **List.** OUTBOUND bookings that are not cancelled or rejected and have an approved schedule or an
   advise (Pre-Alert's candidates). There is a Sea / Air switch (§6 Q7), Pending / Uploaded / All views
