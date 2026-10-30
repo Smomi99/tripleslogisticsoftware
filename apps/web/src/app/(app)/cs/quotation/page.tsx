@@ -244,7 +244,7 @@ export default function QuotationListPage() {
           onChange={(event) => setSearch(event.target.value)}
           placeholder="Search quotation no, inquiry no or customer"
           aria-label="Search quotations"
-          className="w-72"
+          className="w-full sm:w-72"
         />
         <Select
           value={status}
@@ -253,7 +253,7 @@ export default function QuotationListPage() {
             setPage(1);
           }}
           aria-label="Filter by status"
-          className="w-44"
+          className="w-full sm:w-44"
         >
           <option value="">All statuses</option>
           {QUOTATION_STATUSES.map((value) => (
@@ -288,7 +288,8 @@ export default function QuotationListPage() {
           />
         }
         actions={(row) => (
-          <span className="inline-flex items-center gap-3">
+          // A fragment, not a wrapper: on a phone each action is its own chip.
+          <>
             <Link
               href={{ pathname: `/cs/quotation/${row.id}` }}
               className="text-cell text-harbour hover:underline"
@@ -356,7 +357,7 @@ export default function QuotationListPage() {
                 Cancel
               </Button>
             )}
-          </span>
+          </>
         )}
       />
 

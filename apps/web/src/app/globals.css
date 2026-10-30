@@ -1,58 +1,69 @@
 @import 'tailwindcss';
 
 /*
- * "Manifest" — the design system from CLAUDE.md §12.
+ * "Manifest" — the design system from CLAUDE.md §12, colour edition.
  *
- * The visual language is borrowed from the subject's own world: shipping
- * manifests, stencilled container markings, port schedules. The users are
- * operations staff in Dhaka doing data entry for eight hours a day, so density,
- * legibility and scannability beat decoration everywhere.
+ * Every module carries its own colour (Purchase violet, Sales pink, Customer
+ * Service blue …). The colour shows on the module's sidebar icon, page header,
+ * buttons, links, focus ring, table header and row hover, so an operator can
+ * tell which part of the product they are in at a glance.
  *
- * §12 asks for tokens in globals.css AND tailwind.config.ts. Tailwind 4 is
- * CSS-first and has no config file: an @theme block below IS the config, and it
- * generates both the CSS custom properties and the utility classes. That
- * satisfies the rule that matters — define once, never hardcode a hex.
+ * How it works: the app shell sets data-module="<slug>" on <html>, and the
+ * [data-module] rules below redefine --color-harbour and its siblings. Every
+ * `bg-harbour` / `text-harbour` in every screen follows automatically — no
+ * screen names a module colour itself. A data-module attribute on any element
+ * (a sidebar group, a home tile) scopes the colours to that element.
  *
- * Dark mode is deliberately absent. §12 puts it out of scope for v1 rather than
- * have it built half-way.
+ * Token names are kept from the first edition (harbour, steel, paper …) so the
+ * ~2,000 class names already written keep working: `harbour` now means "the
+ * current module's main colour", not a fixed teal.
+ *
+ * Tailwind 4 is CSS-first and has no config file: the @theme block IS the
+ * config, and generates both the CSS custom properties and the utilities.
+ *
+ * Dark mode is out of scope for v1 rather than built half-way.
  */
 
 @theme {
-  /* -- Palette (§12). Semantic names only; never write a hex in a component. */
-  --color-hull: #10243a; /* sidebar, top bar, primary headings, body text */
-  --color-steel: #64717e; /* secondary text, icons, placeholder — see note */
-  --color-harbour: #0f7173; /* primary action, links, focus ring, active nav */
-  --color-harbour-ink: #0a5254; /* hover on primary */
-  --color-paper: #f4f6f5; /* app background */
+  /* -- Base palette. Semantic names only; never write a hex in a component. */
+  --color-hull: #10243a; /* sidebar, primary headings, body text */
+  --color-steel: #5b6878; /* secondary text, icons, placeholder */
+  --color-paper: #f5f7fb; /* app background */
   --color-surface: #ffffff; /* cards, tables, modals */
-  --color-line: #dde3e3; /* borders, dividers, table rules */
-  --color-verified: #2f7a54; /* active / paid / approved */
-  --color-signal: #a06212; /* pending / awaiting / warning — see note */
-  --color-alert: #b3403a; /* inactive / overdue / destructive */
+  --color-line: #e2e8f0; /* borders, dividers, table rules */
 
   /*
-   * Two tokens are darker than §12 prints them, because §12's own quality floor
-   * ("WCAG AA contrast", not optional) rules them out:
-   *
-   *   --steel   #6B7A88 -> #64717E   was 4.41:1 on surface, 4.06:1 on paper
-   *   --signal  #C87A16 -> #A06212   was 3.36:1 on surface
-   *
-   * AA needs 4.5:1 for text this size. --steel is not a minor token — it is
-   * every column header and every field label, the most-read text in an
-   * eight-hour data-entry shift, at 11px. The new values are the smallest
-   * darkening along the same hue that clears 4.5:1 on BOTH backgrounds
-   * (--steel now 4.99 / 4.60, --signal 4.96 / 4.57) and stay visually the same
-   * colour. Revert here if the original hexes are preferred to the floor.
+   * Status. The -ink shades are for text on the status's own 10% tint (the
+   * pills in status.tsx), where the base shade falls under 4.5:1.
    */
+  --color-verified: #15803d; /* active / paid / approved */
+  --color-verified-ink: #166534;
+  --color-signal: #b45309; /* pending / awaiting / warning */
+  --color-signal-ink: #92400e;
+  --color-alert: #b91c1c; /* inactive-destructive / overdue / error */
 
-  /* Row hover, the one tint §12 names outside the palette. */
-  --color-row-hover: #f0f4f4;
+  /*
+   * The module colours, defaulting to the brand indigo for screens that sit
+   * outside any module (home, sign-in). Overridden per module below.
+   *
+   *   harbour      main colour: buttons, links, active nav, focus ring.
+   *                AA (>= 4.5:1) against white, paper and module-soft.
+   *   harbour-ink  hover on harbour.
+   *   module       the vivid shade: icons, accent stripes, chips. Decorative
+   *                only — never text on white.
+   *   module-soft  the faint tint: table header, code gutter, chips.
+   */
+  --color-harbour: #4f46e5;
+  --color-harbour-ink: #4338ca;
+  --color-module: #6366f1;
+  --color-module-soft: #eef2ff;
+  --color-row-hover: color-mix(in oklab, var(--color-module) 7%, white);
 
   /*
    * CR-005: one colour per advise group, on the dot beside a booking's EFR, so
    * the bookings that will share one Shipment Advise read as one down a table.
-   * Categorical, and kept away from the four status hues above so a group dot
-   * is never read as a status.
+   * Categorical, and kept away from the status hues above so a group dot is
+   * never read as a status.
    */
   --color-group-1: #2b59c3;
   --color-group-2: #8e3fa3;
@@ -61,11 +72,28 @@
   --color-group-5: #8a5a2b;
   --color-group-6: #5e4fc4;
 
+  /*
+   * Chart series that mean the same thing on every chart: a sea shipment is
+   * always blue and an air one always orange, whichever module's card draws
+   * it. Checked with the dataviz palette validator against white (adjacent
+   * CVD ΔE 24.7, normal-vision ΔE 33.6, both >= 3:1). De-emphasis is the
+   * quiet gray for context beside an accent series — Cost beside Revenue —
+   * and clears 3:1 and CVD ΔE 15.9 against the Accounts green.
+   */
+  /*
+   * The sidebar's dusk: --hull at the top deepening to this indigo at the
+   * foot. White text keeps well over 7:1 on both.
+   */
+  --color-night: #1b1745;
+
+  --color-sea: #2a78d6;
+  --color-air: #eb6834;
+  --color-deemphasis: #8a96a6;
+
   /* -- Typography. Families are injected by next/font in layout.tsx. */
   --font-sans: var(--font-plex-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-plex-mono), ui-monospace, monospace;
 
-  /* §12 scale, to the pixel. */
   --text-page-title: 20px;
   --text-page-title--line-height: 28px;
   --text-page-title--font-weight: 600;
@@ -85,15 +113,131 @@
   --text-label--font-weight: 600;
   --text-label--letter-spacing: 0.06em;
 
-  /* -- Shape and motion. One radius, one shadow, two durations (§12). */
-  --radius-manifest: 4px;
-  --shadow-manifest: 0 1px 2px rgb(16 36 58 / 0.06);
+  /*
+   * -- Shape. Soft and friendly: 8px on controls, 12px on cards and dialogs.
+   * The `manifest` names are kept so existing class names keep working.
+   */
+  --radius-manifest: 8px;
+  --radius-card: 12px;
+  --shadow-manifest: 0 1px 2px rgb(16 36 58 / 0.04), 0 1px 3px rgb(16 36 58 / 0.06);
+  --shadow-raised: 0 12px 32px -8px rgb(16 36 58 / 0.28);
+
+  /* -- Motion. 120ms on hover/focus, 160–200ms on things that enter. */
   --ease-manifest: cubic-bezier(0, 0, 0.2, 1);
+  --animate-fade-in: fade-in 160ms var(--ease-manifest);
+  --animate-dialog-in: dialog-in 160ms var(--ease-manifest);
+  --animate-sheet-up: sheet-up 200ms var(--ease-manifest);
+  --animate-drawer-in: drawer-in 200ms var(--ease-manifest);
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+  /* Scale only: the dialog's centring uses the separate `translate` property. */
+  @keyframes dialog-in {
+    from {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+  }
+  @keyframes sheet-up {
+    from {
+      transform: translateY(100%);
+    }
+  }
+  @keyframes drawer-in {
+    from {
+      transform: translateX(-100%);
+    }
+  }
+}
+
+/*
+ * One block per module. `harbour` is the darker shade wherever the vivid one
+ * would fail AA as text or under white button text (pink, orange, green,
+ * amber, teal, cyan).
+ */
+[data-module='purchase'] {
+  --color-harbour: #7c3aed;
+  --color-harbour-ink: #6d28d9;
+  --color-module: #8b5cf6;
+  --color-module-soft: #f5f3ff;
+}
+[data-module='sales'] {
+  --color-harbour: #be185d;
+  --color-harbour-ink: #9d174d;
+  --color-module: #ec4899;
+  --color-module-soft: #fdf2f8;
+}
+[data-module='customer-service'] {
+  --color-harbour: #2563eb;
+  --color-harbour-ink: #1d4ed8;
+  --color-module: #3b82f6;
+  --color-module-soft: #eff6ff;
+}
+[data-module='operation'] {
+  --color-harbour: #c2410c;
+  --color-harbour-ink: #9a3412;
+  --color-module: #f97316;
+  --color-module-soft: #fff7ed;
+}
+[data-module='documentation'] {
+  --color-harbour: #0f766e;
+  --color-harbour-ink: #115e59;
+  --color-module: #14b8a6;
+  --color-module-soft: #f0fdfa;
+}
+[data-module='accounts'] {
+  --color-harbour: #15803d;
+  --color-harbour-ink: #166534;
+  --color-module: #22c55e;
+  --color-module-soft: #f0fdf4;
+}
+[data-module='setting'] {
+  --color-harbour: #475569;
+  --color-harbour-ink: #334155;
+  --color-module: #94a3b8;
+  --color-module-soft: #f1f5f9;
+}
+[data-module='crm'] {
+  --color-harbour: #b45309;
+  --color-harbour-ink: #92400e;
+  --color-module: #f59e0b;
+  --color-module-soft: #fffbeb;
+}
+[data-module='admin'] {
+  --color-harbour: #a21caf;
+  --color-harbour-ink: #86198f;
+  --color-module: #d946ef;
+  --color-module-soft: #fdf4ff;
+}
+[data-module='report'] {
+  --color-harbour: #0e7490;
+  --color-harbour-ink: #155e75;
+  --color-module: #06b6d4;
+  --color-module-soft: #ecfeff;
+}
+/* The two outside-company portals never share a sidebar, so they share a colour. */
+[data-module='agent'],
+[data-module='customer'] {
+  --color-harbour: #0369a1;
+  --color-harbour-ink: #075985;
+  --color-module: #0ea5e9;
+  --color-module-soft: #f0f9ff;
+}
+
+/*
+ * Derived tokens are re-declared on every scoping element. A custom property's
+ * var() resolves where it is declared, so without this a sidebar group would
+ * inherit the page's row-hover instead of computing its own.
+ */
+[data-module] {
+  --color-row-hover: color-mix(in oklab, var(--color-module) 7%, white);
 }
 
 @layer base {
   html {
-    /* §12: 1280px laptop is the floor, but list screens stay usable on tablet. */
     -webkit-text-size-adjust: 100%;
   }
 
@@ -117,7 +261,7 @@
     font-feature-settings: 'tnum' 1;
   }
 
-  /* §12 quality floor: visible keyboard focus on every control. */
+  /* Visible keyboard focus on every control, in the module's colour. */
   :focus-visible {
     outline: 2px solid var(--color-harbour);
     outline-offset: 1px;
@@ -127,7 +271,12 @@
     color: var(--color-steel);
   }
 
-  /* §12: respect prefers-reduced-motion. */
+  /* A thin, quiet scrollbar for the many tables that scroll sideways on a phone. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--color-steel) 40%, transparent) transparent;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     *,
     *::before,
@@ -141,7 +290,7 @@
 }
 
 @layer components {
-  /* Column headers and field labels share one treatment (§12). */
+  /* Column headers and detail-view labels share one compact treatment. */
   .label-manifest {
     font-size: var(--text-label);
     line-height: var(--text-label--line-height);
@@ -149,5 +298,26 @@
     letter-spacing: var(--text-label--letter-spacing);
     text-transform: uppercase;
     color: var(--color-steel);
+  }
+
+  /*
+   * The sidebar's container-wall corrugation: hairline ridges every 14px,
+   * fading in towards the foot of the panel. Decoration only, behind the menu.
+   */
+  .sidebar-ridges {
+    background-image: repeating-linear-gradient(
+      90deg,
+      color-mix(in oklab, white 4%, transparent) 0 1px,
+      transparent 1px 14px
+    );
+    mask-image: linear-gradient(to bottom, transparent 35%, black 100%);
+  }
+
+  /* Form labels: sentence case and a size up, easier to read than caps. */
+  .label-field {
+    font-size: var(--text-cell);
+    line-height: var(--text-cell--line-height);
+    font-weight: 500;
+    color: var(--color-hull);
   }
 }

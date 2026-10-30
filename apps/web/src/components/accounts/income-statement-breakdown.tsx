@@ -37,7 +37,7 @@ export interface BreakdownTarget {
   column: IncomeStatementColumn;
 }
 
-const TH = 'label-manifest px-3 py-2';
+const TH = 'label-manifest whitespace-nowrap px-3 py-2';
 const TD = 'px-3 py-2 text-cell text-hull';
 const TD_NUM = `${TD} text-right font-mono tabular-nums`;
 
@@ -116,7 +116,7 @@ export function IncomeStatementBreakdown({
         {data === null ? <Pending error={error} /> : <BreakdownBody data={data} onOpenInvoice={setInvoiceId} />}
 
         <div className="mt-5 flex items-center justify-end border-t border-line pt-4">
-          <Button variant="secondary" onClick={onClose}>
+          <Button variant="secondary" className="max-sm:w-full" onClick={onClose}>
             Close
           </Button>
         </div>
@@ -207,7 +207,7 @@ function BreakdownBody({
       <div className="overflow-x-auto rounded-manifest border border-line">
         <table className="w-full min-w-4xl border-collapse">
           <thead>
-            <tr className="border-b border-line bg-paper">
+            <tr className="border-b border-line bg-module-soft">
               <th className={`${TH} text-left`}>Date</th>
               <th className={`${TH} text-left`}>Document</th>
               <th className={`${TH} text-left`}>Source</th>

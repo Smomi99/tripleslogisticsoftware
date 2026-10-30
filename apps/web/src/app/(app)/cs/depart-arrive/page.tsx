@@ -54,7 +54,7 @@ export default function DepartArriveLandingPage() {
             <Link
               key={screen.slug}
               href={`/cs/depart-arrive/${screen.slug}` as Route}
-              className="flex flex-col gap-2 rounded-manifest border border-line bg-surface px-4 py-3 shadow-manifest transition-colors duration-[120ms] hover:border-harbour focus-visible:outline-2 focus-visible:outline-harbour"
+              className="flex flex-col gap-2 rounded-card border border-line bg-surface px-4 py-3 shadow-manifest transition-colors duration-[120ms] hover:border-harbour focus-visible:outline-2 focus-visible:outline-harbour"
             >
               <span className="text-section text-hull">{screen.title}</span>
               <span className="text-cell text-steel">

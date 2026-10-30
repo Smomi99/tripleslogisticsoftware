@@ -249,7 +249,7 @@ export function PriceListScreen({
         description={description}
         action={
           canExport ? (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2 max-sm:*:flex-1">
               <Button
                 variant="secondary"
                 onClick={() => void download('xlsx')}
@@ -280,10 +280,10 @@ export function PriceListScreen({
 
       <section
         aria-label="Filters"
-        className="flex flex-wrap items-end gap-2 rounded-manifest border border-line bg-surface p-3 shadow-manifest"
+        className="flex flex-wrap items-end gap-2 rounded-card border border-line bg-surface p-3 shadow-manifest"
       >
-        <div className="flex w-56 flex-col gap-1">
-          <span className="label-manifest">Search</span>
+        <div className="flex w-full flex-col gap-1 sm:w-56">
+          <span className="label-field">Search</span>
           <Input
             type="search"
             aria-label="Search rates"
@@ -300,8 +300,8 @@ export function PriceListScreen({
           port on one side collapses the other to the single port it already
           had, and the hint below says so before it happens rather than after.
         */}
-        <div className="flex w-64 flex-col gap-1">
-          <span className="label-manifest">POL</span>
+        <div className="flex w-full flex-col gap-1 sm:w-64">
+          <span className="label-field">POL</span>
           <MultiSelect
             id="price-list-pol"
             options={options.ports}
@@ -320,8 +320,8 @@ export function PriceListScreen({
             <span className="text-cell text-steel">One discharge port at a time.</span>
           )}
         </div>
-        <div className="flex w-64 flex-col gap-1">
-          <span className="label-manifest">POD</span>
+        <div className="flex w-full flex-col gap-1 sm:w-64">
+          <span className="label-field">POD</span>
           <MultiSelect
             id="price-list-pod"
             options={options.ports}
@@ -338,8 +338,8 @@ export function PriceListScreen({
             <span className="text-cell text-steel">One loading port at a time.</span>
           )}
         </div>
-        <div className="flex w-40 flex-col gap-1">
-          <span className="label-manifest">Carrier</span>
+        <div className="flex min-w-0 grow basis-2/5 flex-col gap-1 sm:w-40 sm:flex-none">
+          <span className="label-field">Carrier</span>
           <Select
             aria-label="Carrier"
             value={carrierId}
@@ -356,8 +356,8 @@ export function PriceListScreen({
             ))}
           </Select>
         </div>
-        <div className="flex w-40 flex-col gap-1">
-          <span className="label-manifest">Goods type</span>
+        <div className="flex min-w-0 grow basis-2/5 flex-col gap-1 sm:w-40 sm:flex-none">
+          <span className="label-field">Goods type</span>
           <Select
             aria-label="Goods type"
             value={goodsTypeId}
@@ -405,33 +405,37 @@ export function PriceListScreen({
       </section>
 
       {rates.length === 0 && !isPending ? (
-        <EmptyState
-          title={hasFilters ? 'No rates match those filters' : 'No published rates yet'}
-          description={
-            hasFilters
-              ? 'Widen the search, or tick Include expired to see rates that have lapsed.'
-              : 'Rates appear here once the pricing team has published them.'
-          }
-          action={
-            hasFilters ? (
-              <Button variant="secondary" onClick={clearFilters}>
-                Clear filters
-              </Button>
-            ) : null
-          }
-        />
+        <div className="rounded-card border border-line bg-surface shadow-manifest">
+          <EmptyState
+            title={hasFilters ? 'No rates match those filters' : 'No published rates yet'}
+            description={
+              hasFilters
+                ? 'Widen the search, or tick Include expired to see rates that have lapsed.'
+                : 'Rates appear here once the pricing team has published them.'
+            }
+            action={
+              hasFilters ? (
+                <Button variant="secondary" onClick={clearFilters}>
+                  Clear filters
+                </Button>
+              ) : null
+            }
+          />
+        </div>
       ) : (
-        <div className="max-h-[70vh] overflow-auto rounded-manifest border border-line bg-surface shadow-manifest">
+        <div className="max-h-[70vh] overflow-auto rounded-card border border-line bg-surface shadow-manifest">
           <table className="w-full min-w-max border-collapse">
             <thead className="sticky top-0 z-20">
-              <tr className="bg-paper text-left">
+              <tr className="bg-module-soft text-left">
                 <StickyTh left="0" width="w-24">
                   Code
                 </StickyTh>
-                <StickyTh left="6rem" width="w-20">
+                {/* On a phone only the code stays put: three frozen columns
+                    would leave no room for the tiers to scroll into. */}
+                <StickyTh left="6rem" width="w-20" className="max-sm:static">
                   POL
                 </StickyTh>
-                <StickyTh left="11rem" width="w-20">
+                <StickyTh left="11rem" width="w-20" className="max-sm:static">
                   POD
                 </StickyTh>
                 <Th>Carrier</Th>
@@ -457,10 +461,10 @@ export function PriceListScreen({
                   <StickyTd left="0" mono>
                     {rate.code}
                   </StickyTd>
-                  <StickyTd left="6rem" mono>
+                  <StickyTd left="6rem" mono className="max-sm:static">
                     {rate.polName ?? rate.polCode}
                   </StickyTd>
-                  <StickyTd left="11rem" mono>
+                  <StickyTd left="11rem" mono className="max-sm:static">
                     {rate.podName ?? rate.podCode}
                   </StickyTd>
                   <td className="whitespace-nowrap px-2.5 py-2 text-cell text-hull">{rate.carrierName}</td>
@@ -566,11 +570,11 @@ export function PriceListScreen({
                       <table className="w-full max-w-2xl border-collapse text-cell">
                         <thead>
                           <tr className="border-b border-line text-left">
-                            <th className="label-manifest py-1 pr-4">Charge head</th>
-                            <th className="label-manifest py-1 pr-4">Side</th>
-                            <th className="label-manifest py-1 pr-4">Unit</th>
-                            <th className="label-manifest py-1 pr-4">Currency</th>
-                            <th className="label-manifest py-1 text-right">Amount</th>
+                            <th className="label-manifest whitespace-nowrap py-1 pr-4">Charge head</th>
+                            <th className="label-manifest whitespace-nowrap py-1 pr-4">Side</th>
+                            <th className="label-manifest whitespace-nowrap py-1 pr-4">Unit</th>
+                            <th className="label-manifest whitespace-nowrap py-1 pr-4">Currency</th>
+                            <th className="label-manifest whitespace-nowrap py-1 text-right">Amount</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -605,7 +609,7 @@ export function PriceListScreen({
         </div>
       )}
 
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-cell text-steel">
           {meta.total} rate{meta.total === 1 ? '' : 's'}
         </span>
@@ -613,7 +617,7 @@ export function PriceListScreen({
           <div className="flex items-center gap-2">
             <Button
               variant="secondary"
-              size="inline"
+              size="compact"
               disabled={page <= 1}
               onClick={() => setPage((p) => p - 1)}
             >
@@ -624,7 +628,7 @@ export function PriceListScreen({
             </span>
             <Button
               variant="secondary"
-              size="inline"
+              size="compact"
               disabled={page >= meta.totalPages}
               onClick={() => setPage((p) => p + 1)}
             >
@@ -640,7 +644,7 @@ export function PriceListScreen({
 function Th({ children, numeric }: { children: React.ReactNode; numeric?: boolean }) {
   return (
     <th
-      className={`label-manifest border-b border-line bg-paper px-2.5 py-2 ${
+      className={`label-manifest whitespace-nowrap border-b border-line bg-module-soft px-2.5 py-2 ${
         numeric === true ? 'text-right' : 'text-left'
       }`}
     >
@@ -654,15 +658,17 @@ function StickyTh({
   children,
   left,
   width,
+  className = '',
 }: {
   children: React.ReactNode;
   left: string;
   width: string;
+  className?: string;
 }) {
   return (
     <th
       style={{ left }}
-      className={`label-manifest sticky z-30 border-b border-r border-line bg-paper px-2.5 py-2 text-left ${width}`}
+      className={`label-manifest sticky z-30 whitespace-nowrap border-b border-r border-line bg-module-soft px-2.5 py-2 text-left ${width} ${className}`}
     >
       {children}
     </th>
@@ -673,17 +679,19 @@ function StickyTd({
   children,
   left,
   mono,
+  className = '',
 }: {
   children: React.ReactNode;
   left: string;
   mono?: boolean;
+  className?: string;
 }) {
   return (
     <td
       style={{ left }}
       className={`sticky z-10 whitespace-nowrap border-r border-line bg-surface px-2.5 py-2 text-cell text-hull ${
         mono === true ? 'font-mono tabular-nums' : ''
-      }`}
+      } ${className}`}
     >
       {children}
     </td>

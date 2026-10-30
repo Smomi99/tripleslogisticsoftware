@@ -95,15 +95,15 @@ export function PicContacts({
       ) : (
         <>
           <div className="overflow-x-auto rounded-manifest border border-line">
-            <table className="w-full border-collapse text-cell">
+            <table className="w-full min-w-[36rem] border-collapse text-cell">
               <thead>
-                <tr className="bg-paper">
-                  <th className="label-manifest border-b border-line px-3 py-2 text-left">Name</th>
-                  <th className="label-manifest border-b border-line px-3 py-2 text-left">Department</th>
-                  <th className="label-manifest border-b border-line px-3 py-2 text-left">Designation</th>
-                  <th className="label-manifest border-b border-line px-3 py-2 text-right">Mobile</th>
-                  <th className="label-manifest border-b border-line px-3 py-2 text-left">Email</th>
-                  <th className="label-manifest border-b border-line px-3 py-2 text-left">Status</th>
+                <tr className="bg-module-soft">
+                  <th className="label-manifest whitespace-nowrap border-b border-line px-3 py-2 text-left">Name</th>
+                  <th className="label-manifest whitespace-nowrap border-b border-line px-3 py-2 text-left">Department</th>
+                  <th className="label-manifest whitespace-nowrap border-b border-line px-3 py-2 text-left">Designation</th>
+                  <th className="label-manifest whitespace-nowrap border-b border-line px-3 py-2 text-right">Mobile</th>
+                  <th className="label-manifest whitespace-nowrap border-b border-line px-3 py-2 text-left">Email</th>
+                  <th className="label-manifest whitespace-nowrap border-b border-line px-3 py-2 text-left">Status</th>
                 </tr>
               </thead>
               <tbody>

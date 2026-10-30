@@ -90,7 +90,7 @@ function OwnerFilter({
   onChange: (value: string) => void;
 }) {
   return (
-    <Select aria-label="Filter by salesperson" className="w-48" value={value} onChange={(e) => onChange(e.target.value)}>
+    <Select aria-label="Filter by salesperson" className="col-span-2 sm:w-48" value={value} onChange={(e) => onChange(e.target.value)}>
       <option value="">All salespeople</option>
       {owners.map((o) => (
         <option key={o.id} value={o.id}>
@@ -189,7 +189,7 @@ function DueList({ owners }: { owners: LookupOption[] }) {
           aria-label="Search leads"
           value={list.searchInput}
           onChange={(e) => list.setSearchInput(e.target.value)}
-          className="w-64"
+          className="sm:w-64"
         />
         <OwnerFilter owners={owners} value={list.filters['ownerId'] ?? ''} onChange={(v) => list.setFilter('ownerId', v)} />
       </div>
@@ -318,32 +318,33 @@ function ActivityLog({ owners }: { owners: LookupOption[] }) {
 
   return (
     <div className="flex flex-col gap-3 pt-3">
-      <div className="flex flex-wrap items-center gap-2">
+      {/* On a phone: search and salesperson full width, the two dates side by side. */}
+      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
         <Input
           type="search"
           placeholder="Search lead ID or exporter"
           aria-label="Search follow-ups"
           value={list.searchInput}
           onChange={(e) => list.setSearchInput(e.target.value)}
-          className="w-64"
+          className="col-span-2 sm:w-64"
         />
         <OwnerFilter owners={owners} value={list.filters['ownerId'] ?? ''} onChange={(v) => list.setFilter('ownerId', v)} />
-        <label className="flex items-center gap-1.5 text-cell text-steel">
+        <label className="flex flex-col gap-1 text-cell text-steel sm:flex-row sm:items-center sm:gap-1.5">
           From
           <Input
             type="date"
             numeric
-            className="w-40"
+            className="sm:w-40"
             value={list.filters['from'] ?? ''}
             onChange={(e) => list.setFilter('from', e.target.value)}
           />
         </label>
-        <label className="flex items-center gap-1.5 text-cell text-steel">
+        <label className="flex flex-col gap-1 text-cell text-steel sm:flex-row sm:items-center sm:gap-1.5">
           To
           <Input
             type="date"
             numeric
-            className="w-40"
+            className="sm:w-40"
             value={list.filters['to'] ?? ''}
             onChange={(e) => list.setFilter('to', e.target.value)}
           />

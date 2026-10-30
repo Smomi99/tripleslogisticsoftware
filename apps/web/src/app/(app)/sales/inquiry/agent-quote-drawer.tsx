@@ -13,6 +13,7 @@ import { StatusThread } from '@/components/agent-quote/status-thread';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Modal } from '@/components/ui/modal';
+import { RowActions } from '@/components/ui/row-actions';
 import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
@@ -136,15 +137,15 @@ function OptionDetail({ option }: { option: AgentQuoteOptionDto }) {
       <div className="overflow-x-auto">
         <table className="w-full min-w-180 border-collapse">
           <thead>
-            <tr className="border-b border-line bg-paper">
-              <th className="label-manifest px-3 py-1.5 text-left">Carrier</th>
-              <th className="label-manifest px-3 py-1.5 text-left">Cost head</th>
-              <th className="label-manifest px-3 py-1.5 text-left">Container</th>
-              <th className="label-manifest px-3 py-1.5 text-left">Unit</th>
-              <th className="label-manifest px-3 py-1.5 text-right">Qty</th>
-              <th className="label-manifest px-3 py-1.5 text-right">Unit price</th>
-              <th className="label-manifest px-3 py-1.5 text-left">Cur</th>
-              <th className="label-manifest px-3 py-1.5 text-right">Total</th>
+            <tr className="border-b border-line bg-module-soft">
+              <th className="label-manifest whitespace-nowrap px-3 py-1.5 text-left">Carrier</th>
+              <th className="label-manifest whitespace-nowrap px-3 py-1.5 text-left">Cost head</th>
+              <th className="label-manifest whitespace-nowrap px-3 py-1.5 text-left">Container</th>
+              <th className="label-manifest whitespace-nowrap px-3 py-1.5 text-left">Unit</th>
+              <th className="label-manifest whitespace-nowrap px-3 py-1.5 text-right">Qty</th>
+              <th className="label-manifest whitespace-nowrap px-3 py-1.5 text-right">Unit price</th>
+              <th className="label-manifest whitespace-nowrap px-3 py-1.5 text-left">Cur</th>
+              <th className="label-manifest whitespace-nowrap px-3 py-1.5 text-right">Total</th>
             </tr>
           </thead>
           <tbody>
@@ -316,227 +317,234 @@ export function AgentQuoteDrawer({
         )}
 
         {quotes !== null && quotes.length > 0 && (
-          <table className="w-full border-collapse">
-            <thead>
-              <tr className="border-b border-line bg-paper">
-                <th className="label-manifest px-2 py-2 text-left">Agent</th>
-                <th className="label-manifest px-2 py-2 text-left">Offer</th>
-                <th className="label-manifest px-2 py-2 text-right">Total</th>
-                <th className="label-manifest px-2 py-2 text-right">T/T</th>
-                <th className="label-manifest px-2 py-2 text-left">Valid until</th>
-                <th className="label-manifest px-2 py-2 text-left">Status</th>
-                <th className="label-manifest px-2 py-2 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {quotes.map((quote) => {
-                // A quote from before the breakdown existed has no options; it
-                // still has to render, so it becomes one pseudo-row carrying
-                // the headline figure it was submitted with.
-                const rows: {
-                  key: string;
-                  label: string;
-                  option: AgentQuoteOptionDto | null;
-                }[] =
-                  quote.options.length > 0
-                    ? quote.options.map((option) => ({
-                        key: option.id,
-                        label: `Option ${option.position}`,
-                        option,
-                      }))
-                    : [{ key: `${quote.id}-legacy`, label: 'Quoted price', option: null }];
+          // Seven columns do not fit a phone; the table scrolls sideways in
+          // its own box rather than pushing the sheet wider than the screen.
+          <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+            <table className="w-full min-w-[44rem] border-collapse">
+              <thead>
+                <tr className="border-b border-line bg-module-soft">
+                  <th className="label-manifest whitespace-nowrap px-2 py-2 text-left">Agent</th>
+                  <th className="label-manifest whitespace-nowrap px-2 py-2 text-left">Offer</th>
+                  <th className="label-manifest whitespace-nowrap px-2 py-2 text-right">Total</th>
+                  <th className="label-manifest whitespace-nowrap px-2 py-2 text-right">T/T</th>
+                  <th className="label-manifest whitespace-nowrap px-2 py-2 text-left">Valid until</th>
+                  <th className="label-manifest whitespace-nowrap px-2 py-2 text-left">Status</th>
+                  <th className="label-manifest whitespace-nowrap px-2 py-2 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {quotes.map((quote) => {
+                  // A quote from before the breakdown existed has no options; it
+                  // still has to render, so it becomes one pseudo-row carrying
+                  // the headline figure it was submitted with.
+                  const rows: {
+                    key: string;
+                    label: string;
+                    option: AgentQuoteOptionDto | null;
+                  }[] =
+                    quote.options.length > 0
+                      ? quote.options.map((option) => ({
+                          key: option.id,
+                          label: `Option ${option.position}`,
+                          option,
+                        }))
+                      : [{ key: `${quote.id}-legacy`, label: 'Quoted price', option: null }];
 
-                return (
-                  // The key belongs on the Fragment, not on the first <tr>
-                  // inside it — a row and its expanded detail are siblings of
-                  // one list entry.
-                  <Fragment key={quote.id}>
-                    {rows.map((row, index) => (
-                      <tr
-                        key={row.key}
-                        className={
-                          index === rows.length - 1
-                            ? 'border-b border-line hover:bg-row-hover [&>td]:align-top'
-                            : 'hover:bg-row-hover [&>td]:align-top'
-                        }
-                      >
-                        {index === 0 && (
-                          <td
-                            rowSpan={rows.length}
-                            className="whitespace-nowrap px-2 py-2 text-cell text-hull"
-                          >
-                            {quote.agentName}
-                            {quote.submittedByName !== null && (
-                              <div className="text-steel">{quote.submittedByName}</div>
+                  return (
+                    // The key belongs on the Fragment, not on the first <tr>
+                    // inside it — a row and its expanded detail are siblings of
+                    // one list entry.
+                    <Fragment key={quote.id}>
+                      {rows.map((row, index) => (
+                        <tr
+                          key={row.key}
+                          className={
+                            index === rows.length - 1
+                              ? 'border-b border-line hover:bg-row-hover [&>td]:align-top'
+                              : 'hover:bg-row-hover [&>td]:align-top'
+                          }
+                        >
+                          {index === 0 && (
+                            <td
+                              rowSpan={rows.length}
+                              className="whitespace-nowrap px-2 py-2 text-cell text-hull"
+                            >
+                              {quote.agentName}
+                              {quote.submittedByName !== null && (
+                                <div className="text-steel">{quote.submittedByName}</div>
+                              )}
+                            </td>
+                          )}
+                          <td className="whitespace-nowrap px-2 py-2 text-cell text-steel">
+                            {row.label}
+                            {row.option?.carrierName != null && (
+                              <div className="text-hull">{row.option.carrierName}</div>
                             )}
                           </td>
-                        )}
-                        <td className="whitespace-nowrap px-2 py-2 text-cell text-steel">
-                          {row.label}
-                          {row.option?.carrierName != null && (
-                            <div className="text-hull">{row.option.carrierName}</div>
-                          )}
-                        </td>
-                        <td className="whitespace-nowrap px-2 py-2 text-right">
-                          {row.option === null ? (
-                            <span className="font-mono text-cell tabular-nums text-hull">
-                              {quote.currencyCode ?? ''} {money(quote.amount)}
-                            </span>
-                          ) : (
-                            <Totals option={row.option} />
-                          )}
-                        </td>
-                        <td className="px-2 py-2 text-right font-mono text-cell tabular-nums text-steel">
-                          {(row.option === null ? quote.transitDays : row.option.transitDays) ??
-                            '—'}
-                        </td>
-                        <td className="whitespace-nowrap px-2 py-2 font-mono text-cell tabular-nums text-steel">
-                          {(row.option === null ? quote.validUntil : row.option.validUntil) ?? '—'}
-                        </td>
-                        {index === 0 && (
-                          <td rowSpan={rows.length} className="px-2 py-2 text-cell">
-                            <Status tone={STATUS_TONE[quote.status] ?? 'inactive'}>
-                              {STATUS_LABEL[quote.status] ?? quote.status}
-                            </Status>
+                          <td className="whitespace-nowrap px-2 py-2 text-right">
+                            {row.option === null ? (
+                              <span className="font-mono text-cell tabular-nums text-hull">
+                                {quote.currencyCode ?? ''} {money(quote.amount)}
+                              </span>
+                            ) : (
+                              <Totals option={row.option} />
+                            )}
                           </td>
-                        )}
-                        {index === 0 && (
-                          <td
-                            rowSpan={rows.length}
-                            className="whitespace-nowrap px-2 py-2 text-right text-cell"
-                          >
-                            <span className="inline-flex items-center gap-3">
-                              {/* Only on a quote you have won: turning a price
-                                  you did not take into a purchase rate would
-                                  file a commitment you never made. */}
-                              {decidable && quote.status === 'WON' && mayConvert && (
-                                <Button
-                                  variant="text"
-                                  size="inline"
-                                  onClick={() => setToConvert(quote)}
+                          <td className="px-2 py-2 text-right font-mono text-cell tabular-nums text-steel">
+                            {(row.option === null ? quote.transitDays : row.option.transitDays) ??
+                              '—'}
+                          </td>
+                          <td className="whitespace-nowrap px-2 py-2 font-mono text-cell tabular-nums text-steel">
+                            {(row.option === null ? quote.validUntil : row.option.validUntil) ?? '—'}
+                          </td>
+                          {index === 0 && (
+                            <td rowSpan={rows.length} className="px-2 py-2 text-cell">
+                              <Status tone={STATUS_TONE[quote.status] ?? 'inactive'}>
+                                {STATUS_LABEL[quote.status] ?? quote.status}
+                              </Status>
+                            </td>
+                          )}
+                          {index === 0 && (
+                            <td
+                              rowSpan={rows.length}
+                              className="whitespace-nowrap px-2 py-2 text-right text-cell"
+                            >
+                              <RowActions>
+                                {/* Details leads: it is on every row, and its
+                                    amendment count is worth seeing without
+                                    opening the More menu. */}
+                                <button
+                                  type="button"
+                                  className="text-harbour hover:underline"
+                                  onClick={() => setOpen(open === quote.id ? null : quote.id)}
                                 >
-                                  Convert to rate
-                                </Button>
-                              )}
-                              {/* Narrowing the field, before anyone has won.
-                                  Gone once the quote is answered: a shortlist
-                                  of one settled quote is not a shortlist. */}
-                              {decidable &&
-                                mayDecide &&
-                                (quote.status === 'SUBMITTED' ||
-                                  quote.status === 'SHORTLISTED') && (
+                                  {(() => {
+                                    // Count what the AGENT changed. A decision is
+                                    // our own entry in the trail and would read as
+                                    // though they had moved their price.
+                                    const amendments = quote.history.filter(
+                                      (h) => h.kind === 'AMENDED',
+                                    ).length;
+                                    return amendments === 0
+                                      ? 'Details'
+                                      : `${amendments} amendment${amendments === 1 ? '' : 's'}`;
+                                  })()}
+                                </button>
+                                {/* Only on a quote you have won: turning a price
+                                    you did not take into a purchase rate would
+                                    file a commitment you never made. */}
+                                {decidable && quote.status === 'WON' && mayConvert && (
                                   <Button
                                     variant="text"
                                     size="inline"
-                                    disabled={busy === quote.id}
-                                    onClick={() =>
-                                      void shortlist(quote, quote.status !== 'SHORTLISTED')
-                                    }
+                                    onClick={() => setToConvert(quote)}
                                   >
-                                    {quote.status === 'SHORTLISTED' ? 'Un-shortlist' : 'Shortlist'}
+                                    Convert to rate
                                   </Button>
                                 )}
-                              {decidable && mayDecide && quote.status !== 'WITHDRAWN' && (
-                                <>
-                                  {quote.status !== 'WON' && (
+                                {/* Narrowing the field, before anyone has won.
+                                    Gone once the quote is answered: a shortlist
+                                    of one settled quote is not a shortlist. */}
+                                {decidable &&
+                                  mayDecide &&
+                                  (quote.status === 'SUBMITTED' ||
+                                    quote.status === 'SHORTLISTED') && (
                                     <Button
                                       variant="text"
                                       size="inline"
                                       disabled={busy === quote.id}
-                                      onClick={() => {
-                                        setSettleMessage('');
-                                        setToSettle({ quote, decision: 'WON' });
-                                      }}
+                                      onClick={() =>
+                                        void shortlist(quote, quote.status !== 'SHORTLISTED')
+                                      }
                                     >
-                                      Won
+                                      {quote.status === 'SHORTLISTED' ? 'Un-shortlist' : 'Shortlist'}
                                     </Button>
                                   )}
-                                  {quote.status !== 'LOST' && (
-                                    <Button
-                                      variant="destructive"
-                                      size="inline"
-                                      disabled={busy === quote.id}
-                                      onClick={() => {
-                                        setSettleMessage('');
-                                        setToSettle({ quote, decision: 'LOST' });
-                                      }}
-                                    >
-                                      Lost
-                                    </Button>
-                                  )}
-                                </>
+                                {decidable && mayDecide && quote.status !== 'WITHDRAWN' && (
+                                  <>
+                                    {quote.status !== 'WON' && (
+                                      <Button
+                                        variant="text"
+                                        size="inline"
+                                        disabled={busy === quote.id}
+                                        onClick={() => {
+                                          setSettleMessage('');
+                                          setToSettle({ quote, decision: 'WON' });
+                                        }}
+                                      >
+                                        Won
+                                      </Button>
+                                    )}
+                                    {quote.status !== 'LOST' && (
+                                      <Button
+                                        variant="destructive"
+                                        size="inline"
+                                        disabled={busy === quote.id}
+                                        onClick={() => {
+                                          setSettleMessage('');
+                                          setToSettle({ quote, decision: 'LOST' });
+                                        }}
+                                      >
+                                        Lost
+                                      </Button>
+                                    )}
+                                  </>
+                                )}
+                              </RowActions>
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+
+                      {open === quote.id && (
+                        <tr className="border-b border-line bg-paper">
+                          <td colSpan={7} className="px-2 py-3">
+                            <div className="flex flex-col gap-4">
+                              {quote.options.map((option) => (
+                                <OptionDetail key={option.id} option={option} />
+                              ))}
+
+                              {quote.remarks !== null && quote.remarks !== '' && (
+                                <div>
+                                  <span className="label-manifest">Their remarks</span>
+                                  <p className="mt-0.5 whitespace-pre-line text-cell text-hull">
+                                    {quote.remarks}
+                                  </p>
+                                </div>
                               )}
-                              <button
-                                type="button"
-                                className="text-harbour hover:underline"
-                                onClick={() => setOpen(open === quote.id ? null : quote.id)}
-                              >
-                                {(() => {
-                                  // Count what the AGENT changed. A decision is
-                                  // our own entry in the trail and would read as
-                                  // though they had moved their price.
-                                  const amendments = quote.history.filter(
-                                    (h) => h.kind === 'AMENDED',
-                                  ).length;
-                                  return amendments === 0
-                                    ? 'Details'
-                                    : `${amendments} amendment${amendments === 1 ? '' : 's'}`;
-                                })()}
-                              </button>
-                            </span>
-                          </td>
-                        )}
-                      </tr>
-                    ))}
 
-                    {open === quote.id && (
-                      <tr className="border-b border-line bg-paper">
-                        <td colSpan={7} className="px-2 py-3">
-                          <div className="flex flex-col gap-4">
-                            {quote.options.map((option) => (
-                              <OptionDetail key={option.id} option={option} />
-                            ))}
-
-                            {quote.remarks !== null && quote.remarks !== '' && (
                               <div>
-                                <span className="label-manifest">Their remarks</span>
-                                <p className="mt-0.5 whitespace-pre-line text-cell text-hull">
-                                  {quote.remarks}
-                                </p>
+                                <span className="label-manifest">Messages</span>
+                                <div className="mt-1">
+                                  <StatusThread
+                                    endpoint={`/api/tenant/sales/inquiries/${inquiry.id}/agent-quotes/${quote.id}/comments`}
+                                    canPost={mayDecide}
+                                    emptyHint="Nothing said yet. Anything written here is visible to the agent."
+                                  />
+                                </div>
                               </div>
-                            )}
 
-                            <div>
-                              <span className="label-manifest">Messages</span>
-                              <div className="mt-1">
-                                <StatusThread
-                                  endpoint={`/api/tenant/sales/inquiries/${inquiry.id}/agent-quotes/${quote.id}/comments`}
-                                  canPost={mayDecide}
-                                  emptyHint="Nothing said yet. Anything written here is visible to the agent."
-                                />
+                              <div>
+                                <span className="label-manifest">History</span>
+                                <div className="mt-1">
+                                  <History quote={quote} />
+                                </div>
                               </div>
+
+                              <span className="font-mono text-cell tabular-nums text-steel">
+                                {quote.code} · submitted{' '}
+                                {new Date(quote.submittedAt).toLocaleString()}
+                              </span>
                             </div>
-
-                            <div>
-                              <span className="label-manifest">History</span>
-                              <div className="mt-1">
-                                <History quote={quote} />
-                              </div>
-                            </div>
-
-                            <span className="font-mono text-cell tabular-nums text-steel">
-                              {quote.code} · submitted{' '}
-                              {new Date(quote.submittedAt).toLocaleString()}
-                            </span>
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
-                );
-              })}
-            </tbody>
-          </table>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
@@ -566,7 +574,7 @@ export function AgentQuoteDrawer({
       >
         <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-1">
-            <label htmlFor="settle-message" className="label-manifest">
+            <label htmlFor="settle-message" className="label-field">
               Message to the agent {losing ? '(required)' : '(optional)'}
             </label>
             <textarea
@@ -574,7 +582,7 @@ export function AgentQuoteDrawer({
               rows={3}
               value={settleMessage}
               onChange={(e) => setSettleMessage(e.target.value)}
-              className="w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-body text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour"
+              className="w-full rounded-manifest border border-line bg-surface px-3 py-2 text-base text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour sm:px-2.5 sm:py-1.5 sm:text-body"
               placeholder={
                 losing
                   ? 'Business LOST, your price was not competitive'
@@ -588,13 +596,14 @@ export function AgentQuoteDrawer({
             )}
           </div>
 
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
             <Button
               variant="secondary"
               onClick={() => {
                 setToSettle(null);
                 setSettleMessage('');
               }}
+              className="max-sm:w-full"
             >
               Cancel
             </Button>
@@ -602,6 +611,7 @@ export function AgentQuoteDrawer({
               variant={losing ? 'danger' : 'primary'}
               disabled={busy !== null || (losing && settleMessage.trim() === '')}
               onClick={() => void settle()}
+              className="max-sm:w-full"
             >
               {losing ? 'Mark as lost' : 'Mark as won'}
             </Button>

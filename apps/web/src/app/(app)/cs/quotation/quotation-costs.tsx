@@ -199,8 +199,8 @@ export function QuotationCostDetails({
         description="What we expect to pay the carrier, agent and vendor. Never printed or sent to the customer; the debit invoice starts from it."
       />
 
-      <section className="flex flex-wrap items-end justify-between gap-4 rounded-manifest border border-line bg-surface p-5 shadow-manifest">
-        <dl className="grid gap-x-8 gap-y-3 sm:grid-cols-4">
+      <section className="flex flex-wrap items-end justify-between gap-4 rounded-card border border-line bg-surface p-4 shadow-manifest sm:p-5">
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4 sm:gap-x-8">
           <div>
             <dt className="label-manifest">Total Sell price</dt>
             <dd className="font-mono text-section tabular-nums text-hull">
@@ -235,14 +235,14 @@ export function QuotationCostDetails({
             </dd>
           </div>
           {'unrated' in sell && (
-            <p role="alert" className="text-cell text-alert sm:col-span-4">
+            <p role="alert" className="col-span-2 text-cell text-alert sm:col-span-4">
               No {sell.unrated} rate on file, so the sell price cannot be shown in {baseCode}. Set one on Settings →
               Currency.
             </p>
           )}
         </dl>
         {view.editable && (
-          <Button onClick={() => void save()} disabled={busy}>
+          <Button onClick={() => void save()} disabled={busy} className="max-sm:w-full">
             {busy ? 'Saving…' : 'Save cost details'}
           </Button>
         )}

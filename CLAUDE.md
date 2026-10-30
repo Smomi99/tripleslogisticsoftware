@@ -390,92 +390,193 @@ Any field Claude Code proposes that is not in §5/§6 belongs here, not in the s
 
 ---
 
-## 12. VISUAL DESIGN SYSTEM — "Manifest"
+## 12. VISUAL DESIGN SYSTEM — "Manifest", colour edition
 
-No design was supplied, so this is the direction. **Follow it exactly; do not substitute a default
-dashboard theme.** The users are operations staff in Dhaka doing data entry for eight hours a day.
-The product's job is fast, error-free entry and retrieval of shipping records. Density, legibility
-and scannability beat decoration everywhere.
+Revised 2026-10-30 at the owner's request: colourful, friendly, and usable on a phone. **Follow it
+exactly; do not substitute a default dashboard theme.** The users are operations staff in Dhaka
+doing data entry for eight hours a day on laptops, and checking or updating records from their
+phones in between. Fast, error-free entry and retrieval still come first; colour is used to tell
+people where they are, never as decoration on top of the data.
 
-The visual language is borrowed from the subject's own world: shipping manifests, stencilled
-container markings, port schedules.
+The visual language is still borrowed from the subject's own world — shipping manifests,
+stencilled container markings — now with each module painted its own colour, the way containers
+from different lines are.
 
-### Tokens (define once in `globals.css` and `tailwind.config.ts` — never hardcode a hex)
+### Tokens (defined once in `apps/web/src/app/globals.css` — never hardcode a hex in a component)
+
+Tailwind 4 has no config file: the `@theme` block in `globals.css` is the config.
 
 ```
---hull        #10243A   sidebar, top bar, primary headings, body text
---steel       #6B7A88   secondary text, icons, placeholder
---harbour     #0F7173   primary action, links, focus ring, active nav
---harbour-ink #0A5254   hover on primary
---paper       #F4F6F5   app background
---surface     #FFFFFF   cards, tables, modals
---line        #DDE3E3   borders, dividers, table rules
---verified    #2F7A54   active / paid / approved
---signal      #C87A16   pending / awaiting / warning
---alert       #B3403A   inactive / overdue / destructive
+--hull          #10243A   sidebar, primary headings, body text
+--steel         #5B6878   secondary text, icons, placeholder
+--paper         #F5F7FB   app background
+--surface       #FFFFFF   cards, tables, modals
+--line          #E2E8F0   borders, dividers, table rules
+--verified      #15803D   active / paid / approved      (--verified-ink #166534 for pill text)
+--signal        #B45309   pending / awaiting / warning  (--signal-ink   #92400E for pill text)
+--alert         #B91C1C   inactive / overdue / destructive
 ```
 
-Semantic tokens only in components: `bg-surface`, `text-steel`, `border-line`. Dark mode is out of
-scope for v1 — do not build it half-way.
+### Module colours
+
+Every module has a colour. The app shell sets `data-module="<slug>"` on `<html>` from the current
+route, and `globals.css` redefines four tokens per module. Screens only ever use the tokens, so a
+screen never names its module's colour:
+
+```
+--harbour       main colour: buttons, links, active nav, focus ring, selected tab (AA on white)
+--harbour-ink   hover on --harbour
+--module        vivid shade: icons, accent stripes, gradients — decorative only, never text
+--module-soft   faint tint: table header, code gutter, chips, page-badge backgrounds
+```
+
+| Module | slug | --harbour | --module |
+|---|---|---|---|
+| (none: home, sign-in) | — | `#4F46E5` indigo | `#6366F1` |
+| Purchase | `purchase` | `#7C3AED` violet | `#8B5CF6` |
+| Sales & Marketing | `sales` | `#BE185D` pink | `#EC4899` |
+| Customer Service | `customer-service` | `#2563EB` blue | `#3B82F6` |
+| Operation | `operation` | `#C2410C` orange | `#F97316` |
+| Documentation | `documentation` | `#0F766E` teal | `#14B8A6` |
+| Accounts | `accounts` | `#15803D` green | `#22C55E` |
+| Setting | `setting` | `#475569` slate | `#94A3B8` |
+| CRM | `crm` | `#B45309` amber | `#F59E0B` |
+| Admin | `admin` | `#A21CAF` fuchsia | `#D946EF` |
+| Report | `report` | `#0E7490` cyan | `#06B6D4` |
+| Agent / Customer portals | `agent`, `customer` | `#0369A1` sky | `#0EA5E9` |
+
+`--harbour` is the darker shade wherever the vivid one would fail 4.5:1 as text or under white
+button text. Any element can carry its own `data-module` to show another module's colour (the
+sidebar groups and the home cards do). The module → slug + icon map lives in
+`components/shell/module-theme.tsx`; the route → module map is `moduleForPath` in `nav-config.ts`.
+A new module needs a row in both and a block in `globals.css`.
 
 ### Typography
 
 - **UI + body: IBM Plex Sans.** Industrial, engineered register; also has a Bengali sibling
-  (IBM Plex Sans Bengali) if the client localises later, so the family survives that decision.
-- **All identifiers and all numbers: IBM Plex Mono** — business codes (`PL-001`), container and BL
-  numbers, HS codes, rates, volumes, dates. **Use `font-variant-numeric: tabular-nums`.**
-  This is the one signature move: digits align vertically down a column, so an operator scanning
-  fifty container numbers sees a transposed digit instead of reading past it. Mono is a
-  correctness tool here, not a style.
-- Scale: page title 20px/600 · section 15px/600 · body + inputs 14px/400 · table cell 13px/400 ·
-  label + column header 11px/600 uppercase, `0.06em` tracking, `--steel`.
+  (IBM Plex Sans Bengali) if the client localises later.
+- **All identifiers and all numbers: IBM Plex Mono** with `font-variant-numeric: tabular-nums` —
+  business codes, container and BL numbers, HS codes, rates, volumes, dates. Digits align down a
+  column, so an operator scanning fifty container numbers sees a transposed digit instead of
+  reading past it. Mono is a correctness tool here, not a style.
+- Scale: page title 20px/600 · section 15px/600 · body 14px/400 · table cell 13px/400 ·
+  form label 13px/500 sentence case (`.label-field`) · column header and read-only detail label
+  11px/600 uppercase, `0.06em` tracking, `--steel` (`.label-manifest`).
+- Inputs are 16px on a phone — iOS zooms the page into anything smaller — and 14px from `sm` up.
 - Numbers right-aligned. Text left-aligned. Column headers match their column's alignment.
 
 ### Layout shell
 
 ```
 ┌────────────┬───────────────────────────────────────────────┐
-│            │ breadcrumb        [ search ]  [tenant] [user] │  56px top bar, surface, 1px --line
-│  SIDEBAR   ├───────────────────────────────────────────────┤
-│  240px     │  Page title                    [ + Add … ]    │
-│  --hull    │  ┌─────────────────────────────────────────┐  │
-│            │  │ search · filters                        │  │
-│  9 modules │  ├─────────────────────────────────────────┤  │
-│  collapse  │  │ TABLE                                   │  │
-│  to 64px   │  └─────────────────────────────────────────┘  │
+│            │ ▔▔▔▔▔▔▔▔▔▔▔▔ 3px module-colour stripe ▔▔▔▔▔▔▔▔▔▔▔ │
+│  SIDEBAR   │ [≡] (module chip) / page   [search] [ws] [(AB)]│  56px top bar
+│  240px     ├───────────────────────────────────────────────┤
+│  --hull    │  [■] Page title                    [ + Add … ]│  ■ = module badge
+│            │  ┌─────────────────────────────────────────┐  │
+│  module    │  │ search · filters                        │  │
+│  icons in  │  ├─────────────────────────────────────────┤  │
+│  their     │  │ TABLE  (cards on a phone)               │  │
+│  colours   │  └─────────────────────────────────────────┘  │
 └────────────┴───────────────────────────────────────────────┘
 ```
 
-Sidebar: `--hull`, module groups collapsible, active item marked by a 3px `--harbour` left bar plus
-a lighter fill. Only modules the user can see are rendered (§7 + §7B). No page-level max-width —
-these tables need every pixel.
+- **Sidebar — "the sea at dusk"** (`lg` and up): a 240px panel floating 12px off the page edge,
+  20px radius, a `--hull` → `--night` (#1B1745) gradient lit by two soft glows in the current
+  module's colours, container-wall ridges fading in towards the foot (`.sidebar-ridges`) and three
+  faint swells along the bottom — all decoration aria-hidden, behind the content, holding no text.
+  Top to bottom: brand, Overview, a "Modules" label, each module with its icon on a tile in its
+  colour (filled with the module gradient when it holds the current page), and a signed-in card at
+  the foot. A module's screens hang off a thin route line as stops; the current screen is the lit
+  stop in the module's colour. Collapses to a 64px icon rail. **Below `lg`** the same panel opens
+  as a slide-out drawer from the top bar's menu button.
+- Only modules the user can see are rendered (§7 + §7B). No page-level max-width.
+- **Overview** (`/`, first in the sidebar) is the landing screen: a period filter (Today · This
+  month · Last 6 months · This year · Custom range — a dropdown on a phone), headline figures,
+  charts, then a card per module listing the screens the user may open. See *Charts* below.
 
 ### Components
 
-- **Table.** 36px rows (Compact 30px — ship a density toggle, persisted per user). Header row
-  `--paper` with a bottom `--line`. Row hover `#F0F4F4`. Zebra striping off. **First data column is
-  the business code in mono on a faintly tinted gutter** — the stencilled container-marking
-  reference, and the anchor the eye returns to. Sticky header, sticky first column and sticky
-  Action column on horizontal scroll.
-- **Status.** Not a coloured pill. A 6px dot plus a label — `--verified` Active, `--steel`
-  Inactive, `--signal` Pending, `--alert` Overdue. Quieter, and it survives a dense grid.
-- **Actions.** Text buttons in `--harbour`, not icon-only — the users are not power users on day
-  one. Destructive/deactivate in `--alert`. Hide what the user lacks permission for.
-- **Forms.** Single column up to 8 fields, two columns beyond. Labels above inputs. 36px inputs,
-  4px radius, 1px `--line`, focus = 2px `--harbour` ring. Required marked on the label, never by
-  placeholder. Errors sit below the field in `--alert`, and name the fix.
+- **Table** (`ui/data-table`). 40px rows (Compact 32px — density toggle, persisted per user).
+  Header row and the business-code gutter in `--module-soft`; the code itself in mono,
+  `--harbour`, medium weight. Row hover is a tint of the module colour. Headers never wrap; a text
+  cell keeps its own width up to 18rem and wraps only past it, so names are not squeezed onto two
+  lines. A table wider than its box scrolls sideways under a sticky Code column and a sticky
+  Action column; their edges show a shadow only while columns are hidden beneath them, and a
+  **Columns ‹ ›** pair in the footer scrolls across (an office mouse wheel does not scroll
+  sideways). **Below `md` the same rows render as cards** — code and SL on top, each column as
+  label/value, actions as tappable chips — with a sort picker in place of the clickable headers.
+  Hand-built tables that are inherently wide (statements, rate grids, line items) scroll sideways
+  inside their own `overflow-x-auto` box with the header in `--module-soft` and `whitespace-nowrap`.
+- **Status** (`ui/status`). A soft pill: 6px dot plus label on a 10% tint of the status colour —
+  `--verified` Active, `--steel` Inactive, `--signal` Pending, `--alert` Overdue.
+- **Row actions** (`ui/row-actions`, used by DataTable and by every hand-built table with an
+  action cell). Labelled pill buttons, not icons — the users are not power users on day one. Two
+  or fewer show side by side; three or more show the first as a pill and the rest under a
+  labelled **More ▾** menu, so the Action column never crowds out the data. Colour comes from the
+  action: `--harbour`, destructive/deactivate in `--alert`. Hide what the user lacks permission
+  for — a hidden action simply drops out of the row.
+- **Buttons.** 8px radius, the one soft shadow; 40px tall on a phone, 36px from `sm` up so a
+  button sits level with an input.
+- **Forms.** Single column up to 8 fields, two columns beyond (one column on a phone). Labels
+  above inputs, sentence case. Inputs 40px on a phone / 36px from `sm`, 8px radius, 1px `--line`;
+  focus turns the border `--harbour` with a soft 3px ring. Required marked on the label, never by
+  placeholder. Errors sit below the field in `--alert`, and name the fix. On a phone the form's
+  buttons run full width, the main action nearest the thumb.
+- **Modals** (`ui/modal`). Centred, 12px radius, from `sm` up; **on a phone a bottom sheet** up
+  to 92% of the screen tall with a grab bar. The title row sticks while the body scrolls.
+- **Page header.** The module badge (the module's icon on a `--module` → `--harbour` gradient
+  tile), title, description, and the Add action — full width under the title on a phone.
+- **Child screens** use the "Back to list" chip (`backLinkClasses` in `ui/form-layout`).
+- **Tabs** scroll sideways rather than wrap; the selected tab is `--harbour`.
 - **Empty states** invite the action: "No carriers yet. Add your first carrier to start building
-  price lists." Never a shrug and a blank box.
-- **Radius 4px everywhere. One shadow only** (`0 1px 2px rgb(16 36 58 / 0.06)`) on cards, modals and
-  dropdowns. No gradients, no glassmorphism, no illustration.
-- **Motion:** 120ms ease-out on hover/focus, 160ms on modal entry. Nothing else. Respect
-  `prefers-reduced-motion`.
+  price lists." with an icon in a `--module-soft` circle. Never a shrug and a blank box.
+- **Radius:** 8px on controls (`rounded-manifest`), 12px on cards and dialogs (`rounded-card`),
+  full on pills and chips. **Shadows:** one soft shadow on cards and controls
+  (`shadow-manifest`), one raised shadow on dialogs, drawers and menus (`shadow-raised`).
+  Gradients only on the module badge, avatar, the 3px top stripe and the sidebar. No
+  glassmorphism, and no illustration except the sidebar's swells and ridges.
+- **Motion:** 120ms ease-out on hover/focus; 160ms dialog entry, 200ms sheet and drawer entry.
+  Nothing else. Respect `prefers-reduced-motion`.
+- **Dark mode** is out of scope for v1 — do not build it half-way. Every colour is a token, so it
+  can be added later in `globals.css` alone.
+
+### Charts (the Overview, and any later dashboard or report)
+
+- **Every figure is one an existing screen already defines**, counted the same way (Business
+  Matrix's revenue = ISSUED debit invoices in base; Receivable-Payable's totals; the Live
+  Inquiry list's Lapsed). A chart never invents a business rule — a new measure goes to §11.
+- **Each section is gated by the permission of the screen it repeats** (§7), in the API, which
+  returns `null` for a section the user may not see; the page draws only what came back. Cost
+  needs `ACCOUNTS.DEBIT_INVOICE.VIEW_BUY_PRICE`, as on the invoice. `GET /api/tenant/overview`
+  is the pattern; its test is the two-tenant isolation test §7A rule 4 requires.
+- **Form follows the job:** headline numbers as stat tiles (value, change on last month in words
+  and icon, sparkline); trends as columns; parts compared with each other as ranked horizontal
+  bars on one baseline. No pies or donuts. One y-axis, ever.
+- **Colour:** a chart card carries its source module's colour (`data-module`), so a single series
+  is `--harbour`. Sea is always `--sea` (#2A78D6) and air always `--air` (#EB6834), on every chart;
+  `--deemphasis` (#8A96A6) is the quiet gray for context beside an accent (Cost beside Invoiced).
+  These three were checked with the dataviz palette validator; re-run it before adding a series
+  colour. Text never wears a series colour.
+- **Marks:** columns ≤ 24px (16px each when grouped), 4px rounded data-end, square at the baseline,
+  2px surface gap between stacked parts; 1px solid gridlines; value printed on the latest column
+  only. Every column band is a hover and keyboard target with one tooltip for all its series.
+- **Every chart has a table view** ("Show table" on its card), or prints every value beside its
+  bar. Components: `components/charts/` — `ChartCard`, `ColumnChart`, `BarList`, `StatTile`.
+- **Periods** are resolved on the server in the workspace's time zone. Today is compared with
+  yesterday, This month with the same days last month, Last 6 months with the 6 months before,
+  This year (calendar year) with the same dates last year, and a custom range (≤ 3 years) with the
+  same number of days just before. Ranges up to 62 days chart by day, longer ones by month; a
+  single day shows headlines and lists only. Balances are as of today whatever the period.
 
 ### Quality floor (not optional)
 
 Visible keyboard focus on every control · full keyboard navigation of tables and forms ·
-WCAG AA contrast · works down to a 1280px laptop, and list screens remain usable on tablet ·
-every destructive action confirms · every async action shows a pending state.
+WCAG AA contrast (every `--harbour` is ≥ 4.5:1 on white, `--paper` and `--module-soft`) ·
+**every screen works on a 360px-wide phone**: nothing makes the page scroll sideways, and only
+inherently wide content (big tables, the container planner, printed-document layouts) scrolls
+sideways inside its own box · tap targets ≥ 36px on a phone · every destructive action confirms ·
+every async action shows a pending state.
 
 ---
 

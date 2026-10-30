@@ -10,10 +10,17 @@ import { Button } from './button';
 
 /*
  * §8: a form with 8 fields or fewer goes in a modal, more than 8 goes on a full
- * page. §12: 4px radius, the single shadow, 160ms entry, and nothing else.
+ * page.
+ *
+ *   phone     a sheet that rises from the bottom edge, full width, up to 92% of
+ *             the screen tall, with a grab bar — reachable with one thumb.
+ *   sm and up a centred dialog, 12px radius, raised shadow, 160ms entry.
+ *
+ * The title row sticks to the top while a long form scrolls beneath it, so
+ * the close button is never scrolled away.
  *
  * Radix handles focus trapping, restoring focus on close, Escape, and the
- * aria wiring — all part of §12's keyboard-navigation quality floor.
+ * aria wiring — all part of the keyboard-navigation quality floor.
  */
 export function Modal({
   open,
@@ -41,43 +48,44 @@ export function Modal({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay
-          className={cn(
-            'fixed inset-0 z-40 bg-hull/40',
-            'data-[state=open]:animate-in data-[state=open]:fade-in-0',
-          )}
-        />
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-hull/50 animate-fade-in" />
         <Dialog.Content
           className={cn(
-            'fixed left-1/2 top-1/2 z-50',
+            'fixed inset-x-0 bottom-0 z-50 max-h-[92dvh] w-full overflow-y-auto',
+            'rounded-t-[20px] bg-surface px-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-raised animate-sheet-up',
+            'sm:inset-x-auto sm:bottom-auto sm:left-1/2 sm:top-1/2 sm:max-h-[calc(100dvh-2rem)]',
+            'sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-card sm:border sm:border-line sm:px-5 sm:pb-5 sm:animate-dialog-in',
             size === 'wide'
-              ? 'w-[min(68rem,calc(100vw-2rem))]'
+              ? 'sm:w-[min(68rem,calc(100vw-2rem))]'
               : size === 'medium'
-                ? 'w-[min(44rem,calc(100vw-2rem))]'
-                : 'w-[min(32rem,calc(100vw-2rem))]',
-            '-translate-x-1/2 -translate-y-1/2',
-            'rounded-manifest border border-line bg-surface p-5 shadow-manifest',
-            'max-h-[calc(100vh-2rem)] overflow-y-auto',
+                ? 'sm:w-[min(44rem,calc(100vw-2rem))]'
+                : 'sm:w-[min(32rem,calc(100vw-2rem))]',
           )}
         >
-          <div className="mb-4 flex items-start justify-between gap-4">
-            <div>
-              <Dialog.Title className="text-section text-hull">{title}</Dialog.Title>
-              {description !== undefined && (
-                <Dialog.Description className="mt-0.5 text-body text-steel">
-                  {description}
-                </Dialog.Description>
-              )}
+          <div className="sticky top-0 z-10 -mx-4 mb-4 border-b border-line bg-surface px-4 pb-3 pt-2 sm:-mx-5 sm:px-5 sm:pt-5">
+            <div aria-hidden="true" className="mx-auto mb-2 h-1 w-10 rounded-full bg-line sm:hidden" />
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex min-w-0 items-start gap-2.5">
+                <span aria-hidden="true" className="mt-1.5 h-4 w-1 shrink-0 rounded-full bg-linear-to-b from-module to-harbour" />
+                <div className="min-w-0">
+                  <Dialog.Title className="text-section text-hull">{title}</Dialog.Title>
+                  {description !== undefined && (
+                    <Dialog.Description className="mt-0.5 text-body text-steel">
+                      {description}
+                    </Dialog.Description>
+                  )}
+                </div>
+              </div>
+              <Dialog.Close asChild>
+                <button
+                  type="button"
+                  aria-label="Close"
+                  className="-mr-1 rounded-full p-2 text-steel transition-colors duration-[120ms] hover:bg-paper hover:text-hull sm:p-1.5"
+                >
+                  <X className="size-4" />
+                </button>
+              </Dialog.Close>
             </div>
-            <Dialog.Close asChild>
-              <button
-                type="button"
-                aria-label="Close"
-                className="rounded-manifest p-1 text-steel transition-colors duration-[120ms] hover:bg-paper hover:text-hull"
-              >
-                <X className="size-4" />
-              </button>
-            </Dialog.Close>
           </div>
           {children}
         </Dialog.Content>
@@ -112,15 +120,21 @@ export function ConfirmDialog({
   return (
     <Modal open={open} onOpenChange={onOpenChange} title={title}>
       <p className="text-body text-steel">{message}</p>
-      <div className="mt-5 flex items-center gap-2 border-t border-line pt-4">
+      <div className="mt-5 flex flex-col-reverse gap-2 border-t border-line pt-4 sm:flex-row sm:items-center">
         <Button
           variant={destructive ? 'danger' : 'primary'}
           onClick={onConfirm}
           disabled={isPending}
+          className="max-sm:w-full"
         >
           {isPending ? 'Working…' : confirmLabel}
         </Button>
-        <Button variant="secondary" onClick={() => onOpenChange(false)} disabled={isPending}>
+        <Button
+          variant="secondary"
+          onClick={() => onOpenChange(false)}
+          disabled={isPending}
+          className="max-sm:w-full"
+        >
           Cancel
         </Button>
       </div>

@@ -191,7 +191,7 @@ export function CostBlocksEditor({
         const t = totals.blocks[index] ?? { total: 0, base: 0 };
         const label = SUPPLIER_PARTY_LABEL[block.partyType];
         return (
-          <div key={block.key} className="rounded-manifest border border-line bg-surface shadow-manifest">
+          <div key={block.key} className="rounded-card border border-line bg-surface shadow-manifest">
             <div className="grid gap-3 border-b border-line px-4 py-3 sm:grid-cols-2 lg:grid-cols-4">
               <Field id={`party-${block.key}`} label={`Buying from ${label}`}>
                 <Select
@@ -327,17 +327,17 @@ export function LineGrid({
         <div className="overflow-x-auto">
           <table className="w-full min-w-250 border-collapse">
             <thead>
-              <tr className="border-b border-line bg-paper">
-                <th className="label-manifest px-3 py-2 text-left">Cost head</th>
-                <th className="label-manifest px-3 py-2 text-left">Container size</th>
-                <th className="label-manifest px-3 py-2 text-left">Unit</th>
-                <th className="label-manifest px-3 py-2 text-right">Qty</th>
-                <th className="label-manifest px-3 py-2 text-right">{priceLabel}</th>
-                <th className="label-manifest px-3 py-2 text-left">Currency</th>
-                <th className="label-manifest px-3 py-2 text-right">Total Amount</th>
-                <th className="label-manifest px-3 py-2 text-right">Conversion Rate</th>
-                <th className="label-manifest px-3 py-2 text-right">Total Amount ({baseCode || 'base'})</th>
-                {editable && <th className="label-manifest px-3 py-2 text-right">Action</th>}
+              <tr className="border-b border-line bg-module-soft">
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Cost head</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Container size</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Unit</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">Qty</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">{priceLabel}</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Currency</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">Total Amount</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">Conversion Rate</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">Total Amount ({baseCode || 'base'})</th>
+                {editable && <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">Action</th>}
               </tr>
             </thead>
             <tbody>

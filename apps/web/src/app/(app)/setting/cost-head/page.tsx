@@ -144,13 +144,13 @@ export default function CostHeadPage() {
           aria-label="Search cost heads"
           value={list.searchInput}
           onChange={(event) => list.setSearchInput(event.target.value)}
-          className="w-72"
+          className="w-full sm:w-72"
         />
         <Select
           aria-label="Filter by category"
           value={list.filters['category'] ?? ''}
           onChange={(event) => list.setFilter('category', event.target.value)}
-          className="w-48"
+          className="w-full sm:w-48"
         >
           <option value="">All categories</option>
           {COST_HEAD_CATEGORIES.map((c) => (

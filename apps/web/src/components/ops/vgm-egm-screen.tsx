@@ -33,7 +33,7 @@ import { useMasterList } from '@/lib/use-master-list';
 const FEATURE = 'OPERATION.VGM_EGM';
 const ACCEPT = '.pdf,.jpg,.jpeg,.png,.doc,.docx';
 const FILE_INPUT =
-  'text-body text-hull file:mr-3 file:rounded-manifest file:border file:border-line file:bg-surface file:px-3 file:py-1.5 file:text-body file:text-hull';
+  'w-full text-body text-hull file:mr-3 file:rounded-manifest file:border file:border-line file:bg-surface file:px-3 file:py-1.5 file:text-body file:text-hull';
 
 /**
  * Operation → Upload VGM & EGM — the client's `VGM` sheet, titled "VGM & EGM"
@@ -73,13 +73,17 @@ function SharedNotice({ children }: { children: ReactNode }) {
   return <p className="rounded-manifest border border-harbour/30 bg-harbour/5 px-3 py-2 text-cell text-hull">{children}</p>;
 }
 
-/** One line per container, the height of a status line, so the columns stay level. */
+/**
+ * One line per container, the height of a status line, so the columns stay
+ * level. On a phone the table is a card per booking, nothing sits beside the
+ * line to stay level with, so a long line wraps instead of being clipped.
+ */
 function ContainerLines({ row, render }: { row: VgmEgmRow; render: (c: VgmContainerDto) => ReactNode }) {
   if (row.vgmContainers.length === 0) return <span className="text-steel">—</span>;
   return (
     <div className="flex flex-col gap-1 py-1">
       {row.vgmContainers.map((c) => (
-        <div key={c.clpId} className="flex h-6 items-center whitespace-nowrap">
+        <div key={c.clpId} className="flex min-h-6 items-center max-md:flex-wrap md:h-6 md:whitespace-nowrap">
           {render(c)}
         </div>
       ))}
@@ -136,7 +140,7 @@ function VgmEgmList({ mode, onMode }: { mode: ShipmentType; onMode: (m: Shipment
                   const allowed = c.vgm === null ? mayRecord : mayChange;
                   const shared = othersThan(c.bookingCodes, r.bookingCode);
                   return (
-                    <span className="flex items-center gap-3">
+                    <span className="flex items-center gap-3 max-md:flex-wrap max-md:gap-y-1">
                       <Status tone={done ? 'active' : 'pending'}>{done ? 'Uploaded' : 'Pending'}</Status>
                       {allowed && (
                         <Button variant="text" size="inline" onClick={() => setRecording({ row: r, container: c })}>
@@ -188,8 +192,8 @@ function VgmEgmList({ mode, onMode }: { mode: ShipmentType; onMode: (m: Shipment
   return (
     <>
       <div className="flex flex-wrap items-end gap-3">
-        <div className="flex w-72 flex-col gap-1">
-          <span className="label-manifest">Search</span>
+        <div className="flex w-full flex-col gap-1.5 sm:w-72">
+          <span className="label-field">Search</span>
           <Input
             type="search"
             aria-label="Search bookings"
@@ -392,7 +396,7 @@ function VgmModal({
         >
           <Input id="vgm-booking" numeric value={carrierBookingNo} maxLength={64} onChange={(e) => setCarrierBookingNo(e.target.value)} />
         </Field>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <Field
             id="vgm-kg"
             label="VGM (kg)"
@@ -450,11 +454,11 @@ function VgmModal({
             {formError}
           </p>
         )}
-        <div className="flex justify-end gap-3">
-          <Button variant="secondary" onClick={onClose} disabled={pending}>
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-3">
+          <Button variant="secondary" onClick={onClose} disabled={pending} className="max-sm:w-full">
             Close
           </Button>
-          <Button type="submit" disabled={pending}>
+          <Button type="submit" disabled={pending} className="max-sm:w-full">
             {pending ? 'Saving…' : 'Save VGM'}
           </Button>
         </div>
@@ -544,11 +548,11 @@ function EgmModal({
             {shared.length === 1 ? 'that booking' : 'those bookings'} as well.
           </SharedNotice>
         )}
-        <dl className="grid grid-cols-3 gap-4">
+        <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3">
           {facts.map(([label, value]) => (
             <div key={label} className="flex flex-col gap-1">
               <dt className="label-manifest">{label}</dt>
-              <dd className="font-mono text-body tabular-nums text-hull">
+              <dd className="break-words font-mono text-body tabular-nums text-hull">
                 {value ?? <span className="font-sans text-cell text-steel">Not on the advise yet</span>}
               </dd>
             </div>
@@ -562,10 +566,13 @@ function EgmModal({
           ) : (
             <ul className="flex flex-col divide-y divide-line rounded-manifest border border-line">
               {egm.files.map((f) => (
-                <li key={f.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                <li
+                  key={f.id}
+                  className="flex flex-col items-start gap-1 px-3 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
+                >
                   <button
                     type="button"
-                    className="truncate text-left text-body text-harbour hover:underline"
+                    className="max-w-full truncate text-left text-body text-harbour hover:underline"
                     title={f.fileName}
                     onClick={() => void authorizedDownload(`${base}/${f.id}`, f.fileName).catch(() => toast.error('Could not download that copy.'))}
                   >
@@ -615,7 +622,7 @@ function EgmModal({
           </p>
         )}
         <div className="flex justify-end">
-          <Button variant="secondary" onClick={onClose} disabled={progress !== null}>
+          <Button variant="secondary" onClick={onClose} disabled={progress !== null} className="max-sm:w-full">
             Close
           </Button>
         </div>

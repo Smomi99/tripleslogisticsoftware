@@ -138,7 +138,7 @@ function ReceiptLines({ rows }: { rows: readonly ReceiptGridRow[] }) {
     <div className="overflow-x-auto">
       <table className="w-full min-w-[900px] border-collapse text-cell">
         <thead>
-          <tr className="border-y border-line bg-paper">
+          <tr className="whitespace-nowrap border-y border-line bg-module-soft">
             <th className="label-manifest px-2 py-2 text-left">PO</th>
             <th className="label-manifest px-2 py-2 text-left">Item</th>
             <th className="label-manifest px-2 py-2 text-left">SKU</th>
@@ -434,7 +434,7 @@ export function CargoReceiptTab({
     <div className="flex flex-col gap-4">
       {/* --------------------------------------------- receipts already closed */}
       {confirmed.length > 0 && (
-        <section className="rounded-manifest border border-line bg-surface shadow-manifest">
+        <section className="rounded-card border border-line bg-surface shadow-manifest">
           <h2 className="border-b border-line px-4 py-3 text-section text-hull">Receipts so far</h2>
           {/* Only to someone who could otherwise edit: the lock is their next step. */}
           {mayEdit && editLock !== null && (
@@ -485,7 +485,7 @@ export function CargoReceiptTab({
       {editable && (
         <section
           ref={formRef}
-          className="rounded-manifest border border-line bg-surface p-4 shadow-manifest"
+          className="rounded-card border border-line bg-surface p-4 shadow-manifest"
         >
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-section text-hull">
@@ -538,14 +538,14 @@ export function CargoReceiptTab({
       )}
 
       {/* ------------------------------------- booked · S/O · received (§5.5 r1) */}
-      <section className="rounded-manifest border border-line bg-surface shadow-manifest">
+      <section className="rounded-card border border-line bg-surface shadow-manifest">
         <h2 className="border-b border-line px-4 py-3 text-section text-hull">Cargo</h2>
         <div className="overflow-x-auto">
           <table
             className={`w-full ${showEntry ? 'min-w-[1400px]' : 'min-w-[700px]'} border-collapse text-cell`}
           >
             <thead>
-              <tr className="border-b border-line bg-paper">
+              <tr className="whitespace-nowrap border-b border-line bg-module-soft">
                 <th className="label-manifest px-2 py-2 text-left">PO</th>
                 <th className="label-manifest px-2 py-2 text-left">Item</th>
                 <th className="label-manifest px-2 py-2 text-left">SKU</th>
@@ -754,11 +754,12 @@ export function CargoReceiptTab({
       )}
 
       {editing !== null && (
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <Button variant="secondary" disabled={isPending} onClick={cancelEdit}>
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
+          <Button variant="secondary" disabled={isPending} onClick={cancelEdit} className="max-sm:w-full">
             Cancel
           </Button>
           <Button
+            className="max-sm:w-full"
             disabled={isPending || touched.length === 0 || editReason.trim() === ''}
             onClick={() => void saveEdit()}
           >
@@ -768,16 +769,21 @@ export function CargoReceiptTab({
       )}
 
       {editable && editing === null && (
-        <div className="flex flex-wrap items-center justify-end gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
           <Button
             variant="secondary"
+            className="max-sm:w-full"
             disabled={isPending || touched.length === 0}
             onClick={() => void save(false)}
           >
             {isPending ? 'Saving…' : 'Save draft'}
           </Button>
           {can('OPERATION.CARGO_RECEIPT.CONFIRM') && (
-            <Button disabled={isPending || touched.length === 0} onClick={() => setConfirming(true)}>
+            <Button
+              className="max-sm:w-full"
+              disabled={isPending || touched.length === 0}
+              onClick={() => setConfirming(true)}
+            >
               Confirm receipt
             </Button>
           )}
@@ -813,12 +819,13 @@ export function CargoReceiptTab({
               placeholder="Exporter could not fill the container"
             />
           </Field>
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setClosing(false)}>
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+            <Button variant="secondary" className="max-sm:w-full" onClick={() => setClosing(false)}>
               Keep waiting
             </Button>
             <Button
               variant="destructive"
+              className="max-sm:w-full"
               disabled={isPending || closeReason.trim() === ''}
               onClick={() => void shortClose()}
             >

@@ -11,6 +11,7 @@ import {
   tariffSaveSchema,
   type TariffType,
 } from '@ff/shared';
+import { ArrowLeft } from 'lucide-react';
 import type { Route } from 'next';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -19,6 +20,8 @@ import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
+import { backLinkClasses, PageHeader } from '@/components/ui/form-layout';
+import { RowActions } from '@/components/ui/row-actions';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 
@@ -113,14 +116,15 @@ export function TariffForm({ tariff }: { tariff: TariffDto | null }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-2">
-        <Link href={'/purchase/tariff' as Route} className="text-cell text-harbour underline-offset-2 hover:text-harbour-ink hover:underline">
-          ← Back to list
+      <div className="flex flex-col gap-3">
+        <Link href={'/purchase/tariff' as Route} className={backLinkClasses}>
+          <ArrowLeft className="size-3.5" aria-hidden="true" />
+          Back to list
         </Link>
-        <h1 className="text-page-title text-hull">{tariff === null ? 'Add tariff' : `Tariff ${tariff.code}`}</h1>
+        <PageHeader title={tariff === null ? 'Add tariff' : `Tariff ${tariff.code}`} />
       </div>
 
-      <div className="rounded-manifest border border-line bg-surface p-4 shadow-manifest">
+      <div className="rounded-card border border-line bg-surface p-4 shadow-manifest sm:p-5">
         <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
           <Field id="tariff-country" label="Country" hint="From the POL.">
             <Input id="tariff-country" value={country} disabled />
@@ -160,9 +164,9 @@ export function TariffForm({ tariff }: { tariff: TariffDto | null }) {
         <div className="mt-5 overflow-x-auto">
           <table className="w-full min-w-[720px] border-collapse text-cell">
             <thead>
-              <tr className="border-b border-line bg-paper text-left">
+              <tr className="border-b border-line bg-module-soft text-left">
                 {['Cost Head', 'Container Size', 'Unit', 'Unit Price', 'Currency', ''].map((h) => (
-                  <th key={h} className={`label-manifest px-2 py-2 ${h === 'Unit Price' ? 'text-right' : ''}`}>
+                  <th key={h} className={`label-manifest whitespace-nowrap px-2 py-2 ${h === 'Unit Price' ? 'text-right' : ''}`}>
                     {h}
                   </th>
                 ))}
@@ -222,11 +226,13 @@ export function TariffForm({ tariff }: { tariff: TariffDto | null }) {
                     </Select>
                   </td>
                   <td className="px-2 py-1.5 text-right">
-                    {lines.length > 1 && (
-                      <Button variant="destructive" size="inline" onClick={() => setLines((prev) => prev.filter((l) => l.key !== line.key))}>
-                        Remove
-                      </Button>
-                    )}
+                    <RowActions>
+                      {lines.length > 1 && (
+                        <Button variant="destructive" size="inline" onClick={() => setLines((prev) => prev.filter((l) => l.key !== line.key))}>
+                          Remove
+                        </Button>
+                      )}
+                    </RowActions>
                   </td>
                 </tr>
               ))}
@@ -244,11 +250,11 @@ export function TariffForm({ tariff }: { tariff: TariffDto | null }) {
             {error}
           </p>
         )}
-        <div className="mt-4 flex gap-3">
-          <Button onClick={() => void save()} disabled={pending || options === null}>
+        <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:gap-3">
+          <Button onClick={() => void save()} disabled={pending || options === null} className="max-sm:w-full">
             {pending ? 'Saving…' : tariff === null ? 'Save tariff' : 'Save changes'}
           </Button>
-          <Button variant="secondary" asChild>
+          <Button variant="secondary" asChild className="max-sm:w-full">
             <Link href={'/purchase/tariff' as Route}>Cancel</Link>
           </Button>
         </div>

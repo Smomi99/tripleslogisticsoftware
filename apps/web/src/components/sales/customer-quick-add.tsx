@@ -185,8 +185,13 @@ export function CustomerQuickAdd({
           </p>
         )}
 
-        <div className="flex items-center gap-2 border-t border-line pt-4">
-          <Button type="button" onClick={() => void save()} disabled={isSaving}>
+        <div className="flex flex-col-reverse gap-2 border-t border-line pt-4 sm:flex-row sm:items-center">
+          <Button
+            type="button"
+            onClick={() => void save()}
+            disabled={isSaving}
+            className="max-sm:w-full"
+          >
             {isSaving ? 'Adding…' : 'Add customer'}
           </Button>
           <Button
@@ -194,6 +199,7 @@ export function CustomerQuickAdd({
             variant="secondary"
             onClick={() => onOpenChange(false)}
             disabled={isSaving}
+            className="max-sm:w-full"
           >
             Cancel
           </Button>

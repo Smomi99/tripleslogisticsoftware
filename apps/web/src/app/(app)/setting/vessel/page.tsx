@@ -133,13 +133,13 @@ export default function VesselPage() {
           aria-label="Search vessels"
           value={list.searchInput}
           onChange={(event) => list.setSearchInput(event.target.value)}
-          className="w-72"
+          className="w-full sm:w-72"
         />
         <Select
           aria-label="Filter by carrier"
           value={list.filters['carrierId'] ?? ''}
           onChange={(event) => list.setFilter('carrierId', event.target.value)}
-          className="w-56"
+          className="w-full sm:w-56"
         >
           <option value="">All carriers</option>
           {carriers.map((c) => (

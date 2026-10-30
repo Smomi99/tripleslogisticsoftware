@@ -108,7 +108,7 @@ export default function AccountSetupPage() {
         aria-label="Search accounts"
         value={list.searchInput}
         onChange={(event) => list.setSearchInput(event.target.value)}
-        className="w-72"
+        className="w-full sm:w-72"
       />
 
       {list.error !== null && (
@@ -326,8 +326,8 @@ function AccountForm({
 
   const shown = (label: string, value: string | null | undefined) => (
     <div className="flex flex-col gap-1.5">
-      <span className="label-manifest">{label}</span>
-      <p className="flex h-9 items-center rounded-manifest border border-line bg-paper px-2.5 font-mono text-body tabular-nums text-steel">
+      <span className="label-field">{label}</span>
+      <p className="flex h-10 items-center rounded-manifest border border-line bg-paper px-3 font-mono text-body tabular-nums text-steel sm:h-9 sm:px-2.5">
         {value === null || value === undefined || value === '' ? '—' : value}
       </p>
     </div>
@@ -377,7 +377,7 @@ function AccountForm({
         </Select>
       </Field>
       {shown('Bank Address', chosen?.bankAddress)}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {shown('Swift No', chosen?.swiftNo)}
         {shown('Routing number', chosen?.routingNo)}
         {shown('IBAN No', chosen?.ibanNo)}

@@ -11,12 +11,15 @@ import {
   MOVEMENT_TYPE_LABEL,
   SHIPMENT_STATUS_LABEL,
 } from '@ff/shared';
+import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
+import { backLinkClasses } from '@/components/ui/form-layout';
+import { RowActions } from '@/components/ui/row-actions';
 import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
@@ -410,9 +413,9 @@ export function QuotationForm({
       )}
 
       {/* ------------------------------------------------- the header block */}
-      <section className="rounded-manifest border border-line bg-surface p-5 shadow-manifest">
+      <section className="rounded-card border border-line bg-surface p-4 shadow-manifest sm:p-5">
         <div className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
-          <div className="flex items-baseline gap-3">
+          <div className="flex flex-wrap items-baseline gap-3">
             <h2 className="font-mono text-page-title tabular-nums text-hull">{quotation.code}</h2>
             {quotation.revisionNo > 1 && (
               <span className="text-cell text-steel">revision {quotation.revisionNo}</span>
@@ -431,16 +434,17 @@ export function QuotationForm({
               {QUOTATION_STATUS_LABEL[quotation.status]}
             </Status>
           </div>
-          <Link href={{ pathname: '/cs/quotation' }} className="text-cell text-harbour hover:underline">
-            ← Back to list
+          <Link href={{ pathname: '/cs/quotation' }} className={backLinkClasses}>
+            <ArrowLeft className="size-3.5" aria-hidden="true" />
+            Back to list
           </Link>
         </div>
 
-        <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:gap-x-6 lg:grid-cols-3">
           {facts.map(([label, value]) => (
             <div key={label}>
               <dt className="label-manifest">{label}</dt>
-              <dd className="text-body text-hull">{value ?? '—'}</dd>
+              <dd className="break-words text-body text-hull">{value ?? '—'}</dd>
             </div>
           ))}
         </dl>
@@ -536,7 +540,7 @@ export function QuotationForm({
       />
 
       {/* ------------------------------------------------------- the totals */}
-      <section className="rounded-manifest border border-line bg-surface p-5 shadow-manifest">
+      <section className="rounded-card border border-line bg-surface p-4 shadow-manifest sm:p-5">
         {/*
           One total per currency the charges are priced in.
 
@@ -545,7 +549,7 @@ export function QuotationForm({
           as $1,150. Charges in one currency — the ordinary case — still show
           as one figure; it is just named correctly now.
         */}
-        <div className="flex flex-wrap items-baseline gap-10">
+        <div className="flex flex-wrap items-baseline gap-x-10 gap-y-3">
           {quotation.totalsByCurrency.length === 0 ? (
             <div>
               <span className="label-manifest">Total</span>
@@ -577,7 +581,7 @@ export function QuotationForm({
         <div className="mt-4 border-t border-line pt-4">
           <div className="flex flex-wrap items-end gap-3">
             <div className="flex flex-col gap-1">
-              <span className="label-manifest">Conversion currency</span>
+              <span className="label-field">Conversion currency</span>
               <Select
                 aria-label="See this quotation converted into another currency"
                 className="w-40"
@@ -644,7 +648,7 @@ export function QuotationForm({
       )}
 
       {/* --------------------------------------------------- send / actions */}
-      <section className="rounded-manifest border border-line bg-surface p-5 shadow-manifest">
+      <section className="rounded-card border border-line bg-surface p-4 shadow-manifest sm:p-5">
         <Field
           id="emails"
           label="Insert Email ID"
@@ -659,12 +663,17 @@ export function QuotationForm({
         </Field>
         <div className="mt-4 flex flex-wrap items-center gap-3">
           {editable && (
-            <Button onClick={() => void save()} disabled={busy}>
+            <Button onClick={() => void save()} disabled={busy} className="max-sm:w-full">
               {busy ? 'Saving…' : 'Save changes'}
             </Button>
           )}
           {options.canSend && quotation.status === 'DRAFT' && (
-            <Button variant="primary" onClick={() => void send()} disabled={sending}>
+            <Button
+              variant="primary"
+              onClick={() => void send()}
+              disabled={sending}
+              className="max-sm:w-full"
+            >
               {sending ? 'Sending…' : 'Save & Send'}
             </Button>
           )}
@@ -788,7 +797,7 @@ function LineGrid({
   })();
 
   return (
-    <section className="rounded-manifest border border-line bg-surface shadow-manifest">
+    <section className="rounded-card border border-line bg-surface shadow-manifest">
       <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-line px-4 py-3">
         <div>
           <h3 className="text-section text-hull">{title}</h3>
@@ -812,7 +821,7 @@ function LineGrid({
         <div className="overflow-x-auto">
           <table className="w-full min-w-250 border-collapse">
             <thead>
-              <tr className="border-b border-line bg-paper">
+              <tr className="whitespace-nowrap border-b border-line bg-module-soft">
                 <th className="label-manifest px-3 py-2 text-left">Cost Head</th>
                 <th className="label-manifest px-3 py-2 text-left">Container Size</th>
                 <th className="label-manifest px-3 py-2 text-left">Unit</th>
@@ -940,7 +949,7 @@ function LineGrid({
                         </span>
                       )}
                     </td>
-                    <td className="px-3 py-1.5 text-right font-mono text-cell tabular-nums text-hull">
+                    <td className="whitespace-nowrap px-3 py-1.5 text-right font-mono text-cell tabular-nums text-hull">
                       {shown.total}{' '}
                       <span className="text-steel">
                         {options.currencies.find((c) => c.id === line.currencyId)?.label ?? ''}
@@ -956,7 +965,7 @@ function LineGrid({
                     )}
                     {editable && (
                       <td className="px-3 py-1.5 text-right">
-                        <span className="inline-flex items-center gap-2">
+                        <div className="flex items-center justify-end gap-2">
                           {/* §6.5: where the number came from, at a glance. */}
                           <span
                             className={
@@ -972,14 +981,16 @@ function LineGrid({
                           >
                             {line.source === 'AUTO' ? 'from price list' : 'typed'}
                           </span>
-                          <Button
-                            variant="destructive"
-                            size="inline"
-                            onClick={() => onRemove(line)}
-                          >
-                            Delete
-                          </Button>
-                        </span>
+                          <RowActions>
+                            <Button
+                              variant="destructive"
+                              size="inline"
+                              onClick={() => onRemove(line)}
+                            >
+                              Delete
+                            </Button>
+                          </RowActions>
+                        </div>
                       </td>
                     )}
                   </tr>
@@ -1001,7 +1012,7 @@ function LineGrid({
                 <td className="px-3 py-2 text-right label-manifest" colSpan={6}>
                   {title} total
                 </td>
-                <td className="px-3 py-2 text-right font-mono text-cell tabular-nums text-hull">
+                <td className="whitespace-nowrap px-3 py-2 text-right font-mono text-cell tabular-nums text-hull">
                   {sectionTotal === null ? (
                     <span className="text-steel" title="These charges are in more than one currency.">
                       —

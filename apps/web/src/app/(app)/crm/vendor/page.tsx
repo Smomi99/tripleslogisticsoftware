@@ -149,13 +149,13 @@ export default function VendorPage() {
           aria-label="Search vendors"
           value={list.searchInput}
           onChange={(event) => list.setSearchInput(event.target.value)}
-          className="w-72"
+          className="w-full sm:w-72"
         />
         <Select
           aria-label="Filter by type"
           value={list.filters['vendorTypeId'] ?? ''}
           onChange={(event) => list.setFilter('vendorTypeId', event.target.value)}
-          className="w-56"
+          className="w-full sm:w-56"
         >
           <option value="">All types</option>
           {types.map((t) => (

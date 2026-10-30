@@ -88,8 +88,8 @@ export default function TariffListPage() {
       />
 
       <div className="flex flex-wrap items-end gap-3">
-        <div className="flex w-72 flex-col gap-1">
-          <span className="label-manifest">Search</span>
+        <div className="flex w-full flex-col gap-1 sm:w-72">
+          <span className="label-field">Search</span>
           <Input
             type="search"
             aria-label="Search tariffs"
@@ -98,8 +98,8 @@ export default function TariffListPage() {
             onChange={(e) => list.setSearchInput(e.target.value)}
           />
         </div>
-        <div className="flex w-44 flex-col gap-1">
-          <span className="label-manifest">Movement</span>
+        <div className="flex w-full flex-col gap-1 sm:w-44">
+          <span className="label-field">Movement</span>
           <Select aria-label="Movement type" value={list.filters.movementType ?? ''} onChange={(e) => list.setFilter('movementType', e.target.value)}>
             <option value="">Inbound and outbound</option>
             {TARIFF_MOVEMENT_TYPES.map((m) => (
@@ -109,8 +109,8 @@ export default function TariffListPage() {
             ))}
           </Select>
         </div>
-        <div className="flex w-44 flex-col gap-1">
-          <span className="label-manifest">Tariff type</span>
+        <div className="flex min-w-0 grow basis-2/5 flex-col gap-1 sm:w-44 sm:flex-none">
+          <span className="label-field">Tariff type</span>
           <Select aria-label="Tariff type" value={list.filters.tariffType ?? ''} onChange={(e) => list.setFilter('tariffType', e.target.value)}>
             <option value="">Every type</option>
             {TARIFF_TYPES.map((t) => (
@@ -120,8 +120,8 @@ export default function TariffListPage() {
             ))}
           </Select>
         </div>
-        <div className="flex w-36 flex-col gap-1">
-          <span className="label-manifest">Status</span>
+        <div className="flex min-w-0 grow basis-2/5 flex-col gap-1 sm:w-36 sm:flex-none">
+          <span className="label-field">Status</span>
           <Select aria-label="Status" value={list.filters.isActive ?? ''} onChange={(e) => list.setFilter('isActive', e.target.value)}>
             <option value="">All</option>
             <option value="true">Active</option>

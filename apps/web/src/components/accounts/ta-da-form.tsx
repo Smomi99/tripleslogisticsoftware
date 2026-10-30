@@ -9,6 +9,7 @@ import {
   type TaDaOptionsDto,
   type TaDaStatus,
 } from '@ff/shared';
+import { ArrowLeft } from 'lucide-react';
 import type { Route } from 'next';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -17,6 +18,7 @@ import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
+import { backLinkClasses } from '@/components/ui/form-layout';
 import { Modal } from '@/components/ui/modal';
 import { Status, type StatusTone } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
@@ -42,7 +44,7 @@ export const TA_DA_TONE: Record<TaDaStatus, StatusTone> = {
 
 const FEATURE = 'ACCOUNTS.TA_DA';
 const TEXTAREA =
-  'w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-body text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour disabled:cursor-not-allowed disabled:bg-paper disabled:text-steel';
+  'w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-base text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour disabled:cursor-not-allowed disabled:bg-paper disabled:text-steel sm:text-body';
 
 interface LineDraft {
   key: number;
@@ -204,14 +206,16 @@ export function TaDaForm({
   return (
     <div className="flex flex-col gap-5">
       {/* ------------------------------------------------------------ header */}
-      <section className="rounded-manifest border border-line bg-surface p-5 shadow-manifest">
+      <section className="rounded-card border border-line bg-surface p-4 shadow-manifest sm:p-5">
         <div className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
-          <div className="flex flex-wrap items-baseline gap-3">
+          <div className="flex flex-wrap items-baseline gap-3 max-sm:w-full">
             <h1 className="font-mono text-page-title tabular-nums text-hull">{claim?.code ?? 'New TA/DA claim'}</h1>
             {claim !== null && <Status tone={TA_DA_TONE[claim.status]}>{TA_DA_STATUS_LABEL[claim.status]}</Status>}
           </div>
-          <Link href={{ pathname: '/accounts/ta-da' }} className="text-cell text-harbour hover:underline">
-            ← Back to list
+          {/* On a phone the link leads, above the title, as on every other screen. */}
+          <Link href={{ pathname: '/accounts/ta-da' }} className={`${backLinkClasses} max-sm:order-first`}>
+            <ArrowLeft className="size-3.5" aria-hidden="true" />
+            Back to list
           </Link>
         </div>
 
@@ -247,7 +251,7 @@ export function TaDaForm({
       </section>
 
       {/* ------------------------------------------------------------- lines */}
-      <section className="rounded-manifest border border-line bg-surface shadow-manifest">
+      <section className="rounded-card border border-line bg-surface shadow-manifest">
         <div className="border-b border-line px-4 py-3">
           <h2 className="text-section text-hull">Trips and days</h2>
           <p className="text-cell text-steel">TA is the fare; DA is food and the day&apos;s stay. One row per trip or day.</p>
@@ -255,16 +259,16 @@ export function TaDaForm({
         <div className="overflow-x-auto">
           <table className="w-full min-w-250 border-collapse">
             <thead>
-              <tr className="border-b border-line bg-paper">
-                <th className="label-manifest px-3 py-2 text-left">Date</th>
-                <th className="label-manifest px-3 py-2 text-left">From</th>
-                <th className="label-manifest px-3 py-2 text-left">To</th>
-                <th className="label-manifest px-3 py-2 text-left">Mode</th>
-                <th className="label-manifest px-3 py-2 text-left">Note</th>
-                <th className="label-manifest px-3 py-2 text-right">TA ({currency})</th>
-                <th className="label-manifest px-3 py-2 text-right">DA ({currency})</th>
-                <th className="label-manifest px-3 py-2 text-right">Amount</th>
-                {writable && <th className="label-manifest px-3 py-2 text-right">Action</th>}
+              <tr className="border-b border-line bg-module-soft">
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Date</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">From</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">To</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Mode</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Note</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">TA ({currency})</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">DA ({currency})</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">Amount</th>
+                {writable && <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">Action</th>}
               </tr>
             </thead>
             <tbody>
@@ -272,7 +276,7 @@ export function TaDaForm({
                 <tr key={l.key} className="border-b border-line last:border-0">
                   <td className="px-3 py-1.5">
                     {writable ? (
-                      <Input aria-label="Date" type="date" numeric className="w-36" value={l.travelDate} onChange={(e) => patch(l.key, { travelDate: e.target.value })} />
+                      <Input aria-label="Date" type="date" numeric className="w-40 sm:w-36" value={l.travelDate} onChange={(e) => patch(l.key, { travelDate: e.target.value })} />
                     ) : (
                       <span className="font-mono text-cell tabular-nums">{l.travelDate}</span>
                     )}
@@ -351,20 +355,26 @@ export function TaDaForm({
           ) : (
             <span />
           )}
-          <p className="font-mono text-body tabular-nums text-hull">
-            <span className="label-manifest mr-2">TA</span>
-            {fmt(totals.ta)}
-            <span className="label-manifest ml-5 mr-2">DA</span>
-            {fmt(totals.da)}
-            <span className="label-manifest ml-5 mr-2">Total</span>
-            <span className="text-section">{fmt(totals.total)}</span> {currency}
+          <p className="flex flex-wrap items-baseline gap-x-5 gap-y-1 font-mono text-body tabular-nums text-hull">
+            <span>
+              <span className="label-manifest mr-2">TA</span>
+              {fmt(totals.ta)}
+            </span>
+            <span>
+              <span className="label-manifest mr-2">DA</span>
+              {fmt(totals.da)}
+            </span>
+            <span>
+              <span className="label-manifest mr-2">Total</span>
+              <span className="text-section">{fmt(totals.total)}</span> {currency}
+            </span>
           </p>
         </div>
       </section>
 
       {/* --------------------------------------------------- the record */}
       {claim !== null && (claim.submittedAt !== null || claim.voucher !== null) && (
-        <section className="flex flex-wrap gap-x-8 gap-y-2 rounded-manifest border border-line bg-surface px-5 py-3 text-body shadow-manifest">
+        <section className="flex flex-wrap gap-x-8 gap-y-2 rounded-card border border-line bg-surface px-4 py-3 text-body shadow-manifest sm:px-5">
           {claim.submittedAt !== null && (
             <span>
               <span className="label-manifest mr-2">Submitted</span>
@@ -394,7 +404,8 @@ export function TaDaForm({
       )}
 
       {/* --------------------------------------------------- the buttons */}
-      <section className="flex flex-wrap items-center gap-3 rounded-manifest border border-line bg-surface p-5 shadow-manifest">
+      {/* On a phone the buttons stack full width. */}
+      <section className="flex flex-col gap-2 rounded-card border border-line bg-surface p-4 shadow-manifest sm:flex-row sm:flex-wrap sm:items-center sm:gap-3 sm:p-5">
         {writable && (
           <Button variant="secondary" disabled={busy !== null} onClick={() => void onSave()}>
             {busy === 'save' ? 'Saving…' : isNew ? 'Save draft' : 'Save changes'}
@@ -446,12 +457,13 @@ export function TaDaForm({
           <Field id="reason" label="Reason" required>
             <textarea id="reason" rows={3} className={TEXTAREA} value={reason} onChange={(e) => setReason(e.target.value)} />
           </Field>
-          <div className="flex justify-end gap-3">
-            <Button variant="secondary" onClick={() => setDialog(null)}>
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-end sm:gap-3">
+            <Button variant="secondary" className="max-sm:w-full" onClick={() => setDialog(null)}>
               Keep it
             </Button>
             <Button
               variant="destructive"
+              className="max-sm:w-full"
               disabled={busy !== null || reason.trim() === ''}
               onClick={() =>
                 void (dialog === 'reject'
@@ -489,11 +501,12 @@ export function TaDaForm({
               ))}
             </Select>
           </Field>
-          <div className="flex justify-end gap-3">
-            <Button variant="secondary" onClick={() => setDialog(null)}>
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-end sm:gap-3">
+            <Button variant="secondary" className="max-sm:w-full" onClick={() => setDialog(null)}>
               Not now
             </Button>
             <Button
+              className="max-sm:w-full"
               disabled={busy !== null || moneyAccountId === ''}
               onClick={() => void act('pay', { paymentDate, moneyAccountId }, '{code} paid')}
             >

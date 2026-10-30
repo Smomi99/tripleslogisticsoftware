@@ -8,8 +8,9 @@ import {
   permissionKey,
 } from '@ff/shared';
 import { Check, Minus, X } from 'lucide-react';
-import { Fragment, useMemo } from 'react';
+import { useMemo } from 'react';
 
+import { MODULE_THEME } from '@/components/shell/module-theme';
 import { MODULE_LABEL } from '@/components/shell/nav-config';
 import { cn } from '@/lib/utils';
 
@@ -30,6 +31,10 @@ import { Button } from './button';
  * A cell is only rendered where the feature actually declares that action —
  * §7's action list is the vocabulary, not a promise that every screen supports
  * every verb.
+ *
+ * Thirty-odd columns never fit a phone, so the grid scrolls inside its own box
+ * in both directions, with the header row and the feature column stuck in
+ * place. Each module's rows carry that module's colour.
  */
 
 export interface PermissionMatrixProps {
@@ -148,11 +153,11 @@ export function PermissionMatrix({
   }
 
   return (
-    <div className="overflow-x-auto rounded-manifest border border-line bg-surface shadow-manifest">
+    <div className="max-h-[75dvh] overflow-auto overscroll-contain rounded-card border border-line bg-surface shadow-manifest">
       <table className="w-full border-collapse text-cell">
         <thead className="sticky top-0 z-20">
-          <tr className="bg-paper">
-            <th className="label-manifest sticky left-0 z-30 min-w-56 border-b border-r border-line bg-paper px-3 py-2 text-left">
+          <tr className="bg-module-soft">
+            <th className="label-manifest sticky left-0 z-30 min-w-40 whitespace-nowrap border-b border-r border-line bg-module-soft px-3 py-2 text-left sm:min-w-56">
               Feature
             </th>
             {actions.map((action) => {
@@ -162,7 +167,7 @@ export function PermissionMatrix({
                   .map((f) => permissionKey(f.feature, action)),
               );
               return (
-                <th key={action} className="border-b border-line px-2 py-2 text-center">
+                <th key={action} className="whitespace-nowrap border-b border-line px-2 py-2 text-center">
                   <span className="label-manifest block">{ACTION_LABEL[action]}</span>
                   {!disabled && (
                     <span className="mt-0.5 flex justify-center gap-1">
@@ -191,15 +196,23 @@ export function PermissionMatrix({
           </tr>
         </thead>
 
-        <tbody>
-          {groups.map((group) => (
-            <Fragment key={group.module}>
-              <tr className="bg-paper/60">
-                <td
-                  colSpan={actions.length + 1}
-                  className="sticky left-0 border-y border-line px-3 py-1.5"
-                >
-                  <span className="label-manifest text-hull">{MODULE_LABEL[group.module]}</span>
+        {groups.map((group) => {
+          const { slug, icon: ModuleIcon } = MODULE_THEME[group.module];
+          return (
+            // One body per module, so data-module tints the whole group.
+            <tbody key={group.module} data-module={slug}>
+              <tr className="bg-module-soft">
+                <td colSpan={actions.length + 1} className="border-y border-line px-3 py-1.5">
+                  {/* The cell spans the whole grid; the heading itself stays in view. */}
+                  <span className="sticky left-3 inline-flex items-center gap-2">
+                    <span
+                      aria-hidden="true"
+                      className="flex size-5 items-center justify-center rounded-manifest bg-linear-135 from-module to-harbour text-white"
+                    >
+                      <ModuleIcon className="size-3" strokeWidth={2.25} />
+                    </span>
+                    <span className="label-manifest text-harbour">{MODULE_LABEL[group.module]}</span>
+                  </span>
                 </td>
               </tr>
 
@@ -212,7 +225,8 @@ export function PermissionMatrix({
                     <td className="sticky left-0 z-10 border-r border-line bg-surface px-3 py-1 transition-colors group-hover:bg-row-hover">
                       <span className="text-cell text-hull">{feature.label}</span>
                       {!disabled && (
-                        <span className="ml-2 inline-flex gap-1">
+                        // Under the name on a phone, where the column is narrow.
+                        <span className="flex gap-1 sm:ml-2 sm:inline-flex">
                           <button
                             type="button"
                             onClick={() => setMany(rowKeys, true)}
@@ -263,7 +277,7 @@ export function PermissionMatrix({
                             aria-label={`${feature.label} — ${ACTION_LABEL[action]}: ${state}`}
                             aria-pressed={effective}
                             className={cn(
-                              'inline-flex size-6 items-center justify-center rounded-manifest border',
+                              'inline-flex size-8 items-center justify-center rounded-manifest border sm:size-6',
                               'transition-colors duration-[120ms] ease-manifest',
                               'focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-harbour',
                               disabled && 'cursor-not-allowed opacity-60',
@@ -292,9 +306,9 @@ export function PermissionMatrix({
                   </tr>
                 );
               })}
-            </Fragment>
-          ))}
-        </tbody>
+            </tbody>
+          );
+        })}
       </table>
     </div>
   );

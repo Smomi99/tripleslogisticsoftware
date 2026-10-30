@@ -65,7 +65,8 @@ export default function TaDaListPage() {
         title="TA/DA"
         description="Travel and daily allowance claims — made, approved, then paid from cash or bank."
         action={
-          <div className="flex items-center gap-2">
+          // A fragment, so each button is the header's own and shares the row on a phone.
+          <>
             {can('ACCOUNTS.TA_DA.EXPORT') && (
               <Button variant="secondary" onClick={() => void exportIt()} disabled={exporting}>
                 {exporting ? 'Exporting…' : 'Export to Excel'}
@@ -74,13 +75,13 @@ export default function TaDaListPage() {
             {can('ACCOUNTS.TA_DA.CREATE') && (
               <Button onClick={() => router.push('/accounts/ta-da/new' as Route)}>+ New claim</Button>
             )}
-          </div>
+          </>
         }
       />
 
       <div className="flex flex-wrap items-end gap-3">
-        <div className="flex w-72 flex-col gap-1">
-          <span className="label-manifest">Search</span>
+        <div className="flex w-full flex-col gap-1 sm:w-72">
+          <span className="label-field">Search</span>
           <Input
             type="search"
             aria-label="Search claims"
@@ -89,8 +90,8 @@ export default function TaDaListPage() {
             onChange={(e) => list.setSearchInput(e.target.value)}
           />
         </div>
-        <div className="flex w-48 flex-col gap-1">
-          <span className="label-manifest">Status</span>
+        <div className="flex min-w-0 flex-1 basis-40 flex-col gap-1 sm:w-48 sm:flex-none">
+          <span className="label-field">Status</span>
           <Select aria-label="Status" value={list.filters.status ?? ''} onChange={(e) => list.setFilter('status', e.target.value)}>
             <option value="">Any status</option>
             {TA_DA_STATUSES.map((s) => (

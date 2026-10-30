@@ -8,14 +8,17 @@ import {
   type JournalEntryKind,
   LEDGER_PARTY_LABEL,
 } from '@ff/shared';
+import { ArrowLeft } from 'lucide-react';
 import type { Route } from 'next';
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
+import { ModuleBadge } from '@/components/shell/module-theme';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field } from '@/components/ui/field';
+import { backLinkClasses } from '@/components/ui/form-layout';
 import { Modal } from '@/components/ui/modal';
 import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
@@ -57,8 +60,9 @@ export function VoucherView({ kind, id }: { kind: JournalEntryKind; id: string }
   }, [load]);
 
   const back = (
-    <Link href={`/accounts/${slug}` as Route} className="text-cell text-harbour hover:underline">
-      ← Back to list
+    <Link href={`/accounts/${slug}` as Route} className={backLinkClasses}>
+      <ArrowLeft className="size-3.5" aria-hidden="true" />
+      Back to list
     </Link>
   );
 
@@ -119,14 +123,14 @@ export function VoucherView({ kind, id }: { kind: JournalEntryKind; id: string }
             rows={3}
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            className="w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-body text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour"
+            className="w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-base text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour sm:text-body"
           />
         </Field>
-        <div className="flex justify-end gap-3">
-          <Button variant="secondary" onClick={() => setCancelling(false)}>
+        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end sm:gap-3">
+          <Button variant="secondary" className="max-sm:w-full" onClick={() => setCancelling(false)}>
             Keep it
           </Button>
-          <Button variant="destructive" disabled={busy || reason.trim() === ''} onClick={() => void cancel()}>
+          <Button variant="destructive" className="max-sm:w-full" disabled={busy || reason.trim() === ''} onClick={() => void cancel()}>
             {busy ? 'Cancelling…' : 'Cancel voucher'}
           </Button>
         </div>
@@ -163,11 +167,14 @@ export function VoucherView({ kind, id }: { kind: JournalEntryKind; id: string }
       <div className="flex flex-col gap-2">
         {back}
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="label-manifest">{JOURNAL_ENTRY_KIND_LABEL[kind]}</p>
-            <h1 className="font-mono text-page-title tabular-nums text-hull">{entry.code}</h1>
+          <div className="flex min-w-0 items-start gap-3">
+            <ModuleBadge />
+            <div className="min-w-0">
+              <p className="label-manifest">{JOURNAL_ENTRY_KIND_LABEL[kind]}</p>
+              <h1 className="break-words font-mono text-page-title tabular-nums text-hull">{entry.code}</h1>
+            </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             <Status tone={VOUCHER_STATUS_TONE[entry.status]}>{JOURNAL_ENTRY_STATUS_LABEL[entry.status]}</Status>
             {kind === 'INCOME' && entry.status === 'POSTED' && entry.party !== null && can('ACCOUNTS.INCOME.VIEW') && (
               <Button variant="secondary" disabled={receipt.opening !== null} onClick={() => void receipt.open(entry.id)}>
@@ -194,7 +201,7 @@ export function VoucherView({ kind, id }: { kind: JournalEntryKind; id: string }
         </p>
       )}
 
-      <section className="grid grid-cols-1 gap-x-8 gap-y-3 rounded-manifest border border-line bg-surface p-5 shadow-manifest md:grid-cols-3">
+      <section className="grid grid-cols-1 gap-x-8 gap-y-3 rounded-card border border-line bg-surface p-4 shadow-manifest md:grid-cols-3 sm:p-5">
         <div>
           <p className="label-manifest">Date</p>
           <p className="font-mono text-body tabular-nums text-hull">{entry.entryDate}</p>
@@ -246,14 +253,14 @@ export function VoucherView({ kind, id }: { kind: JournalEntryKind; id: string }
         )}
       </section>
 
-      <section className="overflow-x-auto rounded-manifest border border-line bg-surface shadow-manifest">
+      <section className="overflow-x-auto rounded-card border border-line bg-surface shadow-manifest">
         <table className="w-full min-w-160 border-collapse">
           <thead>
-            <tr className="border-b border-line bg-paper">
-              <th className="label-manifest w-28 px-3 py-2 text-left">Code</th>
-              <th className="label-manifest px-3 py-2 text-left">Account</th>
-              <th className="label-manifest w-44 px-3 py-2 text-right">Debit ({baseCode})</th>
-              <th className="label-manifest w-44 px-3 py-2 text-right">Credit ({baseCode})</th>
+            <tr className="border-b border-line bg-module-soft">
+              <th className="label-manifest whitespace-nowrap w-28 px-3 py-2 text-left">Code</th>
+              <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Account</th>
+              <th className="label-manifest whitespace-nowrap w-44 px-3 py-2 text-right">Debit ({baseCode})</th>
+              <th className="label-manifest whitespace-nowrap w-44 px-3 py-2 text-right">Credit ({baseCode})</th>
             </tr>
           </thead>
           <tbody>

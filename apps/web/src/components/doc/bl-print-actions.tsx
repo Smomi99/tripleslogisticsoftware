@@ -160,7 +160,7 @@ export function BlPrintActions({
           <p className="text-body text-steel">Loading…</p>
         ) : (
           <div className="flex flex-col gap-4">
-            <dl className="grid grid-cols-[9rem_1fr] gap-x-3 gap-y-1.5 text-body">
+            <dl className="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-x-3 gap-y-1.5 break-words text-body sm:grid-cols-[9rem_minmax(0,1fr)]">
               {/* CR-005: one bill can cover several bookings sharing an EFR. */}
               <dt className="label-manifest self-center">
                 {bill.bookingNos.length > 1 ? 'Bookings' : 'Booking'}
@@ -232,11 +232,11 @@ export function BlPrintActions({
               </p>
             )}
 
-            <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={() => setOpen(false)}>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button variant="secondary" onClick={() => setOpen(false)} className="max-sm:w-full">
                 Back
               </Button>
-              <Button disabled={isPending} onClick={() => void issue()}>
+              <Button disabled={isPending} onClick={() => void issue()} className="max-sm:w-full">
                 {isPending ? 'Issuing…' : `Issue ${terms.short}`}
               </Button>
             </div>

@@ -1,6 +1,7 @@
 'use client';
 
 import type { BlTemplateDto } from '@ff/shared';
+import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
@@ -9,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Input, Select } from '@/components/ui/field';
-import { PageHeader } from '@/components/ui/form-layout';
+import { backLinkClasses, PageHeader } from '@/components/ui/form-layout';
 import { Modal } from '@/components/ui/modal';
 import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
@@ -83,7 +84,7 @@ function Block({
         rows={3}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-manifest border border-line bg-surface px-3 py-2 text-body text-hull outline-none transition-colors duration-120 ease-out focus:ring-2 focus:ring-harbour"
+        className="w-full rounded-manifest border border-line bg-surface px-3 py-2 text-base text-hull transition-[border-color,box-shadow] duration-[120ms] hover:border-steel/50 focus:border-harbour focus:outline-none focus:ring-3 focus:ring-harbour/20 sm:text-body"
       />
     </Field>
   );
@@ -165,19 +166,20 @@ export function BlTemplateScreen() {
 
   return (
     <div className="flex flex-col gap-4">
-      <Link href="/documentation/bl-draft" className="self-start text-body text-harbour hover:underline">
-        ← Back to BL drafts
+      <Link href="/documentation/bl-draft" className={backLinkClasses}>
+        <ArrowLeft className="size-3.5" aria-hidden="true" />
+        Back to BL drafts
       </Link>
 
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <PageHeader
-          title="BL templates"
-          description="The party blocks a bill of lading repeats for the same customer, saved once."
-        />
-        {can('DOCUMENTATION.BL_TEMPLATE.CREATE') && (
-          <Button onClick={() => setEditing({ ...EMPTY })}>Add template</Button>
-        )}
-      </div>
+      <PageHeader
+        title="BL templates"
+        description="The party blocks a bill of lading repeats for the same customer, saved once."
+        action={
+          can('DOCUMENTATION.BL_TEMPLATE.CREATE') && (
+            <Button onClick={() => setEditing({ ...EMPTY })}>Add template</Button>
+          )
+        }
+      />
 
       {error !== null && (
         <p
@@ -324,11 +326,12 @@ export function BlTemplateScreen() {
               </Field>
             </div>
 
-            <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={() => setEditing(null)}>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <Button variant="secondary" onClick={() => setEditing(null)} className="max-sm:w-full">
                 Back
               </Button>
               <Button
+                className="max-sm:w-full"
                 disabled={isPending || editing.name.trim() === ''}
                 onClick={() => {
                   const body = {

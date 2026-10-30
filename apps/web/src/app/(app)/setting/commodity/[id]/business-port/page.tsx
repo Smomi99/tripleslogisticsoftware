@@ -18,6 +18,7 @@ import { Field } from '@/components/ui/field';
 import { ChildScreenHeader, FormLayout } from '@/components/ui/form-layout';
 import { ConfirmDialog, Modal } from '@/components/ui/modal';
 import { MultiSelect } from '@/components/ui/multi-select';
+import { RowActions } from '@/components/ui/row-actions';
 import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
@@ -115,7 +116,8 @@ export default function CommodityBusinessPortPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      {/* On a phone the Add drops below the header and runs full width, as PageHeader's does. */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
         <ChildScreenHeader
           parentLabel="Commodity category"
           parentName={parentName === '' ? '…' : parentName}
@@ -123,27 +125,31 @@ export default function CommodityBusinessPortPage() {
           backHref={'/setting/commodity' as Route}
         />
         {can('SETTING.COMMODITY_CATEGORY.CREATE') && (
-          <Button onClick={() => setFormOpen(true)}>+ Add business port</Button>
+          <Button onClick={() => setFormOpen(true)} className="max-sm:w-full">
+            + Add business port
+          </Button>
         )}
       </div>
 
       {loading ? (
         <p className="text-body text-steel">Loading…</p>
       ) : rows.length === 0 ? (
-        <EmptyState
-          title="No business ports yet"
-          description="Add the lane this category trades on — several loading ports into one discharge port, or one loading port out to several."
-        />
+        <div className="rounded-card border border-line bg-surface shadow-manifest">
+          <EmptyState
+            title="No business ports yet"
+            description="Add the lane this category trades on — several loading ports into one discharge port, or one loading port out to several."
+          />
+        </div>
       ) : (
-        <div className="overflow-x-auto rounded-manifest border border-line bg-surface shadow-manifest">
+        <div className="overflow-x-auto rounded-card border border-line bg-surface shadow-manifest">
           <table className="w-full border-collapse">
             <thead>
-              <tr className="border-b border-line bg-paper">
-                <th className="label-manifest px-3 py-2 text-left">Code</th>
-                <th className="label-manifest px-3 py-2 text-left">POL</th>
-                <th className="label-manifest px-3 py-2 text-left">POD</th>
-                <th className="label-manifest px-3 py-2 text-left">Status</th>
-                <th className="label-manifest px-3 py-2 text-right">Action</th>
+              <tr className="border-b border-line bg-module-soft">
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Code</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">POL</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">POD</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Status</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -164,11 +170,13 @@ export default function CommodityBusinessPortPage() {
                     </Status>
                   </td>
                   <td className="px-3 py-2 text-right">
-                    {can('SETTING.COMMODITY_CATEGORY.DELETE') && (
-                      <Button variant="destructive" size="inline" onClick={() => setToDelete(row)}>
-                        Delete
-                      </Button>
-                    )}
+                    <RowActions>
+                      {can('SETTING.COMMODITY_CATEGORY.DELETE') && (
+                        <Button variant="destructive" size="inline" onClick={() => setToDelete(row)}>
+                          Delete
+                        </Button>
+                      )}
+                    </RowActions>
                   </td>
                 </tr>
               ))}

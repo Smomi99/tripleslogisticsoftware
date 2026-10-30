@@ -141,8 +141,8 @@ export default function DebitInvoiceListPage() {
       />
 
       <div className="flex flex-wrap items-end gap-3">
-        <div className="flex w-72 flex-col gap-1">
-          <span className="label-manifest">Search</span>
+        <div className="flex w-full flex-col gap-1 sm:w-72">
+          <span className="label-field">Search</span>
           <Input
             type="search"
             aria-label="Search debit invoices"
@@ -151,8 +151,8 @@ export default function DebitInvoiceListPage() {
             onChange={(e) => list.setSearchInput(e.target.value)}
           />
         </div>
-        <div className="flex w-48 flex-col gap-1">
-          <span className="label-manifest">Status</span>
+        <div className="flex min-w-0 flex-1 basis-40 flex-col gap-1 sm:w-48 sm:flex-none">
+          <span className="label-field">Status</span>
           <Select aria-label="Status" value={list.filters.status ?? ''} onChange={(e) => list.setFilter('status', e.target.value)}>
             <option value="">Any status</option>
             {DEBIT_INVOICE_DISPLAY_STATUSES.map((s) => (
@@ -162,8 +162,8 @@ export default function DebitInvoiceListPage() {
             ))}
           </Select>
         </div>
-        <div className="flex w-44 flex-col gap-1">
-          <span className="label-manifest">Kind</span>
+        <div className="flex min-w-0 flex-1 basis-40 flex-col gap-1 sm:w-44 sm:flex-none">
+          <span className="label-field">Kind</span>
           <Select aria-label="Kind" value={list.filters.kind ?? ''} onChange={(e) => list.setFilter('kind', e.target.value)}>
             <option value="">Freight and other</option>
             <option value="FREIGHT">Freight</option>
@@ -273,14 +273,14 @@ export default function DebitInvoiceListPage() {
               rows={3}
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              className="w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-body text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour"
+              className="w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-base text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour sm:text-body"
             />
           </Field>
-          <div className="flex justify-end gap-3">
-            <Button variant="secondary" onClick={() => setCancelling(null)}>
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-end sm:gap-3">
+            <Button variant="secondary" className="max-sm:w-full" onClick={() => setCancelling(null)}>
               Keep it
             </Button>
-            <Button variant="destructive" disabled={busy || reason.trim() === ''} onClick={() => void cancel()}>
+            <Button variant="destructive" className="max-sm:w-full" disabled={busy || reason.trim() === ''} onClick={() => void cancel()}>
               {busy ? 'Cancelling…' : 'Cancel invoice'}
             </Button>
           </div>

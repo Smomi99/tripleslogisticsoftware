@@ -14,7 +14,7 @@ export function LeadProgress({ status }: { status: SalesLeadStatus }) {
   const at = SALES_LEAD_STEPS.findIndex((step) => step.status === status);
 
   return (
-    <ol aria-label="Lead workflow" className="grid grid-cols-2 gap-px overflow-hidden rounded-manifest border border-line bg-line md:grid-cols-6">
+    <ol aria-label="Lead workflow" className="grid grid-cols-2 gap-px overflow-hidden rounded-card border border-line bg-line md:grid-cols-6">
       {SALES_LEAD_STEPS.map((step, index) => {
         const done = !lost && index < at;
         const current = !lost && index === at;
@@ -22,7 +22,7 @@ export function LeadProgress({ status }: { status: SalesLeadStatus }) {
           <li
             key={step.status}
             aria-current={current ? 'step' : undefined}
-            className={cn('flex flex-col gap-0.5 bg-surface px-3 py-2', current && 'bg-harbour/5')}
+            className={cn('flex flex-col gap-0.5 bg-surface px-3 py-2', current && 'bg-module-soft')}
           >
             <span
               className={cn(

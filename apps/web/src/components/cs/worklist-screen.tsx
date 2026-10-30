@@ -316,8 +316,8 @@ export function WorklistScreen({
       />
 
       <div className="flex flex-wrap items-end gap-3">
-        <div className="flex w-72 flex-col gap-1">
-          <span className="label-manifest">Search</span>
+        <div className="flex w-full flex-col gap-1 sm:w-72">
+          <span className="label-field">Search</span>
           <Input
             type="search"
             aria-label="Search bookings"
@@ -327,8 +327,8 @@ export function WorklistScreen({
           />
         </div>
         {fixedMode === undefined && (
-        <div className="flex w-40 flex-col gap-1">
-          <span className="label-manifest">Mode</span>
+        <div className="flex w-full flex-col gap-1 sm:w-40">
+          <span className="label-field">Mode</span>
           <Select
             aria-label="Sea or air"
             value={mode}

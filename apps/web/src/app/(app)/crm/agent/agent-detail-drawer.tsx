@@ -129,7 +129,7 @@ function Chips({ label, items }: { label: string; items: string[] }) {
           {items.map((item) => (
             <li
               key={item}
-              className="rounded-manifest border border-line bg-paper px-2 py-0.5 text-cell text-hull"
+              className="rounded-full bg-module-soft px-2.5 py-0.5 text-cell text-harbour"
             >
               {item}
             </li>

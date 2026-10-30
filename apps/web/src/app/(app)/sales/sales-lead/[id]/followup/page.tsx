@@ -85,7 +85,7 @@ export default function LeadFollowupPage({ params }: { params: Promise<{ id: str
           <LeadProgress status={lead.status} />
           <section
             aria-label="Lead summary"
-            className="grid grid-cols-2 gap-x-6 gap-y-3 rounded-manifest border border-line bg-surface p-3 shadow-manifest md:grid-cols-4"
+            className="grid grid-cols-2 gap-x-6 gap-y-3 rounded-card border border-line bg-surface p-3 shadow-manifest md:grid-cols-4"
           >
             <Fact label="Status" value={SALES_LEAD_STATUS_LABEL[lead.status]} />
             <Fact label="Salesperson" value={lead.ownerName ?? '—'} />
@@ -100,7 +100,7 @@ export default function LeadFollowupPage({ params }: { params: Promise<{ id: str
             <Fact label="Next follow-up" value={lead.nextFollowupDate ?? '—'} mono />
             <Fact label="Est. monthly profit (USD)" value={money(lead.forecast.monthlyProfit)} mono />
             <Fact label="Win probability" value={lead.winProbability === null ? '—' : `${lead.winProbability}%`} mono />
-            <div className="flex items-end gap-3">
+            <div className="flex flex-wrap items-end gap-x-3 gap-y-1">
               {can('SALES.NEW_SALES_LEAD.EDIT') && (
                 <Link
                   href={`/sales/sales-lead/${lead.id}/edit` as Route}
@@ -121,7 +121,7 @@ export default function LeadFollowupPage({ params }: { params: Promise<{ id: str
           {data !== null && data.inquiries.length > 0 && (
             <section
               aria-label="Inquiries raised from this lead"
-              className="rounded-manifest border border-line bg-surface p-3 shadow-manifest"
+              className="rounded-card border border-line bg-surface p-3 shadow-manifest"
             >
               <p className="label-manifest">Inquiries raised from this lead</p>
               <ul className="mt-2 flex flex-col gap-1">
@@ -144,7 +144,7 @@ export default function LeadFollowupPage({ params }: { params: Promise<{ id: str
       {can('SALES.SALES_LEAD_FOLLOWUP.CREATE') && (
         <section
           aria-label="Record a follow-up"
-          className="rounded-manifest border border-line bg-surface p-4 shadow-manifest"
+          className="rounded-card border border-line bg-surface p-4 shadow-manifest"
         >
           <h2 className="mb-3 text-section text-hull">Record a follow-up</h2>
           <LeadFollowupForm leadId={id} onSaved={load} />
@@ -157,20 +157,20 @@ export default function LeadFollowupPage({ params }: { params: Promise<{ id: str
           description="Record what was said and when to call back, so the next conversation starts where this one ended."
         />
       ) : (
-        <div className="overflow-x-auto rounded-manifest border border-line bg-surface shadow-manifest">
-          <table className="w-full border-collapse">
+        <div className="overflow-x-auto rounded-card border border-line bg-surface shadow-manifest">
+          <table className="w-full min-w-[60rem] border-collapse">
             <thead>
-              <tr className="border-b border-line bg-paper text-left">
-                <th className="label-manifest px-2.5 py-2">Date</th>
-                <th className="label-manifest px-2.5 py-2">How</th>
-                <th className="label-manifest px-2.5 py-2">Contact</th>
-                <th className="label-manifest px-2.5 py-2">Discussion</th>
-                <th className="label-manifest px-2.5 py-2">Outcome</th>
-                <th className="label-manifest px-2.5 py-2 text-right">Target rate</th>
-                <th className="label-manifest px-2.5 py-2">Objections</th>
-                <th className="label-manifest px-2.5 py-2">Next action</th>
-                <th className="label-manifest px-2.5 py-2">Next</th>
-                <th className="label-manifest px-2.5 py-2">Recorded by</th>
+              <tr className="border-b border-line bg-module-soft text-left">
+                <th className="label-manifest whitespace-nowrap px-2.5 py-2">Date</th>
+                <th className="label-manifest whitespace-nowrap px-2.5 py-2">How</th>
+                <th className="label-manifest whitespace-nowrap px-2.5 py-2">Contact</th>
+                <th className="label-manifest whitespace-nowrap px-2.5 py-2">Discussion</th>
+                <th className="label-manifest whitespace-nowrap px-2.5 py-2">Outcome</th>
+                <th className="label-manifest whitespace-nowrap px-2.5 py-2 text-right">Target rate</th>
+                <th className="label-manifest whitespace-nowrap px-2.5 py-2">Objections</th>
+                <th className="label-manifest whitespace-nowrap px-2.5 py-2">Next action</th>
+                <th className="label-manifest whitespace-nowrap px-2.5 py-2">Next</th>
+                <th className="label-manifest whitespace-nowrap px-2.5 py-2">Recorded by</th>
               </tr>
             </thead>
             <tbody>

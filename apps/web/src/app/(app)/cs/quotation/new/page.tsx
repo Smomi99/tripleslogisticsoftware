@@ -1,6 +1,7 @@
 'use client';
 
 import type { QuotationDto } from '@ff/shared';
+import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
@@ -8,7 +9,7 @@ import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
-import { PageHeader } from '@/components/ui/form-layout';
+import { backLinkClasses, PageHeader } from '@/components/ui/form-layout';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 
@@ -108,7 +109,7 @@ export default function NewQuotationPage() {
         description="Pick the inquiry and the carrier. The header copies down and the charges pull themselves from your price list."
       />
 
-      <section className="max-w-3xl rounded-manifest border border-line bg-surface p-5 shadow-manifest">
+      <section className="max-w-3xl rounded-card border border-line bg-surface p-4 shadow-manifest sm:p-5">
         <div className="grid gap-4">
           <Field
             id="inquiryId"
@@ -189,14 +190,12 @@ export default function NewQuotationPage() {
             </Select>
           </Field>
 
-          <div className="flex items-center gap-3">
-            <Button onClick={() => void create()} disabled={!ready || busy}>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <Button onClick={() => void create()} disabled={!ready || busy} className="max-sm:w-full">
               {busy ? 'Creating…' : 'Create quotation'}
             </Button>
-            <Link
-              href={{ pathname: '/cs/quotation' }}
-              className="text-cell text-harbour hover:underline"
-            >
+            <Link href={{ pathname: '/cs/quotation' }} className={backLinkClasses}>
+              <ArrowLeft className="size-3.5" aria-hidden="true" />
               Back to list
             </Link>
           </div>

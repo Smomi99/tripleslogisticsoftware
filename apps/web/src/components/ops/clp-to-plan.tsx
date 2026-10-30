@@ -16,6 +16,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Input, Select } from '@/components/ui/field';
+import { RowActions } from '@/components/ui/row-actions';
 import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
@@ -384,10 +385,10 @@ export function ClpToPlan({
           }
         />
       ) : (
-        <div className="overflow-x-auto rounded-manifest border border-line bg-surface shadow-manifest">
+        <div className="overflow-x-auto rounded-card border border-line bg-surface shadow-manifest">
           <table className="w-full min-w-[900px] border-collapse text-cell">
             <thead className="sticky top-0 z-20">
-              <tr className="bg-paper">
+              <tr className="bg-module-soft">
                 <th className="w-10 border-b border-line px-3 py-2">
                   <span className="sr-only">Every PO of the booking</span>
                 </th>
@@ -463,7 +464,7 @@ export function ClpToPlan({
 
       {/* ------------------------------- the selection and what it would load */}
       {picked.length > 0 && (
-        <section className="sticky bottom-0 z-30 rounded-manifest border border-line bg-surface p-4 shadow-manifest">
+        <section className="sticky bottom-0 z-30 rounded-card border border-line bg-surface p-4 shadow-manifest max-sm:max-h-[70vh] max-sm:overflow-y-auto sm:p-5">
           <div className="flex flex-wrap items-baseline justify-between gap-3">
             <h2 className="text-section text-hull">
               {picked.length} PO{picked.length === 1 ? '' : 's'} ticked
@@ -526,13 +527,13 @@ export function ClpToPlan({
             </p>
           )}
 
-          <div className="mt-3 flex flex-wrap items-end gap-3">
+          <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
             <Field id="sizeId" label="Container" required>
               <Select
                 id="sizeId"
                 value={sizeId}
                 onChange={(event) => setSizeId(event.target.value)}
-                className="w-48"
+                className="w-full sm:w-48"
               >
                 {sizes.length === 0 && <option value="">Loading…</option>}
                 {sizes.map((s) => (
@@ -550,12 +551,12 @@ export function ClpToPlan({
                 value={cfs}
                 onChange={(event) => setCfs(event.target.value)}
                 placeholder={check?.cfsLocations[0] ?? 'CFS location'}
-                className="w-64"
+                className="w-full sm:w-64"
               />
             </Field>
 
-            <div className="ml-auto flex items-center gap-3">
-              <Button variant="secondary" size="inline" onClick={() => setPicked([])} disabled={busy}>
+            <div className="flex items-center gap-3 max-sm:*:flex-1 sm:ml-auto">
+              <Button variant="secondary" onClick={() => setPicked([])} disabled={busy}>
                 Clear
               </Button>
               {mayCreate && (
@@ -718,7 +719,7 @@ function BookingRows({
                 Final to look at.
               */
               <td colSpan={3} className={`px-3 py-2 ${tint}`}>
-                <span className="flex items-center justify-end gap-3 whitespace-nowrap">
+                <div className="flex items-center justify-end gap-3 whitespace-nowrap">
                   <Status tone="active">
                     Planned in{' '}
                     <span className="font-mono tabular-nums">
@@ -726,16 +727,19 @@ function BookingRows({
                     </span>
                   </Status>
                   {po.plans[0] !== undefined && (
-                    <Button variant="secondary" size="inline" asChild>
-                      <Link
-                        href={planHref(booking.shipmentId, po.plans[0].clpId)}
-                        aria-label={`${viewLabel(po.plans)} the plan holding ${po.poNo}`}
-                      >
-                        {viewLabel(po.plans)}
-                      </Link>
-                    </Button>
+                    // The same pill every table's row actions use.
+                    <RowActions>
+                      <Button variant="text" size="inline" asChild>
+                        <Link
+                          href={planHref(booking.shipmentId, po.plans[0].clpId)}
+                          aria-label={`${viewLabel(po.plans)} the plan holding ${po.poNo}`}
+                        >
+                          {viewLabel(po.plans)}
+                        </Link>
+                      </Button>
+                    </RowActions>
                   )}
-                </span>
+                </div>
               </td>
             ) : (
               <>

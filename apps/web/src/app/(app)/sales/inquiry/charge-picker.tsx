@@ -91,6 +91,11 @@ function fromUnits(units: bigint): string {
   return `${digits.slice(0, -4)}.${digits.slice(-4)}`;
 }
 
+// One extra per row from sm up. On a phone the cost head takes a row of its
+// own, with currency, amount and Remove beneath it.
+const EXTRA_GRID =
+  'grid grid-cols-[6.5rem_minmax(0,1fr)_3.5rem] gap-2 sm:grid-cols-[minmax(0,1fr)_5.5rem_7rem_3.5rem]';
+
 /**
  * The charges a container carries (client, 2026-10-26): the purchase rate's
  * local charges for that box, ticked in or out, and any extras typed here.
@@ -208,17 +213,20 @@ export function ChargePicker({
               <input
                 type="checkbox"
                 id={`${idPrefix}-charge-${row.id}`}
-                className="size-3.5 accent-harbour"
+                className="size-4 shrink-0 accent-harbour sm:size-3.5"
                 disabled={disabled}
                 checked={value.localChargeIds.has(row.id)}
                 onChange={(event) => toggle(row.id, event.target.checked)}
               />
-              <label htmlFor={`${idPrefix}-charge-${row.id}`} className="flex flex-1 items-center gap-2">
+              <label
+                htmlFor={`${idPrefix}-charge-${row.id}`}
+                className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2"
+              >
                 <span className="text-hull">{row.name}</span>
                 {row.side !== null && <span className="text-steel">{row.side}</span>}
                 {row.note !== null && <span className="text-steel">{row.note}</span>}
               </label>
-              <span className="font-mono text-hull">
+              <span className="whitespace-nowrap font-mono text-hull">
                 {row.currencyCode} {row.amount}
               </span>
             </li>
@@ -228,8 +236,8 @@ export function ChargePicker({
 
       {value.extras.length > 0 && (
         <div className="flex flex-col gap-1 border-t border-line pt-1.5">
-          <div className="grid grid-cols-[minmax(0,1fr)_5.5rem_7rem_3.5rem] gap-2">
-            <span className="label-manifest">
+          <div className={EXTRA_GRID}>
+            <span className="label-manifest col-span-3 sm:col-span-1">
               Extra charge<span className="ml-1 text-alert" aria-hidden="true">*</span>
             </span>
             <span className="label-manifest">
@@ -245,8 +253,9 @@ export function ChargePicker({
             const unit = options.costHeads.find((h) => h.id === extra.costHeadId)?.unitName;
             return (
               <div key={extra.key} className="flex flex-col gap-0.5">
-                <div className="grid grid-cols-[minmax(0,1fr)_5.5rem_7rem_3.5rem] items-center gap-2">
+                <div className={`${EXTRA_GRID} items-center`}>
                   <Select
+                    className="col-span-3 sm:col-span-1"
                     aria-label={`Extra charge, line ${index + 1}`}
                     aria-invalid={error !== undefined}
                     value={extra.costHeadId}
@@ -319,7 +328,7 @@ export function ChargePicker({
         </div>
       )}
 
-      <div className="flex items-center justify-between gap-3 border-t border-line pt-1.5">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-line pt-1.5">
         <Button variant="text" size="inline" disabled={disabled} onClick={addExtra}>
           Add charge
         </Button>

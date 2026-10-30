@@ -104,14 +104,14 @@ export default function BalanceSheetPage() {
       />
 
       <div className="flex flex-wrap items-end gap-3">
-        <div className="flex w-48 flex-col gap-1">
-          <label htmlFor="bs-as-of" className="label-manifest">
+        <div className="flex min-w-0 flex-1 basis-40 flex-col gap-1 sm:w-48 sm:flex-none">
+          <label htmlFor="bs-as-of" className="label-field">
             As at
           </label>
           <Input id="bs-as-of" type="date" numeric value={asOf} onChange={(e) => setAsOf(e.target.value)} />
         </div>
-        <div className="flex w-48 flex-col gap-1">
-          <label htmlFor="bs-year-start" className="label-manifest">
+        <div className="flex min-w-0 flex-1 basis-40 flex-col gap-1 sm:w-48 sm:flex-none">
+          <label htmlFor="bs-year-start" className="label-field">
             Financial year starts
           </label>
           <Select id="bs-year-start" value={yearStartMonth} onChange={(e) => setYearStartMonth(Number(e.target.value))}>
@@ -123,7 +123,7 @@ export default function BalanceSheetPage() {
           </Select>
         </div>
         <div className="flex flex-col gap-1">
-          <span className="label-manifest">Basis</span>
+          <span className="label-field">Basis</span>
           <Segmented
             label="Basis"
             value={basis}
@@ -141,7 +141,7 @@ export default function BalanceSheetPage() {
 
       {statement !== null && (
         <>
-          <div className="flex flex-wrap gap-x-6 gap-y-1 rounded-manifest border border-line bg-surface px-4 py-3 text-body shadow-manifest">
+          <div className="flex flex-wrap gap-x-6 gap-y-1 rounded-card border border-line bg-surface px-4 py-3 text-body shadow-manifest">
             <span>
               <span className="label-manifest mr-2">As at</span>
               <span className="font-mono tabular-nums">{sheetDay(statement.columns[0]?.asOf ?? asOf)}</span>
@@ -170,7 +170,7 @@ export default function BalanceSheetPage() {
             onOpen={(row, i) => setBreakdown({ line: row.key, label: row.label, column: BALANCE_SHEET_COLUMNS[i] ?? 'AS_AT' })}
           />
 
-          <details className="rounded-manifest border border-line bg-surface px-4 py-3 text-body text-steel">
+          <details className="rounded-card border border-line bg-surface px-4 py-3 text-body text-steel">
             <summary className="cursor-pointer text-hull">How these figures are made</summary>
             <ul className="mt-2 flex list-disc flex-col gap-1 pl-5">
               <li>

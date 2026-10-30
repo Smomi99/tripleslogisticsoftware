@@ -76,13 +76,17 @@ export default function RolePermissionsPage() {
           backHref={'/admin/role' as Route}
         />
         {editable && (
-          <div className="flex items-center gap-2">
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
             {isDirty && (
               <span className="text-cell text-signal">
                 Unsaved changes — everyone holding this role will be signed out on save.
               </span>
             )}
-            <Button onClick={() => void save()} disabled={!isDirty || isSaving}>
+            <Button
+              onClick={() => void save()}
+              disabled={!isDirty || isSaving}
+              className="max-sm:w-full"
+            >
               {isSaving ? 'Saving…' : 'Save changes'}
             </Button>
           </div>

@@ -10,6 +10,7 @@ import {
   type ShipmentStatus,
   TRANSIT_TYPES,
 } from '@ff/shared';
+import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -18,7 +19,8 @@ import { toast } from 'sonner';
 import { ScheduleDetail, ScheduleStatusDot } from '@/components/cs/schedule-detail';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
-import { PageHeader } from '@/components/ui/form-layout';
+import { backLinkClasses, PageHeader } from '@/components/ui/form-layout';
+import { RowActions } from '@/components/ui/row-actions';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 
@@ -351,9 +353,9 @@ export function ScheduleScreen({
       )}
 
       {/* ---------------------------------------- the booking, read-only (§6.4) */}
-      <section className="rounded-manifest border border-line bg-surface p-4 shadow-manifest">
+      <section className="rounded-card border border-line bg-surface p-4 shadow-manifest">
         <h2 className="mb-3 text-section text-hull">Booking</h2>
-        <dl className="grid gap-4 md:grid-cols-4">
+        <dl className="grid grid-cols-2 gap-4 md:grid-cols-4">
           {[
             ['Quotation No', context.quotationCode],
             ['Customer', context.customerName],
@@ -366,7 +368,7 @@ export function ScheduleScreen({
           ].map(([label, value]) => (
             <div key={label}>
               <dt className="label-manifest">{label}</dt>
-              <dd className="font-mono tabular-nums text-body text-hull">{value}</dd>
+              <dd className="break-words font-mono tabular-nums text-body text-hull">{value}</dd>
             </div>
           ))}
         </dl>
@@ -382,9 +384,9 @@ export function ScheduleScreen({
 
       {/* ------------------------------------- what is with the customer now */}
       {live !== null && (
-        <section className="rounded-manifest border border-line bg-surface p-4 shadow-manifest">
+        <section className="rounded-card border border-line bg-surface p-4 shadow-manifest">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-            <h2 className="flex items-center gap-3 text-section text-hull">
+            <h2 className="flex flex-wrap items-center gap-3 text-section text-hull">
               <span>Current proposal</span>
               <span className="font-mono tabular-nums text-body text-steel">v{live.versionNo}</span>
               <ScheduleStatusDot status={live.status} />
@@ -397,7 +399,7 @@ export function ScheduleScreen({
               edited in place — so this only saves the typing, not the history.
             */}
             {canPropose && (
-              <Button variant="secondary" size="inline" onClick={loadIntoForm}>
+              <Button variant="secondary" size="compact" onClick={loadIntoForm}>
                 Update this schedule
               </Button>
             )}
@@ -408,7 +410,7 @@ export function ScheduleScreen({
 
       {/* ------------------------------------------------- what came before it */}
       {earlier.length > 0 && (
-        <section className="rounded-manifest border border-line bg-surface p-4 shadow-manifest">
+        <section className="rounded-card border border-line bg-surface p-4 shadow-manifest">
           <h2 className="mb-3 text-section text-hull">Earlier proposals</h2>
           <ul className="flex flex-col gap-5">
             {earlier.map((version) => (
@@ -427,11 +429,11 @@ export function ScheduleScreen({
       )}
 
       {/* ----------------------------------------------------------- the form */}
-      <section className="rounded-manifest border border-line bg-surface p-4 shadow-manifest">
+      <section className="rounded-card border border-line bg-surface p-4 shadow-manifest">
         <h2 className="mb-3 text-section text-hull">
           {isAir ? 'Flight schedule' : 'Vessel schedule'}
         </h2>
-        <div className="grid gap-4 md:grid-cols-4">
+        <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-4">
           <Field id="carrierId" label={isAir ? 'Airlines' : 'Carrier'} required>
             <Select
               id="carrierId"
@@ -529,7 +531,7 @@ export function ScheduleScreen({
                 accept=".pdf,.jpg,.jpeg,.png,.doc,.docx"
                 disabled={!canPropose}
                 onChange={(e) => setBookingFile(e.target.files?.[0] ?? null)}
-                className="text-body text-hull file:mr-3 file:rounded-manifest file:border file:border-line file:bg-surface file:px-3 file:py-1.5 file:text-body file:text-hull"
+                className="w-full min-w-0 text-body text-hull file:mr-3 file:rounded-manifest file:border file:border-line file:bg-surface file:px-3 file:py-1.5 file:text-body file:text-hull"
               />
               {bookingFile === null && keptFileName !== null && canPropose && (
                 <Button variant="destructive" size="inline" className="self-start" onClick={() => setKeptFileName(null)}>
@@ -542,11 +544,11 @@ export function ScheduleScreen({
       </section>
 
       {/* ------------------------------------------------------------- legs */}
-      <section className="rounded-manifest border border-line bg-surface shadow-manifest">
+      <section className="rounded-card border border-line bg-surface shadow-manifest">
         <div className="flex items-center justify-between border-b border-line px-4 py-3">
           <h2 className="text-section text-hull">Legs</h2>
           {canPropose && transitType === 'INDIRECT' && legs.length < maxLegs && (
-            <Button size="inline" onClick={addLeg}>
+            <Button size="compact" onClick={addLeg}>
               Add leg
             </Button>
           )}
@@ -555,7 +557,7 @@ export function ScheduleScreen({
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1100px] border-collapse text-cell">
             <thead>
-              <tr className="border-b border-line bg-paper">
+              <tr className="whitespace-nowrap border-b border-line bg-module-soft">
                 <th className="label-manifest px-2 py-2 text-left">Leg</th>
                 <th className="label-manifest px-2 py-2 text-left">
                   {isAir ? 'Airlines' : 'Vessel Name'}
@@ -688,13 +690,15 @@ export function ScheduleScreen({
                     </td>
                     <td className="px-2 py-2 text-right">
                       {canPropose && legs.length > Math.min(...allowed) && (
-                        <Button
-                          variant="destructive"
-                          size="inline"
-                          onClick={() => setLegs((c) => c.filter((l) => l.key !== leg.key))}
-                        >
-                          Remove
-                        </Button>
+                        <RowActions>
+                          <Button
+                            variant="destructive"
+                            size="inline"
+                            onClick={() => setLegs((c) => c.filter((l) => l.key !== leg.key))}
+                          >
+                            Remove
+                          </Button>
+                        </RowActions>
                       )}
                     </td>
                   </tr>
@@ -738,15 +742,17 @@ export function ScheduleScreen({
         {embedded ? (
           <span />
         ) : (
-          <Link
-            href={`/cs/shipment-booking/${shipmentId}`}
-            className="text-body text-harbour hover:underline"
-          >
-            ← Back to the booking
+          <Link href={`/cs/shipment-booking/${shipmentId}`} className={backLinkClasses}>
+            <ArrowLeft className="size-3.5" aria-hidden="true" />
+            Back to the booking
           </Link>
         )}
         {canPropose && (
-          <Button disabled={isPending || problems.length > 0} onClick={() => void save()}>
+          <Button
+            disabled={isPending || problems.length > 0}
+            onClick={() => void save()}
+            className="max-sm:w-full"
+          >
             {isPending
               ? 'Saving…'
               : live === null

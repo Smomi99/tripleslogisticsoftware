@@ -315,7 +315,7 @@ function Bar({
           </span>
         </span>
       </div>
-      <div className="mt-1 h-1.5 w-full overflow-hidden rounded-[2px] bg-paper">
+      <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-paper">
         <div
           className={over ? 'h-1.5 bg-alert' : 'h-1.5 bg-harbour'}
           style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}

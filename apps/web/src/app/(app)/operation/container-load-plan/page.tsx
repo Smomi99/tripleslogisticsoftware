@@ -104,7 +104,7 @@ function ContainerLoadPlanScreen() {
             placeholder={view === 'plan' ? 'Booking, customer, exporter or PO' : 'CLP, container no, booking or customer'}
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            className="w-72"
+            className="w-full sm:w-72"
           />
 
           {view === 'plans' && (
@@ -112,7 +112,7 @@ function ContainerLoadPlanScreen() {
               aria-label="Status"
               value={status}
               onChange={(event) => setStatus(event.target.value as '' | ClpStatus)}
-              className="w-40"
+              className="w-full sm:w-40"
             >
               <option value="">All statuses</option>
               <option value="DRAFT">Draft</option>

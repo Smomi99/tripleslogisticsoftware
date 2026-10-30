@@ -91,19 +91,23 @@ export function RecipientsPanel({
         </div>
       </div>
 
+      {/*
+        On a phone each row stacks — the party, then its chips, then the
+        verdict — instead of a 720px table the chips would sit off-screen in.
+      */}
       <div className="overflow-x-auto rounded-manifest border border-line">
-        <table className="w-full min-w-180 border-collapse text-cell">
-          <thead>
-            <tr className="border-b border-line bg-paper">
-              <th className="label-manifest w-64 px-3 py-2 text-left">{noun.label}</th>
-              <th className="label-manifest px-3 py-2 text-left">Email addresses</th>
-              <th className="label-manifest w-36 px-3 py-2 text-left">Will receive</th>
+        <table className="w-full border-collapse text-cell max-sm:block sm:min-w-180">
+          <thead className="max-sm:hidden">
+            <tr className="border-b border-line bg-module-soft">
+              <th className="label-manifest w-64 whitespace-nowrap px-3 py-2 text-left">{noun.label}</th>
+              <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Email addresses</th>
+              <th className="label-manifest w-36 whitespace-nowrap px-3 py-2 text-left">Will receive</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="max-sm:block">
             {shown.length === 0 ? (
-              <tr>
-                <td colSpan={3} className="px-3 py-6 text-center text-steel">
+              <tr className="max-sm:block">
+                <td colSpan={3} className="px-3 py-6 text-center text-steel max-sm:block">
                   {view === 'invalid' ? 'Every address checks out.' : `No ${noun.many}.`}
                 </td>
               </tr>
@@ -141,12 +145,12 @@ function PartyRow({
   const problems = row.emails.filter((e) => !e.checking && !e.valid);
 
   return (
-    <tr className="border-b border-line align-top last:border-0 hover:bg-row-hover">
-      <td className="px-3 py-2">
+    <tr className="border-b border-line align-top last:border-0 hover:bg-row-hover max-sm:flex max-sm:flex-col max-sm:gap-2 max-sm:py-3">
+      <td className="px-3 sm:py-2">
         <span className="block font-mono tabular-nums text-steel">{row.partyCode}</span>
         <span className="text-body text-hull">{row.partyName}</span>
       </td>
-      <td className="px-3 py-2">
+      <td className="px-3 sm:py-2">
         <div className="flex flex-wrap items-center gap-1.5">
           {row.emails.length === 0 && !adding && (
             <span className="text-steel">No email on file.</span>
@@ -185,7 +189,8 @@ function PartyRow({
           </ul>
         )}
       </td>
-      <td className="px-3 py-2">
+      <td className="px-3 sm:py-2">
+        <span className="label-manifest mr-2 sm:hidden">Will receive</span>
         {good > 0 ? (
           <Status tone="active">
             Yes · <span className="font-mono tabular-nums">{good}</span>
@@ -228,7 +233,7 @@ function AddressChip({
   return (
     <span
       className={cn(
-        'inline-flex h-7 items-center gap-1.5 rounded-manifest border pl-2 pr-0.5',
+        'inline-flex min-h-9 max-w-full items-center gap-1.5 rounded-full border pl-2.5 pr-0.5 sm:min-h-7',
         state === 'valid' && 'border-verified/40 bg-verified/5',
         state === 'invalid' && 'border-alert/40 bg-alert/5',
         state === 'checking' && 'border-line bg-paper',
@@ -247,7 +252,7 @@ function AddressChip({
         type="button"
         onClick={() => setEditing(true)}
         className={cn(
-          'text-cell hover:underline underline-offset-2',
+          'min-w-0 text-left text-cell hover:underline underline-offset-2 max-sm:break-all',
           state === 'invalid' ? 'text-alert' : 'text-hull',
         )}
         title={row.picName === null ? 'Click to edit' : `${row.picName} — click to edit`}
@@ -261,7 +266,7 @@ function AddressChip({
         type="button"
         onClick={onRemove}
         aria-label={`Remove ${row.address}`}
-        className="grid size-6 place-items-center rounded-manifest text-steel transition-colors duration-120 hover:bg-line hover:text-hull"
+        className="grid size-8 shrink-0 place-items-center rounded-full text-steel transition-colors duration-120 hover:bg-line hover:text-hull sm:size-6"
       >
         ×
       </button>
@@ -310,7 +315,7 @@ function AddressInput({
           finish(initial);
         }
       }}
-      className="h-7 w-64 rounded-manifest border border-harbour bg-surface px-2 text-cell text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour"
+      className="h-9 w-full rounded-manifest border border-harbour bg-surface px-2 text-base text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour sm:h-7 sm:w-64 sm:text-cell"
     />
   );
 }

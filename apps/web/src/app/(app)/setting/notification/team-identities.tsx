@@ -17,8 +17,9 @@ import { useSession } from '@/lib/session';
 
 const ENDPOINT = '/api/tenant/setting/notifications/teams';
 
+// The Input's look, 16px on a phone so iOS does not zoom into it.
 const TEXTAREA =
-  'w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-body text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour';
+  'w-full rounded-manifest border border-line bg-surface px-3 py-2 text-base text-hull transition-[border-color,box-shadow] duration-[120ms] ease-manifest hover:border-steel/50 focus:border-harbour focus:outline-none focus:ring-3 focus:ring-harbour/20 disabled:cursor-not-allowed disabled:bg-paper disabled:text-steel sm:px-2.5 sm:py-1.5 sm:text-body';
 
 /**
  * The client's Notification sheet: five teams, each with the letters it sends,
@@ -76,7 +77,7 @@ export function TeamIdentities({ mayEdit }: { mayEdit: boolean }) {
   }
 
   return (
-    <div className="max-w-5xl rounded-manifest border border-line bg-surface p-4 shadow-manifest">
+    <div className="max-w-5xl rounded-card border border-line bg-surface p-4 shadow-manifest sm:p-5">
       <p className="text-body text-steel">
         Each team&apos;s letters go out with its reply-to address and its signature. Replies reach the team,
         not the sending account.
@@ -148,7 +149,7 @@ export function TeamIdentities({ mayEdit }: { mayEdit: boolean }) {
       )}
       {mayEdit && (
         <div className="mt-4">
-          <Button onClick={() => void save()} disabled={isSaving || isLoading}>
+          <Button onClick={() => void save()} disabled={isSaving || isLoading} className="max-sm:w-full">
             {isSaving ? 'Saving…' : 'Save team settings'}
           </Button>
         </div>

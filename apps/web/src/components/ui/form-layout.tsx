@@ -1,5 +1,9 @@
+import { ArrowLeft } from 'lucide-react';
+import type { Route } from 'next';
+import Link from 'next/link';
 import { Children, type ReactNode } from 'react';
 
+import { ModuleBadge } from '@/components/shell/module-theme';
 import { cn } from '@/lib/utils';
 
 import { Button } from './button';
@@ -69,12 +73,19 @@ export function FormLayout({
         {children}
       </div>
 
-      <div className="flex items-center gap-2 border-t border-line pt-4">
-        <Button type="submit" disabled={isPending || submitDisabled}>
+      {/* On a phone the buttons run full width, the main action nearest the thumb. */}
+      <div className="flex flex-col-reverse gap-2 border-t border-line pt-4 sm:flex-row sm:items-center">
+        <Button type="submit" disabled={isPending || submitDisabled} className="max-sm:w-full">
           {isPending ? 'Saving…' : submitLabel}
         </Button>
         {onCancel !== undefined && (
-          <Button type="button" variant="secondary" onClick={onCancel} disabled={isPending}>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={onCancel}
+            disabled={isPending}
+            className="max-sm:w-full"
+          >
             {cancelLabel}
           </Button>
         )}
@@ -83,7 +94,11 @@ export function FormLayout({
   );
 }
 
-/** The §8 list-screen header: title on the left, permission-gated Add on the right. */
+/**
+ * The §8 list-screen header: the module's colour badge and the title on the
+ * left, the permission-gated Add on the right. On a phone the action drops
+ * below the title and runs full width.
+ */
 export function PageHeader({
   title,
   description,
@@ -94,17 +109,30 @@ export function PageHeader({
   action?: ReactNode;
 }) {
   return (
-    <div className="flex flex-wrap items-start justify-between gap-3">
-      <div>
-        <h1 className="text-page-title text-hull">{title}</h1>
-        {description !== undefined && (
-          <p className="mt-0.5 text-body text-steel">{description}</p>
-        )}
+    <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
+      <div className="flex min-w-0 items-start gap-3">
+        <ModuleBadge />
+        <div className="min-w-0">
+          <h1 className="text-page-title text-hull">{title}</h1>
+          {description !== undefined && (
+            <p className="mt-0.5 text-body text-steel">{description}</p>
+          )}
+        </div>
       </div>
-      {action}
+      {action !== undefined && action !== null && action !== false && (
+        <div className="flex flex-wrap items-center gap-2 max-sm:*:flex-1">{action}</div>
+      )}
     </div>
   );
 }
+
+/**
+ * The "Back to list" chip. Exported as classes rather than a component so a
+ * screen can put it on whichever link it already uses (next/link with a typed
+ * route, or a plain anchor) — pair it with an ArrowLeft icon at size-3.5.
+ */
+export const backLinkClasses =
+  'inline-flex w-fit items-center gap-1.5 rounded-full bg-module-soft px-3 py-1 text-cell font-medium text-harbour transition-colors duration-[120ms] hover:bg-row-hover hover:text-harbour-ink';
 
 /**
  * §8: every child screen is scoped to its parent by URL, shows the parent name,
@@ -122,17 +150,19 @@ export function ChildScreenHeader({
   backHref: string;
 }) {
   return (
-    <div className="flex flex-col gap-2">
-      <a
-        href={backHref}
-        className="text-cell text-harbour hover:text-harbour-ink hover:underline underline-offset-2"
-      >
-        ← Back to list
-      </a>
-      <div>
-        <p className="label-manifest">{parentLabel}</p>
-        <h1 className="text-page-title text-hull">{parentName}</h1>
-        <p className="mt-0.5 text-body text-steel">{title}</p>
+    <div className="flex flex-col gap-3">
+      {/* A Link, not an anchor: going back to the list should not reload the app. */}
+      <Link href={backHref as Route} className={backLinkClasses}>
+        <ArrowLeft className="size-3.5" aria-hidden="true" />
+        Back to list
+      </Link>
+      <div className="flex min-w-0 items-start gap-3">
+        <ModuleBadge />
+        <div className="min-w-0">
+          <p className="label-manifest">{parentLabel}</p>
+          <h1 className="text-page-title break-words text-hull">{parentName}</h1>
+          <p className="mt-0.5 text-body text-steel">{title}</p>
+        </div>
       </div>
     </div>
   );

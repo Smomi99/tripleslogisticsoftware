@@ -200,15 +200,15 @@ export default function InquiryListPage() {
         }
       />
 
-      {/* §5.5 filters, in the client's order. */}
-      <div className="flex flex-wrap items-center gap-2">
+      {/* §5.5 filters, in the client's order. Two to a row on a phone. */}
+      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
         <Input
           type="search"
           placeholder="Search inquiry no or customer"
           aria-label="Search inquiries"
           value={list.searchInput}
           onChange={(event) => list.setSearchInput(event.target.value)}
-          className="w-64"
+          className="col-span-2 sm:w-64"
         />
         <Input
           type="date"
@@ -216,7 +216,7 @@ export default function InquiryListPage() {
           numeric
           value={list.filters['fromDate'] ?? ''}
           onChange={(event) => list.setFilter('fromDate', event.target.value)}
-          className="w-40"
+          className="sm:w-40"
         />
         <Input
           type="date"
@@ -224,13 +224,13 @@ export default function InquiryListPage() {
           numeric
           value={list.filters['toDate'] ?? ''}
           onChange={(event) => list.setFilter('toDate', event.target.value)}
-          className="w-40"
+          className="sm:w-40"
         />
         <Select
           aria-label="Shipment type"
           value={list.filters['shipmentType'] ?? ''}
           onChange={(event) => list.setFilter('shipmentType', event.target.value)}
-          className="w-32"
+          className="sm:w-32"
         >
           <option value="">All modes</option>
           {SHIPMENT_TYPES.map((t) => (
@@ -243,7 +243,7 @@ export default function InquiryListPage() {
           aria-label="Port of loading"
           value={list.filters['polId'] ?? ''}
           onChange={(event) => list.setFilter('polId', event.target.value)}
-          className="w-44"
+          className="sm:w-44"
         >
           <option value="">All POL</option>
           {ports.map((p) => (
@@ -256,7 +256,7 @@ export default function InquiryListPage() {
           aria-label="Port of discharge"
           value={list.filters['podId'] ?? ''}
           onChange={(event) => list.setFilter('podId', event.target.value)}
-          className="w-44"
+          className="sm:w-44"
         >
           <option value="">All POD</option>
           {ports.map((p) => (
@@ -269,7 +269,7 @@ export default function InquiryListPage() {
           aria-label="Salesman"
           value={list.filters['salesmanId'] ?? ''}
           onChange={(event) => list.setFilter('salesmanId', event.target.value)}
-          className="w-40"
+          className="sm:w-40"
         >
           <option value="">All salesmen</option>
           {(options?.salesmen ?? []).map((s) => (
@@ -282,7 +282,7 @@ export default function InquiryListPage() {
           aria-label="Status"
           value={list.filters['status'] ?? ''}
           onChange={(event) => list.setFilter('status', event.target.value)}
-          className="w-36"
+          className="sm:w-36"
         >
           <option value="">All statuses</option>
           {INQUIRY_STATUSES.map((s) => (
@@ -298,7 +298,7 @@ export default function InquiryListPage() {
             aria-label="Whose inquiries"
             value={list.filters['scope'] ?? 'OWN'}
             onChange={(event) => list.setFilter('scope', event.target.value)}
-            className="w-36"
+            className="sm:w-36"
           >
             <option value="OWN">Mine</option>
             <option value="ALL">Whole team</option>
@@ -306,7 +306,7 @@ export default function InquiryListPage() {
         )}
 
         {list.hasFilters && (
-          <Button variant="secondary" onClick={list.clearFilters}>
+          <Button variant="secondary" onClick={list.clearFilters} className="col-span-2">
             Clear filters
           </Button>
         )}

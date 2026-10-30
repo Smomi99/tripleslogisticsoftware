@@ -1,12 +1,14 @@
 'use client';
 
 import type { DebitInvoiceOptionsDto, DebitInvoicePrefillDto } from '@ff/shared';
+import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 
 import { DebitInvoiceForm, type DebitInvoiceFormMode } from '@/components/accounts/debit-invoice-form';
 import { EmptyState } from '@/components/ui/empty-state';
+import { backLinkClasses } from '@/components/ui/form-layout';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 
@@ -60,9 +62,10 @@ function NewDebitInvoice() {
       <div className="flex flex-col gap-4">
         <Link
           href={shipmentId === null ? { pathname: '/accounts/debit-invoice' } : { pathname: '/accounts/awaiting-freight-inv' }}
-          className="text-cell text-harbour hover:underline"
+          className={backLinkClasses}
         >
-          ← Back to list
+          <ArrowLeft className="size-3.5" aria-hidden="true" />
+          Back to list
         </Link>
         <EmptyState title="Cannot make this invoice" description={error} />
       </div>

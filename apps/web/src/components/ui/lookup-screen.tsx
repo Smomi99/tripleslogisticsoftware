@@ -178,7 +178,7 @@ export function LookupScreen<TRow extends LookupRow>({
           aria-label={searchPlaceholder}
           value={list.searchInput}
           onChange={(event) => list.setSearchInput(event.target.value)}
-          className="w-72"
+          className="w-full sm:w-72"
         />
         {filters?.(list)}
       </div>

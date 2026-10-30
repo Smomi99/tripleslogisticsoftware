@@ -185,13 +185,13 @@ export default function UserPage() {
           aria-label="Search users"
           value={list.searchInput}
           onChange={(event) => list.setSearchInput(event.target.value)}
-          className="w-72"
+          className="w-full sm:w-72"
         />
         <Select
           aria-label="Filter by role"
           value={list.filters['roleId'] ?? ''}
           onChange={(event) => list.setFilter('roleId', event.target.value)}
-          className="w-48"
+          className="w-full sm:w-48"
         >
           <option value="">All roles</option>
           {options.roles.map((r) => (
@@ -544,7 +544,7 @@ function UserForm({
           className="size-4 accent-harbour"
           {...register('isSuperadmin')}
         />
-        <label htmlFor="isSuperadmin" className="text-body text-hull">
+        <label htmlFor="isSuperadmin" className="text-body text-hull max-sm:py-2">
           Superadmin — bypasses every permission check
         </label>
       </div>

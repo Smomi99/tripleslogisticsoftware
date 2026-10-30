@@ -18,6 +18,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Input } from '@/components/ui/field';
 import { FormLayout, PageHeader } from '@/components/ui/form-layout';
 import { ConfirmDialog, Modal } from '@/components/ui/modal';
+import { RowActions } from '@/components/ui/row-actions';
 import { Segmented } from '@/components/ui/segmented';
 import { ActiveStatus } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
@@ -144,15 +145,15 @@ export default function ChartOfAccountsPage() {
             description="Add the first ledger for this head, then add its sub ledgers under it."
           />
         ) : (
-          <div className="overflow-x-auto rounded-manifest border border-line bg-surface shadow-manifest">
+          <div className="overflow-x-auto rounded-card border border-line bg-surface shadow-manifest">
             <table className="w-full min-w-200 border-collapse">
               <thead>
-                <tr className="border-b border-line bg-paper">
-                  <th className="label-manifest w-28 px-3 py-2 text-left">Code</th>
-                  <th className="label-manifest px-3 py-2 text-left">Ledger / Sub Ledger</th>
-                  <th className="label-manifest px-3 py-2 text-right">Balance ({baseCode})</th>
-                  <th className="label-manifest px-3 py-2 text-left">Status</th>
-                  <th className="label-manifest px-3 py-2 text-right">Action</th>
+                <tr className="border-b border-line bg-module-soft">
+                  <th className="label-manifest whitespace-nowrap w-28 px-3 py-2 text-left">Code</th>
+                  <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Ledger / Sub Ledger</th>
+                  <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">Balance ({baseCode})</th>
+                  <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Status</th>
+                  <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -257,11 +258,11 @@ function LedgerRows({
           <ActiveStatus isActive={ledger.isActive} />
         </td>
         <td className="px-3 py-2 text-right">
-          <div className="flex justify-end gap-3">{actions(ledger)}</div>
+          <RowActions>{actions(ledger)}</RowActions>
         </td>
       </tr>
       {ledger.subLedgers.map((sub) => (
-        <tr key={sub.id} className="border-b border-line last:border-0 hover:bg-[#F0F4F4]">
+        <tr key={sub.id} className="border-b border-line last:border-0 hover:bg-row-hover">
           <td className="px-3 py-1.5 font-mono text-cell tabular-nums text-steel">{sub.code}</td>
           <td className={cn('py-1.5 pl-8 pr-3 text-cell', sub.isActive ? 'text-hull' : 'text-steel')}>{sub.name}</td>
           <td className="px-3 py-1.5 text-right font-mono text-cell tabular-nums text-hull">{amount(sub.balance)}</td>
@@ -269,7 +270,7 @@ function LedgerRows({
             <ActiveStatus isActive={sub.isActive} />
           </td>
           <td className="px-3 py-1.5 text-right">
-            <div className="flex justify-end gap-3">{actions(sub)}</div>
+            <RowActions>{actions(sub)}</RowActions>
           </td>
         </tr>
       ))}

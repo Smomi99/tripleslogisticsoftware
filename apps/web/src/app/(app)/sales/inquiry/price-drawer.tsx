@@ -230,8 +230,8 @@ export function PriceDrawer({
                 const isOpen = editing?.inquiryRateId === row.id;
                 return (
                   <li key={row.id} className="flex flex-col gap-1 border-b border-line pb-1.5">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                      <span className="flex flex-wrap items-center gap-2">
                         <Status tone={row.isSelected ? 'active' : 'inactive'}>
                           {row.isSelected ? 'Quoted' : 'Attached'}
                         </Status>
@@ -313,12 +313,13 @@ export function PriceDrawer({
                           errors={editing.errors}
                           disabled={isSaving}
                         />
-                        <div className="flex justify-end gap-2">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
                           <Button
                             variant="secondary"
                             size="compact"
                             disabled={isSaving}
                             onClick={() => setEditing(null)}
+                            className="max-sm:w-full"
                           >
                             Cancel
                           </Button>
@@ -326,6 +327,7 @@ export function PriceDrawer({
                             size="compact"
                             disabled={isSaving}
                             onClick={() => void saveCharges()}
+                            className="max-sm:w-full"
                           >
                             {isSaving ? 'Saving…' : 'Save charges'}
                           </Button>
@@ -371,11 +373,11 @@ export function PriceDrawer({
                       const draft = picked.get(line.id);
                       return (
                         <li key={line.id} className="flex flex-col gap-1">
-                          <div className="flex items-center gap-2 text-cell">
+                          <div className="flex flex-wrap items-center gap-2 text-cell">
                             <input
                               type="checkbox"
                               id={`line-${line.id}`}
-                              className="size-3.5 accent-harbour"
+                              className="size-4 accent-harbour sm:size-3.5"
                               disabled={already || settled}
                               checked={already || draft !== undefined}
                               onChange={(event) =>
@@ -394,7 +396,7 @@ export function PriceDrawer({
                                 </span>
                               )}
                             </label>
-                            <span className="flex items-center gap-3 font-mono">
+                            <span className="ml-auto flex items-center gap-3 font-mono">
                               {line.buyPrice !== undefined && (
                                 <span className="text-steel">buy {line.buyPrice}</span>
                               )}
@@ -409,7 +411,7 @@ export function PriceDrawer({
                             </span>
                           </div>
                           {draft !== undefined && options !== null && (
-                            <div className="pl-5">
+                            <div className="sm:pl-5">
                               <ChargePicker
                                 idPrefix={`line-${line.id}`}
                                 available={line.charges}
@@ -435,11 +437,15 @@ export function PriceDrawer({
           )}
         </div>
 
-        <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={onClose}>
+        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+          <Button variant="secondary" onClick={onClose} className="max-sm:w-full">
             Close
           </Button>
-          <Button disabled={isSaving || picked.size === 0} onClick={() => void attach()}>
+          <Button
+            disabled={isSaving || picked.size === 0}
+            onClick={() => void attach()}
+            className="max-sm:w-full"
+          >
             {isSaving ? 'Attaching…' : `Attach ${picked.size === 0 ? '' : picked.size} `.trim()}
           </Button>
         </div>

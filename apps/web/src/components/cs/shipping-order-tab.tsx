@@ -106,7 +106,7 @@ export function ShippingOrderTab({
   if (order !== null) {
     return (
       <div className="flex flex-col gap-4">
-        <section className="rounded-manifest border border-line bg-surface p-4 shadow-manifest">
+        <section className="rounded-card border border-line bg-surface p-4 shadow-manifest">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-section text-hull">
               {order.status === 'SKIPPED' ? 'No shipping order needed' : 'Shipping order'}
@@ -124,7 +124,7 @@ export function ShippingOrderTab({
               <span className="font-medium">Skipped.</span> {order.skipReason}
             </p>
           ) : (
-            <dl className="grid gap-4 md:grid-cols-4">
+            <dl className="grid grid-cols-2 gap-4 md:grid-cols-4">
               {[
                 ['Issued', order.issueDate],
                 ['Issued by', order.issuedByName],
@@ -140,7 +140,7 @@ export function ShippingOrderTab({
               ].map(([label, value]) => (
                 <div key={label as string}>
                   <dt className="label-manifest">{label}</dt>
-                  <dd className="text-body text-hull">
+                  <dd className="break-words text-body text-hull">
                     {value === null || value === '' ? '—' : value}
                   </dd>
                 </div>
@@ -157,7 +157,9 @@ export function ShippingOrderTab({
 
         <div className="flex flex-wrap gap-2">
           {order.status === 'ISSUED' && can('CUSTOMER_SERVICE.SHIPPING_ORDER.EXPORT_PDF') && (
-            <Button onClick={() => void print()}>Print shipping order</Button>
+            <Button onClick={() => void print()} className="max-sm:w-full">
+              Print shipping order
+            </Button>
           )}
           {can('CUSTOMER_SERVICE.SHIPPING_ORDER.CANCEL') && (
             <Button
@@ -191,12 +193,13 @@ export function ShippingOrderTab({
                 placeholder="Wrong vessel on the order"
               />
             </Field>
-            <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={() => setCancelOpen(false)}>
+            <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <Button variant="secondary" className="max-sm:w-full" onClick={() => setCancelOpen(false)}>
                 Keep it
               </Button>
               <Button
                 variant="destructive"
+                className="max-sm:w-full"
                 disabled={isPending || cancelReason.trim() === ''}
                 onClick={() => void act('/cancel', { reason: cancelReason.trim() }, 'Cancelled')}
               >
@@ -218,7 +221,7 @@ export function ShippingOrderTab({
           description="A shipping order is issued once the customer has approved the schedule."
         />
       ) : (
-        <section className="rounded-manifest border border-line bg-surface p-4 shadow-manifest">
+        <section className="rounded-card border border-line bg-surface p-4 shadow-manifest">
           <h2 className="mb-3 text-section text-hull">Issue the shipping order</h2>
           <p className="mb-4 text-body text-steel">
             It carries the approved POs only, and the schedule the customer accepted. Issuing is
@@ -247,6 +250,7 @@ export function ShippingOrderTab({
         {readyToIssue && can('CUSTOMER_SERVICE.SHIPPING_ORDER.ISSUE') && (
           <Button
             disabled={isPending}
+            className="max-sm:w-full"
             onClick={() =>
               void act(
                 '',
@@ -263,6 +267,7 @@ export function ShippingOrderTab({
           <Button
             variant="secondary"
             disabled={isPending}
+            className="max-sm:w-full"
             onClick={() => {
               setSkipReason('');
               setSkipOpen(true);
@@ -288,11 +293,12 @@ export function ShippingOrderTab({
               placeholder="Inbound shipment — no S/O required"
             />
           </Field>
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setSkipOpen(false)}>
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+            <Button variant="secondary" className="max-sm:w-full" onClick={() => setSkipOpen(false)}>
               Back
             </Button>
             <Button
+              className="max-sm:w-full"
               disabled={isPending || skipReason.trim() === ''}
               onClick={() => void act('/skip', { reason: skipReason.trim() }, 'Shipping order skipped')}
             >

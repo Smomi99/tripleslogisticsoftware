@@ -143,12 +143,12 @@ export function FollowupDrawer({
             rows={3}
             value={notes}
             onChange={(event) => setNotes(event.target.value)}
-            className="w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-body text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour"
+            className="w-full rounded-manifest border border-line bg-surface px-3 py-1.5 text-base text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour sm:px-2.5 sm:text-body"
             placeholder="Their answer, and anything that changes the price."
           />
         </Field>
         <div>
-          <Button onClick={() => void save()} disabled={busy}>
+          <Button onClick={() => void save()} disabled={busy} className="max-sm:w-full">
             {busy ? 'Saving…' : 'Save follow-up'}
           </Button>
         </div>

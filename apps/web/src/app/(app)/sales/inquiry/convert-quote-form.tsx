@@ -268,7 +268,7 @@ export function ConvertQuoteForm({
           </p>
         )}
 
-        <dl className="grid grid-cols-[8rem_1fr] gap-x-4 gap-y-1 rounded-manifest border border-line bg-paper px-3 py-2">
+        <dl className="grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3 gap-y-1 sm:grid-cols-[8rem_minmax(0,1fr)] sm:gap-x-4 rounded-manifest border border-line bg-paper px-3 py-2">
           <dt className="label-manifest self-center">Buy price</dt>
           <dd className="font-mono text-cell tabular-nums text-hull">
             {buyPrice === '' ? '—' : `${buyCurrencyCode ?? ''} ${money(buyPrice)}`}
@@ -369,11 +369,15 @@ export function ConvertQuoteForm({
           profit on Price Add-on, publish it, then attach it here with Price.
         </p>
 
-        <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={onClose}>
+        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+          <Button variant="secondary" onClick={onClose} className="max-sm:w-full">
             Cancel
           </Button>
-          <Button disabled={!ready || saving} onClick={() => void submit()}>
+          <Button
+            disabled={!ready || saving}
+            onClick={() => void submit()}
+            className="max-sm:w-full"
+          >
             {saving ? 'Creating…' : 'Create draft rate'}
           </Button>
         </div>

@@ -646,7 +646,7 @@ export function InquiryForm({
                   aria-label="Add a customer"
                   title="Add a customer without leaving this form"
                   onClick={() => setQuickAddOpen(true)}
-                  className="h-9 shrink-0 px-3"
+                  className="shrink-0 px-3"
                 >
                   +
                 </Button>
@@ -842,7 +842,7 @@ export function InquiryForm({
             would have nowhere to put one.
           */}
           <div className="md:col-span-3">
-            <span className="label-manifest">Commodity</span>
+            <span className="label-field">Commodity</span>
             <div className="mt-1 flex flex-col gap-2">
               {(commodities.length === 0
                 ? [{ commodityItemId: '', hsCode: '' }]
@@ -852,7 +852,7 @@ export function InquiryForm({
                   <Select
                     aria-label={`Commodity ${index + 1}`}
                     id={index === 0 ? 'commodityItemId' : undefined}
-                    className="w-64"
+                    className="w-full sm:w-64"
                     value={row.commodityItemId}
                     onChange={(e) => {
                       const next = e.target.value;
@@ -880,7 +880,7 @@ export function InquiryForm({
                     aria-label={`HS code ${index + 1}`}
                     id={index === 0 ? 'hsCode' : undefined}
                     numeric
-                    className="w-40"
+                    className="min-w-0 flex-1 sm:w-40 sm:flex-none"
                     placeholder="HS code"
                     value={row.hsCode}
                     onChange={(e) => {
@@ -898,6 +898,7 @@ export function InquiryForm({
                       variant="destructive"
                       size="inline"
                       aria-label={`Remove commodity ${index + 1}`}
+                      className="max-sm:min-h-10 max-sm:min-w-10"
                       onClick={() =>
                         setCommodities((current) => current.filter((_, i) => i !== index))
                       }
@@ -986,13 +987,13 @@ export function InquiryForm({
               <table className="w-full min-w-[32rem] border-collapse text-cell">
                 <thead>
                   <tr>
-                    <th className="w-40 border border-line bg-paper px-2 py-1.5 text-left text-label text-steel">
+                    <th className="w-40 whitespace-nowrap border border-line bg-module-soft px-2 py-1.5 text-left text-label text-steel">
                       Required container
                     </th>
                     {volumeColumns.map((column) => (
                       <th
                         key={column.key}
-                        className="border border-line bg-paper px-2 py-1.5 text-center font-mono text-label text-hull"
+                        className="whitespace-nowrap border border-line bg-module-soft px-2 py-1.5 text-center font-mono text-label text-hull"
                       >
                         {column.label}
                       </th>
@@ -1153,11 +1154,11 @@ export function InquiryForm({
           </Field>
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t border-line pt-4">
-          <Button type="button" variant="secondary" onClick={onCancel}>
+        <div className="flex flex-col gap-2 border-t border-line pt-4 sm:flex-row sm:items-center sm:justify-end">
+          <Button type="button" variant="secondary" onClick={onCancel} className="max-sm:w-full">
             Cancel
           </Button>
-          <Button type="submit" disabled={isSaving}>
+          <Button type="submit" disabled={isSaving} className="max-sm:w-full">
             {isSaving
               ? isEdit
                 ? 'Saving…'

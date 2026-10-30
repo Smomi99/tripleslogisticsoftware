@@ -1,11 +1,13 @@
 'use client';
 
 import type { DebitInvoiceDto, DebitInvoiceOptionsDto } from '@ff/shared';
+import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { use, useEffect, useState } from 'react';
 
 import { DebitInvoiceForm } from '@/components/accounts/debit-invoice-form';
 import { EmptyState } from '@/components/ui/empty-state';
+import { backLinkClasses } from '@/components/ui/form-layout';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 
@@ -45,8 +47,9 @@ export default function DebitInvoicePage({ params }: { params: Promise<{ id: str
   if (error !== null) {
     return (
       <div className="flex flex-col gap-4">
-        <Link href={{ pathname: '/accounts/debit-invoice' }} className="text-cell text-harbour hover:underline">
-          ← Back to list
+        <Link href={{ pathname: '/accounts/debit-invoice' }} className={backLinkClasses}>
+          <ArrowLeft className="size-3.5" aria-hidden="true" />
+          Back to list
         </Link>
         <EmptyState title="Not available" description={error} />
       </div>

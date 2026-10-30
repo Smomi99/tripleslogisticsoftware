@@ -142,8 +142,8 @@ export default function CreditInvoicePage() {
       />
 
       <div className="flex flex-wrap items-end gap-3">
-        <div className="flex w-72 flex-col gap-1">
-          <span className="label-manifest">Search</span>
+        <div className="flex w-full flex-col gap-1 sm:w-72">
+          <span className="label-field">Search</span>
           <Input
             type="search"
             aria-label="Search credit invoices"
@@ -152,8 +152,8 @@ export default function CreditInvoicePage() {
             onChange={(e) => list.setSearchInput(e.target.value)}
           />
         </div>
-        <div className="flex w-44 flex-col gap-1">
-          <span className="label-manifest">Supplier</span>
+        <div className="flex min-w-0 flex-1 basis-40 flex-col gap-1 sm:w-44 sm:flex-none">
+          <span className="label-field">Supplier</span>
           <Select aria-label="Kind of supplier" value={list.filters.partyType ?? ''} onChange={(e) => list.setFilter('partyType', e.target.value)}>
             <option value="">Every supplier</option>
             {PAY_TO_PARTY_TYPES.map((t) => (
@@ -163,8 +163,8 @@ export default function CreditInvoicePage() {
             ))}
           </Select>
         </div>
-        <div className="flex w-44 flex-col gap-1">
-          <span className="label-manifest">Payment Status</span>
+        <div className="flex min-w-0 flex-1 basis-40 flex-col gap-1 sm:w-44 sm:flex-none">
+          <span className="label-field">Payment status</span>
           <Select aria-label="Payment status" value={list.filters.payment ?? ''} onChange={(e) => list.setFilter('payment', e.target.value)}>
             <option value="">Any</option>
             {CREDIT_INVOICE_PAYMENT_FILTERS.map((s) => (

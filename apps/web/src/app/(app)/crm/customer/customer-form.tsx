@@ -271,7 +271,7 @@ export function CustomerForm({ customer }: { customer: CustomerDto | null }) {
           id="notes"
           rows={4}
           {...register('notes')}
-          className="w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-body text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour"
+          className="w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-base text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour sm:text-body"
         />
       </Field>
     </FormLayout>

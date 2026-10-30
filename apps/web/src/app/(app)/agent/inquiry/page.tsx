@@ -10,6 +10,8 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { EmptyState } from '@/components/ui/empty-state';
 import { Input } from '@/components/ui/field';
+import { PageHeader } from '@/components/ui/form-layout';
+import { RowActions } from '@/components/ui/row-actions';
 import { Status } from '@/components/ui/status';
 import { useSession } from '@/lib/session';
 
@@ -112,28 +114,30 @@ export default function PortalInquiryListPage() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <h1 className="text-page-title text-hull">Inquiries</h1>
-        <div className="flex items-center gap-4">
-          <label className="flex items-center gap-2 text-body text-steel">
-            <input
-              type="checkbox"
-              checked={pendingOnly}
-              onChange={(event) => setPendingOnly(event.target.checked)}
-              className="h-4 w-4 rounded-manifest border-line accent-harbour"
+      <PageHeader
+        title="Inquiries"
+        action={
+          <>
+            <label className="flex min-h-10 items-center gap-2 text-body text-steel sm:mr-2 sm:min-h-0">
+              <input
+                type="checkbox"
+                checked={pendingOnly}
+                onChange={(event) => setPendingOnly(event.target.checked)}
+                className="h-4 w-4 rounded-manifest border-line accent-harbour"
+              />
+              Not yet quoted
+            </label>
+            <Input
+              type="search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Search"
+              aria-label="Search inquiries"
+              className="sm:w-52"
             />
-            Not yet quoted
-          </label>
-          <Input
-            type="search"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search"
-            aria-label="Search inquiries"
-            className="w-52"
-          />
-        </div>
-      </div>
+          </>
+        }
+      />
 
       {error !== null && (
         <p role="alert" className="text-body text-alert">
@@ -163,21 +167,21 @@ export default function PortalInquiryListPage() {
       )}
 
       {inquiries !== null && inquiries.length > 0 && (
-        <div className="overflow-x-auto rounded-manifest border border-line bg-surface shadow-manifest">
+        <div className="overflow-x-auto rounded-card border border-line bg-surface shadow-manifest">
           <table className="w-full min-w-275 border-collapse">
             <thead>
-              <tr className="border-b border-line bg-paper">
-                <th className="label-manifest px-3 py-2 text-left">Inquiry No</th>
-                <th className="label-manifest px-3 py-2 text-left">Date</th>
-                <th className="label-manifest px-3 py-2 text-left">Commodity</th>
-                <th className="label-manifest px-3 py-2 text-left">Shipment type</th>
-                <th className="label-manifest px-3 py-2 text-left">POL/AOL</th>
-                <th className="label-manifest px-3 py-2 text-left">POD/AOD</th>
-                <th className="label-manifest px-3 py-2 text-left">Required container</th>
-                <th className="label-manifest px-3 py-2 text-left">Valid to date</th>
-                <th className="label-manifest px-3 py-2 text-left">Quotation</th>
-                <th className="label-manifest px-3 py-2 text-left">Status</th>
-                <th className="label-manifest px-3 py-2 text-right">Action</th>
+              <tr className="border-b border-line bg-module-soft">
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Inquiry No</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Date</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Commodity</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Shipment type</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">POL/AOL</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">POD/AOD</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Required container</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Valid to date</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Quotation</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Status</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -194,7 +198,7 @@ export default function PortalInquiryListPage() {
                   >
                     {/* §12: the business code is mono, on a tinted gutter — the
                         anchor the eye returns to when scanning a column. */}
-                    <td className="bg-paper/40 px-3 py-2 font-mono text-cell tabular-nums text-hull">
+                    <td className="bg-module-soft/60 px-3 py-2 font-mono text-cell tabular-nums text-hull">
                       {inquiry.code}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 font-mono text-cell tabular-nums text-steel">
@@ -247,14 +251,14 @@ export default function PortalInquiryListPage() {
                       )}
                     </td>
                     <td className="whitespace-nowrap px-3 py-2 text-right text-cell">
-                      <span className="inline-flex items-center gap-3">
+                      <RowActions>
                         <Link href={pathname} className="text-harbour hover:underline">
                           View
                         </Link>
                         <Link href={at('quotation')} className="text-harbour hover:underline">
                           {quote === null ? 'Quote' : 'Amend'}
                         </Link>
-                      </span>
+                      </RowActions>
                     </td>
                   </tr>
                 );

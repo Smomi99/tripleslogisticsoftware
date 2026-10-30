@@ -12,6 +12,7 @@ import {
   TRANSIT_TYPES,
   LOADING_TYPE_LABEL,
 } from '@ff/shared';
+import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -19,8 +20,9 @@ import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
-import { PageHeader } from '@/components/ui/form-layout';
+import { backLinkClasses, PageHeader } from '@/components/ui/form-layout';
 import { ConfirmDialog, Modal } from '@/components/ui/modal';
+import { RowActions } from '@/components/ui/row-actions';
 import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
@@ -437,8 +439,9 @@ export function ShipmentBookingScreen({
         <p role="alert" className="rounded-manifest border border-alert/30 bg-alert/5 px-3 py-2 text-body text-alert">
           {loadError}
         </p>
-        <Link href="/cs/quotation" className="text-body text-harbour hover:underline">
-          ← Back to quotation list
+        <Link href="/cs/quotation" className={backLinkClasses}>
+          <ArrowLeft className="size-3.5" aria-hidden="true" />
+          Back to quotation list
         </Link>
       </div>
     );
@@ -527,7 +530,7 @@ export function ShipmentBookingScreen({
       )}
 
       {/* ------------------------------------------------------------ header */}
-      <section className="rounded-manifest border border-line bg-surface p-4 shadow-manifest">
+      <section className="rounded-card border border-line bg-surface p-4 shadow-manifest">
         <h2 className="mb-3 text-section text-hull">Booking</h2>
         <div className="grid gap-4 md:grid-cols-3">
           <Field id="customer" label="Customer">
@@ -539,16 +542,19 @@ export function ShipmentBookingScreen({
             keeps what it was issued with.
           */}
           <div className="flex flex-col gap-1.5 md:col-span-2">
-            <div className="grid grid-cols-[minmax(0,1fr)_10rem_2rem] gap-2">
-              <label htmlFor="commodity-0" className="label-manifest">
+            <div className="grid grid-cols-[minmax(0,1fr)_7rem_2.25rem] gap-2 sm:grid-cols-[minmax(0,1fr)_10rem_2rem]">
+              <label htmlFor="commodity-0" className="label-field">
                 Commodity
               </label>
-              <label htmlFor="hsCode-0" className="label-manifest">
+              <label htmlFor="hsCode-0" className="label-field">
                 HS Code
               </label>
             </div>
             {shownCommodities.map((row, index) => (
-              <div key={index} className="grid grid-cols-[minmax(0,1fr)_10rem_2rem] items-start gap-2">
+              <div
+                key={index}
+                className="grid grid-cols-[minmax(0,1fr)_7rem_2.25rem] items-start gap-2 sm:grid-cols-[minmax(0,1fr)_10rem_2rem]"
+              >
                 <Select
                   id={`commodity-${index}`}
                   aria-label={index === 0 ? undefined : `Commodity ${index + 1}`}
@@ -577,6 +583,7 @@ export function ShipmentBookingScreen({
                     variant="destructive"
                     size="inline"
                     aria-label={`Remove commodity ${index + 1}`}
+                    className="max-sm:h-10 max-sm:w-9"
                     onClick={() =>
                       setCommodityRows((current) => current.filter((_, i) => i !== index))
                     }
@@ -764,13 +771,13 @@ export function ShipmentBookingScreen({
       </section>
 
       {/* -------------------------------------------------------------- grid */}
-      <section className="rounded-manifest border border-line bg-surface shadow-manifest">
+      <section className="rounded-card border border-line bg-surface shadow-manifest">
         <h2 className="border-b border-line px-4 py-3 text-section text-hull">Cargo</h2>
 
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1280px] border-collapse text-cell">
             <thead>
-              <tr className="border-b border-line bg-paper">
+              <tr className="whitespace-nowrap border-b border-line bg-module-soft">
                 <th className="label-manifest px-2 py-2 text-left">PO</th>
                 <th className="label-manifest px-2 py-2 text-left">Item</th>
                 <th className="label-manifest px-2 py-2 text-left">SKU</th>
@@ -902,7 +909,7 @@ export function ShipmentBookingScreen({
                     />
                   </td>
                   <td className="px-2 py-2 text-right">
-                    <Button size="inline" onClick={addLine}>
+                    <Button size="compact" onClick={addLine}>
                       ADD
                     </Button>
                   </td>
@@ -918,7 +925,7 @@ export function ShipmentBookingScreen({
                   {rows.map((line) => {
                     const m = measuresOf(line);
                     return (
-                      <tr key={line.key} className="border-b border-line/60 hover:bg-[#F0F4F4]">
+                      <tr key={line.key} className="border-b border-line/60 hover:bg-row-hover">
                         <td className="px-2 py-1 font-mono tabular-nums text-hull">{poNo}</td>
                         <td className="px-2 py-1">
                           {canEdit ? (
@@ -1057,13 +1064,15 @@ export function ShipmentBookingScreen({
                         </td>
                         <td className="px-2 py-1 text-right">
                           {canEdit && (
-                            <Button
-                              variant="destructive"
-                              size="inline"
-                              onClick={() => removeLine(line.key)}
-                            >
-                              Delete
-                            </Button>
+                            <RowActions>
+                              <Button
+                                variant="destructive"
+                                size="inline"
+                                onClick={() => removeLine(line.key)}
+                              >
+                                Delete
+                              </Button>
+                            </RowActions>
                           )}
                         </td>
                       </tr>
@@ -1103,8 +1112,11 @@ export function ShipmentBookingScreen({
             {lines.length === 0 && (
               <tbody>
                 <tr>
-                  <td colSpan={columnCount + 2} className="px-4 py-8 text-center text-steel">
-                    No cargo on this booking yet. Add a PO line above to start.
+                  <td colSpan={columnCount + 2} className="px-4 py-8 text-left text-steel sm:text-center">
+                    {/* Held at the left edge, so a phone sees it without scrolling the grid. */}
+                    <span className="sticky left-4 inline-block max-w-xs sm:max-w-none">
+                      No cargo on this booking yet. Add a PO line above to start.
+                    </span>
                   </td>
                 </tr>
               </tbody>
@@ -1153,17 +1165,20 @@ export function ShipmentBookingScreen({
         {embedded ? (
           <span />
         ) : (
-          <Link href="/cs/quotation" className="text-body text-harbour hover:underline">
-            ← Back to quotation list
+          <Link href="/cs/quotation" className={backLinkClasses}>
+            <ArrowLeft className="size-3.5" aria-hidden="true" />
+            Back to quotation list
           </Link>
         )}
-        <div className="flex items-center gap-2">
+        {/* On a phone the buttons stack full width, Submit nearest the thumb. */}
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
           {booking !== null &&
             booking.status !== 'CANCELLED' &&
             can('CUSTOMER_SERVICE.CARGO_BOOKING.CANCEL') && (
               <Button
                 variant="destructive"
                 disabled={isPending}
+                className="max-sm:w-full"
                 onClick={() => {
                   setCancelReason('');
                   setFormError(null);
@@ -1174,12 +1189,17 @@ export function ShipmentBookingScreen({
               </Button>
             )}
           {canEdit && (
-            <Button variant="secondary" disabled={isPending} onClick={() => void onSave()}>
+            <Button
+              variant="secondary"
+              disabled={isPending}
+              className="max-sm:w-full"
+              onClick={() => void onSave()}
+            >
               {isPending ? 'Saving…' : 'Save booking'}
             </Button>
           )}
           {canEdit && can('CUSTOMER_SERVICE.CARGO_BOOKING.SUBMIT') && (
-            <Button disabled={isPending} onClick={() => setConfirmSubmit(true)}>
+            <Button disabled={isPending} className="max-sm:w-full" onClick={() => setConfirmSubmit(true)}>
               Submit
             </Button>
           )}
@@ -1228,12 +1248,13 @@ export function ShipmentBookingScreen({
               placeholder="Customer withdrew the order"
             />
           </Field>
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setCancelOpen(false)}>
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+            <Button variant="secondary" className="max-sm:w-full" onClick={() => setCancelOpen(false)}>
               Keep it
             </Button>
             <Button
               variant="destructive"
+              className="max-sm:w-full"
               disabled={isPending || cancelReason.trim() === ''}
               onClick={() => void onCancel()}
             >

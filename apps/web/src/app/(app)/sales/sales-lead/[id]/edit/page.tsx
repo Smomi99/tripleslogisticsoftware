@@ -1,13 +1,14 @@
 'use client';
 
 import type { SalesLeadDto } from '@ff/shared';
+import { ArrowLeft } from 'lucide-react';
 import type { Route } from 'next';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
 import { LeadForm } from '@/components/sales/lead-form';
-import { PageHeader } from '@/components/ui/form-layout';
+import { backLinkClasses, PageHeader } from '@/components/ui/form-layout';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 
@@ -28,12 +29,10 @@ export default function EditSalesLeadPage() {
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex flex-col gap-2">
-        <Link
-          href={'/sales/sales-lead' as Route}
-          className="text-cell text-harbour underline-offset-2 hover:text-harbour-ink hover:underline"
-        >
-          ← Back to list
+      <div className="flex flex-col gap-3">
+        <Link href={'/sales/sales-lead' as Route} className={backLinkClasses}>
+          <ArrowLeft className="size-3.5" aria-hidden="true" />
+          Back to list
         </Link>
         <PageHeader
           title={lead === null ? 'Edit lead' : `Edit ${lead.name}`}
@@ -47,7 +46,7 @@ export default function EditSalesLeadPage() {
         </p>
       )}
 
-      <div className="max-w-5xl rounded-manifest border border-line bg-surface p-5 shadow-manifest">
+      <div className="max-w-5xl rounded-card border border-line bg-surface p-4 shadow-manifest sm:p-5">
         {lead === null && error === null ? (
           <p className="text-body text-steel">Loading…</p>
         ) : lead !== null ? (
