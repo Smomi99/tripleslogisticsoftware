@@ -75,7 +75,7 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 
 const FACTS = 'grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-4';
 const TOTALS = `${FACTS} rounded-manifest border border-line bg-paper/60 p-4`;
-const TH = 'label-manifest px-3 py-2';
+const TH = 'label-manifest whitespace-nowrap px-3 py-2';
 const TD = 'px-3 py-2 text-cell text-hull';
 const TD_NUM = `${TD} text-right font-mono tabular-nums`;
 
@@ -110,7 +110,7 @@ function LineTable({
     <div className="overflow-x-auto rounded-manifest border border-line">
       <table className="w-full min-w-160 border-collapse">
         <thead>
-          <tr className="border-b border-line bg-paper">
+          <tr className="border-b border-line bg-module-soft">
             <th className={`${TH} text-left`}>Cost head</th>
             <th className={`${TH} text-left`}>Container size</th>
             <th className={`${TH} text-left`}>Unit</th>
@@ -149,9 +149,10 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 function Footer({ children, onClose }: { children?: ReactNode; onClose: () => void }) {
   return (
-    <div className="mt-5 flex items-center justify-end gap-4 border-t border-line pt-4">
+    // On a phone the links wrap and Close runs full width beneath them.
+    <div className="mt-5 flex flex-wrap items-center justify-end gap-x-4 gap-y-2 border-t border-line pt-4">
       {children}
-      <Button variant="secondary" onClick={onClose}>
+      <Button variant="secondary" className="max-sm:w-full" onClick={onClose}>
         Close
       </Button>
     </div>
@@ -306,7 +307,7 @@ function DebitInvoiceBody({ invoice }: { invoice: DebitInvoiceDto }) {
           <div className="overflow-x-auto rounded-manifest border border-line">
             <table className="w-full min-w-160 border-collapse">
               <thead>
-                <tr className="border-b border-line bg-paper">
+                <tr className="border-b border-line bg-module-soft">
                   <th className={`${TH} text-left`}>Vendor / Agent / Carrier</th>
                   <th className={`${TH} text-left`}>Vendor/Agent/Carrier Inv No</th>
                   <th className={`${TH} text-right`}>Total Cost</th>

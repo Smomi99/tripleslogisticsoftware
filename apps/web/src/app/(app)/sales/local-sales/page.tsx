@@ -31,7 +31,7 @@ import { useMasterList } from '@/lib/use-master-list';
  */
 
 const TEXTAREA =
-  'w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-body text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour';
+  'w-full rounded-manifest border border-line bg-surface px-3 py-2 text-base text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour sm:px-2.5 sm:py-1.5 sm:text-body';
 
 /** "12.5000" -> "12.5"; a column of volumes reads as numbers, not as storage. */
 function volume(value: string | null): string {
@@ -128,9 +128,9 @@ export default function LocalSalesPage() {
         description="Every customer, with their volumes and opening balance, and the meetings and calls the sales team records against them."
       />
 
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="flex w-72 flex-col gap-1">
-          <span className="label-manifest">Search</span>
+      <div className="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:items-end">
+        <div className="col-span-2 flex flex-col gap-1 sm:w-72">
+          <span className="label-field">Search</span>
           <Input
             type="search"
             aria-label="Search customers"
@@ -139,8 +139,8 @@ export default function LocalSalesPage() {
             onChange={(e) => list.setSearchInput(e.target.value)}
           />
         </div>
-        <div className="flex w-40 flex-col gap-1">
-          <span className="label-manifest">Customer type</span>
+        <div className="flex flex-col gap-1 sm:w-40">
+          <span className="label-field">Customer type</span>
           <Select aria-label="Customer type" value={list.filters.customerType ?? ''} onChange={(e) => list.setFilter('customerType', e.target.value)}>
             <option value="">Every type</option>
             {CUSTOMER_TYPES.map((t) => (
@@ -150,8 +150,8 @@ export default function LocalSalesPage() {
             ))}
           </Select>
         </div>
-        <div className="flex w-40 flex-col gap-1">
-          <span className="label-manifest">Business area</span>
+        <div className="flex flex-col gap-1 sm:w-40">
+          <span className="label-field">Business area</span>
           <Select aria-label="Business area" value={list.filters.businessArea ?? ''} onChange={(e) => list.setFilter('businessArea', e.target.value)}>
             <option value="">Every area</option>
             {BUSINESS_AREAS.map((a) => (
@@ -338,7 +338,7 @@ function ActivityLog({ row, onClose, onRecorded }: { row: LocalSalesRow; onClose
               <Input id="act-next" type="date" numeric value={nextDate} onChange={(e) => setNextDate(e.target.value)} />
             </Field>
             <div className="flex items-end justify-end">
-              <Button type="submit" disabled={pending || log === null}>
+              <Button type="submit" disabled={pending || log === null} className="max-sm:w-full">
                 {pending ? 'Recording…' : 'Record'}
               </Button>
             </div>
@@ -358,9 +358,9 @@ function ActivityLog({ row, onClose, onRecorded }: { row: LocalSalesRow; onClose
           <div className="overflow-x-auto">
             <table className="w-full min-w-[720px] border-collapse text-cell">
               <thead>
-                <tr className="border-b border-line bg-paper text-left">
+                <tr className="border-b border-line bg-module-soft text-left">
                   {['Date & time', 'PIC', 'Meeting summary', 'Next follow-up', 'Competitors', 'Possibility', 'By'].map((h) => (
-                    <th key={h} className="label-manifest px-2 py-2">
+                    <th key={h} className="label-manifest whitespace-nowrap px-2 py-2">
                       {h}
                     </th>
                   ))}

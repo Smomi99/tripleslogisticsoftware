@@ -14,6 +14,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Input, Select } from '@/components/ui/field';
 import { ChildScreenHeader } from '@/components/ui/form-layout';
 import { ConfirmDialog } from '@/components/ui/modal';
+import { RowActions } from '@/components/ui/row-actions';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 
@@ -115,10 +116,10 @@ export default function LeadDocumentsPage({ params }: { params: Promise<{ id: st
       {canEdit && (
         <section
           aria-label="Upload a document"
-          className="rounded-manifest border border-line bg-surface p-3 shadow-manifest"
+          className="rounded-card border border-line bg-surface p-3 shadow-manifest"
         >
           <div className="flex flex-wrap items-end gap-3">
-            <div className="w-52">
+            <div className="w-full sm:w-52">
               <Field id="kind" label="Document" required>
                 <Select id="kind" value={kind} onChange={(e) => setKind(e.target.value as SalesLeadDocumentKind)}>
                   {SALES_LEAD_DOCUMENT_KINDS.map((k) => (
@@ -129,7 +130,7 @@ export default function LeadDocumentsPage({ params }: { params: Promise<{ id: st
                 </Select>
               </Field>
             </div>
-            <div className="min-w-64 flex-1">
+            <div className="w-full sm:w-auto sm:min-w-64 sm:flex-1">
               <Field id="file" label="File" required hint="PDF, Word, JPG or PNG, up to 10 MB.">
                 <Input
                   id="file"
@@ -141,7 +142,12 @@ export default function LeadDocumentsPage({ params }: { params: Promise<{ id: st
                 />
               </Field>
             </div>
-            <Button type="button" onClick={() => void upload()} disabled={isUploading}>
+            <Button
+              type="button"
+              onClick={() => void upload()}
+              disabled={isUploading}
+              className="max-sm:w-full"
+            >
               {isUploading ? 'Uploading…' : 'Upload'}
             </Button>
           </div>
@@ -159,15 +165,15 @@ export default function LeadDocumentsPage({ params }: { params: Promise<{ id: st
           description="Attach the buyer's RFQ, a shipment forecast or a nomination letter so the whole team quotes from the same paper."
         />
       ) : (
-        <div className="overflow-x-auto rounded-manifest border border-line bg-surface shadow-manifest">
-          <table className="w-full border-collapse">
+        <div className="overflow-x-auto rounded-card border border-line bg-surface shadow-manifest">
+          <table className="w-full min-w-[36rem] border-collapse">
             <thead>
-              <tr className="border-b border-line bg-paper text-left">
-                <th className="label-manifest px-2.5 py-2">Document</th>
-                <th className="label-manifest px-2.5 py-2">File</th>
-                <th className="label-manifest px-2.5 py-2">Uploaded</th>
-                <th className="label-manifest px-2.5 py-2">By</th>
-                <th className="label-manifest px-2.5 py-2">Action</th>
+              <tr className="border-b border-line bg-module-soft text-left">
+                <th className="label-manifest whitespace-nowrap px-2.5 py-2">Document</th>
+                <th className="label-manifest whitespace-nowrap px-2.5 py-2">File</th>
+                <th className="label-manifest whitespace-nowrap px-2.5 py-2">Uploaded</th>
+                <th className="label-manifest whitespace-nowrap px-2.5 py-2">By</th>
+                <th className="label-manifest whitespace-nowrap px-2.5 py-2 text-right">Action</th>
               </tr>
             </thead>
             <tbody>
@@ -180,7 +186,7 @@ export default function LeadDocumentsPage({ params }: { params: Promise<{ id: st
                   </td>
                   <td className="px-2.5 py-2 text-cell text-steel">{doc.uploadedBy ?? '—'}</td>
                   <td className="px-2.5 py-2">
-                    <div className="flex gap-3">
+                    <RowActions>
                       <Button
                         variant="text"
                         size="inline"
@@ -198,7 +204,7 @@ export default function LeadDocumentsPage({ params }: { params: Promise<{ id: st
                           Remove
                         </Button>
                       )}
-                    </div>
+                    </RowActions>
                   </td>
                 </tr>
               ))}

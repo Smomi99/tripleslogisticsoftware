@@ -76,19 +76,15 @@ export default function CurrencyPage() {
         sortable: true,
         /*
           The base is marked here rather than in a column of its own: it is a
-          fact about this currency, and one row in the table has it. §12 says a
-          state is a dot and a label, not a coloured pill.
+          fact about this currency, and one row in the table has it. Drawn as
+          the Status pill, like every other state on the screen.
         */
         cell: (r) => (
           <span className="flex items-center gap-2">
             {r.currency}
             {r.isBase && (
-              <span
-                className="inline-flex items-center gap-1.5 text-cell text-verified"
-                title="Every rate is expressed against this currency"
-              >
-                <span className="h-1.5 w-1.5 rounded-full bg-verified" aria-hidden />
-                Base
+              <span title="Every rate is expressed against this currency">
+                <Status tone="active">Base</Status>
               </span>
             )}
           </span>
@@ -299,15 +295,15 @@ export default function CurrencyPage() {
       />
 
       <div className="flex flex-wrap items-end gap-3">
-        <div className="flex flex-col gap-1">
-          <span className="label-manifest">Search</span>
+        <div className="flex w-full flex-col gap-1 sm:w-auto">
+          <span className="label-field">Search</span>
           <Input
             type="search"
             placeholder="Search currencies"
             aria-label="Search currencies"
             value={list.searchInput}
             onChange={(event) => list.setSearchInput(event.target.value)}
-            className="w-72"
+            className="w-full sm:w-72"
           />
         </div>
 
@@ -321,11 +317,11 @@ export default function CurrencyPage() {
           holds. Someone without it sees which currency is the base and cannot
           move it.
         */}
-        <div className="flex flex-col gap-1">
-          <span className="label-manifest">Base currency</span>
+        <div className="flex w-full flex-col gap-1 sm:w-auto">
+          <span className="label-field">Base currency</span>
           <Select
             aria-label="Base currency"
-            className="w-64"
+            className="w-full sm:w-64"
             value={list.rows.find((r) => r.isBase)?.id ?? ''}
             disabled={!canSetBase}
             title={

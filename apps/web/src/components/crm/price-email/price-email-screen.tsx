@@ -54,7 +54,7 @@ import { type AddressRow, type RecipientRow, RecipientsPanel } from './recipient
  */
 
 const TEXTAREA =
-  'w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-body text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour';
+  'w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-base text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour sm:text-body';
 
 /** Where each party's list lives, and the permission its button needs. */
 const LIST_HREF: Record<PriceEmailParty, Route> = {
@@ -407,7 +407,7 @@ export function PriceEmailScreen({
     return (
       <div className="flex flex-col gap-4">
         {header}
-        <section className="rounded-manifest border border-line bg-surface p-6 shadow-manifest">
+        <section className="rounded-card border border-line bg-surface p-4 shadow-manifest sm:p-6">
           <p className="label-manifest text-verified">Queued</p>
           <h2 className="mt-1 text-page-title text-hull">
             <span className="font-mono tabular-nums">{sent}</span> emails are on their way
@@ -486,7 +486,7 @@ export function PriceEmailScreen({
                 )}
                 <div className="grid gap-3 md:grid-cols-3">
                   <div className="flex flex-col gap-1.5">
-                    <span className="label-manifest">POL</span>
+                    <span className="label-field">POL</span>
                     <MultiSelect
                       id="price-email-pol"
                       options={options.pols}
@@ -504,7 +504,7 @@ export function PriceEmailScreen({
                     )}
                   </div>
                   <div className="flex flex-col gap-1.5">
-                    <span className="label-manifest">POD</span>
+                    <span className="label-field">POD</span>
                     <MultiSelect
                       id="price-email-pod"
                       options={options.pods}
@@ -607,7 +607,7 @@ export function PriceEmailScreen({
         </div>
 
         {/* -------------------------------------------------------- summary */}
-        <aside className="flex flex-col gap-3 rounded-manifest border border-line bg-surface p-4 shadow-manifest xl:sticky xl:top-4">
+        <aside className="flex flex-col gap-3 rounded-card border border-line bg-surface p-4 shadow-manifest xl:sticky xl:top-4">
           <h2 className="text-section text-hull">Ready to send</h2>
           <dl className="flex flex-col gap-2 text-body">
             <SummaryLine label={`${noun.label}s`} value={sendable.length} note="each gets their own email" />
@@ -673,7 +673,7 @@ function Step({
   children: ReactNode;
 }) {
   return (
-    <section className="rounded-manifest border border-line bg-surface shadow-manifest">
+    <section className="rounded-card border border-line bg-surface shadow-manifest">
       <header className="flex items-start gap-3 border-b border-line px-4 py-3">
         <span className="grid size-6 shrink-0 place-items-center rounded-manifest border border-harbour font-mono text-cell text-harbour">
           {n}

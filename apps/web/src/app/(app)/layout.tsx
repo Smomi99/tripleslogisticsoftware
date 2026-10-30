@@ -1,42 +1,68 @@
 'use client';
 
 import { usePathname, useRouter } from 'next/navigation';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { Toaster } from 'sonner';
 
-import { viewPermissionsForPath } from '@/components/shell/nav-config';
-import { Sidebar } from '@/components/shell/sidebar';
+import { MODULE_THEME } from '@/components/shell/module-theme';
+import { moduleForPath, viewPermissionsForPath } from '@/components/shell/nav-config';
+import { MobileNav, Sidebar } from '@/components/shell/sidebar';
 import { TopBar } from '@/components/shell/top-bar';
 import { useSession } from '@/lib/session';
 
 /*
- * The §12 application shell:
+ * The application shell:
  *
  *   ┌────────────┬───────────────────────────────────────────────┐
- *   │            │ breadcrumb        [ search ]  [tenant] [user] │
- *   │  SIDEBAR   ├───────────────────────────────────────────────┤
- *   │  240px     │  Page title                    [ + Add … ]    │
- *   │  --hull    │  ┌─────────────────────────────────────────┐  │
- *   │            │  │ search · filters                        │  │
- *   │  9 modules │  ├─────────────────────────────────────────┤  │
- *   │  collapse  │  │ TABLE                                   │  │
+ *   │            │ ▔▔▔▔▔▔▔▔▔▔▔ module-colour stripe ▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔ │
+ *   │  SIDEBAR   │ [≡] module · page     [search] [workspace] [●]│
+ *   │  240px     ├───────────────────────────────────────────────┤
+ *   │  --hull    │  [icon] Page title                [ + Add … ] │
+ *   │            │  ┌─────────────────────────────────────────┐  │
+ *   │  module    │  │ search · filters                        │  │
+ *   │  icons     │  ├─────────────────────────────────────────┤  │
+ *   │  collapse  │  │ TABLE (cards on a phone)                │  │
  *   │  to 64px   │  └─────────────────────────────────────────┘  │
  *   └────────────┴───────────────────────────────────────────────┘
  *
- * No page-level max-width — §12 is explicit that these tables need every pixel.
+ * Below lg the sidebar leaves the page and opens as a drawer from [≡].
+ * No page-level max-width — these tables need every pixel.
  */
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { status, can } = useSession();
   const router = useRouter();
   const pathname = usePathname();
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const module = moduleForPath(pathname);
+  const moduleSlug = module === null ? undefined : MODULE_THEME[module].slug;
 
   useEffect(() => {
     if (status === 'anonymous') router.replace('/login');
   }, [status, router]);
 
+  // A tap on a menu item navigates; the drawer should not still be open over
+  // the page it opened.
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [pathname]);
+
+  /*
+   * The module colour goes on <html>, not just the shell, because dialogs,
+   * dropdowns and toasts portal to <body> and must take the page's colour too.
+   */
+  useEffect(() => {
+    const root = document.documentElement;
+    if (moduleSlug === undefined) delete root.dataset.module;
+    else root.dataset.module = moduleSlug;
+    return () => {
+      delete root.dataset.module;
+    };
+  }, [moduleSlug]);
+
   if (status !== 'authenticated') {
     return (
-      <div className="flex min-h-screen items-center justify-center">
+      <div className="flex min-h-dvh items-center justify-center">
         <p className="text-body text-steel">
           {status === 'loading' ? 'Loading your workspace…' : 'Redirecting to sign in…'}
         </p>
@@ -57,11 +83,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const permitted = required.every((p) => can(p));
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-dvh overflow-hidden" data-module={moduleSlug}>
       <Sidebar />
+      <MobileNav open={menuOpen} onOpenChange={setMenuOpen} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar />
-        <main className="flex-1 overflow-auto p-5">
+        <TopBar onOpenMenu={() => setMenuOpen(true)} />
+        <main className="flex-1 overflow-auto p-3 pb-6 sm:p-5">
           {permitted ? (
             children
           ) : (
@@ -75,15 +102,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           )}
         </main>
       </div>
-      {/*
-        §12 allows one shadow and a 4px radius; the toast follows the same rules
-        as every other surface rather than bringing its own look.
-      */}
+      {/* Toasts take the same radius, border and shadow as every other surface. */}
       <Toaster
         position="bottom-right"
         toastOptions={{
-          className:
-            'rounded-manifest border border-line bg-surface text-hull shadow-manifest text-body',
+          className: 'rounded-card border border-line bg-surface text-hull shadow-raised text-body',
         }}
       />
     </div>

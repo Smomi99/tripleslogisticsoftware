@@ -17,7 +17,7 @@ import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 
 const TEXTAREA =
-  'w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-body text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour';
+  'w-full rounded-manifest border border-line bg-surface px-3 py-2 text-base text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour sm:px-2.5 sm:py-1.5 sm:text-body';
 
 const today = (): string => new Date().toISOString().slice(0, 10);
 

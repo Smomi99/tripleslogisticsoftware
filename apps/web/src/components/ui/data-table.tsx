@@ -6,12 +6,23 @@ import {
   tableFeatures,
   useTable,
 } from '@tanstack/react-table';
-import { ArrowDown, ArrowUp, ChevronsUpDown } from 'lucide-react';
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, ChevronsUpDown } from 'lucide-react';
+import {
+  Fragment,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
+import { useIsPhone } from '@/lib/use-media-query';
 import { cn } from '@/lib/utils';
 
 import { Button } from './button';
+import { RowActions } from './row-actions';
 
 /*
  * The list table every §8 master-data screen reuses.
@@ -20,7 +31,12 @@ import { Button } from './button';
  * limit, search, sortBy, sortOrder, isActive), so no sorted or paginated row
  * model is registered here — the header click and the pager both just change
  * the query. TanStack owns the column and row model; this component owns the
- * §12 markup, stickiness and density.
+ * markup, stickiness and density.
+ *
+ * On a phone (below md) the same rows render as cards — code on top, each
+ * column as a label and value, actions as tappable chips — with a sort picker
+ * in place of the clickable headers. Same columns, same cell renderers, so no
+ * screen has to do anything to work on a phone.
  */
 
 const features = tableFeatures({});
@@ -60,8 +76,67 @@ export interface DataTableProps<T extends RowData> {
   empty: ReactNode;
 }
 
+/*
+ * The edge of a sticky column, shown only while columns are hidden beneath it,
+ * so they read as passing behind it rather than cut off. A gradient strip on a
+ * pseudo-element, because a collapsed-border table draws no box-shadow on its
+ * cells. START is the Code column pinned left, END the Action column pinned
+ * right; the scroller sets data-hidden-left / data-hidden-right.
+ */
+const PINNED_START_EDGE = cn(
+  "after:pointer-events-none after:absolute after:inset-y-0 after:left-full after:w-3 after:content-['']",
+  'after:bg-linear-to-r after:from-hull/12 after:to-transparent after:opacity-0',
+  'after:transition-opacity after:duration-[120ms] group-data-[hidden-left]/scroller:after:opacity-100',
+);
+const PINNED_END_EDGE = cn(
+  "before:pointer-events-none before:absolute before:inset-y-0 before:right-full before:w-3 before:content-['']",
+  'before:bg-linear-to-l before:from-hull/12 before:to-transparent before:opacity-0',
+  'before:transition-opacity before:duration-[120ms] group-data-[hidden-right]/scroller:before:opacity-100',
+);
+
 type Density = 'comfortable' | 'compact';
 const DENSITY_KEY = 'ff.table.density';
+
+/**
+ * Whether a wide table has columns hidden to its left or right.
+ *
+ * Drives the shadow on the sticky Code and Action columns (shown only while
+ * something is actually underneath them) and the Columns ‹ › buttons — an
+ * office mouse wheel scrolls up and down, not sideways, so a table wider than
+ * the screen needs a way across that is not a trackpad gesture.
+ */
+function useHorizontalScroll(deps: readonly unknown[]) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [edges, setEdges] = useState({ left: false, right: false });
+
+  const measure = useCallback(() => {
+    const el = ref.current;
+    if (el === null) return;
+    const left = el.scrollLeft > 1;
+    const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+    setEdges((prev) => (prev.left === left && prev.right === right ? prev : { left, right }));
+  }, []);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (el === null) return;
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    const table = el.firstElementChild;
+    if (table !== null) observer.observe(table);
+    return () => observer.disconnect();
+    // `deps` are the rows and layout: a new page of data can change the width.
+  }, [measure, ...deps]);
+
+  const scrollBy = useCallback((direction: -1 | 1) => {
+    const el = ref.current;
+    if (el === null) return;
+    el.scrollBy({ left: direction * el.clientWidth * 0.6, behavior: 'smooth' });
+  }, []);
+
+  return { ref, edges, measure, scrollBy };
+}
 
 /** §12: ship a density toggle, persisted per user. */
 function useDensity(): [Density, (d: Density) => void] {
@@ -99,7 +174,9 @@ export function DataTable<T extends RowData>({
   empty,
 }: DataTableProps<T>) {
   const [density, setDensity] = useDensity();
-  const rowHeight = density === 'compact' ? 'h-[30px]' : 'h-9';
+  const isPhone = useIsPhone();
+  const sortSelectId = useId();
+  const rowHeight = density === 'compact' ? 'h-8' : 'h-10';
 
   const helper = useMemo(() => createColumnHelper<typeof features, T>(), []);
   const tableColumns = useMemo(
@@ -113,6 +190,7 @@ export function DataTable<T extends RowData>({
   );
 
   const table = useTable({ features, columns: tableColumns, data: rows, getRowId });
+  const scroller = useHorizontalScroll([rows, columns, isPhone, density]);
 
   const firstRowNumber = (page - 1) * limit + 1;
   const lastRowNumber = Math.min(page * limit, total);
@@ -126,8 +204,170 @@ export function DataTable<T extends RowData>({
 
   if (rows.length === 0 && !isPending) {
     return (
-      <div className="rounded-manifest border border-line bg-surface shadow-manifest">
-        {empty}
+      <div className="rounded-card border border-line bg-surface shadow-manifest">{empty}</div>
+    );
+  }
+
+  // Still fetching with nothing yet to show: say so, rather than flash
+  // "No records" over a list that is about to fill.
+  if (rows.length === 0) {
+    return (
+      <p className="rounded-card border border-line bg-surface px-4 py-10 text-center text-body text-steel shadow-manifest">
+        Loading…
+      </p>
+    );
+  }
+
+  const sortableColumns = columns.filter((c) => c.sortable === true);
+
+  const pager = (
+    <div className="flex items-center gap-2">
+      <Button
+        variant="secondary"
+        size="compact"
+        disabled={page <= 1 || isPending}
+        onClick={() => onPageChange(page - 1)}
+      >
+        Previous
+      </Button>
+      <span className="whitespace-nowrap text-cell text-steel">
+        Page{' '}
+        <span className="font-mono text-hull" data-numeric="">
+          {page}
+        </span>{' '}
+        of{' '}
+        <span className="font-mono text-hull" data-numeric="">
+          {totalPages}
+        </span>
+      </span>
+      <Button
+        variant="secondary"
+        size="compact"
+        disabled={page >= totalPages || isPending}
+        onClick={() => onPageChange(page + 1)}
+      >
+        Next
+      </Button>
+    </div>
+  );
+
+  const rangeLabel = (
+    <p className="text-cell text-steel">
+      {total === 0 ? (
+        'No records'
+      ) : (
+        <>
+          <span className="font-mono text-hull" data-numeric="">
+            {firstRowNumber}–{lastRowNumber}
+          </span>{' '}
+          of{' '}
+          <span className="font-mono text-hull" data-numeric="">
+            {total}
+          </span>
+        </>
+      )}
+    </p>
+  );
+
+  if (isPhone) {
+    return (
+      <div className="flex flex-col gap-3">
+        {sortableColumns.length > 0 && (
+          <div className="flex items-center gap-2">
+            <label htmlFor={sortSelectId} className="label-field shrink-0 text-steel">
+              Sort by
+            </label>
+            <select
+              id={sortSelectId}
+              value={sortBy ?? ''}
+              onChange={(event) => onSortChange(event.target.value, sortOrder)}
+              className="h-10 min-w-0 flex-1 rounded-manifest border border-line bg-surface px-3 text-base text-hull focus:border-harbour focus:outline-none focus:ring-3 focus:ring-harbour/20"
+            >
+              {sortBy === undefined && <option value="">Default order</option>}
+              {sortableColumns.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.header}
+                </option>
+              ))}
+            </select>
+            <Button
+              variant="secondary"
+              aria-label={sortOrder === 'asc' ? 'Sorted ascending — reverse' : 'Sorted descending — reverse'}
+              disabled={sortBy === undefined}
+              onClick={() => sortBy !== undefined && onSortChange(sortBy, sortOrder === 'asc' ? 'desc' : 'asc')}
+              className="px-3"
+            >
+              {sortOrder === 'asc' ? (
+                <ArrowUp className="size-4" aria-hidden="true" />
+              ) : (
+                <ArrowDown className="size-4" aria-hidden="true" />
+              )}
+            </Button>
+          </div>
+        )}
+
+        <ul className={cn('flex flex-col gap-3', isPending && 'opacity-60')}>
+          {rows.map((row, index) => (
+            <li
+              key={getRowId(row)}
+              className="overflow-hidden rounded-card border border-line bg-surface shadow-manifest"
+            >
+              <div className="flex items-center justify-between gap-3 border-b border-line bg-module-soft px-4 py-2.5">
+                <span className="flex min-w-0 items-center gap-2">
+                  <span className="label-manifest shrink-0">{codeHeader}</span>
+                  {onCodeClick === undefined ? (
+                    <span className="truncate font-mono font-medium text-harbour" data-numeric="">
+                      {getCode(row)}
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      aria-haspopup="dialog"
+                      onClick={() => onCodeClick(row)}
+                      className="truncate font-mono font-medium text-harbour underline underline-offset-2"
+                      data-numeric=""
+                    >
+                      {getCode(row)}
+                    </button>
+                  )}
+                </span>
+                <span className="shrink-0 font-mono text-cell text-steel" data-numeric="">
+                  #{firstRowNumber + index}
+                </span>
+              </div>
+
+              <dl className="grid grid-cols-[minmax(6.5rem,38%)_minmax(0,1fr)] gap-x-3 gap-y-2.5 px-4 py-3 text-cell">
+                {columns.map((column) => (
+                  <Fragment key={column.id}>
+                    <dt className="label-manifest pt-px">{column.header}</dt>
+                    <dd
+                      className={cn(
+                        'min-w-0 break-words text-hull',
+                        column.numeric === true && 'font-mono',
+                      )}
+                      {...(column.numeric === true ? { 'data-numeric': '' } : {})}
+                    >
+                      {column.cell(row)}
+                    </dd>
+                  </Fragment>
+                ))}
+              </dl>
+
+              {actions !== undefined && (
+                // Tappable chips — inline text buttons are too small a target
+                // for a thumb. Past two, the rest fold under More.
+                <div className="border-t border-line px-4 py-3">
+                  <RowActions layout="card">{actions(row)}</RowActions>
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+
+        <div className="flex flex-col items-center gap-2">
+          {pager}
+          {rangeLabel}
+        </div>
       </div>
     );
   }
@@ -135,14 +375,18 @@ export function DataTable<T extends RowData>({
   return (
     <div className="flex flex-col gap-3">
       <div
+        ref={scroller.ref}
+        onScroll={scroller.measure}
+        data-hidden-left={scroller.edges.left ? '' : undefined}
+        data-hidden-right={scroller.edges.right ? '' : undefined}
         className={cn(
-          'relative overflow-x-auto rounded-manifest border border-line bg-surface shadow-manifest',
+          'group/scroller relative overflow-x-auto rounded-card border border-line bg-surface shadow-manifest',
           isPending && 'opacity-60',
         )}
       >
         <table className="w-full border-collapse text-cell">
           <thead className="sticky top-0 z-20">
-            <tr className="bg-paper">
+            <tr className="bg-module-soft">
               {/*
                 §8: SL No, then the client's exact columns, then Action.
 
@@ -152,13 +396,16 @@ export function DataTable<T extends RowData>({
               */}
               <th
                 scope="col"
-                className="label-manifest sticky left-0 z-30 w-14 border-b border-line bg-paper px-3 py-2 text-left"
+                className="label-manifest sticky left-0 z-30 w-14 whitespace-nowrap border-b border-line bg-module-soft px-3 py-2.5 text-left"
               >
                 <span className="inline-block w-8">SL</span>
               </th>
               <th
                 scope="col"
-                className="label-manifest sticky left-14 z-30 border-b border-r border-line bg-paper px-3 py-2 text-left"
+                className={cn(
+                  'label-manifest sticky left-14 z-30 whitespace-nowrap border-b border-r border-line bg-module-soft px-3 py-2.5 text-left',
+                  PINNED_START_EDGE,
+                )}
               >
                 {codeHeader}
               </th>
@@ -174,7 +421,9 @@ export function DataTable<T extends RowData>({
                       : undefined
                   }
                   className={cn(
-                    'label-manifest border-b border-line px-3 py-2',
+                    // A header never wraps: "VALID TO DATE" stacked three high
+                    // made the header row taller than the rows under it.
+                    'label-manifest whitespace-nowrap border-b border-line px-3 py-2.5',
                     column.align === 'right' ? 'text-right' : 'text-left',
                   )}
                 >
@@ -183,16 +432,16 @@ export function DataTable<T extends RowData>({
                       type="button"
                       onClick={() => toggleSort(column)}
                       className={cn(
-                        'inline-flex items-center gap-1 uppercase hover:text-hull',
+                        'inline-flex items-center gap-1 uppercase transition-colors duration-[120ms] hover:text-harbour',
                         column.align === 'right' && 'flex-row-reverse',
                       )}
                     >
                       {column.header}
                       {sortBy === column.id ? (
                         sortOrder === 'asc' ? (
-                          <ArrowUp className="size-3" aria-hidden="true" />
+                          <ArrowUp className="size-3 text-harbour" aria-hidden="true" />
                         ) : (
-                          <ArrowDown className="size-3" aria-hidden="true" />
+                          <ArrowDown className="size-3 text-harbour" aria-hidden="true" />
                         )
                       ) : (
                         <ChevronsUpDown className="size-3 opacity-40" aria-hidden="true" />
@@ -206,7 +455,10 @@ export function DataTable<T extends RowData>({
               {actions !== undefined && (
                 <th
                   scope="col"
-                  className="label-manifest sticky right-0 z-30 border-b border-l border-line bg-paper px-3 py-2 text-right"
+                  className={cn(
+                    'label-manifest sticky right-0 z-30 whitespace-nowrap border-b border-l border-line bg-module-soft px-3 py-2.5 text-right',
+                    PINNED_END_EDGE,
+                  )}
                 >
                   Action
                 </th>
@@ -226,13 +478,19 @@ export function DataTable<T extends RowData>({
                   </span>
                 </td>
                 {/*
-                  §12: the business code sits in a faintly tinted gutter, in
-                  mono — the stencilled container-marking reference, and the
-                  anchor the eye returns to when scanning.
+                  The business code sits in a gutter tinted with the module
+                  colour, in mono — the stencilled container-marking reference,
+                  and the anchor the eye returns to when scanning.
                 */}
-                <td className="sticky left-14 z-10 border-r border-line bg-paper/60 px-3 transition-colors duration-[120ms] group-hover:bg-row-hover">
+                <td
+                  className={cn(
+                    'sticky left-14 z-10 border-r border-line bg-module-soft px-3',
+                    PINNED_START_EDGE,
+                    'transition-colors duration-[120ms] group-hover:bg-row-hover',
+                  )}
+                >
                   {onCodeClick === undefined ? (
-                    <span className="whitespace-nowrap font-mono text-hull" data-numeric="">
+                    <span className="whitespace-nowrap font-mono font-medium text-harbour" data-numeric="">
                       {getCode(row.original)}
                     </span>
                   ) : (
@@ -240,7 +498,7 @@ export function DataTable<T extends RowData>({
                       type="button"
                       aria-haspopup="dialog"
                       onClick={() => onCodeClick(row.original)}
-                      className="whitespace-nowrap rounded-manifest font-mono text-harbour transition-colors duration-[120ms] hover:text-harbour-ink hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-harbour"
+                      className="whitespace-nowrap rounded-manifest font-mono font-medium text-harbour underline decoration-harbour/30 underline-offset-2 transition-colors duration-[120ms] hover:text-harbour-ink hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-harbour"
                       data-numeric=""
                     >
                       {getCode(row.original)}
@@ -260,15 +518,35 @@ export function DataTable<T extends RowData>({
                     )}
                     {...(column.numeric === true ? { 'data-numeric': '' } : {})}
                   >
-                    <table.FlexRender cell={row.getAllCells()[columnIndex]!} />
+                    {column.numeric === true ? (
+                      <table.FlexRender cell={row.getAllCells()[columnIndex]!} />
+                    ) : (
+                      /*
+                       * Text keeps its own width up to 18rem and wraps only
+                       * past it, so "Padma Pharmaceuticals" stays on one line
+                       * instead of being squeezed into two. A table wider than
+                       * the screen scrolls sideways under the sticky columns.
+                       */
+                      <div
+                        className={cn(
+                          'w-max max-w-[18rem] py-1.5',
+                          column.align === 'right' && 'ml-auto',
+                        )}
+                      >
+                        <table.FlexRender cell={row.getAllCells()[columnIndex]!} />
+                      </div>
+                    )}
                   </td>
                 ))}
                 {actions !== undefined && (
-                  <td className="sticky right-0 z-10 border-l border-line bg-surface px-3 text-right transition-colors duration-[120ms] group-hover:bg-row-hover">
-                    {/* One line per action: "Make Shipment Advise" read as three rows of one word. */}
-                    <div className="flex items-center justify-end gap-3 whitespace-nowrap">
-                      {actions(row.original)}
-                    </div>
+                  <td
+                    className={cn(
+                      'sticky right-0 z-10 border-l border-line bg-surface px-3 text-right',
+                      PINNED_END_EDGE,
+                      'transition-colors duration-[120ms] group-hover:bg-row-hover',
+                    )}
+                  >
+                    <RowActions>{actions(row.original)}</RowActions>
                   </td>
                 )}
               </tr>
@@ -278,25 +556,37 @@ export function DataTable<T extends RowData>({
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-cell text-steel">
-          {total === 0 ? (
-            'No records'
-          ) : (
-            <>
-              <span className="font-mono text-hull" data-numeric="">
-                {firstRowNumber}–{lastRowNumber}
-              </span>{' '}
-              of{' '}
-              <span className="font-mono text-hull" data-numeric="">
-                {total}
-              </span>
-            </>
-          )}
-        </p>
+        {rangeLabel}
 
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-4">
+          {(scroller.edges.left || scroller.edges.right) && (
+            <div className="flex items-center gap-1">
+              <span className="label-manifest mr-1">Columns</span>
+              <Button
+                variant="secondary"
+                size="compact"
+                aria-label="Show columns to the left"
+                disabled={!scroller.edges.left}
+                onClick={() => scroller.scrollBy(-1)}
+                className="px-2"
+              >
+                <ChevronLeft className="size-4" aria-hidden="true" />
+              </Button>
+              <Button
+                variant="secondary"
+                size="compact"
+                aria-label="Show columns to the right"
+                disabled={!scroller.edges.right}
+                onClick={() => scroller.scrollBy(1)}
+                className="px-2"
+              >
+                <ChevronRight className="size-4" aria-hidden="true" />
+              </Button>
+            </div>
+          )}
+
           <div className="flex items-center gap-1">
-            <span className="label-manifest">Density</span>
+            <span className="label-manifest mr-1">Density</span>
             <Button
               variant={density === 'comfortable' ? 'secondary' : 'text'}
               size="compact"
@@ -315,34 +605,7 @@ export function DataTable<T extends RowData>({
             </Button>
           </div>
 
-          <div className="flex items-center gap-2">
-            <Button
-              variant="secondary"
-              size="compact"
-              disabled={page <= 1 || isPending}
-              onClick={() => onPageChange(page - 1)}
-            >
-              Previous
-            </Button>
-            <span className="text-cell text-steel">
-              Page{' '}
-              <span className="font-mono text-hull" data-numeric="">
-                {page}
-              </span>{' '}
-              of{' '}
-              <span className="font-mono text-hull" data-numeric="">
-                {totalPages}
-              </span>
-            </span>
-            <Button
-              variant="secondary"
-              size="compact"
-              disabled={page >= totalPages || isPending}
-              onClick={() => onPageChange(page + 1)}
-            >
-              Next
-            </Button>
-          </div>
+          {pager}
         </div>
       </div>
     </div>

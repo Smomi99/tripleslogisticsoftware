@@ -5,9 +5,10 @@ import type { ButtonHTMLAttributes } from 'react';
 import { cn } from '@/lib/utils';
 
 /*
- * §12: actions are text buttons in --harbour, not icon-only — the users are not
- * power users on day one. Destructive and deactivate actions are --alert.
- * One radius, 120ms ease-out, visible focus ring.
+ * Actions are text buttons in the module colour (--harbour), not icon-only —
+ * the users are not power users on day one. Destructive and deactivate actions
+ * are --alert. Boxed buttons are 40px on a phone, where they are tapped, and
+ * 36px from sm up, level with an input.
  */
 const buttonVariants = cva(
   cn(
@@ -19,21 +20,26 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        primary: 'bg-harbour text-white hover:bg-harbour-ink',
-        secondary: 'border border-line bg-surface text-hull hover:bg-row-hover',
+        primary: 'bg-harbour text-white shadow-manifest hover:bg-harbour-ink',
+        secondary: 'border border-line bg-surface text-hull shadow-manifest hover:border-harbour/40 hover:bg-row-hover',
         /** The default for row actions (§12). */
         text: 'text-harbour hover:text-harbour-ink hover:underline underline-offset-2',
         destructive: 'text-alert hover:underline underline-offset-2',
-        danger: 'bg-alert text-white hover:brightness-95',
+        danger: 'bg-alert text-white shadow-manifest hover:brightness-95',
       },
       size: {
         /** Matches the 36px input height so a button sits level with a field. */
-        default: 'h-9 px-3 text-body',
-        compact: 'h-8 px-2.5 text-cell',
+        default: 'h-10 px-4 text-body sm:h-9 sm:px-3.5',
+        compact: 'h-9 px-3 text-cell sm:h-8 sm:px-2.5',
         /** Text buttons carry no box, so they get no padding or height. */
         inline: 'h-auto p-0 text-cell',
       },
     },
+    // "inline" is sized for text buttons. A boxed variant asked for at that size
+    // would be a box with no padding, so it gets the compact box instead.
+    compoundVariants: [
+      { variant: ['primary', 'secondary', 'danger'], size: 'inline', className: 'h-8 px-2.5 text-cell' },
+    ],
     defaultVariants: { variant: 'primary', size: 'default' },
   },
 );

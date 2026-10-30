@@ -174,13 +174,13 @@ export default function CarrierPage() {
           aria-label="Search carriers"
           value={list.searchInput}
           onChange={(event) => list.setSearchInput(event.target.value)}
-          className="w-72"
+          className="w-full sm:w-72"
         />
         <Select
           aria-label="Filter by type"
           value={list.filters['typeId'] ?? ''}
           onChange={(event) => list.setFilter('typeId', event.target.value)}
-          className="w-48"
+          className="w-full sm:w-48"
         >
           <option value="">All types</option>
           {types.map((t) => (

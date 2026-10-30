@@ -9,6 +9,7 @@ import {
   SUPPLIER_PARTY_TYPES,
   type SupplierPartyType,
 } from '@ff/shared';
+import { ArrowLeft } from 'lucide-react';
 import type { Route } from 'next';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -17,7 +18,7 @@ import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
-import { PageHeader } from '@/components/ui/form-layout';
+import { backLinkClasses, PageHeader } from '@/components/ui/form-layout';
 import { Segmented } from '@/components/ui/segmented';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
@@ -117,8 +118,9 @@ export function CreditInvoiceForm({ options }: { options: CostOptionsDto }) {
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-2">
-        <Link href={{ pathname: '/accounts/credit-invoice' }} className="text-cell text-harbour hover:underline">
-          ← Back to list
+        <Link href={{ pathname: '/accounts/credit-invoice' }} className={backLinkClasses}>
+          <ArrowLeft className="size-3.5" aria-hidden="true" />
+          Back to list
         </Link>
         <PageHeader
           title="New Credit Invoice"
@@ -133,7 +135,7 @@ export function CreditInvoiceForm({ options }: { options: CostOptionsDto }) {
       )}
 
       {/* --------------------------------------------- which job it is for */}
-      <section className="grid grid-cols-1 gap-4 rounded-manifest border border-line bg-surface p-5 shadow-manifest md:grid-cols-[16rem_1fr]">
+      <section className="grid grid-cols-1 gap-4 rounded-card border border-line bg-surface p-4 shadow-manifest md:grid-cols-[16rem_1fr] sm:p-5">
         <Field id="targetSearch" label="Find the debit invoice" hint="Invoice no, customer or booking.">
           <Input
             id="targetSearch"
@@ -172,9 +174,9 @@ export function CreditInvoiceForm({ options }: { options: CostOptionsDto }) {
       </section>
 
       {/* ------------------------------------------------- the supplier's bill */}
-      <section className="flex flex-col gap-4 rounded-manifest border border-line bg-surface p-5 shadow-manifest">
+      <section className="flex flex-col gap-4 rounded-card border border-line bg-surface p-4 shadow-manifest sm:p-5">
         <div className="flex flex-col gap-1">
-          <span className="label-manifest">Billed by</span>
+          <span className="label-field">Billed by</span>
           <Segmented<SupplierPartyType>
             label="Billed by"
             value={block.partyType}
@@ -203,11 +205,15 @@ export function CreditInvoiceForm({ options }: { options: CostOptionsDto }) {
         </Field>
       </section>
 
-      <div className="flex items-center justify-end gap-3">
-        <Link href={{ pathname: '/accounts/credit-invoice' }} className="text-body text-harbour hover:underline">
+      {/* On a phone the save runs full width, nearest the thumb. */}
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end sm:gap-3">
+        <Link
+          href={{ pathname: '/accounts/credit-invoice' }}
+          className="text-body text-harbour hover:underline max-sm:py-2 max-sm:text-center"
+        >
           Cancel
         </Link>
-        <Button disabled={pending || !ready} onClick={() => void save()}>
+        <Button className="max-sm:w-full" disabled={pending || !ready} onClick={() => void save()}>
           {pending ? 'Saving…' : 'Save credit invoice'}
         </Button>
       </div>

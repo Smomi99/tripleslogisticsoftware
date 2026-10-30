@@ -134,10 +134,13 @@ export function PerformanceDrawer({
       size="wide"
     >
       <div className="flex flex-col gap-4">
-        {/* ------------------------------------------------ report period */}
-        <div className="flex flex-wrap items-end gap-3 border-b border-line pb-4">
-          <div className="flex w-52 flex-col gap-1">
-            <span className="label-manifest">Report period</span>
+        {/*
+          ------------------------------------------------ report period
+          On a phone: the period across the top, the two dates side by side.
+        */}
+        <div className="grid grid-cols-2 items-end gap-3 border-b border-line pb-4 sm:flex sm:flex-wrap">
+          <div className="col-span-2 flex flex-col gap-1 sm:w-52">
+            <span className="label-field">Report period</span>
             <Select
               aria-label="Report period"
               value={period}
@@ -153,8 +156,8 @@ export function PerformanceDrawer({
 
           {period === 'CUSTOM' && (
             <>
-              <div className="flex w-40 flex-col gap-1">
-                <span className="label-manifest">From</span>
+              <div className="flex min-w-0 flex-col gap-1 sm:w-40">
+                <span className="label-field">From</span>
                 <Input
                   type="date"
                   aria-label="From date"
@@ -162,8 +165,8 @@ export function PerformanceDrawer({
                   onChange={(e) => setFrom(e.target.value)}
                 />
               </div>
-              <div className="flex w-40 flex-col gap-1">
-                <span className="label-manifest">To</span>
+              <div className="flex min-w-0 flex-col gap-1 sm:w-40">
+                <span className="label-field">To</span>
                 <Input
                   type="date"
                   aria-label="To date"
@@ -174,7 +177,7 @@ export function PerformanceDrawer({
             </>
           )}
 
-          <p className="pb-2 font-mono text-cell tabular-nums text-steel">
+          <p className="col-span-2 font-mono text-cell tabular-nums text-steel sm:pb-2">
             {preview === null
               ? 'Choose both dates.'
               : `${preview.from} → ${preview.to}`}
@@ -195,7 +198,7 @@ export function PerformanceDrawer({
         ) : report === null ? null : (
           <>
             {/* -------------------------------------------------- the grid */}
-            <div className="grid gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-3">
               {report.metrics.map((m) => (
                 <MetricTile
                   key={m.key}
@@ -214,8 +217,8 @@ export function PerformanceDrawer({
 
             {/* ------------------------------------------------ the detail */}
             {openMetric !== null && (
-              <div className="rounded-manifest border border-line bg-surface">
-                <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
+              <div className="overflow-hidden rounded-card border border-line bg-surface">
+                <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
                   <h3 className="text-section text-hull">
                     {openMetric.label}
                     {detail !== null && (
@@ -236,12 +239,12 @@ export function PerformanceDrawer({
                     Nothing in this period.
                   </p>
                 ) : (
-                  <div className="max-h-80 overflow-y-auto">
-                    <table className="w-full border-collapse text-cell">
+                  <div className="max-h-80 overflow-auto">
+                    <table className="w-full min-w-[26rem] border-collapse text-cell">
                       <tbody>
                         {detail.map((row) => (
                           <tr key={row.id} className="border-b border-line last:border-0">
-                            <td className="w-40 bg-paper px-3 py-1.5 font-mono text-cell tabular-nums text-hull">
+                            <td className="w-40 whitespace-nowrap bg-module-soft px-3 py-1.5 font-mono text-cell tabular-nums text-hull">
                               {row.code}
                             </td>
                             <td className="px-3 py-1.5 text-hull">
@@ -259,7 +262,7 @@ export function PerformanceDrawer({
                                 <span className="block text-cell text-steel">{row.subtitle}</span>
                               )}
                             </td>
-                            <td className="w-28 px-3 py-1.5 text-right font-mono text-cell tabular-nums text-steel">
+                            <td className="w-28 whitespace-nowrap px-3 py-1.5 text-right font-mono text-cell tabular-nums text-steel">
                               {row.date ?? '—'}
                             </td>
                           </tr>
@@ -298,7 +301,7 @@ function MetricTile({
   if (pending) {
     return (
       <div
-        className="rounded-manifest border border-dashed border-line bg-paper px-3.5 py-3"
+        className="rounded-card border border-dashed border-line bg-paper px-3.5 py-3"
         title={metric.pendingReason ?? undefined}
       >
         <div className="label-manifest">{metric.label}</div>
@@ -313,7 +316,7 @@ function MetricTile({
       onClick={onOpen}
       aria-expanded={isOpen}
       className={[
-        'rounded-manifest border bg-surface px-3.5 py-3 text-left transition-colors duration-[120ms]',
+        'rounded-card border bg-surface px-3.5 py-3 text-left transition-colors duration-[120ms]',
         isOpen
           ? 'border-harbour bg-harbour/5'
           : 'border-line hover:border-harbour hover:bg-row-hover',

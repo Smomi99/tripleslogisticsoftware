@@ -201,8 +201,8 @@ export function ShipmentBookingList({ mode }: { mode: 'SEA' | 'AIR' }) {
       />
 
       <div className="flex flex-wrap items-end gap-3">
-        <div className="flex w-72 flex-col gap-1">
-          <span className="label-manifest">Search</span>
+        <div className="flex w-full flex-col gap-1 sm:w-72">
+          <span className="label-field">Search</span>
           <Input
             type="search"
             aria-label="Search bookings"
@@ -211,8 +211,8 @@ export function ShipmentBookingList({ mode }: { mode: 'SEA' | 'AIR' }) {
             onChange={(e) => setSearchInput(e.target.value)}
           />
         </div>
-        <div className="flex w-52 flex-col gap-1">
-          <span className="label-manifest">Status</span>
+        <div className="flex min-w-0 flex-1 flex-col gap-1 sm:w-52 sm:flex-none">
+          <span className="label-field">Status</span>
           <Select
             aria-label="Filter by status"
             value={status}
@@ -231,8 +231,8 @@ export function ShipmentBookingList({ mode }: { mode: 'SEA' | 'AIR' }) {
         </div>
         {/* §7's VIEW_ALL. Hidden from anyone who only ever sees their own. */}
         {can('CUSTOMER_SERVICE.CARGO_BOOKING.VIEW_ALL') && (
-          <div className="flex w-44 flex-col gap-1">
-            <span className="label-manifest">Show</span>
+          <div className="flex min-w-0 flex-1 flex-col gap-1 sm:w-44 sm:flex-none">
+            <span className="label-field">Show</span>
             <Select
               aria-label="Filter by owner"
               value={scope}
@@ -293,9 +293,12 @@ export function ShipmentBookingList({ mode }: { mode: 'SEA' | 'AIR' }) {
                   </Link>
                 )}
               {next.permission === null ? (
-                // "Awaiting Shipment Approval" is a statement, not a button:
-                // the customer is the one who acts next.
-                <span className="text-body text-steel">{next.label}</span>
+                // "Awaiting Shipment Approval" is a statement, not an action:
+                // the customer is the one who acts next. Drawn as a disabled
+                // button, so it does not pass for one in the row's action pills.
+                <Button variant="text" size="inline" disabled className="text-steel">
+                  {next.label}
+                </Button>
               ) : (
                 // A terminal booking's next action IS View, which the link
                 // above already is — drawing it twice would say nothing twice.

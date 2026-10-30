@@ -12,9 +12,10 @@ import {
   isShipmentTab,
   sumCargoTotals,
 } from '@ff/shared';
+import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { ApprovalTab } from '@/components/cs/approval-tab';
 import { CargoReceiptTab } from '@/components/cs/cargo-receipt-tab';
@@ -23,7 +24,7 @@ import { ShippingOrderTab } from '@/components/cs/shipping-order-tab';
 import { BlDraftTab } from '@/components/doc/bl-draft-tab';
 import { ShipmentAdviseTab } from '@/components/doc/shipment-advise-tab';
 import { ShipmentBookingScreen } from '@/components/cs/shipment-booking-screen';
-import { PageHeader } from '@/components/ui/form-layout';
+import { backLinkClasses, PageHeader } from '@/components/ui/form-layout';
 import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
@@ -72,7 +73,7 @@ function Cell({ label, value }: { label: string; value: string | null }) {
   return (
     <div>
       <dt className="label-manifest">{label}</dt>
-      <dd className="text-body text-hull">{value === null || value === '' ? '—' : value}</dd>
+      <dd className="break-words text-body text-hull">{value === null || value === '' ? '—' : value}</dd>
     </div>
   );
 }
@@ -98,6 +99,7 @@ export function ShipmentFileScreen({ shipmentId }: { shipmentId: string }) {
   const [schedules, setSchedules] = useState<ShipmentScheduleDto[]>([]);
   const [activities, setActivities] = useState<ShipmentActivityDto[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const tabRow = useRef<HTMLUListElement>(null);
 
   const load = useCallback(async () => {
     try {
@@ -129,6 +131,19 @@ export function ShipmentFileScreen({ shipmentId }: { shipmentId: string }) {
       .catch(() => setActivities([]));
   }, [authorizedRequest, shipmentId, tab]);
 
+  // On a phone the tab row scrolls, so a file opened on ?tab=cargo-receipt
+  // would otherwise show a row with no tab marked as open.
+  const loaded = booking !== null;
+  useEffect(() => {
+    const row = tabRow.current;
+    const open = row?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (row == null || open == null) return;
+    const left = open.getBoundingClientRect().left - row.getBoundingClientRect().left;
+    if (left < 0 || left + open.offsetWidth > row.clientWidth) {
+      row.scrollLeft += left - (row.clientWidth - open.offsetWidth) / 2;
+    }
+  }, [tab, loaded]);
+
   function go(next: ShipmentTabId): void {
     router.replace(`/cs/shipment-booking/${shipmentId}?tab=${next}`, { scroll: false });
   }
@@ -140,8 +155,9 @@ export function ShipmentFileScreen({ shipmentId }: { shipmentId: string }) {
         <p role="alert" className="rounded-manifest border border-alert/30 bg-alert/5 px-3 py-2 text-body text-alert">
           {error}
         </p>
-        <Link href="/cs/shipment-booking-sea" className="text-body text-harbour hover:underline">
-          ← Back to the booking list
+        <Link href="/cs/shipment-booking-sea" className={backLinkClasses}>
+          <ArrowLeft className="size-3.5" aria-hidden="true" />
+          Back to the booking list
         </Link>
       </div>
     );
@@ -173,14 +189,15 @@ export function ShipmentFileScreen({ shipmentId }: { shipmentId: string }) {
       </div>
 
       {/* ------------------------------------------------------------- tabs */}
+      {/* One row that scrolls sideways on a phone: wrapped, it read as three rows of tabs. */}
       <nav aria-label="Shipment file" className="border-b border-line">
-        <ul className="flex flex-wrap gap-1">
+        <ul ref={tabRow} className="-mb-px flex overflow-x-auto">
           {SHIPMENT_TABS.filter((entry) => !(isAir && AIR_HIDDEN_TABS.includes(entry.id))).map((entry) => {
             const active = entry.id === tab;
             const label = (isAir ? AIR_TAB_LABEL[entry.id] : undefined) ?? entry.label;
             if (!entry.live) {
               return (
-                <li key={entry.id}>
+                <li key={entry.id} className="shrink-0">
                   {/*
                     §6.3: shown, not hidden. A disabled tab tells the operations
                     team what the file will hold; an absent one tells them
@@ -189,7 +206,7 @@ export function ShipmentFileScreen({ shipmentId }: { shipmentId: string }) {
                   <span
                     aria-disabled="true"
                     title="Coming soon"
-                    className="inline-block cursor-default border-b-2 border-transparent px-3 py-2 text-body text-steel/50"
+                    className="inline-block cursor-default whitespace-nowrap border-b-[3px] border-transparent px-3 py-2.5 text-body text-steel/50"
                   >
                     {label}
                   </span>
@@ -197,15 +214,15 @@ export function ShipmentFileScreen({ shipmentId }: { shipmentId: string }) {
               );
             }
             return (
-              <li key={entry.id}>
+              <li key={entry.id} className="shrink-0">
                 <button
                   type="button"
                   aria-current={active ? 'page' : undefined}
                   onClick={() => go(entry.id)}
                   className={
                     active
-                      ? 'border-b-2 border-harbour px-3 py-2 text-body font-medium text-hull'
-                      : 'border-b-2 border-transparent px-3 py-2 text-body text-steel hover:text-hull'
+                      ? 'whitespace-nowrap border-b-[3px] border-harbour px-3 py-2.5 text-body font-semibold text-harbour'
+                      : 'whitespace-nowrap border-b-[3px] border-transparent px-3 py-2.5 text-body text-steel transition-colors duration-[120ms] hover:border-line hover:text-hull'
                   }
                 >
                   {label}
@@ -219,9 +236,9 @@ export function ShipmentFileScreen({ shipmentId }: { shipmentId: string }) {
       {/* ---------------------------------------------------------- overview */}
       {tab === 'overview' && (
         <div className="flex flex-col gap-4">
-          <section className="rounded-manifest border border-line bg-surface p-4 shadow-manifest">
+          <section className="rounded-card border border-line bg-surface p-4 shadow-manifest">
             <h2 className="mb-3 text-section text-hull">The shipment</h2>
-            <dl className="grid gap-4 md:grid-cols-4">
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-4 md:grid-cols-4">
               <Cell label="Quotation No" value={booking.quotationCode} />
               <Cell label="Customer" value={booking.customerName} />
               <Cell label="Exporter" value={booking.exporterName} />
@@ -240,9 +257,9 @@ export function ShipmentFileScreen({ shipmentId }: { shipmentId: string }) {
             </dl>
           </section>
 
-          <section className="rounded-manifest border border-line bg-surface p-4 shadow-manifest">
+          <section className="rounded-card border border-line bg-surface p-4 shadow-manifest">
             <h2 className="mb-3 text-section text-hull">Cargo</h2>
-            <dl className="grid gap-4 md:grid-cols-5">
+            <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-5">
               <Figure label="POs" value={booking.pos.length} />
               <Figure label="Lines" value={booking.cargoLines.length} />
               <Figure label="Total CTN" value={totals.ctnQty} />
@@ -289,7 +306,7 @@ export function ShipmentFileScreen({ shipmentId }: { shipmentId: string }) {
       )}
       {tab === 'bl' && <BlDraftTab booking={booking} onChanged={() => void load()} />}
       {tab === 'activities' && (
-        <section className="rounded-manifest border border-line bg-surface shadow-manifest">
+        <section className="rounded-card border border-line bg-surface shadow-manifest">
           <h2 className="border-b border-line px-4 py-3 text-section text-hull">
             Everything that has happened to this file
           </h2>
@@ -299,7 +316,7 @@ export function ShipmentFileScreen({ shipmentId }: { shipmentId: string }) {
             <ol className="divide-y divide-line/60">
               {activities.map((event) => (
                 <li key={event.id} className="flex flex-wrap items-baseline gap-3 px-4 py-2">
-                  <span className="w-40 shrink-0 font-mono tabular-nums text-cell text-steel">
+                  <span className="w-full shrink-0 font-mono tabular-nums text-cell text-steel sm:w-40">
                     {new Date(event.at).toLocaleString()}
                   </span>
                   <span className="text-body text-hull">{event.summary}</span>
@@ -318,7 +335,7 @@ export function ShipmentFileScreen({ shipmentId }: { shipmentId: string }) {
 
       {/* The live schedule, summarised under whichever tab is showing it. */}
       {tab === 'overview' && live !== null && (
-        <section className="rounded-manifest border border-line bg-surface p-4 shadow-manifest">
+        <section className="rounded-card border border-line bg-surface p-4 shadow-manifest">
           <h2 className="mb-3 text-section text-hull">Current schedule</h2>
           <div className="flex flex-wrap items-baseline gap-3 text-body">
             <span className="font-mono tabular-nums text-hull">v{live.versionNo}</span>
@@ -334,9 +351,10 @@ export function ShipmentFileScreen({ shipmentId }: { shipmentId: string }) {
 
       <Link
         href={isAir ? '/cs/shipment-booking-air' : '/cs/shipment-booking-sea'}
-        className="text-body text-harbour hover:underline"
+        className={backLinkClasses}
       >
-        ← Back to the booking list
+        <ArrowLeft className="size-3.5" aria-hidden="true" />
+        Back to the booking list
       </Link>
     </div>
   );

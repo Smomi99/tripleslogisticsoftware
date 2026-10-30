@@ -178,7 +178,7 @@ export function BlDraftTab({
         </p>
       )}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <h2 className="text-section text-hull">
             {draft === null ? `New ${terms.draft}` : draft.code}
           </h2>
@@ -360,11 +360,12 @@ export function BlDraftTab({
           <p className="text-cell text-steel">
             The draft is attached to the letter as a PDF, watermarked until it is approved.
           </p>
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setSendOpen(false)}>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button variant="secondary" onClick={() => setSendOpen(false)} className="max-sm:w-full">
               Back
             </Button>
             <Button
+              className="max-sm:w-full"
               disabled={isPending || sendTo.trim() === '' || draft === null}
               onClick={() => {
                 if (draft === null) return;
@@ -408,11 +409,12 @@ export function BlDraftTab({
               placeholder={`${booking.customerName} — standard`}
             />
           </Field>
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setTemplateOpen(false)}>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button variant="secondary" onClick={() => setTemplateOpen(false)} className="max-sm:w-full">
               Back
             </Button>
             <Button
+              className="max-sm:w-full"
               disabled={isPending || templateName.trim() === ''}
               onClick={() => {
                 void run(
@@ -466,12 +468,13 @@ export function BlDraftTab({
               placeholder="Consignee block wrong"
             />
           </Field>
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setCancelOpen(false)}>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button variant="secondary" onClick={() => setCancelOpen(false)} className="max-sm:w-full">
               Keep it
             </Button>
             <Button
               variant="destructive"
+              className="max-sm:w-full"
               disabled={isPending || cancelReason.trim() === '' || draft === null}
               onClick={() => {
                 if (draft === null) return;

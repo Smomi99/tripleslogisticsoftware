@@ -225,7 +225,7 @@ export default function PortListPage() {
           aria-label="Search ports"
           value={searchInput}
           onChange={(event) => setSearchInput(event.target.value)}
-          className="w-72"
+          className="w-full sm:w-72"
         />
         <Select
           aria-label="Filter by type"
@@ -234,7 +234,7 @@ export default function PortListPage() {
             setTypeFilter(event.target.value);
             setPage(1);
           }}
-          className="w-40"
+          className="w-full sm:w-40"
         >
           <option value="">All types</option>
           <option value="SEAPORT">Seaport</option>

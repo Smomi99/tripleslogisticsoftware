@@ -149,7 +149,7 @@ export default function AgentPage() {
         title="Agent"
         description="Overseas partners, what they handle, where they cover, and which networks they belong to."
         action={
-          <div className="flex flex-wrap items-center gap-2">
+          <>
             {/*
               Bulk email writes to the agents this list is filtered to, so
               it carries the filters with it — what the operator is looking at
@@ -167,7 +167,7 @@ export default function AgentPage() {
                 <Link href="/crm/agent/new">+ Add agent</Link>
               </Button>
             )}
-          </div>
+          </>
         }
       />
 
@@ -178,13 +178,13 @@ export default function AgentPage() {
           aria-label="Search agents"
           value={list.searchInput}
           onChange={(event) => list.setSearchInput(event.target.value)}
-          className="w-72"
+          className="w-full sm:w-72"
         />
         <Select
           aria-label="Filter by type"
           value={list.filters['agentType'] ?? ''}
           onChange={(event) => list.setFilter('agentType', event.target.value)}
-          className="w-44"
+          className="w-full sm:w-44"
         >
           <option value="">All types</option>
           {AGENT_TYPES.map((t) => (

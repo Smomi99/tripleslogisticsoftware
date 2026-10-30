@@ -156,7 +156,7 @@ export function ClpCostPanel({
       <div className="overflow-x-auto rounded-manifest border border-line">
         <table className="w-full min-w-[720px] border-collapse text-cell">
           <thead>
-            <tr className="border-b border-line bg-paper">
+            <tr className="whitespace-nowrap border-b border-line bg-module-soft">
               <th className="label-manifest px-3 py-2 text-left">Booking</th>
               <th className="label-manifest px-3 py-2 text-right">Booked CBM</th>
               <th className="label-manifest px-3 py-2 text-right">Measured CBM</th>
@@ -204,7 +204,7 @@ export function ClpCostPanel({
 
       {/* ---------------------------------------------- Stage E: what it cost */}
       {editable && mayEdit && (
-        <div className="mt-3 flex flex-wrap items-end gap-3">
+        <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
           <Field
             id={`cost-${clp.id}`}
             label="Actual container cost"
@@ -216,7 +216,7 @@ export function ClpCostPanel({
               value={cost}
               onChange={(event) => setCost(event.target.value)}
               placeholder="2000.00"
-              className="w-40"
+              className="w-full sm:w-40"
             />
           </Field>
 
@@ -225,7 +225,7 @@ export function ClpCostPanel({
               id={`ccy-${clp.id}`}
               value={currencyId}
               onChange={(event) => setCurrencyId(event.target.value)}
-              className="w-40"
+              className="w-full sm:w-40"
             >
               {plan.currencies.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -241,7 +241,7 @@ export function ClpCostPanel({
               id={`basis-${clp.id}`}
               value={basis}
               onChange={(event) => setBasis(event.target.value as 'CBM' | 'WEIGHT')}
-              className="w-36"
+              className="w-full sm:w-36"
             >
               <option value="CBM">CBM</option>
               <option value="WEIGHT">Weight</option>
@@ -250,7 +250,6 @@ export function ClpCostPanel({
 
           <Button
             variant="secondary"
-            size="inline"
             disabled={busy || saving || cost.trim() === '' || currencyId === ''}
             onClick={() => void save()}
           >
@@ -281,7 +280,7 @@ export function ClpCostPanel({
         <div className="mt-3 overflow-x-auto rounded-manifest border border-line">
           <table className="w-full min-w-[720px] border-collapse text-cell">
             <thead>
-              <tr className="border-b border-line bg-paper">
+              <tr className="whitespace-nowrap border-b border-line bg-module-soft">
                 <th className="label-manifest px-3 py-2 text-left">Booking</th>
                 <th className="label-manifest px-3 py-2 text-right">Default</th>
                 <th className="label-manifest px-3 py-2 text-right">Allocated</th>
@@ -348,7 +347,7 @@ export function ClpCostPanel({
           {mayOverrideCost ? (
             <Button
               variant="secondary"
-              size="inline"
+              size="compact"
               disabled={busy}
               onClick={() => setOverriding(true)}
             >

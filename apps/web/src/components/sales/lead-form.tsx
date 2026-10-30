@@ -40,7 +40,7 @@ const ENDPOINT = '/api/tenant/sales/leads';
 const LIST: Route = '/sales/sales-lead' as Route;
 
 const TEXTAREA =
-  'w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-body text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour aria-[invalid=true]:border-alert';
+  'w-full rounded-manifest border border-line bg-surface px-3 py-2 text-base text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour sm:px-2.5 sm:py-1.5 sm:text-body aria-[invalid=true]:border-alert';
 
 const today = (): string => new Date().toISOString().slice(0, 10);
 
@@ -630,7 +630,7 @@ export function LeadForm({ lead }: { lead: SalesLeadDto | null }) {
 
         <section
           aria-label="Calculated opportunity value"
-          className="rounded-manifest border border-line bg-paper p-3 md:col-span-2"
+          className="rounded-card border border-line bg-module-soft p-3 md:col-span-2"
         >
           <p className="label-manifest">Calculated opportunity value</p>
           <dl className="mt-2 grid grid-cols-2 gap-3 md:grid-cols-4">

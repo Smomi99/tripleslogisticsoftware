@@ -80,8 +80,8 @@ function IgmList({ mode, onMode }: { mode: ShipmentType; onMode: (m: ShipmentTyp
   return (
     <>
       <div className="flex flex-wrap items-end gap-3">
-        <div className="flex w-72 flex-col gap-1">
-          <span className="label-manifest">Search</span>
+        <div className="flex w-full flex-col gap-1.5 sm:w-72">
+          <span className="label-field">Search</span>
           <Input
             type="search"
             aria-label="Search bookings"
@@ -222,7 +222,7 @@ function IgmModal({ row, onClose, onSaved }: { row: IgmRow; onClose: () => void;
             type="file"
             accept=".pdf,.jpg,.jpeg,application/pdf,image/jpeg"
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            className="text-body text-hull file:mr-3 file:rounded-manifest file:border file:border-line file:bg-surface file:px-3 file:py-1.5 file:text-body file:text-hull"
+            className="w-full text-body text-hull file:mr-3 file:rounded-manifest file:border file:border-line file:bg-surface file:px-3 file:py-1.5 file:text-body file:text-hull"
           />
         </Field>
         {error !== null && (
@@ -230,11 +230,11 @@ function IgmModal({ row, onClose, onSaved }: { row: IgmRow; onClose: () => void;
             {error}
           </p>
         )}
-        <div className="flex justify-end gap-3">
-          <Button variant="secondary" onClick={onClose} disabled={pending}>
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-3">
+          <Button variant="secondary" onClick={onClose} disabled={pending} className="max-sm:w-full">
             Close
           </Button>
-          <Button type="submit" disabled={pending}>
+          <Button type="submit" disabled={pending} className="max-sm:w-full">
             {pending ? 'Saving…' : 'Save IGM'}
           </Button>
         </div>

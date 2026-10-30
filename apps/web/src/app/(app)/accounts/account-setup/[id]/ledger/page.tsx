@@ -5,6 +5,7 @@ import {
   JOURNAL_ENTRY_FEATURE,
   JOURNAL_ENTRY_KIND_LABEL,
 } from '@ff/shared';
+import { ArrowLeft } from 'lucide-react';
 import type { Route } from 'next';
 import Link from 'next/link';
 import { use, useEffect, useState } from 'react';
@@ -13,9 +14,11 @@ import { toast } from 'sonner';
 import { amount } from '@/components/accounts/format';
 import { sheetDay } from '@/components/accounts/statement-table';
 import { VOUCHER_SLUG } from '@/components/accounts/voucher-list';
+import { ModuleBadge } from '@/components/shell/module-theme';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Input, Select } from '@/components/ui/field';
+import { backLinkClasses } from '@/components/ui/form-layout';
 import { Segmented } from '@/components/ui/segmented';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
@@ -110,8 +113,9 @@ export default function BankAccountLedgerPage({ params }: { params: Promise<{ id
   }, [authorizedRequest, id, query]);
 
   const back = (
-    <Link href={{ pathname: '/accounts/account-setup' }} className="text-cell text-harbour hover:underline">
-      ← Back to list
+    <Link href={{ pathname: '/accounts/account-setup' }} className={backLinkClasses}>
+      <ArrowLeft className="size-3.5" aria-hidden="true" />
+      Back to list
     </Link>
   );
 
@@ -142,47 +146,56 @@ export default function BankAccountLedgerPage({ params }: { params: Promise<{ id
 
   const code = ledger.currencyCode ?? 'Base';
   const years = Array.from({ length: 10 }, (_, i) => new Date().getFullYear() - i);
-  const TH = 'label-manifest px-3 py-2';
+  const TH = 'label-manifest whitespace-nowrap px-3 py-2';
   const TD = 'px-3 py-2 text-cell text-hull';
   const NUM = `${TD} text-right font-mono tabular-nums`;
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-baseline justify-between gap-3">
-        <div>
-          <h1 className="text-page-title text-hull">Ledger - {ledger.account.ledgerName}</h1>
-          <p className="text-body text-steel">
-            {ledger.account.accountName} · <span className="font-mono tabular-nums">{ledger.account.accountNo}</span> ·{' '}
-            {ledger.account.bankName}, {ledger.account.branch}
-          </p>
-        </div>
-        <div className="flex items-center gap-4">
+      {/* A child screen's header (§8): Back to list first, then whose ledger it is. */}
+      <div className="flex flex-col gap-3">
+        {back}
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <ModuleBadge />
+            <div className="min-w-0">
+              <h1 className="break-words text-page-title text-hull">Ledger - {ledger.account.ledgerName}</h1>
+              <p className="text-body text-steel">
+                {ledger.account.accountName} · <span className="font-mono tabular-nums">{ledger.account.accountNo}</span> ·{' '}
+                {ledger.account.bankName}, {ledger.account.branch}
+              </p>
+            </div>
+          </div>
           {can('ACCOUNTS.ACCOUNT_SETUP.EXPORT') && (
-            <Button variant="secondary" onClick={() => void exportIt()} disabled={exporting || query === null}>
+            <Button
+              variant="secondary"
+              className="max-sm:w-full"
+              onClick={() => void exportIt()}
+              disabled={exporting || query === null}
+            >
               {exporting ? 'Exporting…' : 'Export to Excel'}
             </Button>
           )}
-          {back}
         </div>
       </div>
 
       {/* ---------------------------------------------------------- the period */}
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex flex-col gap-1">
-          <span className="label-manifest">Period</span>
+          <span className="label-field">Period</span>
           <Segmented label="Period" value={kind} options={PERIOD_OPTIONS} onChange={setKind} />
         </div>
         {kind === 'MONTH' && (
-          <div className="flex w-48 flex-col gap-1">
-            <label htmlFor="ledger-month" className="label-manifest">
+          <div className="flex min-w-0 flex-1 basis-40 flex-col gap-1 sm:w-48 sm:flex-none">
+            <label htmlFor="ledger-month" className="label-field">
               Month
             </label>
             <Input id="ledger-month" type="month" numeric value={month} onChange={(e) => setMonth(e.target.value)} />
           </div>
         )}
         {kind === 'YEAR' && (
-          <div className="flex w-36 flex-col gap-1">
-            <label htmlFor="ledger-year" className="label-manifest">
+          <div className="flex min-w-0 flex-1 basis-40 flex-col gap-1 sm:w-36 sm:flex-none">
+            <label htmlFor="ledger-year" className="label-field">
               Year
             </label>
             <Select id="ledger-year" value={year} onChange={(e) => setYear(Number(e.target.value))}>
@@ -196,14 +209,14 @@ export default function BankAccountLedgerPage({ params }: { params: Promise<{ id
         )}
         {kind === 'RANGE' && (
           <>
-            <div className="flex w-48 flex-col gap-1">
-              <label htmlFor="ledger-from" className="label-manifest">
+            <div className="flex min-w-0 flex-1 basis-40 flex-col gap-1 sm:w-48 sm:flex-none">
+              <label htmlFor="ledger-from" className="label-field">
                 From
               </label>
               <Input id="ledger-from" type="date" numeric value={from} onChange={(e) => setFrom(e.target.value)} />
             </div>
-            <div className="flex w-48 flex-col gap-1">
-              <label htmlFor="ledger-to" className="label-manifest">
+            <div className="flex min-w-0 flex-1 basis-40 flex-col gap-1 sm:w-48 sm:flex-none">
+              <label htmlFor="ledger-to" className="label-field">
                 To
               </label>
               <Input id="ledger-to" type="date" numeric value={to} onChange={(e) => setTo(e.target.value)} />
@@ -223,7 +236,7 @@ export default function BankAccountLedgerPage({ params }: { params: Promise<{ id
       )}
 
       {/* --------------------------------------------------------- the figures */}
-      <div className="grid grid-cols-2 gap-4 rounded-manifest border border-line bg-surface px-4 py-3 shadow-manifest sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 rounded-card border border-line bg-surface px-4 py-3 shadow-manifest sm:grid-cols-4">
         {(
           [
             [`Opening balance (${code})`, ledger.opening, `As at ${sheetDay(ledger.from)}`],
@@ -242,10 +255,10 @@ export default function BankAccountLedgerPage({ params }: { params: Promise<{ id
         ))}
       </div>
 
-      <div className={cn('overflow-x-auto rounded-manifest border border-line bg-surface shadow-manifest', pending && 'opacity-60')}>
+      <div className={cn('overflow-x-auto rounded-card border border-line bg-surface shadow-manifest', pending && 'opacity-60')}>
         <table className="w-full min-w-250 border-collapse">
           <thead>
-            <tr className="border-b border-line bg-paper">
+            <tr className="border-b border-line bg-module-soft">
               <th className={`${TH} text-right`}>Date</th>
               <th className={`${TH} text-left`}>Voucher No</th>
               <th className={`${TH} text-left`}>Type</th>

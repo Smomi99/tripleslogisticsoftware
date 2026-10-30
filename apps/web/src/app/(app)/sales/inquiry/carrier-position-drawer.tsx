@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { EmptyState } from '@/components/ui/empty-state';
 import { Modal } from '@/components/ui/modal';
+import { Segmented } from '@/components/ui/segmented';
 import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
@@ -67,27 +68,19 @@ export function CarrierPositionDrawer({
       size="wide"
     >
       <div className="flex flex-col gap-4">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="label-manifest">Rank by</span>
-          {(
-            [
-              ['price', 'Cheapest first'],
-              ['service', 'Best service first'],
-            ] as const
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => setSort(value)}
-              className={
-                sort === value
-                  ? 'rounded-manifest border border-harbour bg-harbour px-2.5 py-1 text-cell text-white'
-                  : 'rounded-manifest border border-line bg-surface px-2.5 py-1 text-cell text-hull hover:bg-row-hover'
-              }
-            >
-              {label}
-            </button>
-          ))}
+          <Segmented
+            label="Rank by"
+            value={sort}
+            options={
+              [
+                ['price', 'Cheapest first'],
+                ['service', 'Best service first'],
+              ] as const
+            }
+            onChange={setSort}
+          />
         </div>
 
         {error !== null && (
@@ -106,15 +99,15 @@ export function CarrierPositionDrawer({
 
         {rows !== null && rows.length > 0 && (
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse">
+            <table className="w-full min-w-[40rem] border-collapse">
               <thead>
-                <tr className="border-b border-line bg-paper">
-                  <th className="label-manifest px-3 py-2 text-left">Carrier</th>
-                  <th className="label-manifest px-3 py-2 text-left">Type</th>
-                  <th className="label-manifest px-3 py-2 text-right">Price rank</th>
-                  <th className="label-manifest px-3 py-2 text-right">Service rank</th>
-                  <th className="label-manifest px-3 py-2 text-left">Rates we hold</th>
-                  <th className="label-manifest px-3 py-2 text-left">Remarks</th>
+                <tr className="border-b border-line bg-module-soft">
+                  <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Carrier</th>
+                  <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Type</th>
+                  <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">Price rank</th>
+                  <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">Service rank</th>
+                  <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Rates we hold</th>
+                  <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Remarks</th>
                 </tr>
               </thead>
               <tbody>
@@ -123,7 +116,7 @@ export function CarrierPositionDrawer({
                     key={row.carrierId}
                     className="border-b border-line last:border-0 hover:bg-row-hover"
                   >
-                    <td className="bg-paper/40 px-3 py-2 text-cell text-hull">{row.carrierName}</td>
+                    <td className="bg-module-soft/60 px-3 py-2 text-cell text-hull">{row.carrierName}</td>
                     <td className="px-3 py-2 text-cell text-steel">
                       {row.carrierTypeName ?? '—'}
                     </td>

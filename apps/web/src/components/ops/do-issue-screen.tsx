@@ -33,8 +33,9 @@ import { useMasterList } from '@/lib/use-master-list';
  * CONTAINER NO — once the IGM is in.
  */
 
+// Drawn like the shared Input: 16px on a phone (iOS zooms into anything smaller), the same focus ring.
 const TEXTAREA =
-  'w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-body text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour';
+  'w-full rounded-manifest border border-line bg-surface px-3 py-2 text-base text-hull transition-[border-color,box-shadow] duration-[120ms] hover:border-steel/50 focus:border-harbour focus:outline-none focus:ring-3 focus:ring-harbour/20 sm:px-2.5 sm:py-1.5 sm:text-body';
 
 function today(): string {
   const now = new Date();
@@ -118,8 +119,8 @@ function DoList({ mode, onMode }: { mode: ShipmentType; onMode: (m: ShipmentType
   return (
     <>
       <div className="flex flex-wrap items-end gap-3">
-        <div className="flex w-72 flex-col gap-1">
-          <span className="label-manifest">Search</span>
+        <div className="flex w-full flex-col gap-1.5 sm:w-72">
+          <span className="label-field">Search</span>
           <Input
             type="search"
             aria-label="Search bookings"
@@ -340,11 +341,11 @@ function IssueModal({
             {error}
           </p>
         )}
-        <div className="flex justify-end gap-3 md:col-span-2">
-          <Button variant="secondary" onClick={onClose} disabled={pending}>
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-3 md:col-span-2">
+          <Button variant="secondary" onClick={onClose} disabled={pending} className="max-sm:w-full">
             Close
           </Button>
-          <Button type="submit" disabled={pending || prefill === null}>
+          <Button type="submit" disabled={pending || prefill === null} className="max-sm:w-full">
             {pending ? 'Issuing…' : 'Issue DO'}
           </Button>
         </div>
@@ -399,11 +400,11 @@ function CancelModal({
             {error}
           </p>
         )}
-        <div className="flex justify-end gap-3">
-          <Button variant="secondary" onClick={onClose} disabled={pending}>
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-3">
+          <Button variant="secondary" onClick={onClose} disabled={pending} className="max-sm:w-full">
             Keep it
           </Button>
-          <Button variant="danger" onClick={() => void submit()} disabled={pending}>
+          <Button variant="danger" onClick={() => void submit()} disabled={pending} className="max-sm:w-full">
             {pending ? 'Cancelling…' : 'Cancel DO'}
           </Button>
         </div>

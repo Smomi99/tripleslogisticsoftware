@@ -9,15 +9,18 @@ import {
   freightCertificateSaveSchema,
   type FreightCertificateViewDto,
 } from '@ff/shared';
+import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { type ReactNode, use, useCallback, useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { toast } from 'sonner';
 
 import { amount } from '@/components/accounts/format';
+import { ModuleBadge } from '@/components/shell/module-theme';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Input } from '@/components/ui/field';
+import { backLinkClasses } from '@/components/ui/form-layout';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 import { cn } from '@/lib/utils';
@@ -35,7 +38,7 @@ import { cn } from '@/lib/utils';
 const FEATURE = 'ACCOUNTS.FREIGHT_CERTIFICATE';
 
 const TEXTAREA = cn(
-  'w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-body text-hull',
+  'w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-base text-hull sm:text-body',
   'focus:outline-2 focus:outline-offset-0 focus:outline-harbour',
   'disabled:cursor-not-allowed disabled:bg-paper disabled:text-steel',
   'aria-[invalid=true]:border-alert',
@@ -79,8 +82,9 @@ export default function FreightCertificatePage({ params }: { params: Promise<{ i
   }, [load]);
 
   const back = (
-    <Link href={{ pathname: '/accounts/debit-invoice' }} className="text-cell text-harbour hover:underline">
-      ← Back to list
+    <Link href={{ pathname: '/accounts/debit-invoice' }} className={backLinkClasses}>
+      <ArrowLeft className="size-3.5" aria-hidden="true" />
+      Back to list
     </Link>
   );
 
@@ -187,19 +191,22 @@ function CertificateForm({
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-2">
         {back}
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="label-manifest">Debit Invoice · {view.debitInvoiceCode}</p>
-            <h1 className="text-page-title text-hull">
-              Freight Certificate{' '}
-              {certificate !== null && <span className="font-mono tabular-nums">{certificate.code}</span>}
-            </h1>
-            <p className="mt-0.5 text-body text-steel">
-              <span className="font-mono tabular-nums">{view.bookingCode}</span> · {view.customerName}
-            </p>
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
+          <div className="flex min-w-0 items-start gap-3">
+            <ModuleBadge />
+            <div className="min-w-0">
+              <p className="label-manifest">Debit Invoice · {view.debitInvoiceCode}</p>
+              <h1 className="text-page-title text-hull">
+                Freight Certificate{' '}
+                {certificate !== null && <span className="font-mono tabular-nums">{certificate.code}</span>}
+              </h1>
+              <p className="mt-0.5 text-body text-steel">
+                <span className="font-mono tabular-nums">{view.bookingCode}</span> · {view.customerName}
+              </p>
+            </div>
           </div>
           {canPrint && (
-            <Button variant="secondary" disabled={downloading} onClick={() => void download()}>
+            <Button variant="secondary" className="max-sm:w-full" disabled={downloading} onClick={() => void download()}>
               {downloading ? 'Downloading…' : 'Download PDF'}
             </Button>
           )}
@@ -213,7 +220,7 @@ function CertificateForm({
       )}
 
       {/* The figure is the invoice's, not the operator's — shown, never typed. */}
-      <section className="grid gap-x-8 gap-y-3 rounded-manifest border border-line bg-surface p-5 shadow-manifest sm:grid-cols-3">
+      <section className="grid gap-x-8 gap-y-3 rounded-card border border-line bg-surface p-4 shadow-manifest sm:grid-cols-3 sm:p-5">
         <div>
           <p className="label-manifest">Ref No</p>
           <p className="font-mono text-body tabular-nums text-hull">{certificate?.code ?? 'Given when you create it'}</p>
@@ -239,7 +246,7 @@ function CertificateForm({
       <form
         onSubmit={(e) => void submit(e)}
         noValidate
-        className="flex flex-col gap-5 rounded-manifest border border-line bg-surface p-5 shadow-manifest"
+        className="flex flex-col gap-5 rounded-card border border-line bg-surface p-4 shadow-manifest sm:p-5"
       >
         {formError !== null && (
           <p role="alert" className="rounded-manifest border border-alert/30 bg-alert/5 px-3 py-2 text-body text-alert">
@@ -301,7 +308,7 @@ function CertificateForm({
 
         {writable && (
           <div className="flex items-center gap-2 border-t border-line pt-4">
-            <Button type="submit" disabled={isSubmitting}>
+            <Button type="submit" className="max-sm:w-full" disabled={isSubmitting}>
               {isSubmitting ? 'Saving…' : certificate === null ? 'Create certificate' : 'Save changes'}
             </Button>
           </div>

@@ -73,14 +73,19 @@ export function CancelQuotationDialog({
             rows={3}
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            className="w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-body text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour"
+            className="w-full rounded-manifest border border-line bg-surface px-3 py-1.5 text-base text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour sm:px-2.5 sm:text-body"
           />
         </Field>
-        <div className="flex justify-end gap-3">
-          <Button variant="secondary" onClick={close}>
+        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end sm:gap-3">
+          <Button variant="secondary" onClick={close} className="max-sm:w-full">
             Keep it
           </Button>
-          <Button variant="destructive" disabled={pending || reason.trim() === ''} onClick={() => void cancel()}>
+          <Button
+            variant="destructive"
+            disabled={pending || reason.trim() === ''}
+            onClick={() => void cancel()}
+            className="max-sm:w-full"
+          >
             {pending ? 'Cancelling…' : 'Cancel quotation'}
           </Button>
         </div>

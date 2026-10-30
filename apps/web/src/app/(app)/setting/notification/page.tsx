@@ -37,10 +37,11 @@ const FIELD_SECTION: Record<SettingField, Section> = {
   awbIssuerDetails: 'awb',
 };
 
+// The Input's look, 16px on a phone so iOS does not zoom into it.
 const TEXTAREA =
-  'w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-body text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour';
+  'w-full rounded-manifest border border-line bg-surface px-3 py-2 text-base text-hull transition-[border-color,box-shadow] duration-[120ms] ease-manifest hover:border-steel/50 focus:border-harbour focus:outline-none focus:ring-3 focus:ring-harbour/20 disabled:cursor-not-allowed disabled:bg-paper disabled:text-steel sm:px-2.5 sm:py-1.5 sm:text-body';
 
-const CARD = 'max-w-2xl rounded-manifest border border-line bg-surface p-4 shadow-manifest';
+const CARD = 'max-w-2xl rounded-card border border-line bg-surface p-4 shadow-manifest sm:p-5';
 
 /**
  * Settings → Notifications.
@@ -121,7 +122,7 @@ export default function NotificationSettingPage() {
 
   const saveButton = mayEdit && (
     <div className="mt-4">
-      <Button onClick={() => void save()} disabled={isSaving || isLoading}>
+      <Button onClick={() => void save()} disabled={isSaving || isLoading} className="max-sm:w-full">
         {isSaving ? 'Saving…' : 'Save changes'}
       </Button>
     </div>

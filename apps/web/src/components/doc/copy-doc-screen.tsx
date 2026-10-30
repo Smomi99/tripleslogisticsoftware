@@ -16,10 +16,12 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Input, Select } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/form-layout';
 import { ConfirmDialog, Modal } from '@/components/ui/modal';
+import { RowActions } from '@/components/ui/row-actions';
 import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 import { useMasterList } from '@/lib/use-master-list';
+import { useIsPhone } from '@/lib/use-media-query';
 
 const FEATURE = 'DOCUMENTATION.COPY_DOC_UPLOAD';
 const BASE = '/api/tenant/documentation/copy-docs';
@@ -60,9 +62,10 @@ export function CopyDocScreen() {
         description="Copies of each booking's shipping papers, sea and air, inbound and outbound. What the system already holds is shown until a copy is uploaded."
       />
 
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="flex w-72 flex-col gap-1">
-          <span className="label-manifest">Search</span>
+      {/* On a phone the filters stack full width: side by side cut "Inbound and outbound" off. */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+        <div className="flex flex-col gap-1.5 sm:w-72">
+          <span className="label-field">Search</span>
           <Input
             type="search"
             aria-label="Search bookings"
@@ -71,8 +74,8 @@ export function CopyDocScreen() {
             onChange={(e) => list.setSearchInput(e.target.value)}
           />
         </div>
-        <div className="flex w-40 flex-col gap-1">
-          <label htmlFor="copy-doc-mode" className="label-manifest">
+        <div className="flex flex-col gap-1.5 sm:w-40">
+          <label htmlFor="copy-doc-mode" className="label-field">
             Mode
           </label>
           <Select id="copy-doc-mode" value={list.filters.shipmentType ?? ''} onChange={(e) => list.setFilter('shipmentType', e.target.value)}>
@@ -81,8 +84,8 @@ export function CopyDocScreen() {
             <option value="AIR">Air</option>
           </Select>
         </div>
-        <div className="flex w-48 flex-col gap-1">
-          <label htmlFor="copy-doc-direction" className="label-manifest">
+        <div className="flex flex-col gap-1.5 sm:w-48">
+          <label htmlFor="copy-doc-direction" className="label-field">
             Direction
           </label>
           <Select
@@ -164,6 +167,7 @@ export function CopyDocScreen() {
 /** The upload form (C16–E24, plus two): a row per paper, each "browse and upload". */
 function CopyDocModal({ row, onClose }: { row: CopyDocRow; onClose: () => void }) {
   const { can, authorizedRequest, authorizedUpload, authorizedDownload } = useSession();
+  const isPhone = useIsPhone();
   const mayCreate = can(`${FEATURE}.CREATE`);
   const mayEdit = can(`${FEATURE}.EDIT`);
   const base = `${BASE}/${row.shipmentId}`;
@@ -244,7 +248,7 @@ function CopyDocModal({ row, onClose }: { row: CopyDocRow; onClose: () => void }
                           <Status tone="active">{doc.source === 'UPLOAD' ? 'Uploaded' : 'On file'}</Status>
                           <button
                             type="button"
-                            className="max-w-80 truncate text-harbour hover:underline"
+                            className="max-w-full truncate text-harbour hover:underline sm:max-w-80"
                             title={doc.fileName ?? undefined}
                             onClick={() =>
                               void authorizedDownload(`${base}/documents/${doc.kind}`, doc.fileName ?? doc.kind).catch(() =>
@@ -265,7 +269,8 @@ function CopyDocModal({ row, onClose }: { row: CopyDocRow; onClose: () => void }
                       )}
                     </span>
                   </div>
-                  <span className="flex shrink-0 items-center gap-4">
+                  {/* The pills every table's row actions use; thumb-sized on a phone. */}
+                  <RowActions layout={isPhone ? 'card' : 'table'}>
                     {mayUploadThis && (
                       <label className="cursor-pointer text-cell text-harbour hover:underline focus-within:outline-2 focus-within:outline-harbour">
                         {uploading === doc.kind
@@ -294,7 +299,7 @@ function CopyDocModal({ row, onClose }: { row: CopyDocRow; onClose: () => void }
                         Remove
                       </Button>
                     )}
-                  </span>
+                  </RowActions>
                 </li>
               );
             })}
@@ -305,7 +310,7 @@ function CopyDocModal({ row, onClose }: { row: CopyDocRow; onClose: () => void }
             </p>
           )}
           <div className="flex justify-end">
-            <Button variant="secondary" onClick={onClose} disabled={uploading !== null}>
+            <Button variant="secondary" onClick={onClose} disabled={uploading !== null} className="max-sm:w-full">
               Close
             </Button>
           </div>

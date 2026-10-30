@@ -170,7 +170,7 @@ export default function CustomerPage() {
         title="Customer"
         description="The shippers and consignees this workspace books for."
         action={
-          <div className="flex flex-wrap items-center gap-2">
+          <>
             {/*
               Bulk email writes to the customers this list is filtered to, so
               it carries the filters with it — what the operator is looking at
@@ -188,7 +188,7 @@ export default function CustomerPage() {
                 <Link href="/crm/customer/new">+ Add customer</Link>
               </Button>
             )}
-          </div>
+          </>
         }
       />
 
@@ -199,13 +199,13 @@ export default function CustomerPage() {
           aria-label="Search customers"
           value={list.searchInput}
           onChange={(event) => list.setSearchInput(event.target.value)}
-          className="w-72"
+          className="w-full sm:w-72"
         />
         <Select
           aria-label="Filter by type"
           value={list.filters['customerType'] ?? ''}
           onChange={(event) => list.setFilter('customerType', event.target.value)}
-          className="w-44"
+          className="w-full sm:w-44"
         >
           <option value="">All types</option>
           {CUSTOMER_TYPES.map((t) => (
@@ -218,7 +218,7 @@ export default function CustomerPage() {
           aria-label="Filter by business area"
           value={list.filters['businessArea'] ?? ''}
           onChange={(event) => list.setFilter('businessArea', event.target.value)}
-          className="w-44"
+          className="w-full sm:w-44"
         >
           <option value="">All business areas</option>
           {BUSINESS_AREAS.map((a) => (
@@ -236,7 +236,7 @@ export default function CustomerPage() {
           aria-label="Filter by commodity"
           value={list.filters['industrySectorId'] ?? ''}
           onChange={(event) => list.setFilter('industrySectorId', event.target.value)}
-          className="w-52"
+          className="w-full sm:w-52"
         >
           <option value="">All commodities</option>
           {sectors.map((sector) => (

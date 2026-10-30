@@ -1,11 +1,13 @@
 'use client';
 
 import { milestoneScreenOf } from '@ff/shared';
+import { ArrowLeft } from 'lucide-react';
 import type { Route } from 'next';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 
 import { MilestoneScreen } from '@/components/cs/milestone-screen';
+import { backLinkClasses } from '@/components/ui/form-layout';
 
 /** One tile of the Depart-Arrive landing page (docs/DESIGN-UPDATE-2026-10-04.md §2). */
 export default function Page() {
@@ -17,7 +19,8 @@ export default function Page() {
       <div className="flex flex-col items-start gap-2">
         <h1 className="text-page-title text-hull">No such list</h1>
         <p className="text-body text-steel">That confirmation list does not exist.</p>
-        <Link href={'/cs/depart-arrive' as Route} className="text-body text-harbour hover:underline">
+        <Link href={'/cs/depart-arrive' as Route} className={backLinkClasses}>
+          <ArrowLeft className="size-3.5" aria-hidden="true" />
           Back to Depart-Arrive Confirmation
         </Link>
       </div>

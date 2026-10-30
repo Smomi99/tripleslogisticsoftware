@@ -1,13 +1,14 @@
 'use client';
 
 import type { EmployeeDto } from '@ff/shared';
+import { ArrowLeft } from 'lucide-react';
 import type { Route } from 'next';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 
-import { PageHeader } from '@/components/ui/form-layout';
+import { backLinkClasses, PageHeader } from '@/components/ui/form-layout';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 
@@ -34,12 +35,10 @@ export default function EditEmployeePage() {
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex flex-col gap-2">
-        <Link
-          href={'/crm/employee' as Route}
-          className="text-cell text-harbour underline-offset-2 hover:text-harbour-ink hover:underline"
-        >
-          ← Back to list
+      <div className="flex flex-col gap-3">
+        <Link href={'/crm/employee' as Route} className={backLinkClasses}>
+          <ArrowLeft className="size-3.5" aria-hidden="true" />
+          Back to list
         </Link>
         <PageHeader
           title={employee === null ? 'Edit employee' : `Edit ${employee.name}`}
@@ -53,7 +52,7 @@ export default function EditEmployeePage() {
         </p>
       )}
 
-      <div className="max-w-3xl rounded-manifest border border-line bg-surface p-5 shadow-manifest">
+      <div className="max-w-3xl rounded-card border border-line bg-surface p-4 shadow-manifest sm:p-5">
         {employee === null && error === null ? (
           <p className="text-body text-steel">Loading…</p>
         ) : employee !== null ? (
@@ -62,7 +61,7 @@ export default function EditEmployeePage() {
       </div>
 
       {employee !== null && can('CRM.EMPLOYEE.EDIT') && (
-        <div className="max-w-3xl rounded-manifest border border-line bg-surface p-5 shadow-manifest">
+        <div className="max-w-3xl rounded-card border border-line bg-surface p-4 shadow-manifest sm:p-5">
           <ContractUpload employee={employee} onUploaded={load} />
         </div>
       )}
@@ -109,7 +108,7 @@ function ContractUpload({
         <p className="text-body text-steel">No contract uploaded yet.</p>
       ) : (
         <p className="text-body text-hull">
-          <span className="font-mono" data-numeric="">
+          <span className="break-all font-mono" data-numeric="">
             {employee.serviceContractFileName}
           </span>{' '}
           <button
@@ -138,7 +137,7 @@ function ContractUpload({
         type="file"
         id="contract"
         accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
-        className="text-cell file:mr-2 file:rounded-manifest file:border file:border-line file:bg-surface file:px-2.5 file:py-1 file:text-body file:text-hull"
+        className="max-w-full text-cell file:mr-2 file:rounded-manifest file:border file:border-line file:bg-surface file:px-2.5 file:py-1 file:text-body file:text-hull"
         onChange={(event) => {
           const file = event.target.files?.[0];
           if (file !== undefined) void upload(file);

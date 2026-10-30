@@ -276,18 +276,19 @@ export default function SalesLeadPage() {
 
       {kpis !== null && <KpiStrip kpis={kpis} />}
 
-      <div className="flex flex-wrap items-center gap-2">
+      {/* Two to a row on a phone, search on a row of its own. */}
+      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
         <Input
           type="search"
           placeholder="Search lead ID, exporter, buyer, agent"
           aria-label="Search leads"
           value={list.searchInput}
           onChange={(event) => list.setSearchInput(event.target.value)}
-          className="w-72"
+          className="col-span-2 sm:w-72"
         />
         <Select
           aria-label="Filter by status"
-          className="w-48"
+          className="sm:w-48"
           value={list.filters['status'] ?? ''}
           onChange={(e) => list.setFilter('status', e.target.value)}
         >
@@ -302,7 +303,7 @@ export default function SalesLeadPage() {
         </Select>
         <Select
           aria-label="Filter by salesperson"
-          className="w-48"
+          className="sm:w-48"
           value={ownerFilter}
           onChange={(e) => list.setFilter('ownerId', e.target.value)}
         >
@@ -315,7 +316,7 @@ export default function SalesLeadPage() {
         </Select>
         <Select
           aria-label="Filter by freight control"
-          className="w-56"
+          className="sm:w-56"
           value={list.filters['freightControl'] ?? ''}
           onChange={(e) => list.setFilter('freightControl', e.target.value as FreightControl | '')}
         >
@@ -328,7 +329,7 @@ export default function SalesLeadPage() {
         </Select>
         <Select
           aria-label="Filter by follow-up"
-          className="w-44"
+          className="sm:w-44"
           value={list.filters['due'] ?? ''}
           onChange={(e) => list.setFilter('due', e.target.value)}
         >
@@ -496,7 +497,7 @@ function KpiStrip({ kpis }: { kpis: SalesLeadKpiDto }) {
   ];
 
   return (
-    <section aria-label="Lead KPIs" className="grid grid-cols-2 gap-px overflow-hidden rounded-manifest border border-line bg-line md:grid-cols-4 xl:grid-cols-8">
+    <section aria-label="Lead KPIs" className="grid grid-cols-2 gap-px overflow-hidden rounded-card border border-line bg-line md:grid-cols-4 xl:grid-cols-8">
       {tiles.map((tile) => (
         <div key={tile.label} className="flex flex-col gap-0.5 bg-surface px-3 py-2.5">
           <span className="label-manifest">{tile.label}</span>

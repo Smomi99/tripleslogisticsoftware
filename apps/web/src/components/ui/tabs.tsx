@@ -55,7 +55,13 @@ export function Tabs<T extends string>({
   }
 
   return (
-    <div role="tablist" aria-label={label} className="flex border-b border-line" onKeyDown={onKeyDown}>
+    // Scrolls sideways on a phone rather than wrapping: a wrapped tab row reads as two rows of tabs.
+    <div
+      role="tablist"
+      aria-label={label}
+      className="flex overflow-x-auto border-b border-line"
+      onKeyDown={onKeyDown}
+    >
       {tabs.map((tab) => {
         const selected = tab.id === value;
         return (
@@ -69,8 +75,10 @@ export function Tabs<T extends string>({
               ? {}
               : { id: `${idBase}-${tab.id}-tab`, 'aria-controls': `${idBase}-${tab.id}-panel` })}
             onClick={() => onChange(tab.id)}
-            className={`-mb-px whitespace-nowrap border-b-[3px] px-4 py-2 text-body transition-colors duration-120 ease-out ${
-              selected ? 'border-harbour font-semibold text-hull' : 'border-transparent text-steel hover:text-hull'
+            className={`-mb-px shrink-0 whitespace-nowrap border-b-[3px] px-4 py-2.5 text-body transition-colors duration-120 ease-out ${
+              selected
+                ? 'border-harbour font-semibold text-harbour'
+                : 'border-transparent text-steel hover:border-line hover:text-hull'
             }`}
           >
             {/* A bold copy holds the width, so the row does not shift when a tab is chosen. */}
@@ -80,7 +88,15 @@ export function Tabs<T extends string>({
                 {tab.label}
               </span>
             </span>
-            {tab.count !== undefined && <span className="ml-2 font-mono text-cell tabular-nums">{tab.count}</span>}
+            {tab.count !== undefined && (
+              <span
+                className={`ml-2 rounded-full px-1.5 py-px font-mono text-cell tabular-nums ${
+                  selected ? 'bg-harbour text-white' : 'bg-paper text-steel'
+                }`}
+              >
+                {tab.count}
+              </span>
+            )}
           </button>
         );
       })}

@@ -215,7 +215,8 @@ export function ChildScreen<TRow extends ChildRow>({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+      {/* As PageHeader: on a phone the Add drops under the title and runs full width. */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
         <ChildScreenHeader
           parentLabel={parentLabel}
           parentName={parentName === '' ? '…' : parentName}
@@ -228,6 +229,7 @@ export function ChildScreen<TRow extends ChildRow>({
               setEditing(null);
               setFormOpen(true);
             }}
+            className="max-sm:w-full"
           >
             {addLabel}
           </Button>
@@ -240,7 +242,7 @@ export function ChildScreen<TRow extends ChildRow>({
         aria-label={searchPlaceholder}
         value={list.searchInput}
         onChange={(event) => list.setSearchInput(event.target.value)}
-        className="w-72"
+        className="w-full sm:w-72"
       />
 
       {list.error !== null && (

@@ -24,6 +24,7 @@ import { Input, Select } from '@/components/ui/field';
 import { MultiSelect } from '@/components/ui/multi-select';
 import { PageHeader } from '@/components/ui/form-layout';
 import { ConfirmDialog } from '@/components/ui/modal';
+import { RowActions } from '@/components/ui/row-actions';
 import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
@@ -459,7 +460,7 @@ export function RateEntryScreen({
       {canCreate && (
         <section
           aria-label={editing === null ? 'Add a rate' : 'Edit a rate'}
-          className="rounded-manifest border border-line bg-surface p-3 shadow-manifest"
+          className="rounded-card border border-line bg-surface p-3 shadow-manifest"
           // §5.1: Enter submits from anywhere in the add row.
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !isSaving) {
@@ -468,8 +469,9 @@ export function RateEntryScreen({
             }
           }}
         >
-          <div className="flex flex-wrap items-end gap-2">
-            <LabelledControl label="POL" width="w-44">
+          {/* Two columns on a phone; the row of §5.1 from sm up. */}
+          <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-end">
+            <LabelledControl label="POL" width="sm:w-44">
               <Select
                 ref={firstFieldRef}
                 aria-label="Port of loading"
@@ -485,7 +487,7 @@ export function RateEntryScreen({
               </Select>
             </LabelledControl>
 
-            <LabelledControl label="POD" width="w-44">
+            <LabelledControl label="POD" width="sm:w-44">
               <Select
                 aria-label="Port of discharge"
                 value={draft.podId}
@@ -500,7 +502,7 @@ export function RateEntryScreen({
               </Select>
             </LabelledControl>
 
-            <LabelledControl label="Carrier" width="w-40">
+            <LabelledControl label="Carrier" width="sm:w-40">
               <Select
                 aria-label="Carrier"
                 value={draft.carrierId}
@@ -515,7 +517,7 @@ export function RateEntryScreen({
               </Select>
             </LabelledControl>
 
-            <LabelledControl label="Goods type" width="w-36">
+            <LabelledControl label="Goods type" width="sm:w-36">
               <Select
                 aria-label="Goods type"
                 value={draft.goodsTypeId}
@@ -532,7 +534,7 @@ export function RateEntryScreen({
 
             {/* The tier inputs — driven by rate_tier, not by four fixed columns. */}
             {options.tiers.map((tier) => (
-              <LabelledControl key={tier.id} label={tier.code} width="w-24" title={tier.label}>
+              <LabelledControl key={tier.id} label={tier.code} width="sm:w-24" title={tier.label}>
                 <Input
                   numeric
                   inputMode="decimal"
@@ -545,7 +547,7 @@ export function RateEntryScreen({
               </LabelledControl>
             ))}
 
-            <LabelledControl label="Currency" width="w-24">
+            <LabelledControl label="Currency" width="sm:w-24">
               <Select
                 aria-label="Currency"
                 value={draft.currencyId}
@@ -562,7 +564,7 @@ export function RateEntryScreen({
             {/* §4 rule 6: the margin fields exist only for the price team. */}
             {options.canManageProfit && (
               <>
-                <LabelledControl label="Profit" width="w-28">
+                <LabelledControl label="Profit" width="sm:w-28">
                   <Select
                     aria-label="Profit type"
                     value={draft.profitType}
@@ -575,7 +577,7 @@ export function RateEntryScreen({
                     ))}
                   </Select>
                 </LabelledControl>
-                <LabelledControl label="Value" width="w-24">
+                <LabelledControl label="Value" width="sm:w-24">
                   <Input
                     numeric
                     inputMode="decimal"
@@ -587,19 +589,19 @@ export function RateEntryScreen({
               </>
             )}
 
-            <LabelledControl label="Local charges" width="w-32">
+            <LabelledControl label="Local charges" width="sm:w-32">
               <Button
                 type="button"
                 variant="secondary"
                 onClick={() => setPanelOpen(true)}
-                className="h-9 w-full justify-center"
+                className="w-full justify-center"
               >
                 {chargeCount === 0 ? 'Add' : `${chargeCount} line${chargeCount === 1 ? '' : 's'}`}
               </Button>
             </LabelledControl>
 
             {/* §5.1: the two dates always travel together. */}
-            <LabelledControl label="Valid from" width="w-36">
+            <LabelledControl label="Valid from" width="sm:w-36">
               <Input
                 type="date"
                 numeric
@@ -615,7 +617,7 @@ export function RateEntryScreen({
                 }}
               />
             </LabelledControl>
-            <LabelledControl label="Valid to" width="w-36">
+            <LabelledControl label="Valid to" width="sm:w-36">
               <Input
                 type="date"
                 numeric
@@ -632,7 +634,7 @@ export function RateEntryScreen({
               buyer, and on one lane a direct sailing and a transhipment via
               Singapore are different products at different prices.
             */}
-            <LabelledControl label="Route" width="w-36">
+            <LabelledControl label="Route" width="sm:w-36">
               <Input
                 aria-label="Route"
                 placeholder="Direct, via Singapore"
@@ -642,7 +644,7 @@ export function RateEntryScreen({
             </LabelledControl>
 
             {/* §9 Q13: sales are asked both of these on every call. */}
-            <LabelledControl label="Transit" width="w-20">
+            <LabelledControl label="Transit" width="sm:w-20">
               <Input
                 numeric
                 inputMode="numeric"
@@ -651,7 +653,7 @@ export function RateEntryScreen({
                 onChange={(e) => setDraft({ ...draft, transitDays: e.target.value })}
               />
             </LabelledControl>
-            <LabelledControl label="Free days" width="w-20">
+            <LabelledControl label="Free days" width="sm:w-20">
               <Input
                 numeric
                 inputMode="numeric"
@@ -664,7 +666,7 @@ export function RateEntryScreen({
             {/* Published is what sales can quote (§4 rule 2). Draft stages a
                 lane that is not agreed yet, and is exempt from the overlap
                 constraint so alternatives can sit side by side. */}
-            <LabelledControl label="Status" width="w-28">
+            <LabelledControl label="Status" width="sm:w-28">
               <Select
                 aria-label="Status"
                 value={draft.status}
@@ -675,7 +677,7 @@ export function RateEntryScreen({
               </Select>
             </LabelledControl>
 
-            <LabelledControl label="Purchase via" width="w-32">
+            <LabelledControl label="Purchase via" width="sm:w-32">
               <Select
                 aria-label="Purchase source type"
                 value={draft.purchaseSourceType}
@@ -694,7 +696,7 @@ export function RateEntryScreen({
                 ))}
               </Select>
             </LabelledControl>
-            <LabelledControl label="Bought from" width="w-40">
+            <LabelledControl label="Bought from" width="sm:w-40">
               <Select
                 aria-label="Bought from"
                 value={draft.purchaseSourceId}
@@ -709,11 +711,22 @@ export function RateEntryScreen({
               </Select>
             </LabelledControl>
 
-            <Button type="button" onClick={() => void submitDraft()} disabled={isSaving}>
+            <Button
+              type="button"
+              onClick={() => void submitDraft()}
+              disabled={isSaving}
+              className="max-sm:col-span-2"
+            >
               {isSaving ? 'Saving…' : editing === null ? 'Add' : 'Save changes'}
             </Button>
             {(editing !== null || copiedFrom !== null) && (
-              <Button type="button" variant="secondary" onClick={cancelEdit} disabled={isSaving}>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={cancelEdit}
+                disabled={isSaving}
+                className="max-sm:col-span-2"
+              >
                 Cancel
               </Button>
             )}
@@ -750,8 +763,8 @@ export function RateEntryScreen({
         controls stop forming a sentence they never meant.
       */}
       <div className="flex flex-wrap items-end gap-3">
-        <div className="flex w-64 flex-col gap-1">
-          <span className="label-manifest">Search</span>
+        <div className="flex w-full flex-col gap-1 sm:w-64">
+          <span className="label-field">Search</span>
           <Input
             aria-label="Search rates"
             placeholder="Code, port or carrier"
@@ -764,8 +777,8 @@ export function RateEntryScreen({
           for the price list's reason: a grid whose rows share neither end is a
           search result pretending to be a comparison.
         */}
-        <div className="flex w-56 flex-col gap-1">
-          <span className="label-manifest">POL</span>
+        <div className="flex w-full flex-col gap-1 sm:w-56">
+          <span className="label-field">POL</span>
           <MultiSelect
             id={`${mode}-entry-pol`}
             options={options.ports}
@@ -779,8 +792,8 @@ export function RateEntryScreen({
             searchPlaceholder="Filter ports"
           />
         </div>
-        <div className="flex w-56 flex-col gap-1">
-          <span className="label-manifest">POD</span>
+        <div className="flex w-full flex-col gap-1 sm:w-56">
+          <span className="label-field">POD</span>
           <MultiSelect
             id={`${mode}-entry-pod`}
             options={options.ports}
@@ -794,8 +807,8 @@ export function RateEntryScreen({
             searchPlaceholder="Filter ports"
           />
         </div>
-        <div className="flex w-44 flex-col gap-1">
-          <span className="label-manifest">Carrier</span>
+        <div className="flex min-w-0 grow basis-2/5 flex-col gap-1 sm:w-44 sm:flex-none">
+          <span className="label-field">Carrier</span>
           <Select
             aria-label="Filter by carrier"
             value={carrierId}
@@ -812,8 +825,8 @@ export function RateEntryScreen({
             ))}
           </Select>
         </div>
-        <div className="flex w-44 flex-col gap-1">
-          <span className="label-manifest">Goods type</span>
+        <div className="flex min-w-0 grow basis-2/5 flex-col gap-1 sm:w-44 sm:flex-none">
+          <span className="label-field">Goods type</span>
           <Select
             aria-label="Filter by goods type"
             value={goodsTypeId}
@@ -832,7 +845,7 @@ export function RateEntryScreen({
         </div>
       </div>
 
-      <div className="flex items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <label className="flex items-center gap-2 text-body text-steel">
           <input
             type="checkbox"
@@ -850,10 +863,10 @@ export function RateEntryScreen({
         </span>
       </div>
 
-      <div className="overflow-x-auto rounded-manifest border border-line bg-surface shadow-manifest">
+      <div className="overflow-x-auto rounded-card border border-line bg-surface shadow-manifest">
         <table className="w-full min-w-max border-collapse">
           <thead>
-            <tr className="border-b border-line bg-paper text-left">
+            <tr className="border-b border-line bg-module-soft text-left">
               <Th>Code</Th>
               <Th>POL</Th>
               <Th>POD</Th>
@@ -870,7 +883,8 @@ export function RateEntryScreen({
               <Th>Validity</Th>
               <Th>Purchase via</Th>
               <Th>Status</Th>
-              <Th>Action</Th>
+              {/* Right-aligned over the action pills, as DataTable does. */}
+              <Th numeric>Action</Th>
             </tr>
           </thead>
           <tbody>
@@ -879,7 +893,7 @@ export function RateEntryScreen({
                 key={rate.id}
                 className="border-b border-line last:border-0 hover:bg-row-hover [&>td]:align-top"
               >
-                <td className="bg-paper/40 px-2.5 py-2 font-mono text-cell tabular-nums text-hull">
+                <td className="bg-module-soft px-2.5 py-2 font-mono text-cell tabular-nums text-hull">
                   {rate.code}
                 </td>
                 <Td>{rate.polName ?? rate.polCode}</Td>
@@ -970,31 +984,33 @@ export function RateEntryScreen({
                       (§4 rule 5) and saving would silently blank the costs.
                       Expired rates are editable; a superseded version is not,
                       because its successor carries the live figures. */}
-                  {canEdit && options.canSeeBuyPrice && !rate.isSuperseded && (
-                    <Button variant="text" size="inline" onClick={() => beginEdit(rate)}>
-                      Edit
-                    </Button>
-                  )}
-                  {/* A copy needs the buy prices to copy, for the same reason. */}
-                  {canCreate && options.canSeeBuyPrice && (
-                    <Button
-                      variant="text"
-                      size="inline"
-                      onClick={() => beginDuplicate(rate)}
-                      aria-label={`Duplicate ${rate.code}`}
-                    >
-                      Duplicate
-                    </Button>
-                  )}
-                  {canEdit && (
-                    <Button
-                      variant="destructive"
-                      size="inline"
-                      onClick={() => setToDelete(rate)}
-                    >
-                      Delete
-                    </Button>
-                  )}
+                  <RowActions>
+                    {canEdit && options.canSeeBuyPrice && !rate.isSuperseded && (
+                      <Button variant="text" size="inline" onClick={() => beginEdit(rate)}>
+                        Edit
+                      </Button>
+                    )}
+                    {/* A copy needs the buy prices to copy, for the same reason. */}
+                    {canCreate && options.canSeeBuyPrice && (
+                      <Button
+                        variant="text"
+                        size="inline"
+                        onClick={() => beginDuplicate(rate)}
+                        aria-label={`Duplicate ${rate.code}`}
+                      >
+                        Duplicate
+                      </Button>
+                    )}
+                    {canEdit && (
+                      <Button
+                        variant="destructive"
+                        size="inline"
+                        onClick={() => setToDelete(rate)}
+                      >
+                        Delete
+                      </Button>
+                    )}
+                  </RowActions>
                 </td>
               </tr>
             ))}
@@ -1030,7 +1046,7 @@ export function RateEntryScreen({
         <div className="flex items-center justify-end gap-2">
           <Button
             variant="secondary"
-            size="inline"
+            size="compact"
             disabled={page <= 1}
             onClick={() => setPage((p) => p - 1)}
           >
@@ -1041,7 +1057,7 @@ export function RateEntryScreen({
           </span>
           <Button
             variant="secondary"
-            size="inline"
+            size="compact"
             disabled={page >= meta.totalPages}
             onClick={() => setPage((p) => p + 1)}
           >
@@ -1094,7 +1110,7 @@ function LabelledControl({
   children: React.ReactNode;
 }) {
   return (
-    <div className={`flex flex-col gap-1 ${width}`} title={title}>
+    <div className={`flex min-w-0 flex-col gap-1 ${width}`} title={title}>
       <span className="label-manifest">{label}</span>
       {children}
     </div>
@@ -1103,7 +1119,11 @@ function LabelledControl({
 
 function Th({ children, numeric }: { children: React.ReactNode; numeric?: boolean }) {
   return (
-    <th className={`label-manifest px-2.5 py-2 ${numeric === true ? 'text-right' : 'text-left'}`}>
+    <th
+      className={`label-manifest whitespace-nowrap px-2.5 py-2 ${
+        numeric === true ? 'text-right' : 'text-left'
+      }`}
+    >
       {children}
     </th>
   );

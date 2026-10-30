@@ -10,6 +10,7 @@ import {
   SHIPMENT_STATUS_LABEL,
   type ShipmentStatus,
 } from '@ff/shared';
+import { ArrowLeft } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -17,7 +18,7 @@ import { BlDraftForm, type BlDraftFormValues, bodyFrom, valuesFrom } from './bl-
 import { Button } from '@/components/ui/button';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
-import { PageHeader } from '@/components/ui/form-layout';
+import { backLinkClasses, PageHeader } from '@/components/ui/form-layout';
 import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
@@ -165,14 +166,15 @@ export function PortalShipmentScreen() {
         {/* §8: every child screen has a Back link. Required, not optional. */}
         <button
           type="button"
-          className="self-start text-body text-harbour hover:underline"
+          className={backLinkClasses}
           onClick={() => {
             setOpenId(null);
             setDraft(null);
             setValues(null);
           }}
         >
-          ← Back to my shipments
+          <ArrowLeft className="size-3.5" aria-hidden="true" />
+          Back to my shipments
         </button>
 
         <PageHeader
@@ -236,7 +238,8 @@ export function PortalShipmentScreen() {
               }}
             />
 
-            <div className="flex flex-wrap gap-2">
+            {/* On a phone the buttons run full width, like a FormLayout's. */}
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
               {draft === null && can('CUSTOMER.BL_DRAFT.CREATE') && (
                 <Button
                   disabled={isPending}

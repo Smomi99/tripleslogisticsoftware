@@ -70,15 +70,16 @@ export function CustomerDetailDrawer({
           </Status>
         </div>
 
-        <dl className="grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
+        {/* Two columns even on a phone: every fact here is a word or two. */}
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:gap-x-6 lg:grid-cols-3">
           {facts.map(([label, value]) => (
-            <div key={label}>
+            <div key={label} className="min-w-0">
               <dt className="label-manifest">{label}</dt>
               <dd
                 className={
                   label === 'Code'
-                    ? 'font-mono text-body tabular-nums text-hull'
-                    : 'text-body text-hull'
+                    ? 'break-all font-mono text-body tabular-nums text-hull'
+                    : 'break-words text-body text-hull'
                 }
               >
                 {value === null || value === '' ? '—' : value}
@@ -97,7 +98,7 @@ export function CustomerDetailDrawer({
         {hasVolumes && (
           <div className="border-t border-line pt-4">
             <span className="label-manifest">Monthly volume</span>
-            <dl className="mt-1 grid gap-x-6 gap-y-2 sm:grid-cols-2 lg:grid-cols-4">
+            <dl className="mt-1 grid grid-cols-2 gap-x-4 gap-y-2 sm:gap-x-6 lg:grid-cols-4">
               {volumes.map(([label, value]) => (
                 <div key={label}>
                   <dt className="text-cell text-steel">{label}</dt>
@@ -109,16 +110,16 @@ export function CustomerDetailDrawer({
         )}
 
         {(customer.weOwe !== null || customer.customerOwe !== null) && (
-          <div className="grid gap-x-6 gap-y-3 border-t border-line pt-4 sm:grid-cols-2">
+          <div className="grid grid-cols-2 gap-x-4 gap-y-3 border-t border-line pt-4 sm:gap-x-6">
             {(
               [
                 ['We owe (Dr)', customer.weOwe],
                 ['Customer owe (Cr)', customer.customerOwe],
               ] as [string, string | null][]
             ).map(([label, value]) => (
-              <div key={label}>
+              <div key={label} className="min-w-0">
                 <dt className="label-manifest">{label}</dt>
-                <dd className="font-mono text-body tabular-nums text-hull">
+                <dd className="break-all font-mono text-body tabular-nums text-hull">
                   {value === null || value === '' ? '—' : `${customer.openingCurrencyCode ?? ''} ${value}`.trim()}
                 </dd>
               </div>

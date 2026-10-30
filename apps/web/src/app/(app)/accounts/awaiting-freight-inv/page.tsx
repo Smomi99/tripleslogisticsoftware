@@ -90,8 +90,8 @@ export default function AwaitingFreightInvPage() {
       />
 
       <div className="flex flex-wrap items-end gap-3">
-        <div className="flex w-72 flex-col gap-1">
-          <span className="label-manifest">Search</span>
+        <div className="flex w-full flex-col gap-1 sm:w-72">
+          <span className="label-field">Search</span>
           <Input
             type="search"
             aria-label="Search bookings"
@@ -100,8 +100,8 @@ export default function AwaitingFreightInvPage() {
             onChange={(e) => list.setSearchInput(e.target.value)}
           />
         </div>
-        <div className="flex w-56 flex-col gap-1">
-          <span className="label-manifest">Stage</span>
+        <div className="flex min-w-0 flex-1 basis-40 flex-col gap-1 sm:w-56 sm:flex-none">
+          <span className="label-field">Stage</span>
           <Select
             aria-label="Booking stage"
             value={list.filters.stage ?? ''}
@@ -115,8 +115,8 @@ export default function AwaitingFreightInvPage() {
             ))}
           </Select>
         </div>
-        <div className="flex w-40 flex-col gap-1">
-          <span className="label-manifest">Mode</span>
+        <div className="flex min-w-0 flex-1 basis-40 flex-col gap-1 sm:w-40 sm:flex-none">
+          <span className="label-field">Mode</span>
           <Select
             aria-label="Sea or air"
             value={list.filters.shipmentType ?? ''}

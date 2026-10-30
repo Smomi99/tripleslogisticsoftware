@@ -152,11 +152,12 @@ export function ViewDrawer({
           </Status>
         </div>
 
-        <dl className="grid grid-cols-[10rem_1fr] gap-x-4 gap-y-1.5">
-          {rows.map(([label, value]) => (
-            <div key={label} className="contents">
+        <dl className="grid grid-cols-[8rem_minmax(0,1fr)] gap-x-3 gap-y-1.5 sm:grid-cols-[10rem_minmax(0,1fr)] sm:gap-x-4">
+          {/* Keyed by position: "Target price" and "Weight (kg)" each appear twice. */}
+          {rows.map(([label, value], index) => (
+            <div key={`${index}-${label}`} className="contents">
               <dt className="label-manifest self-center">{label}</dt>
-              <dd className="text-cell text-hull">{value}</dd>
+              <dd className="break-words text-cell text-hull">{value}</dd>
             </div>
           ))}
           {inquiry.volumes.length > 0 && (
@@ -205,13 +206,14 @@ export function ViewDrawer({
                 />
               </Field>
             )}
-            <div className="flex justify-end gap-2">
-              <Button variant="secondary" onClick={onClose}>
+            <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <Button variant="secondary" onClick={onClose} className="max-sm:w-full">
                 Close
               </Button>
               <Button
                 disabled={isSaving || status === inquiry.status}
                 onClick={() => void save()}
+                className="max-sm:w-full"
               >
                 {isSaving ? 'Saving…' : 'Save status'}
               </Button>

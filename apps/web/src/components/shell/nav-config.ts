@@ -187,6 +187,8 @@ const UNLISTED_ROUTES: Record<string, string> = {
   // §3.5's templates. The client's menu has Make Templet and Use Templet on the
   // BL Draft screen and no third item, so this is reached from there.
   'DOCUMENTATION.BL_TEMPLATE': '/documentation/bl-template',
+  // One user's permission matrix, opened from CRM → User; no menu item of its own.
+  'ADMIN.USER_PERMISSION': '/admin/user-permission',
 };
 
 /**
@@ -270,6 +272,12 @@ export function buildNav(): NavGroup[] {
  * permission of its parent (/crm/agent) without being listed separately.
  */
 export function viewPermissionsForPath(pathname: string): string[] {
+  const feature = featureForPath(pathname);
+  return feature === null ? [] : viewPermissionsOf(feature);
+}
+
+/** The feature whose route a path sits at or under — longest prefix wins. */
+function featureForPath(pathname: string): string | null {
   let best: { route: string; feature: string } | null = null;
   const all: [string, string][] = [];
   for (const [feature, route] of Object.entries(ROUTES)) {
@@ -282,7 +290,29 @@ export function viewPermissionsForPath(pathname: string): string[] {
     if (pathname !== route && !pathname.startsWith(`${route}/`)) continue;
     if (best === null || route.length > best.route.length) best = { route, feature };
   }
-  return best === null ? [] : viewPermissionsOf(best.feature);
+  return best?.feature ?? null;
+}
+
+/**
+ * The module a path belongs to, read from the same route map — so a child
+ * screen (/crm/agent/1/pic) takes its parent's module colour without being
+ * listed anywhere. Null outside every module (home, sign-in).
+ */
+export function moduleForPath(pathname: string): Module | null {
+  const feature = featureForPath(pathname);
+  if (feature === null) return null;
+  return FEATURES.find((f) => f.feature === feature)?.module ?? null;
+}
+
+/**
+ * The registry's name for the screen a path belongs to — for a page no menu
+ * item points at (/cs/shipment-booking/26), where the URL's last segment would
+ * be an id.
+ */
+export function featureLabelForPath(pathname: string): string | null {
+  const feature = featureForPath(pathname);
+  if (feature === null) return null;
+  return FEATURES.find((f) => f.feature === feature)?.label ?? null;
 }
 
 /**

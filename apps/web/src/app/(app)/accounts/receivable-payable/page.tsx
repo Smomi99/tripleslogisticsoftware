@@ -106,8 +106,8 @@ export default function ReceivablePayablePage() {
       />
 
       <div className="flex flex-wrap items-end gap-3">
-        <div className="flex w-72 flex-col gap-1">
-          <span className="label-manifest">Search</span>
+        <div className="flex w-full flex-col gap-1 sm:w-72">
+          <span className="label-field">Search</span>
           <Input
             type="search"
             aria-label="Search parties"
@@ -116,8 +116,8 @@ export default function ReceivablePayablePage() {
             onChange={(e) => list.setSearchInput(e.target.value)}
           />
         </div>
-        <div className="flex w-44 flex-col gap-1">
-          <span className="label-manifest">Party</span>
+        <div className="flex min-w-0 flex-1 basis-40 flex-col gap-1 sm:w-44 sm:flex-none">
+          <span className="label-field">Party</span>
           <Select aria-label="Kind of party" value={list.filters.partyType ?? ''} onChange={(e) => list.setFilter('partyType', e.target.value)}>
             <option value="">Everyone</option>
             {LEDGER_PARTY_TYPES.map((t) => (
@@ -187,7 +187,7 @@ export default function ReceivablePayablePage() {
 
       {/* The sheet's "Total =" row (C19): every page, not just this one. */}
       {totals !== undefined && list.rows.length > 0 && (
-        <div className="grid grid-cols-2 gap-4 rounded-manifest border border-line bg-paper px-4 py-3 sm:grid-cols-3 xl:grid-cols-6">
+        <div className="grid grid-cols-2 gap-4 rounded-card border border-line bg-surface px-4 py-3 shadow-manifest sm:grid-cols-3 xl:grid-cols-6">
           {(
             [
               ['Total receivable (USD)', totals.receivableUsd],

@@ -77,7 +77,7 @@ export function ClpFinalReview({
   }
 
   return (
-    <section className="mt-4 rounded-manifest border-2 border-hull bg-surface p-4">
+    <section className="mt-4 rounded-manifest border-2 border-hull bg-surface p-3 sm:p-4">
       <h3 className="text-section text-hull">
         {clp.status === 'FINAL' ? 'What was finalised' : 'Before you finalise'}
       </h3>
@@ -135,7 +135,7 @@ export function ClpFinalReview({
       <div className="mt-4 overflow-x-auto rounded-manifest border border-line">
         <table className="w-full min-w-[900px] border-collapse text-cell">
           <thead>
-            <tr className="border-b border-line bg-paper">
+            <tr className="whitespace-nowrap border-b border-line bg-module-soft">
               <th className="label-manifest px-3 py-2 text-left">Booking</th>
               <th className="label-manifest px-3 py-2 text-left">Customer</th>
               <th className="label-manifest px-3 py-2 text-right">CTN</th>

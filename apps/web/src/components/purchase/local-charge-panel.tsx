@@ -13,6 +13,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
 import { Modal } from '@/components/ui/modal';
+import { RowActions } from '@/components/ui/row-actions';
 
 /**
  * §5.1: "POL Local Charges opens a small side panel to add cost-head lines;
@@ -145,50 +146,54 @@ export function LocalChargePanel({
             No local charges yet. Add the cost heads this rate covers.
           </p>
         ) : (
-          <table className="w-full text-cell">
-            <thead>
-              <tr className="border-b border-line text-left">
-                <th className="label-manifest py-1.5">Cost head</th>
-                <th className="label-manifest py-1.5">Side</th>
-                <th className="label-manifest py-1.5">Container</th>
-                <th className="label-manifest py-1.5 text-right">Amount</th>
-                <th className="sr-only">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {charges.map((charge, index) => (
-                <tr
-                  key={`${charge.costHeadId}-${charge.side}-${charge.containerSizeId ?? ''}`}
-                  className={`border-b border-line ${index === editing ? 'bg-harbour/5' : ''}`}
-                >
-                  <td className="py-1.5">{nameOf(charge.costHeadId)}</td>
-                  <td className="py-1.5 text-steel">{charge.side}</td>
-                  <td className="py-1.5 font-mono text-steel">
-                    {charge.containerSizeId === undefined || charge.containerSizeId === ''
-                      ? 'All'
-                      : (containerSizes.find((t) => t.id === charge.containerSizeId)?.name ?? '—')}
-                  </td>
-                  <td className="py-1.5 text-right font-mono tabular-nums">
-                    {purchasePrice(charge.amount)} {codeOf(charge.currencyId)}
-                  </td>
-                  <td className="py-1.5 pl-3 text-right">
-                    <span className="inline-flex items-center gap-3 whitespace-nowrap">
-                      {index === editing ? (
-                        <span className="text-cell text-steel">Editing</span>
-                      ) : (
-                        <Button variant="text" size="inline" onClick={() => edit(index)}>
-                          Edit
-                        </Button>
-                      )}
-                      <Button variant="destructive" size="inline" onClick={() => remove(index)}>
-                        Remove
-                      </Button>
-                    </span>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-cell">
+              <thead>
+                <tr className="border-b border-line text-left">
+                  <th className="label-manifest whitespace-nowrap py-1.5">Cost head</th>
+                  <th className="label-manifest whitespace-nowrap py-1.5">Side</th>
+                  <th className="label-manifest whitespace-nowrap py-1.5">Container</th>
+                  <th className="label-manifest whitespace-nowrap py-1.5 text-right">Amount</th>
+                  <th className="sr-only">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {charges.map((charge, index) => (
+                  <tr
+                    key={`${charge.costHeadId}-${charge.side}-${charge.containerSizeId ?? ''}`}
+                    className={`border-b border-line ${index === editing ? 'bg-harbour/5' : ''}`}
+                  >
+                    <td className="py-1.5">{nameOf(charge.costHeadId)}</td>
+                    <td className="py-1.5 text-steel">{charge.side}</td>
+                    <td className="py-1.5 font-mono text-steel">
+                      {charge.containerSizeId === undefined || charge.containerSizeId === ''
+                        ? 'All'
+                        : (containerSizes.find((t) => t.id === charge.containerSizeId)?.name ?? '—')}
+                    </td>
+                    <td className="py-1.5 text-right font-mono tabular-nums">
+                      {purchasePrice(charge.amount)} {codeOf(charge.currencyId)}
+                    </td>
+                    <td className="py-1.5 pl-3 text-right">
+                      {/* "Editing" is a state, not an action, so it sits outside the pills. */}
+                      <span className="inline-flex items-center gap-3 whitespace-nowrap">
+                        {index === editing && <span className="text-cell text-steel">Editing</span>}
+                        <RowActions>
+                          {index !== editing && (
+                            <Button variant="text" size="inline" onClick={() => edit(index)}>
+                              Edit
+                            </Button>
+                          )}
+                          <Button variant="destructive" size="inline" onClick={() => remove(index)}>
+                            Remove
+                          </Button>
+                        </RowActions>
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
 
         <div className="grid grid-cols-1 gap-3 border-t border-line pt-4 md:grid-cols-2">
@@ -271,22 +276,27 @@ export function LocalChargePanel({
           </p>
         )}
 
-        <div className="flex items-center gap-2 border-t border-line pt-4">
+        <div className="flex flex-col-reverse gap-2 border-t border-line pt-4 sm:flex-row sm:items-center">
           {editing === null ? (
             <>
-              <Button type="button" onClick={save}>
+              <Button type="button" onClick={save} className="max-sm:w-full">
                 Add charge
               </Button>
-              <Button type="button" variant="secondary" onClick={() => onOpenChange(false)}>
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => onOpenChange(false)}
+                className="max-sm:w-full"
+              >
                 Done
               </Button>
             </>
           ) : (
             <>
-              <Button type="button" onClick={save}>
+              <Button type="button" onClick={save} className="max-sm:w-full">
                 Save charge
               </Button>
-              <Button type="button" variant="secondary" onClick={resetForm}>
+              <Button type="button" variant="secondary" onClick={resetForm} className="max-sm:w-full">
                 Cancel edit
               </Button>
             </>

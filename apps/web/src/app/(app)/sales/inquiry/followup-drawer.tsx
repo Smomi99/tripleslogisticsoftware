@@ -110,7 +110,7 @@ export function FollowupDrawer({
       title={`Follow-ups — ${inquiry.code}`}
     >
       <div className="flex flex-col gap-4">
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field id="followupDate" label="Date" required>
             <Input
               id="followupDate"
@@ -149,7 +149,7 @@ export function FollowupDrawer({
               onChange={(event) => setNextFollowupDate(event.target.value)}
             />
           </Field>
-          <div className="col-span-2">
+          <div className="sm:col-span-2">
             <Field id="notes" label="Notes">
               <Input
                 id="notes"
@@ -160,11 +160,11 @@ export function FollowupDrawer({
           </div>
         </div>
 
-        <div className="flex justify-end gap-2">
-          <Button variant="secondary" onClick={onClose}>
+        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+          <Button variant="secondary" onClick={onClose} className="max-sm:w-full">
             Close
           </Button>
-          <Button disabled={isSaving} onClick={() => void record()}>
+          <Button disabled={isSaving} onClick={() => void record()} className="max-sm:w-full">
             {isSaving ? 'Recording…' : 'Record'}
           </Button>
         </div>
@@ -186,7 +186,7 @@ export function FollowupDrawer({
             <ul className="flex flex-col gap-2">
               {rows.map((row) => (
                 <li key={row.id} className="flex flex-col gap-0.5 border-b border-line pb-2">
-                  <span className="flex items-center gap-2">
+                  <span className="flex flex-wrap items-center gap-x-2">
                     <span className="font-mono text-cell text-hull">{row.followupDate}</span>
                     <span className="label-manifest">{CONTACT_MODE_LABEL[row.contactMode]}</span>
                     {row.contactPerson !== null && (

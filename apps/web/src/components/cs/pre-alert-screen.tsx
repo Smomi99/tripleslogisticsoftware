@@ -82,8 +82,8 @@ function PreAlertList({ mode, onMode }: { mode: ShipmentType; onMode: (m: Shipme
   return (
     <>
       <div className="flex flex-wrap items-end gap-3">
-        <div className="flex w-72 flex-col gap-1">
-          <span className="label-manifest">Search</span>
+        <div className="flex w-full flex-col gap-1 sm:w-72">
+          <span className="label-field">Search</span>
           <Input
             type="search"
             aria-label="Search bookings"
@@ -256,7 +256,7 @@ function SendModal({ row, onClose, onSent }: { row: PreAlertRow; onClose: () => 
               const available = doc.source !== null;
               return (
                 <div key={doc.kind} className="flex items-start justify-between gap-3 rounded-manifest border border-line px-3 py-2">
-                  <label className="flex items-start gap-2 text-body text-hull">
+                  <label className="flex min-w-0 items-start gap-2 text-body text-hull">
                     <input
                       type="checkbox"
                       className="mt-0.5 h-4 w-4 accent-harbour"
@@ -277,7 +277,7 @@ function SendModal({ row, onClose, onSent }: { row: PreAlertRow; onClose: () => 
                         {available ? (
                           <button
                             type="button"
-                            className="text-harbour hover:underline"
+                            className="break-all text-left text-harbour hover:underline"
                             onClick={() =>
                               void authorizedDownload(`${base}/documents/${doc.kind}`, doc.fileName ?? doc.kind).catch(() =>
                                 toast.error('Could not open that document.'),
@@ -294,7 +294,7 @@ function SendModal({ row, onClose, onSent }: { row: PreAlertRow; onClose: () => 
                     </span>
                   </label>
                   {mayUpload && (
-                    <label className="shrink-0 cursor-pointer text-cell text-harbour hover:underline">
+                    <label className="shrink-0 cursor-pointer text-cell text-harbour hover:underline max-sm:-my-2 max-sm:py-2">
                       {uploading === doc.kind ? 'Uploading…' : doc.source === 'UPLOAD' ? 'Replace' : 'Upload'}
                       <input
                         type="file"
@@ -333,7 +333,7 @@ function SendModal({ row, onClose, onSent }: { row: PreAlertRow; onClose: () => 
                 rows={3}
                 value={emails}
                 onChange={(e) => setEmails(e.target.value)}
-                className="w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-body text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour"
+                className="w-full rounded-manifest border border-line bg-surface px-3 py-1.5 text-base text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour sm:px-2.5 sm:text-body"
               />
             </Field>
             {detail.sends.length > 0 && (
@@ -357,11 +357,15 @@ function SendModal({ row, onClose, onSent }: { row: PreAlertRow; onClose: () => 
               {error}
             </p>
           )}
-          <div className="flex justify-end gap-3 md:col-span-2">
-            <Button variant="secondary" onClick={onClose} disabled={pending}>
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-end sm:gap-3 md:col-span-2">
+            <Button variant="secondary" onClick={onClose} disabled={pending} className="max-sm:w-full">
               Close
             </Button>
-            <Button onClick={() => void send()} disabled={pending || uploading !== null}>
+            <Button
+              onClick={() => void send()}
+              disabled={pending || uploading !== null}
+              className="max-sm:w-full"
+            >
               {pending ? 'Sending…' : 'Send pre-alert'}
             </Button>
           </div>

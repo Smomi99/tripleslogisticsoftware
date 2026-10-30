@@ -113,8 +113,8 @@ export default function ShipmentProfitabilityPage() {
       />
 
       <div className="flex flex-wrap items-end gap-3">
-        <div className="flex w-72 flex-col gap-1">
-          <span className="label-manifest">Search</span>
+        <div className="flex w-full flex-col gap-1 sm:w-72">
+          <span className="label-field">Search</span>
           <Input
             type="search"
             aria-label="Search bookings"
@@ -123,8 +123,8 @@ export default function ShipmentProfitabilityPage() {
             onChange={(e) => list.setSearchInput(e.target.value)}
           />
         </div>
-        <div className="flex w-40 flex-col gap-1">
-          <span className="label-manifest">Mode</span>
+        <div className="flex min-w-0 flex-1 basis-40 flex-col gap-1 sm:w-40 sm:flex-none">
+          <span className="label-field">Mode</span>
           <Select
             aria-label="Sea or air"
             value={list.filters.shipmentType ?? ''}
@@ -136,8 +136,8 @@ export default function ShipmentProfitabilityPage() {
           </Select>
         </div>
         {/* On the booking's first issued invoice — the day the job was billed. */}
-        <div className="flex w-40 flex-col gap-1">
-          <label htmlFor="profit-from" className="label-manifest">
+        <div className="flex min-w-0 flex-1 basis-40 flex-col gap-1 sm:w-40 sm:flex-none">
+          <label htmlFor="profit-from" className="label-field">
             Invoiced from
           </label>
           <Input
@@ -149,8 +149,8 @@ export default function ShipmentProfitabilityPage() {
             onChange={(e) => list.setFilter('from', e.target.value)}
           />
         </div>
-        <div className="flex w-40 flex-col gap-1">
-          <label htmlFor="profit-to" className="label-manifest">
+        <div className="flex min-w-0 flex-1 basis-40 flex-col gap-1 sm:w-40 sm:flex-none">
+          <label htmlFor="profit-to" className="label-field">
             Invoiced to
           </label>
           <Input
@@ -206,7 +206,7 @@ export default function ShipmentProfitabilityPage() {
 
       {/* Every page, not just this one: a period's GP % is its total GP over its total revenue. */}
       {totals !== undefined && list.rows.length > 0 && (
-        <div className="grid grid-cols-2 gap-4 rounded-manifest border border-line bg-paper px-4 py-3 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 rounded-card border border-line bg-surface px-4 py-3 shadow-manifest sm:grid-cols-4">
           {(
             [
               [`Total revenue (${base})`, totals.revenue, false, ''],

@@ -107,15 +107,18 @@ function LaneList({ direction, onDirection }: { direction: TradeLaneDirection; o
 
   return (
     <>
-      <div className="flex flex-wrap items-end gap-3">
-        <Segmented
-          label="Which section"
-          value={direction}
-          options={TRADE_LANE_DIRECTIONS.map((d) => [d, TRADE_LANE_DIRECTION_LABEL[d]] as const)}
-          onChange={onDirection}
-        />
-        <div className="flex w-64 flex-col gap-1">
-          <span className="label-manifest">Search</span>
+      {/* On a phone the switches and search take a row each, the two dates share one. */}
+      <div className="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:items-end">
+        <div className="col-span-2 flex">
+          <Segmented
+            label="Which section"
+            value={direction}
+            options={TRADE_LANE_DIRECTIONS.map((d) => [d, TRADE_LANE_DIRECTION_LABEL[d]] as const)}
+            onChange={onDirection}
+          />
+        </div>
+        <div className="col-span-2 flex flex-col gap-1 sm:w-64">
+          <span className="label-field">Search</span>
           <Input
             type="search"
             aria-label="Search trade lanes"
@@ -125,8 +128,8 @@ function LaneList({ direction, onDirection }: { direction: TradeLaneDirection; o
           />
         </div>
         {/* §6 Q1: the sheet has no period. Empty is all time; each figure is dated by its own record. */}
-        <div className="flex w-40 flex-col gap-1">
-          <label htmlFor="matrix-from" className="label-manifest">
+        <div className="flex flex-col gap-1 sm:w-40">
+          <label htmlFor="matrix-from" className="label-field">
             From
           </label>
           <Input
@@ -137,20 +140,22 @@ function LaneList({ direction, onDirection }: { direction: TradeLaneDirection; o
             onChange={(e) => list.setFilter('from', e.target.value)}
           />
         </div>
-        <div className="flex w-40 flex-col gap-1">
-          <label htmlFor="matrix-to" className="label-manifest">
+        <div className="flex flex-col gap-1 sm:w-40">
+          <label htmlFor="matrix-to" className="label-field">
             To
           </label>
           <Input id="matrix-to" type="date" numeric value={list.filters.to ?? ''} onChange={(e) => list.setFilter('to', e.target.value)} />
         </div>
-        <Segmented
-          label="Status"
-          value={(list.filters.isActive ?? '') as StatusFilter}
-          options={STATUS_OPTIONS}
-          onChange={(v) => list.setFilter('isActive', v)}
-        />
-        <div className="flex w-36 flex-col gap-1">
-          <label htmlFor="matrix-sort" className="label-manifest">
+        <div className="col-span-2 flex">
+          <Segmented
+            label="Status"
+            value={(list.filters.isActive ?? '') as StatusFilter}
+            options={STATUS_OPTIONS}
+            onChange={(v) => list.setFilter('isActive', v)}
+          />
+        </div>
+        <div className="col-span-2 flex flex-col gap-1 sm:w-36">
+          <label htmlFor="matrix-sort" className="label-field">
             Sort by
           </label>
           <Select
@@ -174,7 +179,7 @@ function LaneList({ direction, onDirection }: { direction: TradeLaneDirection; o
       )}
 
       {list.rows.length === 0 && !list.isPending ? (
-        <div className="rounded-manifest border border-line bg-surface shadow-manifest">
+        <div className="rounded-card border border-line bg-surface shadow-manifest">
           {list.hasFilters ? (
             <EmptyState
               title="No trade lanes match"
@@ -210,7 +215,7 @@ function LaneList({ direction, onDirection }: { direction: TradeLaneDirection; o
       )}
 
       {totalPages > 1 && (
-        <div className="flex items-center justify-between text-cell text-steel">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-cell text-steel">
           <span>
             Lanes <span className="font-mono tabular-nums">{(page - 1) * limit + 1}</span>–
             <span className="font-mono tabular-nums">{Math.min(page * limit, total)}</span> of{' '}
@@ -264,11 +269,11 @@ function LaneList({ direction, onDirection }: { direction: TradeLaneDirection; o
 /** One lane: C8 "Trade Lane Name : …" and its table (row 9). */
 function LaneTable({ lane, onEdit, onToggle }: { lane: TradeLaneDto; onEdit?: (() => void) | undefined; onToggle?: (() => void) | undefined }) {
   const single = TRADE_LANE_SIDES[lane.movementType].single;
-  const head = 'label-manifest border-b border-line px-3 py-2';
+  const head = 'label-manifest whitespace-nowrap border-b border-line px-3 py-2';
   const numberCell = 'px-3 text-right font-mono tabular-nums';
 
   return (
-    <section className="rounded-manifest border border-line bg-surface shadow-manifest" aria-label={`Trade lane ${lane.name}`}>
+    <section className="rounded-card border border-line bg-surface shadow-manifest" aria-label={`Trade lane ${lane.name}`}>
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-4 py-3">
         <div className="flex flex-wrap items-baseline gap-3">
           <h2 className="text-section text-hull">
@@ -291,9 +296,9 @@ function LaneTable({ lane, onEdit, onToggle }: { lane: TradeLaneDto; onEdit?: ((
         </div>
       </header>
       <div className="overflow-x-auto">
-        <table className="w-full border-collapse text-cell">
+        <table className="w-full min-w-[40rem] border-collapse text-cell">
           <thead>
-            <tr className="bg-paper">
+            <tr className="bg-module-soft">
               <th scope="col" className={cn(head, 'text-left')}>
                 POL
               </th>

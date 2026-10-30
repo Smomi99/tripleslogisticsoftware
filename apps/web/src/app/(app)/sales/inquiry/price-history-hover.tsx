@@ -34,11 +34,11 @@ export function PriceHistoryHover({
           <table className="w-full text-cell">
             <thead>
               <tr className="border-b border-line">
-                <th className="label-manifest py-1 text-left">Date</th>
-                <th className="label-manifest py-1 text-right">Price</th>
-                <th className="label-manifest py-1 text-right">Change</th>
-                <th className="label-manifest py-1 pl-3 text-left">Rate</th>
-                <th className="label-manifest py-1 pl-3 text-left">By</th>
+                <th className="label-manifest whitespace-nowrap py-1 text-left">Date</th>
+                <th className="label-manifest whitespace-nowrap py-1 text-right">Price</th>
+                <th className="label-manifest whitespace-nowrap py-1 text-right">Change</th>
+                <th className="label-manifest whitespace-nowrap py-1 pl-3 text-left">Rate</th>
+                <th className="label-manifest whitespace-nowrap py-1 pl-3 text-left">By</th>
               </tr>
             </thead>
             <tbody>

@@ -289,7 +289,7 @@ export function ShipmentAdviseTab({
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <h2 className="text-section text-hull">
             {advise === null ? 'New shipment advise' : advise.code}
           </h2>
@@ -448,9 +448,10 @@ export function ShipmentAdviseTab({
         row, after the EFR — the same order the printed advise uses.
       */}
       <div className="overflow-x-auto rounded-manifest border border-line">
-        <table className="w-full border-collapse text-cell">
+        {/* Never wrapped: a container or PO number broken at its hyphen reads as two. */}
+        <table className="w-full whitespace-nowrap border-collapse text-cell">
           <thead>
-            <tr className="bg-paper text-left label-manifest">
+            <tr className="bg-module-soft text-left label-manifest">
               {!isAir && (
                 <>
                   <th className="px-3 py-2">Container no</th>
@@ -683,11 +684,12 @@ export function ShipmentAdviseTab({
               advise with a new {isAir ? 'HAWB' : 'House BL'} number.
             </p>
           )}
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setSendOpen(false)}>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button variant="secondary" onClick={() => setSendOpen(false)} className="max-sm:w-full">
               Back
             </Button>
             <Button
+              className="max-sm:w-full"
               disabled={isPending || sendTo.trim() === '' || advise === null}
               onClick={() => {
                 if (advise === null) return;
@@ -739,12 +741,13 @@ export function ShipmentAdviseTab({
               placeholder="Wrong vessel on the advise"
             />
           </Field>
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setCancelOpen(false)}>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button variant="secondary" onClick={() => setCancelOpen(false)} className="max-sm:w-full">
               Keep it
             </Button>
             <Button
               variant="destructive"
+              className="max-sm:w-full"
               disabled={isPending || cancelReason.trim() === '' || advise === null}
               onClick={() => {
                 if (advise === null) return;

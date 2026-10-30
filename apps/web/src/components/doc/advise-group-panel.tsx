@@ -8,6 +8,7 @@ import {
 } from '@ff/shared';
 
 import { Button } from '@/components/ui/button';
+import { RowActions } from '@/components/ui/row-actions';
 import { Status, type StatusTone } from '@/components/ui/status';
 
 /**
@@ -107,7 +108,7 @@ export function AdviseGroupPanel({
       <div className="overflow-x-auto rounded-manifest border border-line">
         <table className="w-full border-collapse text-cell">
           <thead>
-            <tr className="bg-paper text-left label-manifest">
+            <tr className="whitespace-nowrap bg-module-soft text-left label-manifest">
               {mode === 'new' && (
                 <th className="w-10 px-3 py-2">
                   <span className="sr-only">On the advise</span>
@@ -116,7 +117,8 @@ export function AdviseGroupPanel({
               <th className="px-3 py-2">Booking</th>
               <th className="px-3 py-2">EFR</th>
               <th className="px-3 py-2">Match</th>
-              <th className="px-3 py-2">Detail</th>
+              {/* A floor, so on a phone the sentence scrolls sideways rather than stacking a word a line. */}
+              <th className="min-w-64 px-3 py-2">Detail</th>
               {mode === 'draft' && canAdd && (
                 <th className="px-3 py-2">
                   <span className="sr-only">Action</span>
@@ -171,14 +173,16 @@ export function AdviseGroupPanel({
                   {mode === 'draft' && canAdd && (
                     <td className="whitespace-nowrap px-3 py-2 text-right">
                       {addable && (
-                        <Button
-                          variant="text"
-                          size="inline"
-                          disabled={pending}
-                          onClick={() => onAdd(b.shipmentId)}
-                        >
-                          Add to this advise
-                        </Button>
+                        <RowActions>
+                          <Button
+                            variant="text"
+                            size="inline"
+                            disabled={pending}
+                            onClick={() => onAdd(b.shipmentId)}
+                          >
+                            Add to this advise
+                          </Button>
+                        </RowActions>
                       )}
                     </td>
                   )}

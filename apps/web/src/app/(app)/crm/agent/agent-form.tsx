@@ -24,7 +24,7 @@ import { useSession } from '@/lib/session';
 const ENDPOINT = '/api/tenant/crm/agents';
 
 const TEXTAREA_CLASS =
-  'w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-body text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour';
+  'w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-base text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour sm:text-body';
 
 interface AgentOptions {
   expertAreas: LookupOption[];

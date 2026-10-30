@@ -111,7 +111,7 @@ function LookupCell({
   width: string;
 } & ReturnType<UseFormRegister<AgentQuoteInput>>) {
   return (
-    <Select {...props} className={`h-8 text-cell ${width}`}>
+    <Select {...props} className={`sm:h-8 sm:text-cell ${width}`}>
       <option value="">{placeholder}</option>
       {options.map((option) => (
         <option key={option.id} value={option.id}>
@@ -183,16 +183,16 @@ function ChargeLines({
       <div className="overflow-x-auto">
         <table className="w-full min-w-260 border-collapse">
           <thead>
-            <tr className="border-b border-line bg-paper">
-              <th className="label-manifest px-2 py-2 text-left">Carrier</th>
-              <th className="label-manifest px-2 py-2 text-left">Cost head *</th>
-              <th className="label-manifest px-2 py-2 text-left">Container size</th>
-              <th className="label-manifest px-2 py-2 text-left">Unit</th>
-              <th className="label-manifest px-2 py-2 text-right">Qty *</th>
-              <th className="label-manifest px-2 py-2 text-right">Unit price *</th>
-              <th className="label-manifest px-2 py-2 text-left">Currency *</th>
-              <th className="label-manifest px-2 py-2 text-right">Total</th>
-              <th className="label-manifest px-2 py-2 text-right">
+            <tr className="border-b border-line bg-module-soft">
+              <th className="label-manifest whitespace-nowrap px-2 py-2 text-left">Carrier</th>
+              <th className="label-manifest whitespace-nowrap px-2 py-2 text-left">Cost head *</th>
+              <th className="label-manifest whitespace-nowrap px-2 py-2 text-left">Container size</th>
+              <th className="label-manifest whitespace-nowrap px-2 py-2 text-left">Unit</th>
+              <th className="label-manifest whitespace-nowrap px-2 py-2 text-right">Qty *</th>
+              <th className="label-manifest whitespace-nowrap px-2 py-2 text-right">Unit price *</th>
+              <th className="label-manifest whitespace-nowrap px-2 py-2 text-left">Currency *</th>
+              <th className="label-manifest whitespace-nowrap px-2 py-2 text-right">Total</th>
+              <th className="label-manifest whitespace-nowrap px-2 py-2 text-right">
                 <span className="sr-only">Remove</span>
               </th>
             </tr>
@@ -244,7 +244,7 @@ function ChargeLines({
                     <Input
                       numeric
                       inputMode="decimal"
-                      className="h-8 w-14 text-cell"
+                      className="w-16 sm:h-8 sm:w-14 sm:text-cell"
                       placeholder="2"
                       aria-label="Quantity"
                       {...register(`${path}.quantity`)}
@@ -256,7 +256,7 @@ function ChargeLines({
                     <Input
                       numeric
                       inputMode="decimal"
-                      className="h-8 w-24 text-cell"
+                      className="w-28 sm:h-8 sm:w-24 sm:text-cell"
                       placeholder="1850.00"
                       aria-label="Unit price"
                       {...register(`${path}.unitPrice`)}
@@ -287,6 +287,7 @@ function ChargeLines({
                         size="inline"
                         aria-label={`Remove charge line ${lineIndex + 1}`}
                         title="Remove this line"
+                        className="max-sm:min-h-10 max-sm:min-w-10"
                         onClick={() => remove(lineIndex)}
                       >
                         ×
@@ -349,8 +350,8 @@ function OptionBlock({
   ] as const;
 
   return (
-    <section className="rounded-manifest border border-line">
-      <header className="flex items-center justify-between border-b border-line bg-paper px-4 py-2">
+    <section className="overflow-hidden rounded-card border border-line">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-module-soft px-3 py-2 sm:px-4">
         <h3 className="text-section text-hull">Option {index + 1}</h3>
         {onRemove !== null && !disabled && (
           <Button type="button" variant="destructive" size="inline" onClick={onRemove}>
@@ -359,7 +360,7 @@ function OptionBlock({
         )}
       </header>
 
-      <div className="flex flex-col gap-4 p-4">
+      <div className="flex flex-col gap-4 p-3 sm:p-4">
         <ChargeLines
           optionIndex={index}
           control={control}
@@ -374,13 +375,13 @@ function OptionBlock({
             <div key={f.name} className="flex flex-col gap-1">
               <label
                 htmlFor={`options.${index}.${f.name}`}
-                className="label-manifest"
+                className="label-field"
               >
                 {f.label}
               </label>
               <Input
                 id={`options.${index}.${f.name}`}
-                className="h-8 text-cell"
+                className="sm:h-8 sm:text-cell"
                 numeric={f.numeric}
                 {...('type' in f ? { type: f.type } : {})}
                 {...('placeholder' in f ? { placeholder: f.placeholder } : {})}
@@ -404,13 +405,13 @@ function OptionBlock({
         </div>
 
         <div className="flex flex-col gap-1">
-          <label htmlFor={`options.${index}.remarks`} className="label-manifest">
+          <label htmlFor={`options.${index}.remarks`} className="label-field">
             Remarks
           </label>
           <textarea
             id={`options.${index}.remarks`}
             rows={2}
-            className="w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-body text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour disabled:bg-paper disabled:text-steel"
+            className="w-full rounded-manifest border border-line bg-surface px-3 py-2 text-base text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour disabled:bg-paper disabled:text-steel sm:px-2.5 sm:py-1.5 sm:text-body"
             placeholder="Anything the forwarder should know about this routing."
             {...register(`options.${index}.remarks`)}
             disabled={disabled}
@@ -527,8 +528,8 @@ export function QuoteForm({
       )}
 
       {quotable && (
-        <div className="flex items-center gap-3">
-          <Button type="submit" disabled={isSubmitting}>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+          <Button type="submit" disabled={isSubmitting} className="max-sm:w-full">
             {isSubmitting
               ? quote === null
                 ? 'Sending…'
@@ -538,7 +539,12 @@ export function QuoteForm({
                 : 'Update quote'}
           </Button>
           {fields.length < 5 && (
-            <Button type="button" variant="secondary" onClick={() => append(emptyOption())}>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => append(emptyOption())}
+              className="max-sm:w-full"
+            >
               Add another option
             </Button>
           )}

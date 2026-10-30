@@ -21,7 +21,7 @@ export function Segmented<T extends string>({
 }) {
   return (
     <div
-      className="inline-flex shrink-0 rounded-manifest border border-line bg-surface p-0.5"
+      className="inline-flex max-w-full shrink-0 overflow-x-auto rounded-full border border-line bg-surface p-0.5 shadow-manifest"
       role="tablist"
       aria-label={label}
     >
@@ -34,8 +34,8 @@ export function Segmented<T extends string>({
           onClick={() => onChange(key)}
           className={
             value === key
-              ? 'whitespace-nowrap rounded-[3px] bg-harbour px-3 py-1.5 text-cell font-semibold text-white'
-              : 'whitespace-nowrap rounded-[3px] px-3 py-1.5 text-cell text-steel transition-colors duration-[120ms] hover:text-hull'
+              ? 'shrink-0 whitespace-nowrap rounded-full bg-harbour px-3.5 py-1.5 text-cell font-semibold text-white'
+              : 'shrink-0 whitespace-nowrap rounded-full px-3.5 py-1.5 text-cell text-steel transition-colors duration-[120ms] hover:bg-row-hover hover:text-hull'
           }
         >
           {text}

@@ -13,6 +13,7 @@ import {
   type OpenDocumentDto,
   PAY_TO_PARTY_TYPES,
 } from '@ff/shared';
+import { ArrowLeft } from 'lucide-react';
 import type { Route } from 'next';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -22,7 +23,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Input, Select } from '@/components/ui/field';
-import { PageHeader } from '@/components/ui/form-layout';
+import { backLinkClasses, PageHeader } from '@/components/ui/form-layout';
 import { Segmented } from '@/components/ui/segmented';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
@@ -414,8 +415,9 @@ export function VoucherForm({
   // ------------------------------------------------------------ the page
 
   const back = (
-    <Link href={`/accounts/${slug}` as Route} className="text-cell text-harbour hover:underline">
-      ← Back to list
+    <Link href={`/accounts/${slug}` as Route} className={backLinkClasses}>
+      <ArrowLeft className="size-3.5" aria-hidden="true" />
+      Back to list
     </Link>
   );
 
@@ -511,14 +513,14 @@ export function VoucherForm({
       )}
 
       {/* ------------------------------------------ date, party, description */}
-      <section className="grid grid-cols-1 gap-4 rounded-manifest border border-line bg-surface p-5 shadow-manifest md:grid-cols-2">
+      <section className="grid grid-cols-1 gap-4 rounded-card border border-line bg-surface p-4 shadow-manifest md:grid-cols-2 sm:p-5">
         <Field id="entryDate" label="Date" required>
           <Input id="entryDate" type="date" value={entryDate} onChange={(e) => setEntryDate(e.target.value)} />
         </Field>
 
         {settles && withParty && (
           <>
-            <div className="grid grid-cols-[10rem_1fr] gap-3 md:col-span-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-[10rem_1fr] md:col-span-2">
               <Field
                 id="partyType"
                 label={kind === 'EXPENSE' ? 'Pay to' : 'Income From'}
@@ -642,7 +644,7 @@ export function VoucherForm({
             rows={2}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            className="w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-body text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour"
+            className="w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-base text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour sm:text-body"
           />
         </Field>
 
@@ -669,7 +671,7 @@ export function VoucherForm({
       {/* ------------------------------------------------ the money account */}
       {kind !== 'JOURNAL' && (
         <section
-          className={`grid grid-cols-1 gap-4 rounded-manifest border border-line bg-surface p-5 shadow-manifest ${chargeShown ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}
+          className={`grid grid-cols-1 gap-4 rounded-card border border-line bg-surface p-4 sm:p-5 shadow-manifest ${chargeShown ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}
         >
           <Field id="moneyAccount" label={moneyLabel} required hint={moneyHint}>
             <AccountSelect
@@ -735,22 +737,22 @@ export function VoucherForm({
       )}
 
       {/* ------------------------------------------------------ the rows */}
-      <section className="rounded-manifest border border-line bg-surface shadow-manifest">
-        <div className="border-b border-line px-5 py-3">
+      <section className="rounded-card border border-line bg-surface shadow-manifest">
+        <div className="border-b border-line px-4 py-3 sm:px-5">
           <h2 className="text-section text-hull">{kind === 'JOURNAL' ? 'Account' : rowsTitle}</h2>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-160 border-collapse">
             <thead>
-              <tr className="border-b border-line bg-paper">
-                <th className="label-manifest px-3 py-2 text-left">{kind === 'JOURNAL' ? 'Account' : rowPlaceholder}</th>
+              <tr className="border-b border-line bg-module-soft">
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">{kind === 'JOURNAL' ? 'Account' : rowPlaceholder}</th>
                 {kind === 'JOURNAL' ? (
                   <>
-                    <th className="label-manifest w-44 px-3 py-2 text-right">Debit</th>
-                    <th className="label-manifest w-44 px-3 py-2 text-right">Credit</th>
+                    <th className="label-manifest whitespace-nowrap w-44 px-3 py-2 text-right">Debit</th>
+                    <th className="label-manifest whitespace-nowrap w-44 px-3 py-2 text-right">Credit</th>
                   </>
                 ) : (
-                  <th className="label-manifest w-44 px-3 py-2 text-right">Amount</th>
+                  <th className="label-manifest whitespace-nowrap w-44 px-3 py-2 text-right">Amount</th>
                 )}
                 <th className="w-20 px-3 py-2" />
               </tr>
@@ -836,7 +838,7 @@ export function VoucherForm({
             </tbody>
           </table>
         </div>
-        <div className="border-t border-line px-5 py-3">
+        <div className="border-t border-line px-4 py-3 sm:px-5">
           <Button
             variant="text"
             size="inline"
@@ -852,8 +854,9 @@ export function VoucherForm({
       </section>
 
       {/* ------------------------------ Debit Amount / Credit Amount / Difference */}
-      <section className="flex flex-wrap items-end justify-between gap-4 rounded-manifest border border-line bg-surface p-5 shadow-manifest">
-        <dl className="grid grid-cols-3 gap-8">
+      <section className="flex flex-wrap items-end justify-between gap-4 rounded-card border border-line bg-surface p-4 shadow-manifest sm:p-5">
+        {/* On a phone the three figures stack, label left and figure right. */}
+        <dl className="grid w-full grid-cols-1 gap-2 sm:w-auto sm:grid-cols-3 sm:gap-8">
           {(
             [
               [kind === 'JOURNAL' ? 'Total Debit' : 'Debit Amount', debitUnits],
@@ -861,7 +864,7 @@ export function VoucherForm({
               ['Difference', difference],
             ] as [string, number][]
           ).map(([label, value]) => (
-            <div key={label} className="text-right">
+            <div key={label} className="flex items-baseline justify-between gap-3 sm:block sm:text-right">
               <dt className="label-manifest">{label}</dt>
               <dd
                 className={
@@ -875,20 +878,21 @@ export function VoucherForm({
             </div>
           ))}
         </dl>
-        <div className="flex items-center gap-3">
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-3">
           {kind === 'JOURNAL' ? (
             <>
-              <Button variant="secondary" disabled={pending !== null || !balanced} onClick={() => void save(false)}>
+              <Button variant="secondary" className="max-sm:w-full" disabled={pending !== null || !balanced} onClick={() => void save(false)}>
                 {pending === 'save' ? 'Saving…' : 'Save'}
               </Button>
               {can('ACCOUNTS.JOURNAL.APPROVE') && (
-                <Button disabled={pending !== null || !balanced} onClick={() => void save(true)}>
+                <Button className="max-sm:w-full" disabled={pending !== null || !balanced} onClick={() => void save(true)}>
                   {pending === 'post' ? 'Saving…' : 'Save & agreed'}
                 </Button>
               )}
             </>
           ) : (
             <Button
+              className="max-sm:w-full"
               disabled={
                 pending !== null ||
                 !balanced ||

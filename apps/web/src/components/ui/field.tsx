@@ -3,10 +3,12 @@ import type { ComponentPropsWithRef, ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
 /*
- * §12 form rules, all of them load-bearing:
- *   - labels sit ABOVE inputs, never beside or inside
+ * Form rules, all of them load-bearing:
+ *   - labels sit ABOVE inputs, never beside or inside, in sentence case
  *   - required is marked on the label, never by placeholder
- *   - 36px inputs, 4px radius, 1px --line, focus = 2px --harbour ring
+ *   - 36px inputs (40px on a phone), 8px radius, 1px --line; focus turns the
+ *     border to the module colour with a soft ring around it
+ *   - inputs are 16px on a phone: iOS zooms the page into anything smaller
  *   - errors sit below the field in --alert, and name the fix
  */
 
@@ -24,7 +26,7 @@ export interface FieldProps {
 export function Field({ id, label, required, error, hint, children, wide }: FieldProps) {
   return (
     <div className={cn('flex flex-col gap-1.5', wide && 'md:col-span-2')}>
-      <label htmlFor={id} className="label-manifest">
+      <label htmlFor={id} className="label-field">
         {label}
         {required === true && (
           <span className="ml-1 text-alert" aria-hidden="true">
@@ -47,11 +49,12 @@ export function Field({ id, label, required, error, hint, children, wide }: Fiel
 }
 
 const controlClasses = cn(
-  'h-9 w-full rounded-manifest border border-line bg-surface px-2.5',
-  'text-body text-hull transition-colors duration-[120ms] ease-manifest',
-  'focus:outline-2 focus:outline-offset-0 focus:outline-harbour',
+  'h-10 w-full rounded-manifest border border-line bg-surface px-3 sm:h-9 sm:px-2.5',
+  'text-base text-hull transition-[border-color,box-shadow] duration-[120ms] ease-manifest sm:text-body',
+  'hover:border-steel/50',
+  'focus:border-harbour focus:outline-none focus:ring-3 focus:ring-harbour/20',
   'disabled:cursor-not-allowed disabled:bg-paper disabled:text-steel',
-  'aria-[invalid=true]:border-alert',
+  'aria-[invalid=true]:border-alert aria-[invalid=true]:focus:ring-alert/20',
 );
 
 /**

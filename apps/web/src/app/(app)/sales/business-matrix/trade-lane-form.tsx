@@ -185,11 +185,11 @@ export function TradeLaneForm({
             {formError}
           </p>
         )}
-        <div className="flex justify-end gap-3">
-          <Button variant="secondary" onClick={onClose} disabled={pending}>
+        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end sm:gap-3">
+          <Button variant="secondary" onClick={onClose} disabled={pending} className="max-sm:w-full">
             Cancel
           </Button>
-          <Button type="submit" disabled={pending || options === null}>
+          <Button type="submit" disabled={pending || options === null} className="max-sm:w-full">
             {pending ? 'Saving…' : lane === null ? 'Add trade lane' : 'Save changes'}
           </Button>
         </div>

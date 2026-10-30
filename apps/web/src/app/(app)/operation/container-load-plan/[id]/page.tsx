@@ -25,6 +25,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Input, Select } from '@/components/ui/field';
 import { ChildScreenHeader, FormLayout } from '@/components/ui/form-layout';
 import { ConfirmDialog, Modal } from '@/components/ui/modal';
+import { RowActions } from '@/components/ui/row-actions';
 import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
@@ -369,8 +370,8 @@ export default function ClpBuilderPage() {
       />
 
       {/* ------------------------------------------------- the booking (§5.1) */}
-      <section className="rounded-manifest border border-line bg-surface p-4 shadow-manifest">
-        <dl className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      <section className="rounded-card border border-line bg-surface p-4 shadow-manifest">
+        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           {[
             ['S/O No', plan.booking.shippingOrderCode ?? '—'],
             ['POL', plan.booking.polName],
@@ -409,7 +410,7 @@ export default function ClpBuilderPage() {
 
       {/* --------------------------------------------- select container (§5.1) */}
       {mayEdit && (
-        <section className="rounded-manifest border border-line bg-surface p-4 shadow-manifest">
+        <section className="rounded-card border border-line bg-surface p-4 shadow-manifest">
           {/*
             Named, because without a heading this panel sat above "Nothing left
             to assign" as an unexplained dropdown. Most plans are made by
@@ -421,13 +422,13 @@ export default function ClpBuilderPage() {
               For cargo that does not fit the containers below. Load it with add or Split.
             </p>
           </div>
-          <div className="flex flex-wrap items-end gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
             <Field id="containerSizeId" label="Container size">
               <Select
                 id="containerSizeId"
                 value={sizeId}
                 onChange={(event) => setSizeId(event.target.value)}
-                className="w-56"
+                className="w-full sm:w-56"
               >
                 {plan.containerSizes.map((s) => (
                   <option key={s.id} value={s.id}>
@@ -447,7 +448,7 @@ export default function ClpBuilderPage() {
                   id="target"
                   value={target}
                   onChange={(event) => setTarget(event.target.value)}
-                  className="w-44"
+                  className="w-full sm:w-44"
                 >
                   {drafts.map((c) => (
                     <option key={c.id} value={c.id}>
@@ -462,7 +463,7 @@ export default function ClpBuilderPage() {
       )}
 
       {/* ------------------------------------------------ the cargo pool (§5.1) */}
-      <section className="rounded-manifest border border-line bg-surface shadow-manifest">
+      <section className="rounded-card border border-line bg-surface shadow-manifest">
         <div className="border-b border-line px-4 py-3">
           <h2 className="text-section text-hull">Cargo to load</h2>
           <p className="text-cell text-steel">
@@ -479,7 +480,7 @@ export default function ClpBuilderPage() {
           <div className="overflow-x-auto">
             <table className="w-full min-w-[980px] border-collapse text-cell">
               <thead>
-                <tr className="border-b border-line bg-paper">
+                <tr className="whitespace-nowrap border-b border-line bg-module-soft">
                   <th className="label-manifest px-3 py-2 text-left">PO</th>
                   <th className="label-manifest px-3 py-2 text-left">Item</th>
                   <th className="label-manifest px-3 py-2 text-left">SKU</th>
@@ -529,7 +530,7 @@ export default function ClpBuilderPage() {
                     </td>
                     {mayEdit && (
                       <td className="px-3 py-2 text-right">
-                        <span className="inline-flex gap-3">
+                        <RowActions>
                           <Button
                             variant="text"
                             size="inline"
@@ -548,7 +549,7 @@ export default function ClpBuilderPage() {
                               Split
                             </Button>
                           )}
-                        </span>
+                        </RowActions>
                       </td>
                     )}
                   </tr>
@@ -737,14 +738,15 @@ function ClpCardView({
   return (
     <section
       id={`clp-${clp.id}`}
+      // min-w-0: a grid item otherwise grows to its widest table, and the page scrolls sideways.
       className={
         isTarget
-          ? 'scroll-mt-4 rounded-manifest border-2 border-harbour bg-surface p-4 shadow-manifest'
-          : 'scroll-mt-4 rounded-manifest border border-line bg-surface p-4 shadow-manifest'
+          ? 'min-w-0 scroll-mt-4 rounded-card border-2 border-harbour bg-surface p-4 shadow-manifest sm:p-5'
+          : 'min-w-0 scroll-mt-4 rounded-card border border-line bg-surface p-4 shadow-manifest sm:p-5'
       }
     >
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h3 className="flex items-center gap-3 text-section text-hull">
+        <h3 className="flex flex-wrap items-center gap-x-3 gap-y-1 text-section text-hull">
           <span>CLP No : {clp.clpSeq}</span>
           <span className="font-mono text-cell tabular-nums text-steel">{clp.code}</span>
           <Status tone={clp.status === 'DRAFT' ? 'pending' : clp.status === 'FINAL' ? 'active' : 'inactive'}>
@@ -754,7 +756,7 @@ function ClpCardView({
         <span className="font-mono text-cell tabular-nums text-hull">{clp.containerSizeCode}</span>
       </div>
 
-      <dl className="mb-3 grid grid-cols-4 gap-3">
+      <dl className="mb-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
         {[
           ['CTN', whole(clp.totalCtnQty)],
           ['PCS', whole(clp.totalPcsQty)],
@@ -859,7 +861,7 @@ function ClpCardView({
           </Button>
         )}
         {mayEdit && clp.status === 'DRAFT' && clp.lines.length === 0 && (
-          <Button variant="secondary" size="inline" disabled={busy} onClick={onRemove}>
+          <Button variant="secondary" size="compact" disabled={busy} onClick={onRemove}>
             Remove this container
           </Button>
         )}
@@ -1073,7 +1075,7 @@ function FinalisePanel({
         )}
         <Button
           variant="secondary"
-          size="inline"
+          size="compact"
           disabled={busy || containerError !== null}
           onClick={() => void onSave(details())}
         >
@@ -1082,7 +1084,7 @@ function FinalisePanel({
         {mayFinalise && (
           <Button
             variant="primary"
-            size="inline"
+            size="compact"
             disabled={busy || missing.length > 0}
             onClick={() => setConfirming(true)}
           >
@@ -1129,13 +1131,19 @@ function FinalisePanel({
           ))}
         </dl>
 
-        <div className="mt-4 flex justify-end gap-3">
-          <Button variant="secondary" onClick={() => setConfirming(false)} disabled={busy}>
+        <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-3">
+          <Button
+            variant="secondary"
+            onClick={() => setConfirming(false)}
+            disabled={busy}
+            className="max-sm:w-full"
+          >
             Back
           </Button>
           <Button
             variant="primary"
             disabled={busy}
+            className="max-sm:w-full"
             onClick={async () => {
               await onFinalise({
                 containerNo,
@@ -1318,7 +1326,7 @@ function SplitForm({
       <div className="overflow-x-auto">
         <table className="w-full border-collapse text-cell">
           <thead>
-            <tr className="border-b border-line bg-paper">
+            <tr className="whitespace-nowrap border-b border-line bg-module-soft">
               <th className="label-manifest px-3 py-2 text-left" />
               <th className="label-manifest px-3 py-2 text-right">Available</th>
               <th className="label-manifest px-3 py-2 text-right">Use</th>

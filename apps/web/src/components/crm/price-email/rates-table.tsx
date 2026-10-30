@@ -47,8 +47,8 @@ export function RatesTable({
       <div className="max-h-112 overflow-auto rounded-manifest border border-line">
         <table className="w-full min-w-max border-collapse text-cell">
           <thead className="sticky top-0 z-10">
-            <tr className="bg-paper text-left">
-              <th className="w-10 border-b border-line bg-paper px-2.5 py-2">
+            <tr className="bg-module-soft text-left">
+              <th className="w-10 border-b border-line bg-module-soft px-2.5 py-2">
                 <input
                   type="checkbox"
                   aria-label="Tick every rate"
@@ -58,7 +58,7 @@ export function RatesTable({
                     if (el !== null) el.indeterminate = some && !all;
                   }}
                   onChange={() => onChange(all ? new Set() : new Set(rates.map((r) => r.id)))}
-                  className="size-4 accent-harbour"
+                  className="size-5 accent-harbour sm:size-4"
                 />
               </th>
               <Th>Code</Th>
@@ -96,11 +96,11 @@ export function RatesTable({
                       checked={on}
                       onChange={() => toggle(rate.id)}
                       aria-label={`Send ${rate.polName} to ${rate.podName}, ${rate.carrierName}`}
-                      className="size-4 accent-harbour"
+                      className="size-5 accent-harbour sm:size-4"
                     />
                   </td>
                   {/* §12: the business code in mono on a faintly tinted gutter. */}
-                  <td className="whitespace-nowrap bg-paper/60 px-2.5 py-2 font-mono tabular-nums text-steel">
+                  <td className="whitespace-nowrap bg-module-soft px-2.5 py-2 font-mono tabular-nums text-steel">
                     {rate.code}
                   </td>
                   <Td className={text}>{rate.polName}</Td>
@@ -183,7 +183,7 @@ function Th({ children, numeric }: { children: ReactNode; numeric?: boolean }) {
   return (
     <th
       className={cn(
-        'label-manifest whitespace-nowrap border-b border-line bg-paper px-2.5 py-2',
+        'label-manifest whitespace-nowrap border-b border-line bg-module-soft px-2.5 py-2',
         numeric === true ? 'text-right' : 'text-left',
       )}
     >

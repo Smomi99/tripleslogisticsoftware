@@ -85,13 +85,13 @@ export function TariffDetailDrawer({ row, onClose }: { row: TariffListRow | null
             <div className="overflow-x-auto">
               <table className="w-full min-w-[560px] border-collapse text-cell">
                 <thead>
-                  <tr className="border-b border-line bg-paper text-left">
-                    <th className="label-manifest px-2 py-2 text-right">SL No</th>
-                    <th className="label-manifest px-2 py-2">Cost Head</th>
-                    <th className="label-manifest px-2 py-2">Container Size</th>
-                    <th className="label-manifest px-2 py-2">Unit</th>
-                    <th className="label-manifest px-2 py-2 text-right">Unit Price</th>
-                    <th className="label-manifest px-2 py-2">Currency</th>
+                  <tr className="border-b border-line bg-module-soft text-left">
+                    <th className="label-manifest whitespace-nowrap px-2 py-2 text-right">SL No</th>
+                    <th className="label-manifest whitespace-nowrap px-2 py-2">Cost Head</th>
+                    <th className="label-manifest whitespace-nowrap px-2 py-2">Container Size</th>
+                    <th className="label-manifest whitespace-nowrap px-2 py-2">Unit</th>
+                    <th className="label-manifest whitespace-nowrap px-2 py-2 text-right">Unit Price</th>
+                    <th className="label-manifest whitespace-nowrap px-2 py-2">Currency</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -113,7 +113,7 @@ export function TariffDetailDrawer({ row, onClose }: { row: TariffListRow | null
 
         {can('PURCHASE.TARIFF.EDIT') && (
           <div className="flex justify-end border-t border-line pt-4">
-            <Button variant="secondary" asChild>
+            <Button variant="secondary" asChild className="max-sm:w-full">
               <Link href={`/purchase/tariff/${row.id}` as Route}>Edit tariff</Link>
             </Button>
           </div>

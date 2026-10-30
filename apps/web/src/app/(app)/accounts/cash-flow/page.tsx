@@ -98,14 +98,14 @@ export default function CashFlowPage() {
       />
 
       <div className="flex flex-wrap items-end gap-3">
-        <div className="flex w-48 flex-col gap-1">
-          <label htmlFor="cf-month" className="label-manifest">
+        <div className="flex min-w-0 flex-1 basis-40 flex-col gap-1 sm:w-48 sm:flex-none">
+          <label htmlFor="cf-month" className="label-field">
             Month
           </label>
           <Input id="cf-month" type="month" numeric value={month} onChange={(e) => setMonth(e.target.value)} />
         </div>
-        <div className="flex w-48 flex-col gap-1">
-          <label htmlFor="cf-year-start" className="label-manifest">
+        <div className="flex min-w-0 flex-1 basis-40 flex-col gap-1 sm:w-48 sm:flex-none">
+          <label htmlFor="cf-year-start" className="label-field">
             Financial year starts
           </label>
           <Select id="cf-year-start" value={yearStartMonth} onChange={(e) => setYearStartMonth(Number(e.target.value))}>
@@ -126,7 +126,7 @@ export default function CashFlowPage() {
 
       {statement !== null && periods !== undefined && (
         <>
-          <div className="flex flex-wrap gap-x-6 gap-y-1 rounded-manifest border border-line bg-surface px-4 py-3 text-body shadow-manifest">
+          <div className="flex flex-wrap gap-x-6 gap-y-1 rounded-card border border-line bg-surface px-4 py-3 text-body shadow-manifest">
             <span>
               <span className="label-manifest mr-2">Period</span>
               <span className="font-mono tabular-nums">
@@ -157,7 +157,7 @@ export default function CashFlowPage() {
             onOpen={(row, i) => setBreakdown({ line: row.key, label: row.label, column: CASH_FLOW_COLUMNS[i] ?? 'CURRENT_MONTH' })}
           />
 
-          <details className="rounded-manifest border border-line bg-surface px-4 py-3 text-body text-steel">
+          <details className="rounded-card border border-line bg-surface px-4 py-3 text-body text-steel">
             <summary className="cursor-pointer text-hull">How these figures are made</summary>
             <ul className="mt-2 flex list-disc flex-col gap-1 pl-5">
               <li>Cash is every Cash and Bank account. Only posted vouchers count; drafts and cancellations are left out.</li>

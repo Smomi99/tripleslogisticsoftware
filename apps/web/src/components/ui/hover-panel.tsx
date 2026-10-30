@@ -65,13 +65,17 @@ export function HoverPanel<T>({
     };
   }, [anchor]);
 
+  // Never wider than the screen less a margin each side — a phone is narrower
+  // than the panel's natural width.
+  const panelWidth = anchor === null ? width : Math.min(width, window.innerWidth - 16);
+
   // Right edge on the figure's right edge, kept on screen; above the figure
   // when it sits in the lower part of the window, so the panel is not cut off.
   const position =
     anchor === null
       ? undefined
       : {
-          left: Math.max(8, Math.min(anchor.right - width, window.innerWidth - width - 8)),
+          left: Math.max(8, Math.min(anchor.right - panelWidth, window.innerWidth - panelWidth - 8)),
           ...(anchor.bottom > window.innerHeight * 0.6
             ? { bottom: window.innerHeight - anchor.top + 4 }
             : { top: anchor.bottom + 4 }),
@@ -96,8 +100,8 @@ export function HoverPanel<T>({
           <div
             id={panelId}
             role="tooltip"
-            style={{ ...position, width }}
-            className="pointer-events-none fixed z-60 rounded-manifest border border-line bg-surface p-3 text-left font-sans shadow-manifest"
+            style={{ ...position, width: panelWidth }}
+            className="pointer-events-none fixed z-60 max-h-[70dvh] overflow-hidden rounded-card border border-line bg-surface p-3 text-left font-sans shadow-raised"
           >
             <p className="label-manifest">{title}</p>
             {error !== null ? (

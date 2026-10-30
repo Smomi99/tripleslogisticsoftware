@@ -69,7 +69,7 @@ export default function RateTierPage() {
           aria-label="Filter by mode"
           value={list.filters.mode ?? ''}
           onChange={(event) => list.setFilter('mode', event.target.value)}
-          className="w-44"
+          className="w-full sm:w-44"
         >
           <option value="">All modes</option>
           {RATE_MODES.map((mode) => (

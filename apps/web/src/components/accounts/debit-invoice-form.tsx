@@ -11,6 +11,7 @@ import {
   SHIPMENT_STATUS_LABEL,
   SUPPLIER_PAYMENT_STATUS_LABEL,
 } from '@ff/shared';
+import { ArrowLeft } from 'lucide-react';
 import type { Route } from 'next';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -19,6 +20,7 @@ import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { Field, Input, Select } from '@/components/ui/field';
+import { backLinkClasses } from '@/components/ui/form-layout';
 import { Modal } from '@/components/ui/modal';
 import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
@@ -384,12 +386,12 @@ export function DebitInvoiceForm({
   return (
     <div className="flex flex-col gap-5">
       {/* --------------------------------------------------- the booking */}
-      <section className="rounded-manifest border border-line bg-surface p-5 shadow-manifest">
+      <section className="rounded-card border border-line bg-surface p-4 shadow-manifest sm:p-5">
         <div className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
-          <div className="flex flex-wrap items-baseline gap-3">
-            <h2 className="font-mono text-page-title tabular-nums text-hull">
+          <div className="flex flex-wrap items-baseline gap-3 max-sm:w-full">
+            <h1 className="font-mono text-page-title tabular-nums text-hull">
               {invoice?.code ?? 'New debit invoice'}
-            </h2>
+            </h1>
             {invoice !== null && (
               <Status tone={DISPLAY_STATUS_TONE[invoice.displayStatus]}>
                 {DEBIT_INVOICE_DISPLAY_STATUS_LABEL[invoice.displayStatus]}
@@ -405,9 +407,11 @@ export function DebitInvoiceForm({
                 ? { pathname: '/accounts/awaiting-freight-inv' }
                 : { pathname: '/accounts/debit-invoice' }
             }
-            className="text-cell text-harbour hover:underline"
+            // On a phone the link leads, above the title, as on every other screen.
+            className={`${backLinkClasses} max-sm:order-first`}
           >
-            ← Back to list
+            <ArrowLeft className="size-3.5" aria-hidden="true" />
+            Back to list
           </Link>
         </div>
 
@@ -574,7 +578,7 @@ export function DebitInvoiceForm({
       )}
 
       {/* ------------------------------------------------ Selling Price (B51) */}
-      <section className="rounded-manifest border border-line bg-surface shadow-manifest">
+      <section className="rounded-card border border-line bg-surface shadow-manifest">
         <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-line px-4 py-3">
           <div>
             <h3 className="text-section text-hull">Selling Price</h3>
@@ -603,7 +607,7 @@ export function DebitInvoiceForm({
       </section>
 
       {/* ---------------------------------------------------- the totals */}
-      <section className="rounded-manifest border border-line bg-surface p-5 shadow-manifest">
+      <section className="rounded-card border border-line bg-surface p-4 shadow-manifest sm:p-5">
         <dl className="grid gap-x-8 gap-y-4 sm:grid-cols-2 lg:grid-cols-4">
           <div>
             <dt className="label-manifest">Total Sell price</dt>
@@ -644,16 +648,18 @@ export function DebitInvoiceForm({
 
         {invoice !== null && invoice.status === 'ISSUED' && (
           <div className="mt-4 border-t border-line pt-4">
-            <p className="text-body text-hull">
-              <span className="label-manifest mr-2">Received</span>
-              <span className="font-mono tabular-nums">{money(invoice.currencyCode, invoice.receivedAmount)}</span>
-              <span className="label-manifest ml-6 mr-2">Outstanding</span>
-              <span className="font-mono tabular-nums">{money(invoice.currencyCode, invoice.outstandingAmount)}</span>
-              <span className="ml-6">
-                <Status tone={invoice.paymentStatus === 'PAID' ? 'active' : 'pending'}>
-                  {PAYMENT_STATUS_LABEL[invoice.paymentStatus]}
-                </Status>
+            <p className="flex flex-wrap items-center gap-x-6 gap-y-2 text-body text-hull">
+              <span>
+                <span className="label-manifest mr-2">Received</span>
+                <span className="font-mono tabular-nums">{money(invoice.currencyCode, invoice.receivedAmount)}</span>
               </span>
+              <span>
+                <span className="label-manifest mr-2">Outstanding</span>
+                <span className="font-mono tabular-nums">{money(invoice.currencyCode, invoice.outstandingAmount)}</span>
+              </span>
+              <Status tone={invoice.paymentStatus === 'PAID' ? 'active' : 'pending'}>
+                {PAYMENT_STATUS_LABEL[invoice.paymentStatus]}
+              </Status>
             </p>
             {invoice.paymentStatus !== 'PAID' && can('ACCOUNTS.DEBIT_INVOICE.RECEIVE') && can('ACCOUNTS.INCOME.CREATE') && (
               <Link
@@ -705,7 +711,7 @@ export function DebitInvoiceForm({
       </section>
 
       {/* --------------------------------------- Email id + the buttons */}
-      <section className="rounded-manifest border border-line bg-surface p-5 shadow-manifest">
+      <section className="rounded-card border border-line bg-surface p-4 shadow-manifest sm:p-5">
         <Field
           id="emails"
           label="Email id of Customer"
@@ -719,7 +725,8 @@ export function DebitInvoiceForm({
           />
         </Field>
 
-        <div className="mt-4 flex flex-wrap items-center gap-3">
+        {/* On a phone the buttons stack full width. */}
+        <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
           {canEdit && (sellEditable || costEditable) && (
             <Button variant="secondary" onClick={() => void onDraft()} disabled={busy !== null}>
               {busy === 'save' ? 'Saving…' : invoice?.status === 'ISSUED' ? 'Save changes' : 'Save draft'}
@@ -747,7 +754,7 @@ export function DebitInvoiceForm({
                   ? { pathname: '/accounts/awaiting-freight-inv' }
                   : { pathname: '/accounts/debit-invoice' }
               }
-              className="text-body text-steel hover:underline"
+              className="text-body text-steel hover:underline max-sm:py-2 max-sm:text-center"
             >
               Discard
             </Link>
@@ -778,15 +785,16 @@ export function DebitInvoiceForm({
               rows={3}
               value={cancelReason}
               onChange={(e) => setCancelReason(e.target.value)}
-              className="w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-body text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour"
+              className="w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-base text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour sm:text-body"
             />
           </Field>
-          <div className="flex justify-end gap-3">
-            <Button variant="secondary" onClick={() => setCancelOpen(false)}>
+          <div className="flex flex-col gap-2 sm:flex-row sm:justify-end sm:gap-3">
+            <Button variant="secondary" className="max-sm:w-full" onClick={() => setCancelOpen(false)}>
               Keep it
             </Button>
             <Button
               variant="destructive"
+              className="max-sm:w-full"
               disabled={busy !== null || cancelReason.trim() === ''}
               onClick={() => void onCancelInvoice()}
             >
@@ -808,7 +816,7 @@ function CreditInvoicePaid({ invoice, blockId }: { invoice: DebitInvoiceDto | nu
   const cost = invoice?.costs?.find((c) => c.id === blockId);
   if (invoice === null || invoice.status !== 'ISSUED' || cost === undefined) return null;
   return (
-    <p className="flex items-center gap-3 text-cell text-steel">
+    <p className="flex flex-wrap items-center gap-3 text-cell text-steel">
       <Status tone={cost.paymentStatus === 'PAID' ? 'active' : 'pending'}>
         {SUPPLIER_PAYMENT_STATUS_LABEL[cost.paymentStatus]}
       </Status>

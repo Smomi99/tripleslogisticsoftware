@@ -85,9 +85,9 @@ export function MultiSelect({
         aria-invalid={invalid}
         onClick={() => setOpen((prev) => !prev)}
         className={cn(
-          'flex min-h-9 w-full items-center gap-1.5 rounded-manifest border bg-surface px-2.5 py-1 text-left',
-          'transition-colors duration-[120ms] ease-manifest',
-          'focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-harbour',
+          'flex min-h-10 w-full items-center gap-1.5 rounded-manifest border bg-surface px-2.5 py-1 text-left sm:min-h-9',
+          'transition-[border-color,box-shadow] duration-[120ms] ease-manifest',
+          'focus-visible:border-harbour focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-harbour/20',
           invalid ? 'border-alert' : 'border-line',
         )}
       >
@@ -98,7 +98,7 @@ export function MultiSelect({
             selected.map((option) => (
               <span
                 key={option.id}
-                className="inline-flex items-center gap-1 rounded-manifest bg-paper px-1.5 py-0.5 text-cell text-hull"
+                className="inline-flex items-center gap-1 rounded-full bg-module-soft py-0.5 pl-2 pr-1 text-cell text-harbour"
               >
                 {option.name}
                 <span
@@ -109,7 +109,7 @@ export function MultiSelect({
                     event.stopPropagation();
                     toggle(option.id);
                   }}
-                  className="text-steel hover:text-alert"
+                  className="rounded-full p-0.5 text-harbour/70 hover:bg-surface hover:text-alert"
                 >
                   <X className="size-3" />
                 </span>
@@ -121,7 +121,7 @@ export function MultiSelect({
       </button>
 
       {isOpen && (
-        <div className="absolute z-40 mt-1 w-full rounded-manifest border border-line bg-surface shadow-manifest">
+        <div className="absolute z-40 mt-1 w-full overflow-hidden rounded-card border border-line bg-surface shadow-raised">
           <div className="border-b border-line p-1.5">
             <input
               type="search"
@@ -130,7 +130,7 @@ export function MultiSelect({
               onChange={(event) => setQuery(event.target.value)}
               placeholder={searchPlaceholder}
               aria-label={searchPlaceholder}
-              className="h-8 w-full rounded-manifest border border-line px-2 text-body focus:outline-2 focus:outline-offset-0 focus:outline-harbour"
+              className="h-9 w-full rounded-manifest border border-line px-2.5 text-base focus:border-harbour focus:outline-none focus:ring-3 focus:ring-harbour/20 sm:h-8 sm:text-body"
             />
           </div>
           <ul role="listbox" aria-multiselectable="true" className="max-h-56 overflow-y-auto py-1">
@@ -147,7 +147,7 @@ export function MultiSelect({
                       aria-selected={isSelected}
                       onClick={() => toggle(option.id)}
                       className={cn(
-                        'flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-body',
+                        'flex w-full items-center gap-2 px-2.5 py-2.5 text-left text-body sm:py-1.5',
                         'transition-colors duration-[120ms] hover:bg-row-hover',
                         isSelected && 'text-hull',
                       )}

@@ -146,8 +146,8 @@ export function CargoStockTable({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex w-52 flex-col gap-1">
-        <span className="label-manifest">Category</span>
+      <div className="flex w-full flex-col gap-1.5 sm:w-52">
+        <span className="label-field">Category</span>
         <Select
           aria-label="Loading category"
           value={family}

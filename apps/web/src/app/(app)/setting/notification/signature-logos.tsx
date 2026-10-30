@@ -131,7 +131,7 @@ export function SignatureLogos({ mayEdit }: { mayEdit: boolean }) {
                   src={previews[logo.id]}
                   alt={logo.altText}
                   style={{ height: `${logo.heightPx}px` }}
-                  className="w-auto"
+                  className="w-auto max-w-full"
                 />
               )}
               <span className="text-cell text-hull">{logo.altText}</span>
@@ -181,15 +181,15 @@ export function SignatureLogos({ mayEdit }: { mayEdit: boolean }) {
               className="font-mono tabular-nums"
             />
           </Field>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <input
               ref={fileInput}
               type="file"
               accept="image/png,image/jpeg"
               aria-label="Logo image"
-              className="text-cell text-steel file:mr-2 file:rounded-manifest file:border file:border-line file:bg-surface file:px-2 file:py-1 file:text-cell file:text-hull"
+              className="min-w-0 max-w-full text-cell text-steel file:mr-2 file:rounded-manifest file:border file:border-line file:bg-surface file:px-2 file:py-1 file:text-cell file:text-hull"
             />
-            <Button onClick={() => void upload()} disabled={busy}>
+            <Button onClick={() => void upload()} disabled={busy} className="max-sm:w-full">
               {busy ? 'Adding…' : 'Add logo'}
             </Button>
           </div>

@@ -66,7 +66,7 @@ export function ScheduleDetail({
   const fileName = schedule.bookingFileName;
   return (
     <div className="flex flex-col gap-3">
-      <dl className="grid gap-3 sm:grid-cols-2 md:grid-cols-4">
+      <dl className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {[
           [isAir ? 'Airline' : 'Carrier', schedule.carrierName],
           ['Transit', schedule.transitType === 'INDIRECT' ? 'Indirect' : 'Direct'],
@@ -87,7 +87,8 @@ export function ScheduleDetail({
             <dd className="font-mono text-body tabular-nums text-hull">{value}</dd>
           </div>
         ))}
-        <div>
+        {/* min-w-0, so a long file name truncates instead of widening its column. */}
+        <div className="min-w-0">
           <dt className="label-manifest">Booking confirmation</dt>
           <dd className="text-body text-hull">
             {fileName === null ? (
@@ -114,7 +115,7 @@ export function ScheduleDetail({
       <div className="overflow-x-auto rounded-manifest border border-line">
         <table className="w-full min-w-[720px] border-collapse text-cell">
           <thead>
-            <tr className="border-b border-line bg-paper">
+            <tr className="whitespace-nowrap border-b border-line bg-module-soft">
               <th className="label-manifest px-3 py-2 text-left">Leg</th>
               <th className="label-manifest px-3 py-2 text-left">{isAir ? 'Flight' : 'Vessel'}</th>
               <th className="label-manifest px-3 py-2 text-left">

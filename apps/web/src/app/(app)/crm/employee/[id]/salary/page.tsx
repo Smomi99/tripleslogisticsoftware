@@ -111,7 +111,7 @@ export default function EmployeeSalaryPage() {
         </p>
       )}
 
-      <div className="max-w-2xl rounded-manifest border border-line bg-surface p-5 shadow-manifest">
+      <div className="max-w-2xl rounded-card border border-line bg-surface p-4 shadow-manifest sm:p-5">
         {!isReady && loadError === null ? (
           <p className="text-body text-steel">Loading…</p>
         ) : isReady ? (
@@ -143,14 +143,14 @@ export default function EmployeeSalaryPage() {
               </FormLayout>
             </fieldset>
 
-            <div className="mt-5 flex items-center justify-between border-t border-line pt-4">
+            <div className="mt-5 flex items-center justify-between gap-4 border-t border-line pt-4">
               <div>
                 <p className="label-manifest">Gross salary</p>
                 <p className="text-cell text-steel">
                   Computed by the database from the six components — it cannot be typed.
                 </p>
               </div>
-              <p className="font-mono text-page-title text-hull" data-numeric="">
+              <p className="shrink-0 font-mono text-page-title text-hull" data-numeric="">
                 {savedGross ?? '0.0000'}
               </p>
             </div>

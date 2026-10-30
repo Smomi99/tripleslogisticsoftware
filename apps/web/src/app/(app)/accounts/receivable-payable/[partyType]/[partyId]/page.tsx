@@ -7,12 +7,16 @@ import {
   PAYMENT_STATUS_LABEL,
   SUPPLIER_PAYMENT_STATUS_LABEL,
 } from '@ff/shared';
+import { ArrowLeft } from 'lucide-react';
 import type { Route } from 'next';
 import Link from 'next/link';
 import { use, useEffect, useState } from 'react';
 
 import { amount, PAYMENT_TONE } from '@/components/accounts/format';
+import { ModuleBadge } from '@/components/shell/module-theme';
 import { EmptyState } from '@/components/ui/empty-state';
+import { backLinkClasses } from '@/components/ui/form-layout';
+import { RowActions } from '@/components/ui/row-actions';
 import { Status } from '@/components/ui/status';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
@@ -49,8 +53,9 @@ export default function LedgerPage({ params }: { params: Promise<{ partyType: st
   }, [authorizedRequest, partyType, partyId]);
 
   const back = (
-    <Link href={{ pathname: '/accounts/receivable-payable' }} className="text-cell text-harbour hover:underline">
-      ← Back to list
+    <Link href={{ pathname: '/accounts/receivable-payable' }} className={backLinkClasses}>
+      <ArrowLeft className="size-3.5" aria-hidden="true" />
+      Back to list
     </Link>
   );
 
@@ -82,18 +87,22 @@ export default function LedgerPage({ params }: { params: Promise<{ partyType: st
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-baseline justify-between gap-3">
-        <div>
-          <h1 className="text-page-title text-hull">Ledger - {ledger.partyName}</h1>
-          <p className="text-body text-steel">
-            <span className="font-mono tabular-nums">{ledger.partyCode}</span> ·{' '}
-            {LEDGER_PARTY_LABEL[ledger.partyType]}
-          </p>
-        </div>
+      {/* A child screen's header (§8): Back to list first, then whose ledger it is. */}
+      <div className="flex flex-col gap-3">
         {back}
+        <div className="flex min-w-0 items-start gap-3">
+          <ModuleBadge />
+          <div className="min-w-0">
+            <h1 className="break-words text-page-title text-hull">Ledger - {ledger.partyName}</h1>
+            <p className="text-body text-steel">
+              <span className="font-mono tabular-nums">{ledger.partyCode}</span> ·{' '}
+              {LEDGER_PARTY_LABEL[ledger.partyType]}
+            </p>
+          </div>
+        </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 rounded-manifest border border-line bg-surface px-4 py-3 shadow-manifest sm:grid-cols-3 xl:grid-cols-6">
+      <div className="grid grid-cols-2 gap-4 rounded-card border border-line bg-surface px-4 py-3 shadow-manifest sm:grid-cols-3 xl:grid-cols-6">
         {(
           [
             ['Receivable (USD)', ledger.totals.receivableUsd],
@@ -117,26 +126,26 @@ export default function LedgerPage({ params }: { params: Promise<{ partyType: st
           description="Entries appear when a debit invoice naming this party is sent, when money is paid or received against one, or when an opening balance is entered in CRM."
         />
       ) : (
-        <div className="overflow-x-auto rounded-manifest border border-line bg-surface shadow-manifest">
+        <div className="overflow-x-auto rounded-card border border-line bg-surface shadow-manifest">
           <table className="w-full min-w-250 border-collapse">
             <thead>
-              <tr className="border-b border-line bg-paper">
-                <th className="label-manifest px-3 py-2 text-right">Date</th>
-                <th className="label-manifest px-3 py-2 text-left">Invoice No</th>
-                <th className="label-manifest px-3 py-2 text-left">Description</th>
-                <th className="label-manifest px-3 py-2 text-left">Side</th>
-                <th className="label-manifest px-3 py-2 text-right">Amount</th>
-                <th className="label-manifest px-3 py-2 text-right">Conversion Rate</th>
-                <th className="label-manifest px-3 py-2 text-right">Amount ({baseCode})</th>
-                <th className="label-manifest px-3 py-2 text-left">Payment Status</th>
-                <th className="label-manifest px-3 py-2 text-right">Action</th>
+              <tr className="border-b border-line bg-module-soft">
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">Date</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Invoice No</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Description</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Side</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">Amount</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">Conversion Rate</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">Amount ({baseCode})</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Payment Status</th>
+                <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">Action</th>
               </tr>
             </thead>
             <tbody>
               {ledger.entries.map((e, index) => {
                 const voucher = voucherHref(e);
                 return (
-                  <tr key={`${e.kind}:${e.reference}:${index}`} className="border-b border-line last:border-0 hover:bg-[#F0F4F4]">
+                  <tr key={`${e.kind}:${e.reference}:${index}`} className="border-b border-line last:border-0 hover:bg-row-hover">
                     <td className="px-3 py-2 text-right font-mono text-cell tabular-nums">{e.date}</td>
                     <td className="px-3 py-2 font-mono text-cell tabular-nums text-hull">
                       {voucher === null ? (
@@ -168,7 +177,7 @@ export default function LedgerPage({ params }: { params: Promise<{ partyType: st
                       )}
                     </td>
                     <td className="px-3 py-2 text-right">
-                      <div className="flex justify-end gap-3">
+                      <RowActions>
                         {e.kind === 'SUPPLIER_INVOICE' && e.paymentStatus !== 'PAID' && canPay && e.creditInvoiceId !== null && (
                           <Link
                             href={`/accounts/expense/new?creditInvoice=${e.creditInvoiceId}` as Route}
@@ -209,7 +218,7 @@ export default function LedgerPage({ params }: { params: Promise<{ partyType: st
                             Open invoice
                           </Link>
                         )}
-                      </div>
+                      </RowActions>
                     </td>
                   </tr>
                 );

@@ -147,14 +147,14 @@ export default function IncomeStatementPage() {
       />
 
       <div className="flex flex-wrap items-end gap-3">
-        <div className="flex w-48 flex-col gap-1">
-          <label htmlFor="is-month" className="label-manifest">
+        <div className="flex min-w-0 flex-1 basis-40 flex-col gap-1 sm:w-48 sm:flex-none">
+          <label htmlFor="is-month" className="label-field">
             Month
           </label>
           <Input id="is-month" type="month" numeric value={month} onChange={(e) => setMonth(e.target.value)} />
         </div>
-        <div className="flex w-48 flex-col gap-1">
-          <label htmlFor="is-year-start" className="label-manifest">
+        <div className="flex min-w-0 flex-1 basis-40 flex-col gap-1 sm:w-48 sm:flex-none">
+          <label htmlFor="is-year-start" className="label-field">
             Financial year starts
           </label>
           <Select id="is-year-start" value={yearStartMonth} onChange={(e) => setYearStartMonth(Number(e.target.value))}>
@@ -166,7 +166,7 @@ export default function IncomeStatementPage() {
           </Select>
         </div>
         <div className="flex flex-col gap-1">
-          <span className="label-manifest">Basis</span>
+          <span className="label-field">Basis</span>
           <Segmented
             label="Basis"
             value={basis}
@@ -185,7 +185,7 @@ export default function IncomeStatementPage() {
       {statement !== null && periods !== undefined && (
         <>
           {/* The sheet's header block (C6–C9). */}
-          <div className="flex flex-wrap gap-x-6 gap-y-1 rounded-manifest border border-line bg-surface px-4 py-3 text-body shadow-manifest">
+          <div className="flex flex-wrap gap-x-6 gap-y-1 rounded-card border border-line bg-surface px-4 py-3 text-body shadow-manifest">
             <span>
               <span className="label-manifest mr-2">Period</span>
               <span className="font-mono tabular-nums">
@@ -205,15 +205,15 @@ export default function IncomeStatementPage() {
             </span>
           </div>
 
-          <div className={cn('overflow-x-auto rounded-manifest border border-line bg-surface shadow-manifest', pending && 'opacity-60')}>
+          <div className={cn('overflow-x-auto rounded-card border border-line bg-surface shadow-manifest', pending && 'opacity-60')}>
             <table className="w-full min-w-220 border-collapse text-cell">
               <thead className="sticky top-0 z-10">
-                <tr className="border-b border-line bg-paper">
-                  <th className="label-manifest px-4 py-2 text-left">Particulars</th>
+                <tr className="border-b border-line bg-module-soft">
+                  <th className="label-manifest min-w-52 whitespace-nowrap px-4 py-2 text-left">Particulars</th>
                   {INCOME_STATEMENT_COLUMNS.map((column) => {
                     const span = periods[COLUMN_PERIOD[column]];
                     return (
-                      <th key={column} className="px-4 py-2 text-right">
+                      <th key={column} className="whitespace-nowrap px-4 py-2 text-right">
                         <span className="label-manifest block">{INCOME_STATEMENT_COLUMN_LABEL[column]}</span>
                         <span className="block font-mono text-[11px] font-normal tabular-nums text-steel">
                           {sheetDay(span.from)} – {sheetDay(span.to)}
@@ -287,7 +287,7 @@ export default function IncomeStatementPage() {
             </table>
           </div>
 
-          <details className="rounded-manifest border border-line bg-surface px-4 py-3 text-body text-steel">
+          <details className="rounded-card border border-line bg-surface px-4 py-3 text-body text-steel">
             <summary className="cursor-pointer text-hull">How these figures are made</summary>
             {statement.basis === 'ACCRUAL' ? (
               <ul className="mt-2 flex list-disc flex-col gap-1 pl-5">

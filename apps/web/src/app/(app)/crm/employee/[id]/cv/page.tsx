@@ -95,7 +95,7 @@ export default function EmployeeCvPage() {
         </p>
       )}
 
-      <div className="max-w-3xl rounded-manifest border border-line bg-surface p-5 shadow-manifest">
+      <div className="max-w-3xl rounded-card border border-line bg-surface p-4 shadow-manifest sm:p-5">
         {!isReady && loadError === null ? (
           <p className="text-body text-steel">Loading…</p>
         ) : isReady ? (

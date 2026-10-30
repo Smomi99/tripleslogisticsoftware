@@ -128,8 +128,8 @@ export function VoucherList({ kind }: { kind: JournalEntryKind }) {
       <PageHeader title={label} description={DESCRIPTION[kind]} action={add} />
 
       <div className="flex flex-wrap items-end gap-3">
-        <div className="flex w-72 flex-col gap-1">
-          <span className="label-manifest">Search</span>
+        <div className="flex w-full flex-col gap-1 sm:w-72">
+          <span className="label-field">Search</span>
           <Input
             type="search"
             aria-label={`Search ${label.toLowerCase()}`}
@@ -138,8 +138,8 @@ export function VoucherList({ kind }: { kind: JournalEntryKind }) {
             onChange={(e) => list.setSearchInput(e.target.value)}
           />
         </div>
-        <div className="flex w-44 flex-col gap-1">
-          <span className="label-manifest">Status</span>
+        <div className="flex min-w-0 flex-1 basis-40 flex-col gap-1 sm:w-44 sm:flex-none">
+          <span className="label-field">Status</span>
           <Select aria-label="Status" value={list.filters.status ?? ''} onChange={(e) => list.setFilter('status', e.target.value)}>
             <option value="">Any status</option>
             {JOURNAL_ENTRY_STATUSES.filter((s) => kind === 'JOURNAL' || s !== 'DRAFT').map((s) => (

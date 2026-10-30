@@ -5,12 +5,15 @@ import {
   type AgentInquiryDto,
   loadingTypeLabel,
 } from '@ff/shared';
+import { ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 
 import { StatusThread } from '@/components/agent-quote/status-thread';
+import { ModuleBadge } from '@/components/shell/module-theme';
 import { Button } from '@/components/ui/button';
+import { backLinkClasses } from '@/components/ui/form-layout';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 
@@ -32,9 +35,9 @@ import { QuoteForm } from './quote-form';
 /** A read-only fact about the shipment. */
 function Detail({ label, value, mono }: { label: string; value: string | null; mono?: boolean }) {
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className="flex min-w-0 flex-col gap-0.5">
       <span className="label-manifest">{label}</span>
-      <span className={mono === true ? 'font-mono text-body tabular-nums text-hull' : 'text-body text-hull'}>
+      <span className={mono === true ? 'font-mono text-body tabular-nums text-hull' : 'break-words text-body text-hull'}>
         {value === null || value === '' ? '—' : value}
       </span>
     </div>
@@ -102,21 +105,29 @@ export default function PortalInquiryDetailPage() {
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex flex-col gap-1">
+      <div className="flex flex-col gap-3">
         {/* Required on every child screen (§8), and doubly so here: this is the
             only way back for someone who arrived from an email link. */}
-        <Link href="/agent/inquiry" className="text-cell text-harbour hover:underline">
-          ← Back to inquiries
+        <Link href="/agent/inquiry" className={backLinkClasses}>
+          <ArrowLeft className="size-3.5" aria-hidden="true" />
+          Back to inquiries
         </Link>
-        <h1 className="font-mono text-page-title tabular-nums text-hull">{inquiry.code}</h1>
-        <p className="text-body text-steel">
-          {inquiry.polName ?? '—'} → {inquiry.podName ?? '—'}
-        </p>
+        <div className="flex min-w-0 items-start gap-3">
+          <ModuleBadge />
+          <div className="min-w-0">
+            <h1 className="break-words font-mono text-page-title tabular-nums text-hull">
+              {inquiry.code}
+            </h1>
+            <p className="text-body text-steel">
+              {inquiry.polName ?? '—'} → {inquiry.podName ?? '—'}
+            </p>
+          </div>
+        </div>
       </div>
 
-      <section className="rounded-manifest border border-line bg-surface p-5 shadow-manifest">
+      <section className="rounded-card border border-line bg-surface p-4 shadow-manifest sm:p-5">
         <h2 className="mb-4 text-section text-hull">Shipment</h2>
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
           <Detail label="Loading port" value={inquiry.polName} />
           <Detail label="Discharge port" value={inquiry.podName} />
           <Detail label="Place of receipt" value={inquiry.placeOfReceipt} />
@@ -146,44 +157,46 @@ export default function PortalInquiryDetailPage() {
       </section>
 
       {inquiry.volumes.length > 0 && (
-        <section className="rounded-manifest border border-line bg-surface shadow-manifest">
-          <h2 className="border-b border-line px-5 py-3 text-section text-hull">Volume</h2>
-          <table className="w-full border-collapse">
-            <thead>
-              <tr className="border-b border-line bg-paper">
-                <th className="label-manifest px-5 py-2 text-left">Type</th>
-                <th className="label-manifest px-3 py-2 text-left">Container</th>
-                <th className="label-manifest px-3 py-2 text-right">Quantity</th>
-                <th className="label-manifest px-3 py-2 text-right">CBM</th>
-                <th className="label-manifest px-5 py-2 text-right">Weight (kg)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {inquiry.volumes.map((volume) => (
-                <tr key={volume.id} className="border-b border-line last:border-0">
-                  <td className="px-5 py-2 text-cell text-hull">{volume.volumeKind}</td>
-                  <td className="px-3 py-2 text-cell text-hull">
-                    {volume.containerSizeName ?? volume.containerSizeNote ?? '—'}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono text-cell tabular-nums text-hull">
-                    {volume.quantity ?? '—'}
-                  </td>
-                  <td className="px-3 py-2 text-right font-mono text-cell tabular-nums text-hull">
-                    {volume.cbm ?? '—'}
-                  </td>
-                  <td className="px-5 py-2 text-right font-mono text-cell tabular-nums text-hull">
-                    {volume.weightKg ?? '—'}
-                  </td>
+        <section className="rounded-card border border-line bg-surface shadow-manifest">
+          <h2 className="border-b border-line px-4 py-3 text-section text-hull sm:px-5">Volume</h2>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[28rem] border-collapse">
+              <thead>
+                <tr className="border-b border-line bg-module-soft">
+                  <th className="label-manifest whitespace-nowrap px-4 py-2 text-left sm:px-5">Type</th>
+                  <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Container</th>
+                  <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">Quantity</th>
+                  <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">CBM</th>
+                  <th className="label-manifest whitespace-nowrap px-4 py-2 text-right sm:px-5">Weight (kg)</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {inquiry.volumes.map((volume) => (
+                  <tr key={volume.id} className="border-b border-line last:border-0">
+                    <td className="px-4 py-2 text-cell text-hull sm:px-5">{volume.volumeKind}</td>
+                    <td className="px-3 py-2 text-cell text-hull">
+                      {volume.containerSizeName ?? volume.containerSizeNote ?? '—'}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-cell tabular-nums text-hull">
+                      {volume.quantity ?? '—'}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-cell tabular-nums text-hull">
+                      {volume.cbm ?? '—'}
+                    </td>
+                    <td className="px-4 py-2 text-right font-mono text-cell tabular-nums text-hull sm:px-5">
+                      {volume.weightKg ?? '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </section>
       )}
 
       <section
         id="quotation"
-        className="scroll-mt-20 rounded-manifest border border-line bg-surface p-5 shadow-manifest"
+        className="scroll-mt-20 rounded-card border border-line bg-surface p-4 shadow-manifest sm:p-5"
       >
         <h2 className="mb-1 text-section text-hull">Your quotation</h2>
         <p className="mb-4 text-cell text-steel">
@@ -211,7 +224,7 @@ export default function PortalInquiryDetailPage() {
       {inquiry.quote !== null && (
         <section
           id="status"
-          className="scroll-mt-20 rounded-manifest border border-line bg-surface p-5 shadow-manifest"
+          className="scroll-mt-20 rounded-card border border-line bg-surface p-4 shadow-manifest sm:p-5"
         >
           <h2 className="mb-1 text-section text-hull">Status</h2>
           <p className="mb-4 text-cell text-steel">

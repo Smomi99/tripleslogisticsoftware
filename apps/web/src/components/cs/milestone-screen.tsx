@@ -13,6 +13,7 @@ import {
   type MilestoneSortField,
   type MilestoneView,
 } from '@ff/shared';
+import { ArrowLeft } from 'lucide-react';
 import type { Route } from 'next';
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
@@ -22,6 +23,7 @@ import { Button } from '@/components/ui/button';
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Field, Input } from '@/components/ui/field';
+import { backLinkClasses, PageHeader } from '@/components/ui/form-layout';
 import { Modal } from '@/components/ui/modal';
 import { Segmented } from '@/components/ui/segmented';
 import { Status } from '@/components/ui/status';
@@ -165,27 +167,25 @@ export function MilestoneScreen({ screen }: { screen: MilestoneScreenDef }) {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-3">
         {/* The sheets' "back to landing" (B13). */}
-        <Link
-          href={'/cs/depart-arrive' as Route}
-          className="text-cell text-harbour underline-offset-2 hover:text-harbour-ink hover:underline"
-        >
-          ← Back to Depart-Arrive Confirmation
+        <Link href={'/cs/depart-arrive' as Route} className={backLinkClasses}>
+          <ArrowLeft className="size-3.5" aria-hidden="true" />
+          Back to Depart-Arrive Confirmation
         </Link>
-        <div>
-          <h1 className="text-page-title text-hull">{screen.title}</h1>
-          <p className="mt-0.5 text-body text-steel">
-            {kind === 'ARRIVED'
+        <PageHeader
+          title={screen.title}
+          description={
+            kind === 'ARRIVED'
               ? `Confirm the final arrival date at least ${isAir ? 'one day' : 'three days'} before it lands. The customer is emailed the date${isAir ? '' : ', containers and seals'}.`
-              : `The ${MILESTONE_DATE_LABEL[kind]} comes from the shipment advise. If it sailed early or late, change the date and say why — the customer is emailed.`}
-          </p>
-        </div>
+              : `The ${MILESTONE_DATE_LABEL[kind]} comes from the shipment advise. If it sailed early or late, change the date and say why — the customer is emailed.`
+          }
+        />
       </div>
 
       <div className="flex flex-wrap items-end gap-3">
-        <div className="flex w-72 flex-col gap-1">
-          <span className="label-manifest">Search</span>
+        <div className="flex w-full flex-col gap-1 sm:w-72">
+          <span className="label-field">Search</span>
           <Input
             type="search"
             aria-label="Search bookings"
@@ -353,7 +353,7 @@ function ConfirmModal({
               rows={3}
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              className="w-full rounded-manifest border border-line bg-surface px-2.5 py-1.5 text-body text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour"
+              className="w-full rounded-manifest border border-line bg-surface px-3 py-1.5 text-base text-hull focus:outline-2 focus:outline-offset-0 focus:outline-harbour sm:px-2.5 sm:text-body"
             />
           </Field>
         )}
@@ -380,11 +380,11 @@ function ConfirmModal({
             {error}
           </p>
         )}
-        <div className="flex justify-end gap-3">
-          <Button variant="secondary" onClick={onClose} disabled={pending}>
+        <div className="flex flex-col gap-2 sm:flex-row sm:justify-end sm:gap-3">
+          <Button variant="secondary" onClick={onClose} disabled={pending} className="max-sm:w-full">
             Close
           </Button>
-          <Button type="submit" disabled={pending}>
+          <Button type="submit" disabled={pending} className="max-sm:w-full">
             {pending ? 'Saving…' : action}
           </Button>
         </div>

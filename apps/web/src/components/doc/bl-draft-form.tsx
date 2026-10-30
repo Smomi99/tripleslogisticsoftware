@@ -148,7 +148,7 @@ function Block({
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-manifest border border-line bg-surface px-3 py-2 text-body text-hull outline-none transition-colors duration-120 ease-out focus:ring-2 focus:ring-harbour disabled:bg-paper disabled:text-steel"
+        className="w-full rounded-manifest border border-line bg-surface px-3 py-2 text-base text-hull transition-[border-color,box-shadow] duration-[120ms] hover:border-steel/50 focus:border-harbour focus:outline-none focus:ring-3 focus:ring-harbour/20 disabled:cursor-not-allowed disabled:bg-paper disabled:text-steel sm:text-body"
       />
     </Field>
   );
@@ -175,9 +175,9 @@ function AirRoute({ legs }: { legs: AirRouteLegDto[] }) {
         <p className="text-cell text-steel">The advise records no flight yet.</p>
       ) : (
         <div className="overflow-x-auto rounded-manifest border border-line">
-          <table className="w-full border-collapse text-cell">
+          <table className="w-full whitespace-nowrap border-collapse text-cell">
             <thead>
-              <tr className="bg-paper text-left label-manifest">
+              <tr className="bg-module-soft text-left label-manifest">
                 <th className="px-3 py-2">Leg</th>
                 <th className="px-3 py-2">Flight</th>
                 <th className="px-3 py-2">Airline</th>
@@ -244,9 +244,9 @@ export function BlDraftForm({
   const set = (patch: Partial<BlDraftFormValues>): void => setValues({ ...values, ...patch });
 
   const templatePicker = templates.length > 0 && !disabled && (
-    <div className="flex flex-wrap items-end gap-3">
-      <div className="flex w-72 flex-col gap-1">
-        <span className="label-manifest">Use template</span>
+    <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+      <div className="flex w-full flex-col gap-1.5 sm:w-72">
+        <span className="label-field">Use template</span>
         <Select value={templateId} onChange={(e) => setTemplateId(e.target.value)}>
           <option value="">Choose a saved template</option>
           {templates.map((t) => (
@@ -362,7 +362,7 @@ export function BlDraftForm({
 
         <AirRoute legs={airRoute} />
 
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {numberField('packageCount', 'No. of pieces', 'numeric')}
           {numberField('grossWeightKg', 'Gross weight (KG)')}
           {numberField('chargeableWeightKg', 'Chargeable weight (KG)')}
@@ -544,9 +544,9 @@ export function BlDraftForm({
           </p>
         ) : (
           <div className="overflow-x-auto rounded-manifest border border-line">
-            <table className="w-full border-collapse text-cell">
+            <table className="w-full whitespace-nowrap border-collapse text-cell">
               <thead>
-                <tr className="bg-paper text-left label-manifest">
+                <tr className="bg-module-soft text-left label-manifest">
                   <th className="px-3 py-2">Container no</th>
                   <th className="px-3 py-2">Size</th>
                   <th className="px-3 py-2">Seal no</th>

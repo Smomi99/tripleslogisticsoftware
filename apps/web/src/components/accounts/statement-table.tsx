@@ -55,13 +55,13 @@ export function StatementTable({
     opens !== undefined && onOpen !== undefined && opens(row) && figures(row).some(Boolean);
 
   return (
-    <div className={cn('overflow-x-auto rounded-manifest border border-line bg-surface shadow-manifest', pending && 'opacity-60')}>
+    <div className={cn('overflow-x-auto rounded-card border border-line bg-surface shadow-manifest', pending && 'opacity-60')}>
       <table className="w-full min-w-[640px] border-collapse text-cell">
         <thead className="sticky top-0 z-10">
-          <tr className="border-b border-line bg-paper">
-            <th className="label-manifest px-4 py-2 text-left">Particulars</th>
+          <tr className="border-b border-line bg-module-soft">
+            <th className="label-manifest min-w-52 whitespace-nowrap px-4 py-2 text-left">Particulars</th>
             {columns.map((c) => (
-              <th key={c.label + c.sub} className="px-4 py-2 text-right">
+              <th key={c.label + c.sub} className="whitespace-nowrap px-4 py-2 text-right">
                 <span className="label-manifest block">{c.label}</span>
                 <span className="block font-mono text-[11px] font-normal tabular-nums text-steel">{c.sub}</span>
               </th>

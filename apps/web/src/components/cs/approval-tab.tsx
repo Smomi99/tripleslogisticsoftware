@@ -133,9 +133,9 @@ export function ApprovalTab({
   return (
     <div className="flex flex-col gap-4">
       {/* --------------------------------- the proposal, read-only (§6.5) */}
-      <section className="rounded-manifest border border-line bg-surface p-4 shadow-manifest">
+      <section className="rounded-card border border-line bg-surface p-4 shadow-manifest">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <h2 className="flex items-center gap-3 text-section text-hull">
+          <h2 className="flex flex-wrap items-center gap-3 text-section text-hull">
             <span>Proposed schedule</span>
             {schedule !== null && (
               <>
@@ -152,7 +152,7 @@ export function ApprovalTab({
             the only route was to know which tab it came from.
           */}
           {schedule !== null && can('CUSTOMER_SERVICE.SCHEDULE.CREATE') && (
-            <Button variant="secondary" size="inline" asChild>
+            <Button variant="secondary" size="compact" asChild>
               <Link href={`/cs/shipment-booking/${booking.id}?tab=schedule`}>
                 {isAir ? 'Update flight schedule' : 'Update vessel schedule'}
               </Link>
@@ -175,12 +175,12 @@ export function ApprovalTab({
       </section>
 
       {/* ------------------------------------------------------- the POs */}
-      <section className="rounded-manifest border border-line bg-surface shadow-manifest">
+      <section className="rounded-card border border-line bg-surface shadow-manifest">
         <h2 className="border-b border-line px-4 py-3 text-section text-hull">Purchase orders</h2>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[840px] border-collapse text-cell">
             <thead>
-              <tr className="border-b border-line bg-paper">
+              <tr className="whitespace-nowrap border-b border-line bg-module-soft">
                 <th className="label-manifest px-3 py-2 text-left">PO</th>
                 <th className="label-manifest px-3 py-2 text-left">Current</th>
                 {open && <th className="label-manifest px-3 py-2 text-left">Decision</th>}
@@ -282,7 +282,11 @@ export function ApprovalTab({
             />
             I am recording this on the customer&apos;s behalf
           </label>
-          <Button disabled={isPending || decided.length === 0} onClick={() => void submit()}>
+          <Button
+            disabled={isPending || decided.length === 0}
+            onClick={() => void submit()}
+            className="max-sm:w-full"
+          >
             {isPending ? 'Recording…' : 'Record decision'}
           </Button>
         </div>
