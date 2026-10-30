@@ -32,6 +32,7 @@ export * from './local-sales';
 export * from './milestone';
 export * from './notification-team';
 export * from './opening-balance';
+export * from './overview';
 export * from './performance';
 export * from './permissions';
 export * from './port';

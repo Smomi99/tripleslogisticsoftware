@@ -54,6 +54,7 @@ import { tariffRouter } from './tariff.route';
 import { salesLeadRouter } from './sales-lead.route';
 import { portRouter } from './port.route';
 import { notificationSettingRouter } from './notification-setting.route';
+import { overviewRouter } from './overview.route';
 import { rateLookupRouter } from './rate-lookup.route';
 import { vendorRouter } from './vendor.route';
 import { userRouter } from './user.route';
@@ -165,6 +166,10 @@ tenantRouter.use('/agent/currencies', agentReferenceRouter);
 
 // §7 superadmin screens.
 tenantRouter.use('/admin', adminRouter);
+
+// The Overview — the first screen after sign-in. Each of its sections is
+// guarded by the permission of the screen whose figure it repeats.
+tenantRouter.use('/overview', overviewRouter);
 
 interface TenantContextPayload {
   id: string;
