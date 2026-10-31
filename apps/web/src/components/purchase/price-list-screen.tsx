@@ -17,8 +17,13 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Input, Select } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/form-layout';
 import { MultiSelect } from '@/components/ui/multi-select';
+import { ColumnScrollButtons, PINNED_START_EDGE, useHorizontalScroll } from '@/components/ui/table-scroll';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
+import { useIsPhone } from '@/lib/use-media-query';
+import { cn } from '@/lib/utils';
+
+import { RateCard } from './rate-card';
 
 /**
  * Price List (MODULE_PURCHASE_SALES §5.3) — "the screen sales actually lives in".
@@ -29,7 +34,7 @@ import { useSession } from '@/lib/session';
  *
  * §5.3 asks for a sticky header and sticky POL/POD columns because these tables
  * scroll wide — an operator reading the fifth tier column must still be able to
- * see which lane they are on.
+ * see which lane they are on. On a phone each rate is a card instead.
  */
 
 interface ListOptions {
@@ -241,6 +246,13 @@ export function PriceListScreen({
   }
 
   const canExport = can(`${feature}.EXPORT`);
+  const isPhone = useIsPhone();
+  const scroller = useHorizontalScroll([rates, options.tiers, isPhone, hideBuyPrice, charges]);
+  const pinned = usePinnedOffsets(3, [rates, isPhone]);
+
+  function toggleCharges(rateId: string): void {
+    setCharges((open) => (open === rateId ? null : rateId));
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -404,44 +416,89 @@ export function PriceListScreen({
         )}
       </section>
 
-      {rates.length === 0 && !isPending ? (
+      {rates.length === 0 ? (
         <div className="rounded-card border border-line bg-surface shadow-manifest">
-          <EmptyState
-            title={hasFilters ? 'No rates match those filters' : 'No published rates yet'}
-            description={
-              hasFilters
-                ? 'Widen the search, or tick Include expired to see rates that have lapsed.'
-                : 'Rates appear here once the pricing team has published them.'
-            }
-            action={
-              hasFilters ? (
-                <Button variant="secondary" onClick={clearFilters}>
-                  Clear filters
-                </Button>
-              ) : null
-            }
-          />
+          {isPending ? (
+            <p className="px-4 py-10 text-center text-body text-steel">Loading the price list…</p>
+          ) : (
+            <EmptyState
+              title={hasFilters ? 'No rates match those filters' : 'No published rates yet'}
+              description={
+                hasFilters
+                  ? 'Widen the search, or tick Include expired to see rates that have lapsed.'
+                  : 'Rates appear here once the pricing team has published them.'
+              }
+              action={
+                hasFilters ? (
+                  <Button variant="secondary" onClick={clearFilters}>
+                    Clear filters
+                  </Button>
+                ) : null
+              }
+            />
+          )}
         </div>
+      ) : isPhone ? (
+        <ul className={cn('flex flex-col gap-3', isPending && 'opacity-60')}>
+          {rates.map((rate) => (
+            <li key={rate.id}>
+              <RateCard
+                rate={rate}
+                tiers={options.tiers}
+                showBuy={!hideBuyPrice}
+                mutePrices={rate.isExpired}
+                details={[
+                  {
+                    label: 'Local charges',
+                    value:
+                      rate.localCharges.length === 0 ? (
+                        <span className="font-mono text-steel">—</span>
+                      ) : (
+                        // A 36px tap target (§12) without making the row taller.
+                        <ChargesToggle
+                          rate={rate}
+                          open={charges === rate.id}
+                          onToggle={toggleCharges}
+                          className="-my-2 min-h-9"
+                        />
+                      ),
+                  },
+                  { label: 'Route', value: rate.route ?? '—' },
+                  { label: 'Transit days', value: rate.transitDays ?? '—', numeric: true },
+                  { label: 'Free days', value: rate.freeDays ?? '—', numeric: true },
+                  { label: 'Validity', value: <Validity rate={rate} />, numeric: true },
+                  // On a desktop this is the price's hover; a phone has no hover.
+                  {
+                    label: 'Bought from',
+                    value: `${PURCHASE_SOURCE_LABEL[rate.purchaseSourceType]}: ${rate.purchaseSourceName}`,
+                  },
+                ]}
+              >
+                {charges === rate.id && <ChargeBreakdown rate={rate} stacked />}
+              </RateCard>
+            </li>
+          ))}
+        </ul>
       ) : (
-        <div className="max-h-[70vh] overflow-auto rounded-card border border-line bg-surface shadow-manifest">
-          <table className="w-full min-w-max border-collapse">
+        <div
+          {...scroller.props}
+          className={cn(
+            'group/scroller relative max-h-[70vh] overflow-auto rounded-card border border-line bg-surface shadow-manifest',
+            isPending && 'opacity-60',
+          )}
+        >
+          <table className="w-full min-w-max border-collapse text-cell">
             <thead className="sticky top-0 z-20">
-              <tr className="bg-module-soft text-left">
-                <StickyTh left="0" width="w-24">
-                  Code
-                </StickyTh>
-                {/* On a phone only the code stays put: three frozen columns
-                    would leave no room for the tiers to scroll into. */}
-                <StickyTh left="6rem" width="w-20" className="max-sm:static">
-                  POL
-                </StickyTh>
-                <StickyTh left="11rem" width="w-20" className="max-sm:static">
+              <tr ref={pinned.headRef} className="bg-module-soft">
+                <PinnedTh left={pinned.offsets[0]}>Code</PinnedTh>
+                <PinnedTh left={pinned.offsets[1]}>POL</PinnedTh>
+                <PinnedTh left={pinned.offsets[2]} last>
                   POD
-                </StickyTh>
+                </PinnedTh>
                 <Th>Carrier</Th>
                 <Th>Goods</Th>
                 {options.tiers.map((tier) => (
-                  <Th key={tier.id} numeric>
+                  <Th key={tier.id} numeric title={tier.label}>
                     {tier.code}
                   </Th>
                 ))}
@@ -457,243 +514,331 @@ export function PriceListScreen({
             <tbody>
               {rates.map((rate) => (
                 <Fragment key={rate.id}>
-                  <tr className="border-b border-line last:border-0 hover:bg-row-hover [&>td]:align-top">
-                  <StickyTd left="0" mono>
-                    {rate.code}
-                  </StickyTd>
-                  <StickyTd left="6rem" mono className="max-sm:static">
-                    {rate.polName ?? rate.polCode}
-                  </StickyTd>
-                  <StickyTd left="11rem" mono className="max-sm:static">
-                    {rate.podName ?? rate.podCode}
-                  </StickyTd>
-                  <td className="whitespace-nowrap px-2.5 py-2 text-cell text-hull">{rate.carrierName}</td>
-                  <td className="whitespace-nowrap px-2.5 py-2 text-cell text-hull">{rate.goodsTypeName}</td>
-                  {options.tiers.map((tier) => {
-                    const line = rate.lines.find((l) => l.tierId === tier.id);
-                    return (
-                      <td
-                        key={tier.id}
-                        className="px-2.5 py-2 text-right font-mono text-cell tabular-nums"
-                        // Hover tells you where the price came from. A native
-                        // title rather than a floating panel: this table scrolls
-                        // sideways under sticky columns, and anything positioned
-                        // inside a cell gets clipped by that.
-                        title={line === undefined ? undefined : boughtFrom(rate, line, !hideBuyPrice)}
-                      >
-                        {line === undefined ? (
-                          <span className="text-steel">—</span>
-                        ) : (
-                          <>
-                            {/*
-                              The currency beside the price (client,
-                              2026-09-12). It belongs to the rate rather than
-                              the tier, so it is the same down the row — but a
-                              figure with no currency on it is not a price, and
-                              the buyer reading across four tiers should not
-                              have to remember which row they are on.
-                            */}
-                            {/* Dimmed when expired (§4 rule 2), so a lapsed
-                                price never reads as one sales can quote. */}
-                            <div className={rate.isExpired ? 'cursor-help text-steel' : 'cursor-help'}>
-                              {purchasePrice(line.sellPrice, mode)}{' '}
-                              <span className="text-steel">{rate.currencyCode}</span>
-                            </div>
-                            {/* Absent unless the server sent it (§4 rule 5). */}
-                            {line.buyPrice !== undefined && !hideBuyPrice && (
-                              <div className="text-steel">buy {purchasePrice(line.buyPrice, mode)}</div>
-                            )}
-                          </>
-                        )}
-                      </td>
-                    );
-                  })}
-                  {/*
-                    The client asked for the line count here, with the
-                    breakdown a click away — the total alone does not say what
-                    it is made of, and the charges are already on the row.
-                  */}
-                  <td className="px-2.5 py-2 text-right text-cell">
-                    {rate.localCharges.length === 0 ? (
-                      <span className="font-mono tabular-nums text-steel">—</span>
-                    ) : (
-                      <Button
-                        variant="text"
-                        size="inline"
-                        aria-expanded={charges === rate.id}
-                        onClick={() => setCharges(charges === rate.id ? null : rate.id)}
-                      >
-                        {rate.localCharges.length === 1
-                          ? '1 line'
-                          : `${rate.localCharges.length} lines`}
-                      </Button>
-                    )}
-                  </td>
-                  <td className="whitespace-nowrap px-2.5 py-2 text-cell text-steel">
-                    {rate.route ?? '—'}
-                  </td>
-                  <td className="px-2.5 py-2 text-right font-mono text-cell tabular-nums text-steel">
-                    {rate.transitDays ?? '—'}
-                  </td>
-                  <td className="px-2.5 py-2 text-right font-mono text-cell tabular-nums text-steel">
-                    {rate.freeDays ?? '—'}
-                  </td>
-                  <td className="whitespace-nowrap px-2.5 py-2 font-mono text-cell tabular-nums">
-                    <div
-                      className={
-                        rate.isExpired ? 'text-steel' : rate.expiringSoon ? 'text-signal' : 'text-hull'
-                      }
-                    >
-                      {rate.validTo}
-                      {rate.isExpired && ' • expired'}
-                    </div>
-                    <div className="text-steel">from {rate.validFrom}</div>
-                  </td>
-                  <td className="px-2.5 py-2 font-mono text-cell tabular-nums text-steel">
-                    {rate.currencyCode}
-                  </td>
-                </tr>
-
-                {/*
-                  The breakdown, in the table, directly under the rate it
-                  belongs to — the client's own layout: charge head, side,
-                  unit, currency, amount.
-
-                  The container size rides in the head rather than taking a
-                  column of its own, because that is how a forwarder writes it:
-                  "Stuffing Charge, 40HC" is the name of the thing being
-                  billed, not a charge plus a separate fact about equipment.
-                */}
-                {charges === rate.id && (
-                  <tr className="bg-paper">
-                    <td colSpan={10 + options.tiers.length} className="px-2.5 py-3">
-                      <table className="w-full max-w-2xl border-collapse text-cell">
-                        <thead>
-                          <tr className="border-b border-line text-left">
-                            <th className="label-manifest whitespace-nowrap py-1 pr-4">Charge head</th>
-                            <th className="label-manifest whitespace-nowrap py-1 pr-4">Side</th>
-                            <th className="label-manifest whitespace-nowrap py-1 pr-4">Unit</th>
-                            <th className="label-manifest whitespace-nowrap py-1 pr-4">Currency</th>
-                            <th className="label-manifest whitespace-nowrap py-1 text-right">Amount</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {rate.localCharges.map((charge) => (
-                            <tr key={charge.id} className="border-b border-line last:border-0">
-                              <td className="py-1 pr-4 text-hull">
-                                {charge.costHeadName}
-                                {charge.containerSizeCode !== null &&
-                                  `, ${charge.containerSizeCode}`}
-                              </td>
-                              <td className="py-1 pr-4 text-steel">{charge.side}</td>
-                              <td className="py-1 pr-4 text-steel">
-                                {charge.costUnitName ?? '—'}
-                              </td>
-                              <td className="py-1 pr-4 font-mono tabular-nums text-steel">
-                                {charge.currencyCode}
-                              </td>
-                              <td className="py-1 text-right font-mono tabular-nums text-hull">
-                                {purchasePrice(charge.amount)}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                  <tr className="group border-b border-line last:border-b-0 hover:bg-row-hover [&>td]:align-top">
+                    <PinnedTd left={pinned.offsets[0]} code>
+                      {rate.code}
+                    </PinnedTd>
+                    <PinnedTd left={pinned.offsets[1]}>{rate.polName ?? rate.polCode}</PinnedTd>
+                    <PinnedTd left={pinned.offsets[2]} last>
+                      {rate.podName ?? rate.podCode}
+                    </PinnedTd>
+                    <td className="px-3 py-2 text-hull">
+                      <div className="w-max max-w-[18rem]">{rate.carrierName}</div>
                     </td>
+                    <td className="whitespace-nowrap px-3 py-2 text-hull">{rate.goodsTypeName}</td>
+                    {options.tiers.map((tier) => {
+                      const line = rate.lines.find((l) => l.tierId === tier.id);
+                      return (
+                        <td
+                          key={tier.id}
+                          className="whitespace-nowrap px-3 py-2 text-right font-mono tabular-nums"
+                          // Hover tells you where the price came from. A native
+                          // title rather than a floating panel: this table scrolls
+                          // sideways under sticky columns, and anything positioned
+                          // inside a cell gets clipped by that.
+                          title={line === undefined ? undefined : boughtFrom(rate, line, !hideBuyPrice)}
+                        >
+                          {line === undefined ? (
+                            <span className="text-steel">—</span>
+                          ) : (
+                            <>
+                              {/*
+                                The currency beside the price (client,
+                                2026-09-12). It belongs to the rate rather than
+                                the tier, so it is the same down the row — but a
+                                figure with no currency on it is not a price, and
+                                the buyer reading across four tiers should not
+                                have to remember which row they are on.
+                              */}
+                              {/* Dimmed when expired (§4 rule 2), so a lapsed
+                                  price never reads as one sales can quote. */}
+                              <div className={rate.isExpired ? 'cursor-help text-steel' : 'cursor-help text-hull'}>
+                                {purchasePrice(line.sellPrice, mode)}{' '}
+                                <span className="text-steel">{rate.currencyCode}</span>
+                              </div>
+                              {/* Absent unless the server sent it (§4 rule 5). */}
+                              {line.buyPrice !== undefined && !hideBuyPrice && (
+                                <div className="text-steel">buy {purchasePrice(line.buyPrice, mode)}</div>
+                              )}
+                            </>
+                          )}
+                        </td>
+                      );
+                    })}
+                    {/*
+                      The client asked for the line count here, with the
+                      breakdown a click away — the total alone does not say what
+                      it is made of, and the charges are already on the row.
+                    */}
+                    <td className="whitespace-nowrap px-3 py-2 text-right">
+                      {rate.localCharges.length === 0 ? (
+                        <span className="font-mono tabular-nums text-steel">—</span>
+                      ) : (
+                        <ChargesToggle rate={rate} open={charges === rate.id} onToggle={toggleCharges} />
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-steel">
+                      <div className="w-max max-w-[14rem]">{rate.route ?? '—'}</div>
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono tabular-nums text-steel">
+                      {rate.transitDays ?? '—'}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono tabular-nums text-steel">
+                      {rate.freeDays ?? '—'}
+                    </td>
+                    <td className="whitespace-nowrap px-3 py-2 font-mono tabular-nums">
+                      <Validity rate={rate} />
+                    </td>
+                    <td className="px-3 py-2 font-mono tabular-nums text-steel">{rate.currencyCode}</td>
                   </tr>
-                )}
-              </Fragment>
+
+                  {/*
+                    The breakdown, in the table, directly under the rate it
+                    belongs to — the client's own layout: charge head, side,
+                    unit, currency, amount. It stays in view while the table
+                    scrolls sideways, since it belongs to the whole row rather
+                    than to whichever columns are showing.
+                  */}
+                  {charges === rate.id && (
+                    <tr className="border-b border-line bg-paper last:border-b-0">
+                      <td colSpan={COLUMNS_AROUND_TIERS + options.tiers.length} className="py-3">
+                        <div className="sticky left-3 w-fit max-w-2xl px-3">
+                          <ChargeBreakdown rate={rate} />
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               ))}
             </tbody>
           </table>
         </div>
       )}
 
-      <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <span className="text-cell text-steel">
           {meta.total} rate{meta.total === 1 ? '' : 's'}
         </span>
-        {meta.totalPages > 1 && (
-          <div className="flex items-center gap-2">
-            <Button
-              variant="secondary"
-              size="compact"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => p - 1)}
-            >
-              Previous
-            </Button>
-            <span className="text-cell text-steel">
-              Page {meta.page} of {meta.totalPages}
-            </span>
-            <Button
-              variant="secondary"
-              size="compact"
-              disabled={page >= meta.totalPages}
-              onClick={() => setPage((p) => p + 1)}
-            >
-              Next
-            </Button>
-          </div>
-        )}
+        <div className="flex flex-wrap items-center gap-4">
+          {!isPhone && rates.length > 0 && <ColumnScrollButtons scroller={scroller} />}
+          {meta.totalPages > 1 && (
+            <div className="flex items-center gap-2">
+              <Button
+                variant="secondary"
+                size="compact"
+                disabled={page <= 1 || isPending}
+                onClick={() => setPage((p) => p - 1)}
+              >
+                Previous
+              </Button>
+              <span className="whitespace-nowrap text-cell text-steel">
+                Page {meta.page} of {meta.totalPages}
+              </span>
+              <Button
+                variant="secondary"
+                size="compact"
+                disabled={page >= meta.totalPages || isPending}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
-function Th({ children, numeric }: { children: React.ReactNode; numeric?: boolean }) {
-  return (
-    <th
-      className={`label-manifest whitespace-nowrap border-b border-line bg-module-soft px-2.5 py-2 ${
-        numeric === true ? 'text-right' : 'text-left'
-      }`}
-    >
-      {children}
-    </th>
-  );
+/** Code, POL, POD; then Carrier, Goods; after the tiers, six more. For the breakdown row's span. */
+const COLUMNS_AROUND_TIERS = 11;
+
+/**
+ * Where each pinned column starts: the widths of the pinned columns before it.
+ *
+ * Measured, because codes and port names set those widths. Fixed offsets (6rem
+ * and 11rem) were narrower than "DEMO-RATE-1" and "Chattogram", so scrolling
+ * slid POL under the code and POD under POL.
+ */
+function usePinnedOffsets(count: number, deps: readonly unknown[]) {
+  const headRef = useRef<HTMLTableRowElement>(null);
+  const [offsets, setOffsets] = useState<number[]>(() => Array.from({ length: count }, () => 0));
+
+  useEffect(() => {
+    const row = headRef.current;
+    if (row === null) return;
+    const cells = [...row.cells].slice(0, count);
+    const measure = () => {
+      let left = 0;
+      const next = cells.map((cell) => {
+        const at = left;
+        left += cell.getBoundingClientRect().width;
+        return at;
+      });
+      setOffsets((prev) => (prev.every((v, i) => v === next[i]) ? prev : next));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    for (const cell of cells) observer.observe(cell);
+    return () => observer.disconnect();
+    // `deps` are the rows: a new page can widen a pinned column, or remount the table.
+  }, [count, ...deps]);
+
+  return { headRef, offsets };
 }
 
-/** §5.3: POL and POD stay put while the tier columns scroll away. */
-function StickyTh({
+function Th({
   children,
-  left,
-  width,
-  className = '',
+  numeric,
+  title,
 }: {
   children: React.ReactNode;
-  left: string;
-  width: string;
-  className?: string;
+  numeric?: boolean;
+  title?: string;
 }) {
   return (
     <th
-      style={{ left }}
-      className={`label-manifest sticky z-30 whitespace-nowrap border-b border-r border-line bg-module-soft px-2.5 py-2 text-left ${width} ${className}`}
+      scope="col"
+      title={title}
+      className={cn(
+        'label-manifest whitespace-nowrap border-b border-line bg-module-soft px-3 py-2.5',
+        numeric === true ? 'text-right' : 'text-left',
+      )}
     >
       {children}
     </th>
   );
 }
 
-function StickyTd({
+/**
+ * §5.3: Code, POL and POD stay put while the tier columns scroll away. The
+ * last of them carries the edge that shows columns passing behind.
+ */
+function PinnedTh({ children, left, last }: { children: React.ReactNode; left: number | undefined; last?: boolean }) {
+  return (
+    <th
+      scope="col"
+      style={{ left: left ?? 0 }}
+      className={cn(
+        'label-manifest sticky z-30 whitespace-nowrap border-b border-line bg-module-soft px-3 py-2.5 text-left',
+        last === true && cn('border-r', PINNED_START_EDGE),
+      )}
+    >
+      {children}
+    </th>
+  );
+}
+
+function PinnedTd({
   children,
   left,
-  mono,
-  className = '',
+  code,
+  last,
 }: {
   children: React.ReactNode;
-  left: string;
-  mono?: boolean;
-  className?: string;
+  left: number | undefined;
+  /** The business code: mono, in the module colour, on its tinted gutter (§12). */
+  code?: boolean;
+  last?: boolean;
 }) {
   return (
     <td
-      style={{ left }}
-      className={`sticky z-10 whitespace-nowrap border-r border-line bg-surface px-2.5 py-2 text-cell text-hull ${
-        mono === true ? 'font-mono tabular-nums' : ''
-      } ${className}`}
+      style={{ left: left ?? 0 }}
+      className={cn(
+        'sticky z-10 whitespace-nowrap px-3 py-2 transition-colors duration-[120ms] group-hover:bg-row-hover',
+        code === true ? 'bg-module-soft font-mono font-medium tabular-nums text-harbour' : 'bg-surface text-hull',
+        last === true && cn('border-r border-line', PINNED_START_EDGE),
+      )}
     >
       {children}
     </td>
+  );
+}
+
+function ChargesToggle({
+  rate,
+  open,
+  onToggle,
+  className,
+}: {
+  rate: FreightRateDto;
+  open: boolean;
+  onToggle: (rateId: string) => void;
+  className?: string;
+}) {
+  return (
+    <Button variant="text" size="inline" aria-expanded={open} onClick={() => onToggle(rate.id)} className={className}>
+      {rate.localCharges.length === 1 ? '1 line' : `${rate.localCharges.length} lines`}
+    </Button>
+  );
+}
+
+/*
+ * The container size rides in the head rather than taking a column of its own,
+ * because that is how a forwarder writes it: "Stuffing Charge, 40HC" is the name
+ * of the thing being billed, not a charge plus a separate fact about equipment.
+ */
+function chargeHead(charge: FreightRateDto['localCharges'][number]): string {
+  return charge.containerSizeCode === null ? charge.costHeadName : `${charge.costHeadName}, ${charge.containerSizeCode}`;
+}
+
+/** A rate's local charges: a table under the row, or a list on a phone card. */
+function ChargeBreakdown({ rate, stacked = false }: { rate: FreightRateDto; stacked?: boolean }) {
+  if (stacked) {
+    return (
+      <ul aria-label={`Local charges for ${rate.code}`} className="flex flex-col divide-y divide-line rounded-manifest bg-paper px-3 text-cell">
+        {rate.localCharges.map((charge) => (
+          <li key={charge.id} className="flex items-start justify-between gap-3 py-2">
+            <div className="min-w-0">
+              <div className="text-hull">{chargeHead(charge)}</div>
+              <div className="text-steel">
+                {charge.side}
+                {charge.costUnitName !== null && ` · ${charge.costUnitName}`}
+              </div>
+            </div>
+            <div className="shrink-0 text-right font-mono tabular-nums text-hull">
+              {purchasePrice(charge.amount)} <span className="text-steel">{charge.currencyCode}</span>
+            </div>
+          </li>
+        ))}
+      </ul>
+    );
+  }
+
+  return (
+    <table className="w-full border-collapse text-cell">
+      <thead>
+        <tr className="border-b border-line text-left">
+          <th className="label-manifest whitespace-nowrap py-1 pr-6">Charge head</th>
+          <th className="label-manifest whitespace-nowrap py-1 pr-6">Side</th>
+          <th className="label-manifest whitespace-nowrap py-1 pr-6">Unit</th>
+          <th className="label-manifest whitespace-nowrap py-1 pr-6">Currency</th>
+          <th className="label-manifest whitespace-nowrap py-1 text-right">Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rate.localCharges.map((charge) => (
+          <tr key={charge.id} className="border-b border-line last:border-0">
+            <td className="whitespace-nowrap py-1.5 pr-6 text-hull">{chargeHead(charge)}</td>
+            <td className="py-1.5 pr-6 text-steel">{charge.side}</td>
+            <td className="whitespace-nowrap py-1.5 pr-6 text-steel">{charge.costUnitName ?? '—'}</td>
+            <td className="py-1.5 pr-6 font-mono tabular-nums text-steel">{charge.currencyCode}</td>
+            <td className="py-1.5 text-right font-mono tabular-nums text-hull">{purchasePrice(charge.amount)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function Validity({ rate }: { rate: FreightRateDto }) {
+  return (
+    <>
+      <div className={rate.isExpired ? 'text-steel' : rate.expiringSoon ? 'text-signal' : 'text-hull'}>
+        {rate.validTo}
+        {rate.isExpired && ' • expired'}
+      </div>
+      <div className="text-steel">from {rate.validFrom}</div>
+    </>
   );
 }
