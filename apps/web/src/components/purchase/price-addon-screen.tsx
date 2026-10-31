@@ -21,6 +21,8 @@ import { PageHeader } from '@/components/ui/form-layout';
 import { MultiSelect } from '@/components/ui/multi-select';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
+import { useIsPhone } from '@/lib/use-media-query';
+import { cn } from '@/lib/utils';
 
 /**
  * Price Add-on (MODULE_PURCHASE_SALES §5.2).
@@ -178,6 +180,23 @@ export function PriceAddonScreen({
   }
 
   const edits = pendingEdits();
+  const isPhone = useIsPhone();
+
+  /* Air reads to the cent (2026-09-24); sea shows the figure as it always has. */
+  const buyFigure = (line: FreightRateDto['lines'][number]) =>
+    mode === 'AIR' ? purchasePrice(line.buyPrice, mode) : (line.buyPrice ?? '—');
+
+  /** Quiet helper text under the inputs: the outcome before saving. */
+  function outcome(rate: FreightRateDto, line: FreightRateDto['lines'][number], draft: Draft): string {
+    if (!options.canSeeBuyPrice) return `now ${purchasePrice(line.sellPrice, mode)} ${rate.currencyCode}`;
+    const preview = previewSellPrice(
+      line.buyPrice ?? line.sellPrice,
+      draft.profitType,
+      draft.profitValue || '0',
+      mode,
+    );
+    return `sell ${preview} ${rate.currencyCode}`;
+  }
 
   async function save(): Promise<void> {
     if (edits.length === 0) return;
@@ -293,7 +312,7 @@ export function PriceAddonScreen({
               className="overflow-hidden rounded-card border border-line bg-surface shadow-manifest"
             >
               <header className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-line px-3 py-2">
-                <span className="font-mono text-cell tabular-nums text-hull">{rate.code}</span>
+                <span className="font-mono text-cell font-medium tabular-nums text-harbour">{rate.code}</span>
                 <span className="font-mono text-cell tabular-nums text-hull">
                   {rate.polName ?? rate.polCode} → {rate.podName ?? rate.podCode}
                 </span>
@@ -304,94 +323,94 @@ export function PriceAddonScreen({
                 </span>
               </header>
 
-              {/* The tiers scroll sideways on a phone; the lane above stays put. */}
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse">
-                  <thead>
-                    <tr className="border-b border-line bg-module-soft">
-                      <th className="label-manifest whitespace-nowrap px-3 py-1.5 text-left">Tier</th>
-                      {rate.lines.map((line) => (
-                        <th key={line.id} className="label-manifest whitespace-nowrap px-3 py-1.5 text-right">
-                          {line.tierCode}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {/* Row 1: buy price, read-only — and absent entirely when the
-                        server withheld it (§4 rule 5). */}
-                    {options.canSeeBuyPrice && (
-                      <tr className="border-b border-line">
-                        <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Buy</th>
+              {isPhone ? (
+                /*
+                  On a phone the tiers stack, one under another. Side by side
+                  they scrolled sideways inside the card, and only the first
+                  tier's margin could be seen — or edited — without swiping.
+                */
+                <ul aria-label={`Tiers for ${rate.code}`} className="divide-y divide-line">
+                  {rate.lines.map((line) => {
+                    const draft = draftFor(rate, line.id);
+                    return (
+                      <li key={line.id} className="flex flex-col gap-2 px-3 py-3">
+                        <div className="flex items-baseline justify-between gap-3">
+                          <span className="label-manifest">{line.tierCode}</span>
+                          {/* Absent entirely when the server withheld it (§4 rule 5). */}
+                          {options.canSeeBuyPrice && (
+                            <span className="font-mono text-cell tabular-nums text-steel">
+                              buy {buyFigure(line)}
+                            </span>
+                          )}
+                        </div>
+                        <ProfitInputs
+                          rateCode={rate.code}
+                          tierCode={line.tierCode}
+                          draft={draft}
+                          onChange={(next) => setDraft(line.id, next, draft)}
+                          fill
+                        />
+                        <p className="text-right font-mono text-cell tabular-nums text-steel">
+                          {outcome(rate, line, draft)}
+                        </p>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full border-collapse">
+                    <thead>
+                      <tr className="border-b border-line bg-module-soft">
+                        <th className="label-manifest whitespace-nowrap px-3 py-1.5 text-left">Tier</th>
                         {rate.lines.map((line) => (
-                          <td
-                            key={line.id}
-                            className="px-3 py-2 text-right font-mono text-cell tabular-nums text-steel"
-                          >
-                            {/* Air reads to the cent (2026-09-24); sea shows the
-                                figure as it always has. */}
-                            {mode === 'AIR' ? purchasePrice(line.buyPrice, mode) : (line.buyPrice ?? '—')}
-                          </td>
+                          <th key={line.id} className="label-manifest whitespace-nowrap px-3 py-1.5 text-right">
+                            {line.tierCode}
+                          </th>
                         ))}
                       </tr>
-                    )}
+                    </thead>
+                    <tbody>
+                      {/* Row 1: buy price, read-only — and absent entirely when the
+                          server withheld it (§4 rule 5). */}
+                      {options.canSeeBuyPrice && (
+                        <tr className="border-b border-line">
+                          <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Buy</th>
+                          {rate.lines.map((line) => (
+                            <td
+                              key={line.id}
+                              className="px-3 py-2 text-right font-mono text-cell tabular-nums text-steel"
+                            >
+                              {buyFigure(line)}
+                            </td>
+                          ))}
+                        </tr>
+                      )}
 
-                    {/* Row 2: profit, editable. */}
-                    <tr>
-                      <th className="label-manifest whitespace-nowrap px-3 py-2 text-left align-top">Profit</th>
-                      {rate.lines.map((line) => {
-                        const draft = draftFor(rate, line.id);
-                        const preview = previewSellPrice(
-                          line.buyPrice ?? line.sellPrice,
-                          draft.profitType,
-                          draft.profitValue || '0',
-                          mode,
-                        );
-                        return (
-                          <td key={line.id} className="px-3 py-2 align-top">
-                            <div className="flex items-center justify-end gap-1">
-                              <Select
-                                aria-label={`Profit type for ${rate.code} ${line.tierCode}`}
-                                value={draft.profitType}
-                                onChange={(e) =>
-                                  setDraft(
-                                    line.id,
-                                    { profitType: e.target.value as ProfitType },
-                                    draft,
-                                  )
-                                }
-                                className="w-24"
-                              >
-                                {PROFIT_TYPES.map((value) => (
-                                  <option key={value} value={value}>
-                                    {PROFIT_TYPE_LABEL[value]}
-                                  </option>
-                                ))}
-                              </Select>
-                              <Input
-                                numeric
-                                inputMode="decimal"
-                                aria-label={`Profit for ${rate.code} ${line.tierCode}`}
-                                value={draft.profitValue}
-                                onChange={(e) =>
-                                  setDraft(line.id, { profitValue: e.target.value }, draft)
-                                }
-                                className="w-28 text-right sm:w-24"
+                      {/* Row 2: profit, editable. */}
+                      <tr>
+                        <th className="label-manifest whitespace-nowrap px-3 py-2 text-left align-top">Profit</th>
+                        {rate.lines.map((line) => {
+                          const draft = draftFor(rate, line.id);
+                          return (
+                            <td key={line.id} className="px-3 py-2 align-top">
+                              <ProfitInputs
+                                rateCode={rate.code}
+                                tierCode={line.tierCode}
+                                draft={draft}
+                                onChange={(next) => setDraft(line.id, next, draft)}
                               />
-                            </div>
-                            {/* Quiet helper text: the outcome before saving. */}
-                            <p className="mt-1 text-right font-mono text-cell tabular-nums text-steel">
-                              {options.canSeeBuyPrice
-                                ? `sell ${preview} ${rate.currencyCode}`
-                                : `now ${purchasePrice(line.sellPrice, mode)} ${rate.currencyCode}`}
-                            </p>
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
+                              <p className="mt-1 text-right font-mono text-cell tabular-nums text-steel">
+                                {outcome(rate, line, draft)}
+                              </p>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </article>
           ))}
         </div>
@@ -421,6 +440,47 @@ export function PriceAddonScreen({
           </Button>
         </div>
       )}
+    </div>
+  );
+}
+
+/** One tier's margin: Flat or Percent, and the figure. */
+function ProfitInputs({
+  rateCode,
+  tierCode,
+  draft,
+  onChange,
+  fill = false,
+}: {
+  rateCode: string;
+  tierCode: string;
+  draft: Draft;
+  onChange: (next: Partial<Draft>) => void;
+  /** Share the width equally, as on a phone, instead of sitting right-aligned in a table cell. */
+  fill?: boolean;
+}) {
+  return (
+    <div className={cn('items-center', fill ? 'grid grid-cols-2 gap-2' : 'flex justify-end gap-1')}>
+      <Select
+        aria-label={`Profit type for ${rateCode} ${tierCode}`}
+        value={draft.profitType}
+        onChange={(e) => onChange({ profitType: e.target.value as ProfitType })}
+        className={fill ? undefined : 'w-24'}
+      >
+        {PROFIT_TYPES.map((value) => (
+          <option key={value} value={value}>
+            {PROFIT_TYPE_LABEL[value]}
+          </option>
+        ))}
+      </Select>
+      <Input
+        numeric
+        inputMode="decimal"
+        aria-label={`Profit for ${rateCode} ${tierCode}`}
+        value={draft.profitValue}
+        onChange={(e) => onChange({ profitValue: e.target.value })}
+        className={fill ? 'text-right' : 'w-24 text-right'}
+      />
     </div>
   );
 }

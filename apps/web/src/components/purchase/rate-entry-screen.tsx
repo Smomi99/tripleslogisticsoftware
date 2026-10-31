@@ -26,10 +26,19 @@ import { PageHeader } from '@/components/ui/form-layout';
 import { ConfirmDialog } from '@/components/ui/modal';
 import { RowActions } from '@/components/ui/row-actions';
 import { Status } from '@/components/ui/status';
+import {
+  ColumnScrollButtons,
+  PINNED_END_EDGE,
+  PINNED_START_EDGE,
+  useHorizontalScroll,
+} from '@/components/ui/table-scroll';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
+import { useIsPhone } from '@/lib/use-media-query';
+import { cn } from '@/lib/utils';
 
 import { LocalChargePanel } from './local-charge-panel';
+import { RateCard } from './rate-card';
 
 /**
  * Purchase rate entry (MODULE_PURCHASE_SALES §5.1).
@@ -443,6 +452,42 @@ export function RateEntryScreen({
   const canCreate = can(`${feature}.CREATE`);
   const canEdit = can(`${feature}.EDIT`);
   const chargeCount = draft.localCharges.length;
+  const isPhone = useIsPhone();
+  const scroller = useHorizontalScroll([rows, options.tiers, isPhone]);
+
+  /** A row's actions, the same in the table and on a phone card. */
+  function actionsFor(rate: FreightRateDto) {
+    return (
+      <>
+        {/* Editing rewrites every price, so it needs the buy prices to load.
+            Without VIEW_BUY_PRICE they arrive absent (§4 rule 5) and saving
+            would silently blank the costs. Expired rates are editable; a
+            superseded version is not, because its successor carries the live
+            figures. */}
+        {canEdit && options.canSeeBuyPrice && !rate.isSuperseded && (
+          <Button variant="text" size="inline" onClick={() => beginEdit(rate)}>
+            Edit
+          </Button>
+        )}
+        {/* A copy needs the buy prices to copy, for the same reason. */}
+        {canCreate && options.canSeeBuyPrice && (
+          <Button
+            variant="text"
+            size="inline"
+            onClick={() => beginDuplicate(rate)}
+            aria-label={`Duplicate ${rate.code}`}
+          >
+            Duplicate
+          </Button>
+        )}
+        {canEdit && (
+          <Button variant="destructive" size="inline" onClick={() => setToDelete(rate)}>
+            Delete
+          </Button>
+        )}
+      </>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -863,206 +908,193 @@ export function RateEntryScreen({
         </span>
       </div>
 
-      <div className="overflow-x-auto rounded-card border border-line bg-surface shadow-manifest">
-        <table className="w-full min-w-max border-collapse">
-          <thead>
-            <tr className="border-b border-line bg-module-soft text-left">
-              <Th>Code</Th>
-              <Th>POL</Th>
-              <Th>POD</Th>
-              <Th>Carrier</Th>
-              <Th>Goods</Th>
-              {options.tiers.map((tier) => (
-                <Th key={tier.id} numeric>
-                  {tier.code}
-                </Th>
-              ))}
-              <Th numeric>Local</Th>
-              {/* The buyer typed it on the row above; they should see it back. */}
-              <Th>Route</Th>
-              <Th>Validity</Th>
-              <Th>Purchase via</Th>
-              <Th>Status</Th>
-              {/* Right-aligned over the action pills, as DataTable does. */}
-              <Th numeric>Action</Th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((rate) => (
-              <tr
-                key={rate.id}
-                className="border-b border-line last:border-0 hover:bg-row-hover [&>td]:align-top"
-              >
-                <td className="bg-module-soft px-2.5 py-2 font-mono text-cell tabular-nums text-hull">
-                  {rate.code}
-                </td>
-                <Td>{rate.polName ?? rate.polCode}</Td>
-                <Td>{rate.podName ?? rate.podCode}</Td>
-                <Td>{rate.carrierName}</Td>
-                <Td>{rate.goodsTypeName}</Td>
-                {options.tiers.map((tier) => {
-                  const line = rate.lines.find((l) => l.tierId === tier.id);
-                  return (
-                    <td
-                      key={tier.id}
-                      className="px-2.5 py-2 text-right font-mono text-cell tabular-nums"
-                    >
-                      {line === undefined ? (
-                        <span className="text-steel">—</span>
-                      ) : (
-                        <>
-                          <div>
-                            {purchasePrice(line.sellPrice, mode)}{' '}
-                            <span className="text-steel">{rate.currencyCode}</span>
-                          </div>
-                          {/* Absent when the server withheld it (§4 rule 5). */}
-                          {line.buyPrice !== undefined && (
-                            <div className="text-steel">buy {purchasePrice(line.buyPrice, mode)}</div>
-                          )}
-                        </>
-                      )}
-                    </td>
-                  );
-                })}
-                <td className="px-2.5 py-2 text-right font-mono text-cell tabular-nums">
-                  {/*
-                    Client decision, 2026-09-06: the charges, not their sum.
-                    A total across cost heads in different currencies was never
-                    a figure anyone could bill from, and it read as one.
-                  */}
-                  {rate.localChargeCount === 0 ? (
-                    <span className="text-steel">—</span>
-                  ) : (
-                    <span className="text-steel">
-                      {rate.localChargeCount} line{rate.localChargeCount === 1 ? '' : 's'}
-                    </span>
+      {rows.length === 0 ? (
+        <div className="rounded-card border border-line bg-surface shadow-manifest">
+          {isPending ? (
+            <p className="px-4 py-10 text-center text-body text-steel">Loading rates…</p>
+          ) : (
+            <EmptyState
+              title="No rates yet"
+              description={
+                canCreate
+                  ? 'Use the row above to add the first lane you have bought.'
+                  : 'No rates have been bought for this mode yet.'
+              }
+            />
+          )}
+        </div>
+      ) : isPhone ? (
+        <ul className={cn('flex flex-col gap-3', isPending && 'opacity-60')}>
+          {rows.map((rate) => (
+            <li key={rate.id}>
+              <RateCard
+                rate={rate}
+                tiers={options.tiers}
+                showBuy
+                badge={<RateStatus rate={rate} />}
+                details={[
+                  { label: 'Local charges', value: <LocalCount rate={rate} />, numeric: true },
+                  { label: 'Route', value: rate.route ?? '—' },
+                  { label: 'Validity', value: <Validity rate={rate} />, numeric: true },
+                  { label: 'Purchase via', value: <PurchaseVia rate={rate} /> },
+                ]}
+                actions={actionsFor(rate)}
+              />
+            </li>
+          ))}
+        </ul>
+      ) : (
+        /*
+          Wider than a laptop once the tiers are in, so it scrolls sideways
+          under the Code column pinned left and the Action column pinned right
+          — Edit used to be the last column, off the edge of the screen.
+        */
+        <div
+          {...scroller.props}
+          className={cn(
+            'group/scroller relative overflow-x-auto rounded-card border border-line bg-surface shadow-manifest',
+            isPending && 'opacity-60',
+          )}
+        >
+          <table className="w-full min-w-max border-collapse text-cell">
+            <thead>
+              <tr className="bg-module-soft">
+                <th
+                  scope="col"
+                  className={cn(
+                    'label-manifest sticky left-0 z-20 whitespace-nowrap border-b border-r border-line bg-module-soft px-3 py-2.5 text-left',
+                    PINNED_START_EDGE,
                   )}
-                </td>
-                <td className="whitespace-nowrap px-2.5 py-2 text-cell text-steel">
-                  {rate.route ?? '—'}
-                </td>
-                <td className="px-2.5 py-2 font-mono text-cell tabular-nums">
-                  <div>{rate.validFrom}</div>
-                  <div className={rate.expiringSoon ? 'text-signal' : 'text-steel'}>
-                    {rate.validTo}
-                    {rate.expiringSoon && ' • expiring'}
-                    {rate.isExpired && ' • expired'}
-                  </div>
-                </td>
-                <Td>
-                  {/*
-                    The short name when the party has one (client, 2026-10-17),
-                    the full name on hover. Dotted, so the hover is findable.
-                  */}
-                  {rate.purchaseSourceShortName === null ? (
-                    rate.purchaseSourceName
-                  ) : (
-                    <abbr
-                      title={rate.purchaseSourceName}
-                      className="cursor-help underline decoration-steel decoration-dotted underline-offset-2"
-                    >
-                      {rate.purchaseSourceShortName}
-                    </abbr>
-                  )}
-                </Td>
-                <td className="px-2.5 py-2">
-                  <Status
-                    tone={
-                      rate.status === 'PUBLISHED'
-                        ? 'active'
-                        : rate.status === 'DRAFT'
-                          ? 'pending'
-                          : 'inactive'
-                    }
-                  >
-                    {RATE_STATUS_LABEL[rate.status]}
-                  </Status>
-                </td>
-                <td className="whitespace-nowrap px-2.5 py-2">
-                  {/* Editing rewrites every price, so it needs the buy prices
-                      to load. Without VIEW_BUY_PRICE they arrive absent
-                      (§4 rule 5) and saving would silently blank the costs.
-                      Expired rates are editable; a superseded version is not,
-                      because its successor carries the live figures. */}
-                  <RowActions>
-                    {canEdit && options.canSeeBuyPrice && !rate.isSuperseded && (
-                      <Button variant="text" size="inline" onClick={() => beginEdit(rate)}>
-                        Edit
-                      </Button>
-                    )}
-                    {/* A copy needs the buy prices to copy, for the same reason. */}
-                    {canCreate && options.canSeeBuyPrice && (
-                      <Button
-                        variant="text"
-                        size="inline"
-                        onClick={() => beginDuplicate(rate)}
-                        aria-label={`Duplicate ${rate.code}`}
-                      >
-                        Duplicate
-                      </Button>
-                    )}
-                    {canEdit && (
-                      <Button
-                        variant="destructive"
-                        size="inline"
-                        onClick={() => setToDelete(rate)}
-                      >
-                        Delete
-                      </Button>
-                    )}
-                  </RowActions>
-                </td>
-              </tr>
-            ))}
-            {rows.length === 0 && !isPending && (
-              <tr>
-                <td colSpan={11 + options.tiers.length} className="p-8">
-                  <EmptyState
-                    title="No rates yet"
-                    description={
-                      canCreate
-                        ? 'Use the row above to add the first lane you have bought.'
-                        : 'No rates have been bought for this mode yet.'
-                    }
-                  />
-                </td>
-              </tr>
-            )}
-            {isPending && rows.length === 0 && (
-              <tr>
-                <td
-                  colSpan={11 + options.tiers.length}
-                  className="p-8 text-center text-body text-steel"
                 >
-                  Loading rates…
-                </td>
+                  Code
+                </th>
+                <Th>POL</Th>
+                <Th>POD</Th>
+                <Th>Carrier</Th>
+                <Th>Goods</Th>
+                {options.tiers.map((tier) => (
+                  <Th key={tier.id} numeric title={tier.label}>
+                    {tier.code}
+                  </Th>
+                ))}
+                <Th numeric>Local</Th>
+                {/* The buyer typed it on the row above; they should see it back. */}
+                <Th>Route</Th>
+                <Th>Validity</Th>
+                <Th>Purchase via</Th>
+                <Th>Status</Th>
+                {/* Right-aligned over the action pills, as DataTable does. */}
+                <th
+                  scope="col"
+                  className={cn(
+                    'label-manifest sticky right-0 z-20 whitespace-nowrap border-b border-l border-line bg-module-soft px-3 py-2.5 text-right',
+                    PINNED_END_EDGE,
+                  )}
+                >
+                  Action
+                </th>
               </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {rows.map((rate) => (
+                <tr
+                  key={rate.id}
+                  className="group border-b border-line last:border-b-0 hover:bg-row-hover [&>td]:align-top"
+                >
+                  <td
+                    className={cn(
+                      'sticky left-0 z-10 whitespace-nowrap border-r border-line bg-module-soft px-3 py-2 font-mono font-medium tabular-nums text-harbour',
+                      'transition-colors duration-[120ms] group-hover:bg-row-hover',
+                      PINNED_START_EDGE,
+                    )}
+                  >
+                    {rate.code}
+                  </td>
+                  <Td>{rate.polName ?? rate.polCode}</Td>
+                  <Td>{rate.podName ?? rate.podCode}</Td>
+                  <Td>{rate.carrierName}</Td>
+                  <Td>{rate.goodsTypeName}</Td>
+                  {options.tiers.map((tier) => {
+                    const line = rate.lines.find((l) => l.tierId === tier.id);
+                    return (
+                      <td
+                        key={tier.id}
+                        className="whitespace-nowrap px-3 py-2 text-right font-mono tabular-nums"
+                      >
+                        {line === undefined ? (
+                          <span className="text-steel">—</span>
+                        ) : (
+                          <>
+                            <div className="text-hull">
+                              {purchasePrice(line.sellPrice, mode)}{' '}
+                              <span className="text-steel">{rate.currencyCode}</span>
+                            </div>
+                            {/* Absent when the server withheld it (§4 rule 5). */}
+                            {line.buyPrice !== undefined && (
+                              <div className="text-steel">buy {purchasePrice(line.buyPrice, mode)}</div>
+                            )}
+                          </>
+                        )}
+                      </td>
+                    );
+                  })}
+                  <td className="whitespace-nowrap px-3 py-2 text-right font-mono tabular-nums">
+                    <LocalCount rate={rate} />
+                  </td>
+                  <td className="px-3 py-2 text-steel">
+                    <div className="w-max max-w-[14rem]">{rate.route ?? '—'}</div>
+                  </td>
+                  <td className="whitespace-nowrap px-3 py-2 font-mono tabular-nums">
+                    <Validity rate={rate} />
+                  </td>
+                  <Td>
+                    <PurchaseVia rate={rate} />
+                  </Td>
+                  <td className="px-3 py-1.5">
+                    <RateStatus rate={rate} />
+                  </td>
+                  <td
+                    className={cn(
+                      'sticky right-0 z-10 border-l border-line bg-surface px-3 py-1 text-right',
+                      'transition-colors duration-[120ms] group-hover:bg-row-hover',
+                      PINNED_END_EDGE,
+                    )}
+                  >
+                    <RowActions>{actionsFor(rate)}</RowActions>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
-      {meta.totalPages > 1 && (
-        <div className="flex items-center justify-end gap-2">
-          <Button
-            variant="secondary"
-            size="compact"
-            disabled={page <= 1}
-            onClick={() => setPage((p) => p - 1)}
-          >
-            Previous
-          </Button>
-          <span className="text-cell text-steel">
-            Page {meta.page} of {meta.totalPages}
-          </span>
-          <Button
-            variant="secondary"
-            size="compact"
-            disabled={page >= meta.totalPages}
-            onClick={() => setPage((p) => p + 1)}
-          >
-            Next
-          </Button>
+      {rows.length > 0 && (
+        <div className="flex flex-wrap items-center justify-end gap-4">
+          <ColumnScrollButtons scroller={scroller} />
+          {meta.totalPages > 1 && (
+            <div className="flex items-center gap-2">
+              <Button
+                variant="secondary"
+                size="compact"
+                disabled={page <= 1 || isPending}
+                onClick={() => setPage((p) => p - 1)}
+              >
+                Previous
+              </Button>
+              <span className="whitespace-nowrap text-cell text-steel">
+                Page {meta.page} of {meta.totalPages}
+              </span>
+              <Button
+                variant="secondary"
+                size="compact"
+                disabled={page >= meta.totalPages || isPending}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          )}
         </div>
       )}
 
@@ -1117,18 +1149,87 @@ function LabelledControl({
   );
 }
 
-function Th({ children, numeric }: { children: React.ReactNode; numeric?: boolean }) {
+function Th({
+  children,
+  numeric,
+  title,
+}: {
+  children: React.ReactNode;
+  numeric?: boolean;
+  title?: string;
+}) {
   return (
     <th
-      className={`label-manifest whitespace-nowrap px-2.5 py-2 ${
-        numeric === true ? 'text-right' : 'text-left'
-      }`}
+      scope="col"
+      title={title}
+      className={cn(
+        'label-manifest whitespace-nowrap border-b border-line px-3 py-2.5',
+        numeric === true ? 'text-right' : 'text-left',
+      )}
     >
       {children}
     </th>
   );
 }
 
+/** A text cell: its own width up to 18rem, wrapping only past it (§12). */
 function Td({ children }: { children: React.ReactNode }) {
-  return <td className="px-2.5 py-2 text-cell text-hull">{children}</td>;
+  return (
+    <td className="px-3 py-2 text-hull">
+      <div className="w-max max-w-[18rem]">{children}</div>
+    </td>
+  );
+}
+
+function RateStatus({ rate }: { rate: FreightRateDto }) {
+  return (
+    <Status tone={rate.status === 'PUBLISHED' ? 'active' : rate.status === 'DRAFT' ? 'pending' : 'inactive'}>
+      {RATE_STATUS_LABEL[rate.status]}
+    </Status>
+  );
+}
+
+/*
+ * Client decision, 2026-09-06: the charges, not their sum. A total across cost
+ * heads in different currencies was never a figure anyone could bill from, and
+ * it read as one.
+ */
+function LocalCount({ rate }: { rate: FreightRateDto }) {
+  return (
+    <span className="text-steel">
+      {rate.localChargeCount === 0
+        ? '—'
+        : `${rate.localChargeCount} line${rate.localChargeCount === 1 ? '' : 's'}`}
+    </span>
+  );
+}
+
+function Validity({ rate }: { rate: FreightRateDto }) {
+  return (
+    <>
+      <div className="text-hull">{rate.validFrom}</div>
+      <div className={rate.expiringSoon ? 'text-signal' : 'text-steel'}>
+        {rate.validTo}
+        {rate.expiringSoon && ' • expiring'}
+        {rate.isExpired && ' • expired'}
+      </div>
+    </>
+  );
+}
+
+/*
+ * The short name when the party has one (client, 2026-10-17), the full name on
+ * hover. Dotted, so the hover is findable.
+ */
+function PurchaseVia({ rate }: { rate: FreightRateDto }) {
+  return rate.purchaseSourceShortName === null ? (
+    <>{rate.purchaseSourceName}</>
+  ) : (
+    <abbr
+      title={rate.purchaseSourceName}
+      className="cursor-help underline decoration-steel decoration-dotted underline-offset-2"
+    >
+      {rate.purchaseSourceShortName}
+    </abbr>
+  );
 }
