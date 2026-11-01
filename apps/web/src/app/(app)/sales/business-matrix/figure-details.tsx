@@ -14,6 +14,7 @@ import {
   type TradeLaneDirection,
   type TradeLanePortDto,
 } from '@ff/shared';
+import type { Route } from 'next';
 import Link from 'next/link';
 import { type ReactNode, useEffect, useState } from 'react';
 
@@ -53,7 +54,8 @@ const NOUN: Record<BusinessMatrixFigure, [string, string]> = {
   revenue: ['invoice', 'invoices'],
 };
 
-const PRICE_LIST_PATH: Record<RateMode, string> = {
+// Typed routes (next.config typedRoutes): each must be a page that exists.
+const PRICE_LIST_PATH: Record<RateMode, Route> = {
   SEA_FCL: '/purchase/price-list-fcl',
   SEA_LCL: '/purchase/price-list-lcl',
   AIR: '/purchase/price-list-air',
