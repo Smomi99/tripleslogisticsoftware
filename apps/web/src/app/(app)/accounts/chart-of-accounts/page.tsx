@@ -21,6 +21,7 @@ import { ConfirmDialog, Modal } from '@/components/ui/modal';
 import { RowActions } from '@/components/ui/row-actions';
 import { Segmented } from '@/components/ui/segmented';
 import { ActiveStatus } from '@/components/ui/status';
+import { useEndPins } from '@/components/ui/table-scroll';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 import { cn } from '@/lib/utils';
@@ -80,6 +81,8 @@ export default function ChartOfAccountsPage() {
   }
 
   const current = chart?.heads.find((h) => h.accountType === head);
+  // Status and Action stay in view as the chart scrolls sideways (owner, 2026-11-01).
+  const pin = useEndPins([current]);
   const baseCode = chart?.baseCurrencyCode ?? 'Base';
   const canCreate = can('ACCOUNTS.CHART_OF_ACCOUNTS.CREATE');
   const canEdit = can('ACCOUNTS.CHART_OF_ACCOUNTS.EDIT');
@@ -145,15 +148,15 @@ export default function ChartOfAccountsPage() {
             description="Add the first ledger for this head, then add its sub ledgers under it."
           />
         ) : (
-          <div className="overflow-x-auto rounded-card border border-line bg-surface shadow-manifest">
+          <div {...pin.box} className="group/scroller overflow-x-auto rounded-card border border-line bg-surface shadow-manifest">
             <table className="w-full min-w-200 border-collapse">
               <thead>
-                <tr className="border-b border-line bg-module-soft">
+                <tr ref={pin.rowRef} className="border-b border-line bg-module-soft">
                   <th className="label-manifest whitespace-nowrap w-28 px-3 py-2 text-left">Code</th>
                   <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Ledger / Sub Ledger</th>
                   <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">Balance ({baseCode})</th>
-                  <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Status</th>
-                  <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">Action</th>
+                  <th {...pin.head(0, 'label-manifest whitespace-nowrap px-3 py-2 text-left')}>Status</th>
+                  <th {...pin.head(1, 'label-manifest whitespace-nowrap px-3 py-2 text-right')}>Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -162,6 +165,7 @@ export default function ChartOfAccountsPage() {
                     key={ledger.id}
                     ledger={ledger}
                     actions={actions}
+                    pin={pin}
                     onAddSub={
                       canCreate && ledger.systemKey !== 'ASSET.BANK'
                         ? () => setEditing({ mode: 'add-sub', ledger })
@@ -228,14 +232,18 @@ export default function ChartOfAccountsPage() {
 function LedgerRows({
   ledger,
   actions,
+  pin,
   onAddSub,
   bankHint,
 }: {
   ledger: ChartLedgerDto;
   actions: (a: LedgerAccountDto) => ReactNode;
+  pin: ReturnType<typeof useEndPins>;
   onAddSub: (() => void) | null;
   bankHint: boolean;
 }) {
+  // The ledger row's shade, made opaque for the pinned cells columns pass behind.
+  const ledgerBg = 'bg-[color-mix(in_oklab,var(--color-paper)_60%,var(--color-surface))]';
   return (
     <>
       <tr className="border-b border-line bg-paper/60">
@@ -254,22 +262,22 @@ function LedgerRows({
           )}
         </td>
         <td className="px-3 py-2 text-right font-mono text-body font-semibold tabular-nums text-hull">{amount(ledger.balance)}</td>
-        <td className="px-3 py-2">
+        <td {...pin.cell(0, 'px-3 py-2', ledgerBg)}>
           <ActiveStatus isActive={ledger.isActive} />
         </td>
-        <td className="px-3 py-2 text-right">
+        <td {...pin.cell(1, 'px-3 py-2 text-right', ledgerBg)}>
           <RowActions>{actions(ledger)}</RowActions>
         </td>
       </tr>
       {ledger.subLedgers.map((sub) => (
-        <tr key={sub.id} className="border-b border-line last:border-0 hover:bg-row-hover">
+        <tr key={sub.id} className="group border-b border-line last:border-0 hover:bg-row-hover">
           <td className="px-3 py-1.5 font-mono text-cell tabular-nums text-steel">{sub.code}</td>
           <td className={cn('py-1.5 pl-8 pr-3 text-cell', sub.isActive ? 'text-hull' : 'text-steel')}>{sub.name}</td>
           <td className="px-3 py-1.5 text-right font-mono text-cell tabular-nums text-hull">{amount(sub.balance)}</td>
-          <td className="px-3 py-1.5">
+          <td {...pin.cell(0, 'px-3 py-1.5')}>
             <ActiveStatus isActive={sub.isActive} />
           </td>
-          <td className="px-3 py-1.5 text-right">
+          <td {...pin.cell(1, 'px-3 py-1.5 text-right')}>
             <RowActions>{actions(sub)}</RowActions>
           </td>
         </tr>

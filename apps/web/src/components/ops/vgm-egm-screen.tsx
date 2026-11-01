@@ -140,7 +140,9 @@ function VgmEgmList({ mode, onMode }: { mode: ShipmentType; onMode: (m: Shipment
                   const allowed = c.vgm === null ? mayRecord : mayChange;
                   const shared = othersThan(c.bookingCodes, r.bookingCode);
                   return (
-                    <span className="flex items-center gap-3 max-md:flex-wrap max-md:gap-y-1">
+                    // Wraps at every width: the column is pinned beside Action now,
+                    // and a line wider than it would pass under the column next to it.
+                    <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
                       <Status tone={done ? 'active' : 'pending'}>{done ? 'Uploaded' : 'Pending'}</Status>
                       {allowed && (
                         <Button variant="text" size="inline" onClick={() => setRecording({ row: r, container: c })}>

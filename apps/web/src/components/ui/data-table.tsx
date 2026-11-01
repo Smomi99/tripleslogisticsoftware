@@ -17,9 +17,12 @@ import { RowActions } from './row-actions';
 import { Select } from './select';
 import {
   ColumnScrollButtons,
+  isStatusHeader,
+  PINNED_END_CELL,
   PINNED_END_EDGE,
   PINNED_START_EDGE,
   useHorizontalScroll,
+  usePinnedEnd,
 } from './table-scroll';
 
 /*
@@ -50,6 +53,12 @@ export interface DataTableColumn<T extends RowData> {
   numeric?: boolean;
   sortable?: boolean;
   className?: string;
+  /**
+   * Pinned to the right beside Action, sticky like it, so it stays in view
+   * while the table scrolls sideways. Any column whose header names a status
+   * pins unless this says false.
+   */
+  pinned?: boolean;
 }
 
 export interface DataTableProps<T extends RowData> {
@@ -130,6 +139,22 @@ export function DataTable<T extends RowData>({
 
   const table = useTable({ features, columns: tableColumns, data: rows, getRowId });
   const scroller = useHorizontalScroll([rows, columns, isPhone, density]);
+
+  // On the wide table, status columns move to the end and stick beside
+  // Action. `index` is the column's place in `columns`, which is how its
+  // cell is found. The phone's cards keep the screen's own order.
+  const placed = useMemo(() => {
+    const all = columns.map((column, index) => ({ column, index, pinned: column.pinned ?? isStatusHeader(column.header) }));
+    return [...all.filter((c) => !c.pinned), ...all.filter((c) => c.pinned)];
+  }, [columns]);
+  const pinnedCount = placed.filter((c) => c.pinned).length;
+  const pinnedEnd = usePinnedEnd([rows, columns, isPhone, density, actions === undefined]);
+  /** Classes and offset for the column at this pinned position, Action last. */
+  const pinAt = (position: number) => ({
+    // The shadow belongs to whichever pinned column the others pass behind.
+    edge: position === 0 ? PINNED_END_EDGE : undefined,
+    style: { right: pinnedEnd.right(position) },
+  });
 
   const firstRowNumber = (page - 1) * limit + 1;
   const lastRowNumber = Math.min(page * limit, total);
@@ -322,7 +347,7 @@ export function DataTable<T extends RowData>({
       >
         <table className="w-full border-collapse text-cell">
           <thead className="sticky top-0 z-20">
-            <tr className="bg-module-soft">
+            <tr ref={pinnedEnd.rowRef} className="bg-module-soft">
               {/*
                 §8: SL No, then the client's exact columns, then Action.
 
@@ -345,10 +370,12 @@ export function DataTable<T extends RowData>({
               >
                 {codeHeader}
               </th>
-              {columns.map((column) => (
+              {placed.map(({ column, pinned }, place) => (
                 <th
                   key={column.id}
                   scope="col"
+                  {...(pinned ? { 'data-pin-end': '' } : {})}
+                  style={pinned ? pinAt(place - (placed.length - pinnedCount)).style : undefined}
                   aria-sort={
                     sortBy === column.id
                       ? sortOrder === 'asc'
@@ -361,6 +388,7 @@ export function DataTable<T extends RowData>({
                     // made the header row taller than the rows under it.
                     'label-manifest whitespace-nowrap border-b border-line px-3 py-2.5',
                     column.align === 'right' ? 'text-right' : 'text-left',
+                    pinned && cn(PINNED_END_CELL, 'z-30 bg-module-soft', pinAt(place - (placed.length - pinnedCount)).edge),
                   )}
                 >
                   {column.sortable === true ? (
@@ -391,9 +419,13 @@ export function DataTable<T extends RowData>({
               {actions !== undefined && (
                 <th
                   scope="col"
+                  data-pin-end=""
+                  style={pinAt(pinnedCount).style}
                   className={cn(
-                    'label-manifest sticky right-0 z-30 whitespace-nowrap border-b border-l border-line bg-module-soft px-3 py-2.5 text-right',
-                    PINNED_END_EDGE,
+                    'label-manifest whitespace-nowrap border-b bg-module-soft px-3 py-2.5 text-right',
+                    PINNED_END_CELL,
+                    'z-30',
+                    pinAt(pinnedCount).edge,
                   )}
                 >
                   Action
@@ -441,15 +473,17 @@ export function DataTable<T extends RowData>({
                     </button>
                   )}
                 </td>
-                {columns.map((column, columnIndex) => (
+                {placed.map(({ column, index: columnIndex, pinned }, place) => (
                   <td
                     key={column.id}
+                    style={pinned ? pinAt(place - (placed.length - pinnedCount)).style : undefined}
                     className={cn(
                       'bg-surface px-3 transition-colors duration-[120ms] group-hover:bg-row-hover',
                       column.align === 'right' ? 'text-right' : 'text-left',
                       // Codes, dates and amounts stay whole: a wide table scrolls
                       // rather than breaking 2026-09-20 or QTN-0012 in two.
                       column.numeric === true && 'whitespace-nowrap font-mono',
+                      pinned && cn(PINNED_END_CELL, pinAt(place - (placed.length - pinnedCount)).edge),
                       column.className,
                     )}
                     {...(column.numeric === true ? { 'data-numeric': '' } : {})}
@@ -476,9 +510,11 @@ export function DataTable<T extends RowData>({
                 ))}
                 {actions !== undefined && (
                   <td
+                    style={pinAt(pinnedCount).style}
                     className={cn(
-                      'sticky right-0 z-10 border-l border-line bg-surface px-3 text-right',
-                      PINNED_END_EDGE,
+                      'bg-surface px-3 text-right',
+                      PINNED_END_CELL,
+                      pinAt(pinnedCount).edge,
                       'transition-colors duration-[120ms] group-hover:bg-row-hover',
                     )}
                   >

@@ -1,7 +1,7 @@
 'use client';
 
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { cn } from '@/lib/utils';
 
@@ -85,6 +85,88 @@ export function useHorizontalScroll(deps: readonly unknown[]) {
 }
 
 export type HorizontalScroll = ReturnType<typeof useHorizontalScroll>;
+
+/**
+ * A column's header names it a status column — "Status", "Payment Status",
+ * "VGM Status". Those pin beside Action (owner, 2026-11-01: "on every table
+ * status will show sticky as action"), so whether a row is live, paid or
+ * approved stays in view however far the table scrolls.
+ */
+export const isStatusHeader = (header: string): boolean => /\bstatus\b/i.test(header);
+
+/** A cell pinned to the right of a wide table — Action, and Status beside it. */
+export const PINNED_END_CELL = 'sticky z-10 border-l border-line';
+
+/**
+ * Where each right-pinned column sticks: the last (Action) at 0, each one
+ * before it at the width of those after it. Measured from the header row,
+ * whose pinned cells carry `data-pin-end` in order, and measured again when
+ * one changes width — a page whose actions fold into More is narrower.
+ * Measured before paint, so Status never draws on top of Action.
+ */
+export function usePinnedEnd(deps: readonly unknown[]) {
+  const rowRef = useRef<HTMLTableRowElement>(null);
+  const [offsets, setOffsets] = useState<number[]>([]);
+
+  useLayoutEffect(() => {
+    const row = rowRef.current;
+    if (row === null) return;
+    const cells = Array.from(row.querySelectorAll<HTMLElement>('[data-pin-end]'));
+    const measure = () => {
+      const widths = cells.map((cell) => cell.getBoundingClientRect().width);
+      const next = widths.map((_, i) => widths.slice(i + 1).reduce((sum, w) => sum + w, 0));
+      setOffsets((prev) =>
+        prev.length === next.length && prev.every((v, i) => Math.abs(v - (next[i] ?? 0)) < 0.5) ? prev : next,
+      );
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    for (const cell of cells) observer.observe(cell);
+    return () => observer.disconnect();
+    // `deps` are what can add, remove or resize a pinned column.
+  }, deps);
+
+  /** The `right` for the pinned column at this position (0 = leftmost of them). */
+  const right = useCallback((position: number): number => offsets[position] ?? 0, [offsets]);
+
+  return { rowRef, right };
+}
+
+/**
+ * Status and Action pinned on a hand-built table, as DataTable pins them.
+ *
+ *   const pin = useEndPins([rows]);
+ *   <div {...pin.box} className="group/scroller overflow-x-auto …">
+ *     <tr ref={pin.rowRef}> … <th {...pin.head(0, '…')}>Status</th><th {...pin.head(1, '…')}>Action</th>
+ *     <tr className="group"> … <td {...pin.cell(0, '…')}> … <td {...pin.cell(1, '…')}>
+ *
+ * Positions count from the leftmost pinned column. A body cell is opaque so
+ * columns pass behind it: the row's own background, given as `bg` when it is
+ * not the plain surface, and the row needs `group` for the hover tint.
+ */
+export function useEndPins(deps: readonly unknown[]) {
+  const scroller = useHorizontalScroll(deps);
+  const pinned = usePinnedEnd(deps);
+
+  const head = (position: number, className?: string) => ({
+    'data-pin-end': '',
+    style: { right: pinned.right(position) },
+    className: cn(className, PINNED_END_CELL, 'z-30 bg-module-soft', position === 0 && PINNED_END_EDGE),
+  });
+
+  const cell = (position: number, className?: string, bg = 'bg-surface group-hover:bg-row-hover') => ({
+    style: { right: pinned.right(position) },
+    className: cn(
+      className,
+      PINNED_END_CELL,
+      bg,
+      'transition-colors duration-[120ms] ease-manifest',
+      position === 0 && PINNED_END_EDGE,
+    ),
+  });
+
+  return { box: scroller.props, rowRef: pinned.rowRef, head, cell };
+}
 
 /** The Columns ‹ › pair for a table's footer. Absent while every column fits. */
 export function ColumnScrollButtons({ scroller, className }: { scroller: HorizontalScroll; className?: string }) {

@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
 import { Status } from '@/components/ui/status';
+import { useEndPins } from '@/components/ui/table-scroll';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 
@@ -38,6 +39,8 @@ export function PicContacts({
   const [contacts, setContacts] = useState<PicContact[] | null>(null);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // Status stays in view as the table scrolls sideways (owner, 2026-11-01).
+  const pin = useEndPins([contacts]);
 
   useEffect(() => {
     // A drawer closed and reopened on another record must not show the
@@ -94,16 +97,16 @@ export function PicContacts({
         <p className="text-body text-steel">{emptyText}</p>
       ) : (
         <>
-          <div className="overflow-x-auto rounded-manifest border border-line">
+          <div {...pin.box} className="group/scroller overflow-x-auto rounded-manifest border border-line">
             <table className="w-full min-w-[36rem] border-collapse text-cell">
               <thead>
-                <tr className="bg-module-soft">
+                <tr ref={pin.rowRef} className="bg-module-soft">
                   <th className="label-manifest whitespace-nowrap border-b border-line px-3 py-2 text-left">Name</th>
                   <th className="label-manifest whitespace-nowrap border-b border-line px-3 py-2 text-left">Department</th>
                   <th className="label-manifest whitespace-nowrap border-b border-line px-3 py-2 text-left">Designation</th>
                   <th className="label-manifest whitespace-nowrap border-b border-line px-3 py-2 text-right">Mobile</th>
                   <th className="label-manifest whitespace-nowrap border-b border-line px-3 py-2 text-left">Email</th>
-                  <th className="label-manifest whitespace-nowrap border-b border-line px-3 py-2 text-left">Status</th>
+                  <th {...pin.head(0, 'label-manifest whitespace-nowrap border-b border-line px-3 py-2 text-left')}>Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -112,8 +115,8 @@ export function PicContacts({
                     key={contact.id}
                     className={
                       contact.isActive
-                        ? 'h-9 border-b border-line text-hull last:border-b-0'
-                        : 'h-9 border-b border-line text-steel last:border-b-0'
+                        ? 'group h-9 border-b border-line text-hull last:border-b-0'
+                        : 'group h-9 border-b border-line text-steel last:border-b-0'
                     }
                   >
                     <td className="px-3">{contact.name}</td>
@@ -123,7 +126,7 @@ export function PicContacts({
                       {contact.mobile ?? '—'}
                     </td>
                     <td className="px-3">{contact.email ?? '—'}</td>
-                    <td className="px-3">
+                    <td {...pin.cell(0, 'px-3', 'bg-surface')}>
                       <Status tone={contact.isActive ? 'active' : 'inactive'}>
                         {contact.isActive ? 'Active' : 'Inactive'}
                       </Status>

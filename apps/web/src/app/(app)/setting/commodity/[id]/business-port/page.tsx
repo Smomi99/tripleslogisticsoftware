@@ -20,6 +20,7 @@ import { ConfirmDialog, Modal } from '@/components/ui/modal';
 import { MultiSelect } from '@/components/ui/multi-select';
 import { RowActions } from '@/components/ui/row-actions';
 import { Status } from '@/components/ui/status';
+import { useEndPins } from '@/components/ui/table-scroll';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 
@@ -57,6 +58,8 @@ export default function CommodityBusinessPortPage() {
 
   const [parentName, setParentName] = useState('');
   const [rows, setRows] = useState<CommodityBusinessPortDto[]>([]);
+  // Status and Action stay in view as the table scrolls sideways (owner, 2026-11-01).
+  const pin = useEndPins([rows]);
   const [ports, setPorts] = useState<PortOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [formOpen, setFormOpen] = useState(false);
@@ -141,20 +144,20 @@ export default function CommodityBusinessPortPage() {
           />
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-card border border-line bg-surface shadow-manifest">
+        <div {...pin.box} className="group/scroller overflow-x-auto rounded-card border border-line bg-surface shadow-manifest">
           <table className="w-full border-collapse">
             <thead>
-              <tr className="border-b border-line bg-module-soft">
+              <tr ref={pin.rowRef} className="border-b border-line bg-module-soft">
                 <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Code</th>
                 <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">POL</th>
                 <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">POD</th>
-                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Status</th>
-                <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">Action</th>
+                <th {...pin.head(0, 'label-manifest whitespace-nowrap px-3 py-2 text-left')}>Status</th>
+                <th {...pin.head(1, 'label-manifest whitespace-nowrap px-3 py-2 text-right')}>Action</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((row) => (
-                <tr key={row.id} className="border-b border-line last:border-0">
+                <tr key={row.id} className="group border-b border-line last:border-0">
                   <td className="px-3 py-2 font-mono text-cell tabular-nums text-hull">
                     {row.code}
                   </td>
@@ -164,12 +167,12 @@ export default function CommodityBusinessPortPage() {
                   <td className="px-3 py-2 text-cell text-hull">
                     {portLabel(row.podCode, row.podName)}
                   </td>
-                  <td className="px-3 py-2">
+                  <td {...pin.cell(0, 'px-3 py-2')}>
                     <Status tone={row.isActive ? 'active' : 'inactive'}>
                       {row.isActive ? 'Active' : 'Inactive'}
                     </Status>
                   </td>
-                  <td className="px-3 py-2 text-right">
+                  <td {...pin.cell(1, 'px-3 py-2 text-right')}>
                     <RowActions>
                       {can('SETTING.COMMODITY_CATEGORY.DELETE') && (
                         <Button variant="destructive" size="inline" onClick={() => setToDelete(row)}>

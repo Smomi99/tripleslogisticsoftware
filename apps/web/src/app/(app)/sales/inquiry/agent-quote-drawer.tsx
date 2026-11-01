@@ -15,6 +15,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Modal } from '@/components/ui/modal';
 import { RowActions } from '@/components/ui/row-actions';
 import { Status } from '@/components/ui/status';
+import { useEndPins } from '@/components/ui/table-scroll';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 import { CONVERT_FEATURE, ConvertQuoteForm, modeOf } from './convert-quote-form';
@@ -202,6 +203,8 @@ export function AgentQuoteDrawer({
 }) {
   const { authorizedRequest, can } = useSession();
   const [quotes, setQuotes] = useState<StaffAgentQuoteDto[] | null>(null);
+  // Status and Actions stay in view as the table scrolls sideways (owner, 2026-11-01).
+  const pin = useEndPins([quotes]);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -319,17 +322,17 @@ export function AgentQuoteDrawer({
         {quotes !== null && quotes.length > 0 && (
           // Seven columns do not fit a phone; the table scrolls sideways in
           // its own box rather than pushing the sheet wider than the screen.
-          <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+          <div {...pin.box} className="group/scroller -mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
             <table className="w-full min-w-[44rem] border-collapse">
               <thead>
-                <tr className="border-b border-line bg-module-soft">
+                <tr ref={pin.rowRef} className="border-b border-line bg-module-soft">
                   <th className="label-manifest whitespace-nowrap px-2 py-2 text-left">Agent</th>
                   <th className="label-manifest whitespace-nowrap px-2 py-2 text-left">Offer</th>
                   <th className="label-manifest whitespace-nowrap px-2 py-2 text-right">Total</th>
                   <th className="label-manifest whitespace-nowrap px-2 py-2 text-right">T/T</th>
                   <th className="label-manifest whitespace-nowrap px-2 py-2 text-left">Valid until</th>
-                  <th className="label-manifest whitespace-nowrap px-2 py-2 text-left">Status</th>
-                  <th className="label-manifest whitespace-nowrap px-2 py-2 text-right">Actions</th>
+                  <th {...pin.head(0, 'label-manifest whitespace-nowrap px-2 py-2 text-left')}>Status</th>
+                  <th {...pin.head(1, 'label-manifest whitespace-nowrap px-2 py-2 text-right')}>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -360,8 +363,8 @@ export function AgentQuoteDrawer({
                           key={row.key}
                           className={
                             index === rows.length - 1
-                              ? 'border-b border-line hover:bg-row-hover [&>td]:align-top'
-                              : 'hover:bg-row-hover [&>td]:align-top'
+                              ? 'group border-b border-line hover:bg-row-hover [&>td]:align-top'
+                              : 'group hover:bg-row-hover [&>td]:align-top'
                           }
                         >
                           {index === 0 && (
@@ -398,17 +401,14 @@ export function AgentQuoteDrawer({
                             {(row.option === null ? quote.validUntil : row.option.validUntil) ?? '—'}
                           </td>
                           {index === 0 && (
-                            <td rowSpan={rows.length} className="px-2 py-2 text-cell">
+                            <td rowSpan={rows.length} {...pin.cell(0, 'px-2 py-2 text-cell')}>
                               <Status tone={STATUS_TONE[quote.status] ?? 'inactive'}>
                                 {STATUS_LABEL[quote.status] ?? quote.status}
                               </Status>
                             </td>
                           )}
                           {index === 0 && (
-                            <td
-                              rowSpan={rows.length}
-                              className="whitespace-nowrap px-2 py-2 text-right text-cell"
-                            >
+                            <td rowSpan={rows.length} {...pin.cell(1, 'whitespace-nowrap px-2 py-2 text-right text-cell')}>
                               <RowActions>
                                 {/* Details leads: it is on every row, and its
                                     amendment count is worth seeing without

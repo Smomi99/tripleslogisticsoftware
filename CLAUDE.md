@@ -502,7 +502,9 @@ A new module needs a row in both and a block in `globals.css`.
   `--harbour`, medium weight. Row hover is a tint of the module colour. Headers never wrap; a text
   cell keeps its own width up to 18rem and wraps only past it, so names are not squeezed onto two
   lines. A table wider than its box scrolls sideways under a sticky Code column and a sticky
-  Action column; their edges show a shadow only while columns are hidden beneath them, and a
+  Action column, with every Status column (any header naming a status) pinned beside Action
+  (owner, 2026-11-01) — hand-built tables do the same with `useEndPins` from `ui/table-scroll`;
+  their edges show a shadow only while columns are hidden beneath them, and a
   **Columns ‹ ›** pair in the footer scrolls across (an office mouse wheel does not scroll
   sideways). **Below `md` the same rows render as cards** — code and SL on top, each column as
   label/value, actions as tappable chips — with a sort picker in place of the clickable headers.

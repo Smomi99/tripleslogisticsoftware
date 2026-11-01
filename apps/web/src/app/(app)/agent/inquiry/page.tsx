@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/form-layout';
 import { RowActions } from '@/components/ui/row-actions';
 import { Status } from '@/components/ui/status';
+import { useEndPins } from '@/components/ui/table-scroll';
 import { useSession } from '@/lib/session';
 
 /**
@@ -81,6 +82,8 @@ const QUOTE_LABEL: Record<string, string> = {
 export default function PortalInquiryListPage() {
   const { authorizedList: list } = useSession();
   const [inquiries, setInquiries] = useState<AgentInquiryDto[] | null>(null);
+  // Status and Action stay in view as the list scrolls sideways (owner, 2026-11-01).
+  const pin = useEndPins([inquiries]);
   const [error, setError] = useState<string | null>(null);
   const [pendingOnly, setPendingOnly] = useState(false);
   const [search, setSearch] = useState('');
@@ -167,10 +170,10 @@ export default function PortalInquiryListPage() {
       )}
 
       {inquiries !== null && inquiries.length > 0 && (
-        <div className="overflow-x-auto rounded-card border border-line bg-surface shadow-manifest">
+        <div {...pin.box} className="group/scroller overflow-x-auto rounded-card border border-line bg-surface shadow-manifest">
           <table className="w-full min-w-275 border-collapse">
             <thead>
-              <tr className="border-b border-line bg-module-soft">
+              <tr ref={pin.rowRef} className="border-b border-line bg-module-soft">
                 <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Inquiry No</th>
                 <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Date</th>
                 <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Commodity</th>
@@ -180,8 +183,8 @@ export default function PortalInquiryListPage() {
                 <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Required container</th>
                 <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Valid to date</th>
                 <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Quotation</th>
-                <th className="label-manifest whitespace-nowrap px-3 py-2 text-left">Status</th>
-                <th className="label-manifest whitespace-nowrap px-3 py-2 text-right">Action</th>
+                <th {...pin.head(0, 'label-manifest whitespace-nowrap px-3 py-2 text-left')}>Status</th>
+                <th {...pin.head(1, 'label-manifest whitespace-nowrap px-3 py-2 text-right')}>Action</th>
               </tr>
             </thead>
             <tbody>
@@ -194,7 +197,7 @@ export default function PortalInquiryListPage() {
                 return (
                   <tr
                     key={inquiry.id}
-                    className="border-b border-line last:border-0 hover:bg-row-hover"
+                    className="group border-b border-line last:border-0 hover:bg-row-hover"
                   >
                     {/* §12: the business code is mono, on a tinted gutter — the
                         anchor the eye returns to when scanning a column. */}
@@ -239,7 +242,7 @@ export default function PortalInquiryListPage() {
                       still links to the same place — the messages, and the
                       won/lost answer when it comes.
                     */}
-                    <td className="whitespace-nowrap px-3 py-2 text-cell">
+                    <td {...pin.cell(0, 'whitespace-nowrap px-3 py-2 text-cell')}>
                       {quote === null ? (
                         <span className="text-steel">–</span>
                       ) : (
@@ -250,7 +253,7 @@ export default function PortalInquiryListPage() {
                         </Link>
                       )}
                     </td>
-                    <td className="whitespace-nowrap px-3 py-2 text-right text-cell">
+                    <td {...pin.cell(1, 'whitespace-nowrap px-3 py-2 text-right text-cell')}>
                       <RowActions>
                         <Link href={pathname} className="text-harbour hover:underline">
                           View
