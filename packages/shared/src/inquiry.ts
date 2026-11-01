@@ -494,6 +494,30 @@ export interface InquiryFollowupDto {
 
 // ---------------------------------------------------------------- list query
 
+/**
+ * The Live Inquiry list's tabs (owner, 2026-11-01): what is still being
+ * worked, what was won, and what ended without winning. Every status is in
+ * exactly one tab. An OPEN inquiry past its valid-to reads "Lapsed" but is
+ * still OPEN, so it stays in Active until someone closes it.
+ */
+export const INQUIRY_TABS = ['ACTIVE', 'WON', 'CLOSED'] as const;
+export type InquiryTab = (typeof INQUIRY_TABS)[number];
+
+export const INQUIRY_TAB_LABEL: Record<InquiryTab, string> = {
+  ACTIVE: 'Active',
+  WON: 'Won',
+  CLOSED: 'Lost & closed',
+};
+
+export const INQUIRY_TAB_STATUSES: Record<InquiryTab, readonly InquiryStatus[]> = {
+  ACTIVE: ['OPEN', 'RFQ_SENT', 'PRICED', 'QUOTED'],
+  WON: ['WON'],
+  CLOSED: ['LOST', 'EXPIRED', 'CANCELLED'],
+};
+
+/** How many inquiries each tab holds under the list's other filters. */
+export type InquiryTabCountsDto = Record<InquiryTab, number>;
+
 export const inquiryListQuerySchema = listQuerySchema.extend({
   fromDate: optionalDateField,
   toDate: optionalDateField,
@@ -502,6 +526,8 @@ export const inquiryListQuerySchema = listQuerySchema.extend({
   podId: optionalIdField,
   salesmanId: optionalIdField,
   status: z.enum(INQUIRY_STATUSES).optional(),
+  /** One tab's statuses; the status filter narrows within it. */
+  tab: z.enum(INQUIRY_TABS).optional(),
   /**
    * §4 rule 10: a salesman sees their own inquiries by default. Asking for the
    * whole team requires SALES.INQUIRY.VIEW_ALL — the server decides, this only

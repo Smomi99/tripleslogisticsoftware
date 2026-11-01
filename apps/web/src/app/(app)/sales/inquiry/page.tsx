@@ -3,8 +3,12 @@
 import {
   type InquiryDto,
   INQUIRY_STATUS_TONE,
-  INQUIRY_STATUSES,
+  INQUIRY_TAB_LABEL,
+  INQUIRY_TAB_STATUSES,
+  INQUIRY_TABS,
   type InquirySortField,
+  type InquiryTab,
+  type InquiryTabCountsDto,
   type LookupOption,
   SHIPMENT_TYPES,
 } from '@ff/shared';
@@ -20,6 +24,7 @@ import { InquiryForm } from '@/components/sales/inquiry-form';
 import { PageHeader } from '@/components/ui/form-layout';
 import { Modal } from '@/components/ui/modal';
 import { Status } from '@/components/ui/status';
+import { Tabs } from '@/components/ui/tabs';
 import { useSession } from '@/lib/session';
 import { useMasterList } from '@/lib/use-master-list';
 
@@ -67,10 +72,47 @@ function requiredVolume(inquiry: InquiryDto): string {
 export default function InquiryListPage() {
   const { authorizedRequest, can } = useSession();
   const router = useRouter();
+  /*
+   * Owner, 2026-11-01: three tabs over the statuses — Active (open to
+   * quoted), Won, and Lost & closed (lost, expired, cancelled) — and the
+   * most recent inquiry first.
+   */
+  const [tab, setTab] = useState<InquiryTab>('ACTIVE');
   const list = useMasterList<InquiryDto, InquirySortField>(
-    '/api/tenant/sales/inquiries',
+    `/api/tenant/sales/inquiries?tab=${tab}`,
     'inquiryDate',
+    undefined,
+    'desc',
   );
+  // Each tab's count under the other filters, refreshed whenever the list is.
+  const [tabCounts, setTabCounts] = useState<InquiryTabCountsDto | null>(null);
+  useEffect(() => {
+    const params = new URLSearchParams();
+    const term = list.searchInput.trim();
+    if (term !== '') params.set('search', term);
+    for (const [key, value] of Object.entries(list.filters)) {
+      if (value !== '' && key !== 'status') params.set(key, value);
+    }
+    let current = true;
+    authorizedRequest<InquiryTabCountsDto>(`/api/tenant/sales/inquiries/tab-counts?${params.toString()}`)
+      .then((counts) => {
+        if (current) setTabCounts(counts);
+      })
+      .catch(() => {
+        if (current) setTabCounts(null);
+      });
+    return () => {
+      current = false;
+    };
+    // Keyed on list.rows, not the filters: a reload is when the filters it
+    // was made with — the search after its debounce — have settled.
+  }, [authorizedRequest, list.rows]);
+
+  function changeTab(next: InquiryTab): void {
+    setTab(next);
+    // A status belongs to one tab, so it does not travel; the page starts again.
+    list.setFilter('status', '');
+  }
   const [options, setOptions] = useState<InquiryOptions | null>(null);
   const [viewing, setViewing] = useState<InquiryDto | null>(null);
   const [followingUp, setFollowingUp] = useState<InquiryDto | null>(null);
@@ -200,6 +242,13 @@ export default function InquiryListPage() {
         }
       />
 
+      <Tabs
+        label="Inquiry stage"
+        value={tab}
+        onChange={changeTab}
+        tabs={INQUIRY_TABS.map((t) => ({ id: t, label: INQUIRY_TAB_LABEL[t], count: tabCounts?.[t] }))}
+      />
+
       {/* §5.5 filters, in the client's order. Two to a row on a phone. */}
       <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
         <Input
@@ -278,19 +327,22 @@ export default function InquiryListPage() {
             </option>
           ))}
         </Select>
-        <Select
-          aria-label="Status"
-          value={list.filters['status'] ?? ''}
-          onChange={(event) => list.setFilter('status', event.target.value)}
-          className="sm:w-36"
-        >
-          <option value="">All statuses</option>
-          {INQUIRY_STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </Select>
+        {/* The open tab's statuses; Won is one status, so it has nothing to choose. */}
+        {INQUIRY_TAB_STATUSES[tab].length > 1 && (
+          <Select
+            aria-label="Status"
+            value={list.filters['status'] ?? ''}
+            onChange={(event) => list.setFilter('status', event.target.value)}
+            className="sm:w-36"
+          >
+            <option value="">All statuses</option>
+            {INQUIRY_TAB_STATUSES[tab].map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </Select>
+        )}
 
         {/* §4 rule 10's scope, shown only to someone it would change anything for. */}
         {options?.canViewAll === true && (
@@ -399,14 +451,23 @@ export default function InquiryListPage() {
                 </Button>
               }
             />
-          ) : (
+          ) : tab === 'ACTIVE' ? (
             <EmptyState
-              title="No inquiries yet"
-              description="Raise your first inquiry to start working the pipeline."
+              title="No active inquiries"
+              description="Raise an inquiry to start working the pipeline. Won ones, and lost, expired or cancelled ones, are in their own tabs."
               action={
                 can('SALES.INQUIRY.CREATE') ? (
                   <Button onClick={() => setFormFor('new')}>+ New inquiry</Button>
                 ) : null
+              }
+            />
+          ) : (
+            <EmptyState
+              title={tab === 'WON' ? 'No won inquiries yet' : 'No lost or closed inquiries'}
+              description={
+                tab === 'WON'
+                  ? 'An inquiry moves here when its quotation is won.'
+                  : 'Inquiries that were lost, expired or cancelled are listed here.'
               }
             />
           )

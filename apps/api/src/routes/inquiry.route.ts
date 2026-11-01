@@ -11,6 +11,9 @@ import {
   inquiryFollowupInputSchema,
   inquiryInputSchema,
   inquiryListQuerySchema,
+  INQUIRY_TAB_STATUSES,
+  type InquiryTab,
+  type InquiryTabCountsDto,
   type InquiryChargeOptionsDto,
   type InquiryRateDto,
   inquiryRateAttachSchema,
@@ -1557,6 +1560,87 @@ inquiryRouter.get(
   },
 );
 
+/**
+ * The list's filters as a where clause, for the list and its tab counts alike,
+ * so a tab's count is the number of rows the tab shows. `withStatus` false
+ * leaves out the tab and the status filter: the counts are per tab.
+ */
+async function listWhere(
+  db: TenantDb,
+  auth: { userId: bigint; isSuperadmin: boolean; permissions: ReadonlySet<string> },
+  query: ReturnType<typeof inquiryListQuerySchema.parse>,
+  withStatus: boolean,
+): Promise<Prisma.InquiryWhereInput> {
+  const scope = await scopeClause(db, auth, query.scope);
+
+  // The tab's statuses and the status filter both apply: a status from
+  // another tab narrows the tab to nothing rather than escaping it.
+  const statuses: Prisma.InquiryWhereInput[] = [];
+  if (withStatus && query.tab !== undefined) statuses.push({ status: { in: [...INQUIRY_TAB_STATUSES[query.tab]] } });
+  if (withStatus && query.status !== undefined) statuses.push({ status: query.status });
+
+  const where: Prisma.InquiryWhereInput = {
+    deletedAt: null,
+    ...scope,
+    ...(statuses.length > 0 ? { AND: statuses } : {}),
+    ...(query.shipmentType !== undefined ? { shipmentType: query.shipmentType } : {}),
+    ...(query.polId !== undefined && query.polId !== '' ? { polId: BigInt(query.polId) } : {}),
+    ...(query.podId !== undefined && query.podId !== '' ? { podId: BigInt(query.podId) } : {}),
+    ...(query.salesmanId !== undefined && query.salesmanId !== ''
+      ? { salesmanId: BigInt(query.salesmanId) }
+      : {}),
+    ...(query.fromDate !== undefined && query.fromDate !== ''
+      ? { inquiryDate: { gte: new Date(query.fromDate) } }
+      : {}),
+    ...(query.toDate !== undefined && query.toDate !== ''
+      ? { inquiryDate: { lte: new Date(query.toDate) } }
+      : {}),
+    ...(query.search !== undefined
+      ? {
+          OR: [
+            { code: { contains: query.search, mode: 'insensitive' } },
+            { customer: { name: { contains: query.search, mode: 'insensitive' } } },
+          ],
+        }
+      : {}),
+  };
+
+  // fromDate and toDate both target inquiryDate, so they must merge rather
+  // than the second overwriting the first.
+  if (
+    query.fromDate !== undefined &&
+    query.fromDate !== '' &&
+    query.toDate !== undefined &&
+    query.toDate !== ''
+  ) {
+    where.inquiryDate = { gte: new Date(query.fromDate), lte: new Date(query.toDate) };
+  }
+  return where;
+}
+
+/**
+ * The Live Inquiry tabs' counts (owner, 2026-11-01): how many inquiries each
+ * tab holds under the list's other filters — the search, the dates, the
+ * ports, whose. Registered before /inquiries/:id so "tab-counts" is not
+ * read as an id.
+ */
+inquiryRouter.get('/inquiries/tab-counts', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
+  const auth = req.auth!;
+  const query = inquiryListQuerySchema.parse(req.query);
+
+  const counts = await withTenant(auth.tenantId, async (db) => {
+    const where = await listWhere(db, auth, query, false);
+    return db.inquiry.groupBy({ by: ['status'], where, _count: { _all: true } });
+  });
+
+  const inTab = (tab: InquiryTab) =>
+    counts.filter((c) => INQUIRY_TAB_STATUSES[tab].includes(c.status)).reduce((n, c) => n + c._count._all, 0);
+  const data: InquiryTabCountsDto = { ACTIVE: inTab('ACTIVE'), WON: inTab('WON'), CLOSED: inTab('CLOSED') };
+
+  const payload: ApiSuccess<InquiryTabCountsDto> = { success: true, data };
+  res.json(payload);
+});
+
 inquiryRouter.get('/inquiries/:id', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
   const auth = req.auth!;
   const id = parseId(req.params.id, 'inquiry');
@@ -1588,44 +1672,7 @@ inquiryRouter.get('/inquiries', requirePermission(`${FEATURE}.VIEW`), async (req
   const today = startOfToday();
 
   const { rows, total } = await withTenant(auth.tenantId, async (db) => {
-    const scope = await scopeClause(db, auth, query.scope);
-
-    const where: Prisma.InquiryWhereInput = {
-      deletedAt: null,
-      ...scope,
-      ...(query.shipmentType !== undefined ? { shipmentType: query.shipmentType } : {}),
-      ...(query.status !== undefined ? { status: query.status } : {}),
-      ...(query.polId !== undefined && query.polId !== '' ? { polId: BigInt(query.polId) } : {}),
-      ...(query.podId !== undefined && query.podId !== '' ? { podId: BigInt(query.podId) } : {}),
-      ...(query.salesmanId !== undefined && query.salesmanId !== ''
-        ? { salesmanId: BigInt(query.salesmanId) }
-        : {}),
-      ...(query.fromDate !== undefined && query.fromDate !== ''
-        ? { inquiryDate: { gte: new Date(query.fromDate) } }
-        : {}),
-      ...(query.toDate !== undefined && query.toDate !== ''
-        ? { inquiryDate: { lte: new Date(query.toDate) } }
-        : {}),
-      ...(query.search !== undefined
-        ? {
-            OR: [
-              { code: { contains: query.search, mode: 'insensitive' } },
-              { customer: { name: { contains: query.search, mode: 'insensitive' } } },
-            ],
-          }
-        : {}),
-    };
-
-    // fromDate and toDate both target inquiryDate, so they must merge rather
-    // than the second overwriting the first.
-    if (
-      query.fromDate !== undefined &&
-      query.fromDate !== '' &&
-      query.toDate !== undefined &&
-      query.toDate !== ''
-    ) {
-      where.inquiryDate = { gte: new Date(query.fromDate), lte: new Date(query.toDate) };
-    }
+    const where = await listWhere(db, auth, query, true);
 
     const sortBy: InquirySortField = INQUIRY_SORT_FIELDS.includes(
       query.sortBy as InquirySortField,
@@ -1637,7 +1684,10 @@ inquiryRouter.get('/inquiries', requirePermission(`${FEATURE}.VIEW`), async (req
       db.inquiry.findMany({
         where,
         include: inquiryInclude,
-        orderBy: { [sortBy]: query.sortOrder === 'asc' ? 'asc' : 'desc' },
+        // Ties break newest-created first (owner, 2026-11-01: "the recent
+        // date first"), so a day's inquiries read in the order they came in
+        // and paging never repeats or skips a row.
+        orderBy: [{ [sortBy]: query.sortOrder === 'asc' ? 'asc' : 'desc' }, { id: 'desc' }],
         skip: (query.page - 1) * query.limit,
         take: query.limit,
       }),
