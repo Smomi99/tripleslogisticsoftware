@@ -516,6 +516,11 @@ A new module needs a row in both and a block in `globals.css`.
   labelled **More ▾** menu, so the Action column never crowds out the data. Colour comes from the
   action: `--harbour`, destructive/deactivate in `--alert`. Hide what the user lacks permission
   for — a hidden action simply drops out of the row.
+- **Dropdowns** (`ui/select`, exported as `Select` from `ui/field`). Every single-choice dropdown
+  is searchable (owner, 2026-11-01): type to filter, ↓/↑ and Enter to pick, Escape to close. It
+  takes native `<option>`/`<optgroup>` children, `value`/`onChange` or `register()`, so never
+  write a raw `<select>`. The list opens in the top layer, so modals and scroll boxes never clip
+  it. Many-choice fields use `ui/multi-select` (§8).
 - **Buttons.** 8px radius, the one soft shadow; 40px tall on a phone, 36px from `sm` up so a
   button sits level with an input.
 - **Forms.** Single column up to 8 fields, two columns beyond (one column on a phone). Labels

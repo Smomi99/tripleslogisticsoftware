@@ -14,6 +14,7 @@ import { cn } from '@/lib/utils';
 
 import { Button } from './button';
 import { RowActions } from './row-actions';
+import { Select } from './select';
 import {
   ColumnScrollButtons,
   PINNED_END_EDGE,
@@ -215,11 +216,11 @@ export function DataTable<T extends RowData>({
             <label htmlFor={sortSelectId} className="label-field shrink-0 text-steel">
               Sort by
             </label>
-            <select
+            <Select
               id={sortSelectId}
               value={sortBy ?? ''}
               onChange={(event) => onSortChange(event.target.value, sortOrder)}
-              className="h-10 min-w-0 flex-1 rounded-manifest border border-line bg-surface px-3 text-base text-hull focus:border-harbour focus:outline-none focus:ring-3 focus:ring-harbour/20"
+              className="flex-1"
             >
               {sortBy === undefined && <option value="">Default order</option>}
               {sortableColumns.map((c) => (
@@ -227,7 +228,7 @@ export function DataTable<T extends RowData>({
                   {c.header}
                 </option>
               ))}
-            </select>
+            </Select>
             <Button
               variant="secondary"
               aria-label={sortOrder === 'asc' ? 'Sorted ascending — reverse' : 'Sorted descending — reverse'}

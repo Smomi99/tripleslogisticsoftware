@@ -8,11 +8,8 @@ import { Select } from './field';
 /**
  * Country dropdown — every ISO 3166-1 country, selected rather than typed.
  *
- * A native select rather than a custom combobox on purpose: it gives keyboard
- * type-ahead for free (an operator types "ban" and lands on Bangladesh), works
- * with every screen reader, and needs no open/close state. §12's users spend
- * eight hours a day in these forms, and the fastest control is the one their
- * fingers already know.
+ * The shared searchable Select: an operator types "ban" and the list is
+ * Bangladesh, rather than scrolling 250 names.
  *
  * Stores the country NAME, matching the existing `country` columns (§5, §6).
  * React 19 passes `ref` as an ordinary prop, so react-hook-form's register()

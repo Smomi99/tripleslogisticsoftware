@@ -2,6 +2,8 @@ import type { ComponentPropsWithRef, ReactNode } from 'react';
 
 import { cn } from '@/lib/utils';
 
+import { controlClasses } from './control';
+
 /*
  * Form rules, all of them load-bearing:
  *   - labels sit ABOVE inputs, never beside or inside, in sentence case
@@ -48,18 +50,9 @@ export function Field({ id, label, required, error, hint, children, wide }: Fiel
   );
 }
 
-const controlClasses = cn(
-  'h-10 w-full rounded-manifest border border-line bg-surface px-3 sm:h-9 sm:px-2.5',
-  'text-base text-hull transition-[border-color,box-shadow] duration-[120ms] ease-manifest sm:text-body',
-  'hover:border-steel/50',
-  'focus:border-harbour focus:outline-none focus:ring-3 focus:ring-harbour/20',
-  'disabled:cursor-not-allowed disabled:bg-paper disabled:text-steel',
-  'aria-[invalid=true]:border-alert aria-[invalid=true]:focus:ring-alert/20',
-);
-
 /**
  * React 19 passes `ref` as an ordinary prop, so no forwardRef is needed — but
- * the prop type has to admit it, which SelectHTMLAttributes alone does not.
+ * the prop type has to admit it, which InputHTMLAttributes alone does not.
  */
 export interface InputProps extends ComponentPropsWithRef<'input'> {
   /** Identifiers and numbers render in mono with tabular figures (§12). */
@@ -76,10 +69,9 @@ export function Input({ className, numeric, ...props }: InputProps) {
   );
 }
 
-export function Select({ className, children, ...props }: ComponentPropsWithRef<'select'>) {
-  return (
-    <select className={cn(controlClasses, 'pr-8', className)} {...props}>
-      {children}
-    </select>
-  );
-}
+/**
+ * Every dropdown is the searchable one (client, 2026-11-01). It lives in its
+ * own client module; it is exported here so the 200-odd screens that import
+ * Select beside Field and Input keep their imports.
+ */
+export { Select, type SelectProps } from './select';
