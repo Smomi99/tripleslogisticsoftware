@@ -74,6 +74,7 @@ async function makeWorld(name: string, slug: string, tag: string, extra: number)
     ).id;
   const ctg = await port('CTG', 'Bangladesh');
   const ham = await port('HAM', 'Germany');
+  const rtm = await port('RTM', 'Netherlands');
   const carrierType = await owner.carrierType.findFirstOrThrow({ where: { tenantId: null }, select: { id: true } });
   const carrier = await owner.carrier.create({ data: { tenantId, code: `CAR-${tag}`, name: `Line ${tag}`, typeId: carrierType.id }, select: { id: true } });
   const source = await owner.inquirySource.findFirstOrThrow({ where: { tenantId: null }, select: { id: true } });
@@ -84,6 +85,7 @@ async function makeWorld(name: string, slug: string, tag: string, extra: number)
     status: 'OPEN' | 'QUOTED' | 'WON' | 'LOST',
     inquiryDate: Date,
     validTo?: Date,
+    podId: bigint = ham,
   ) => {
     inquiryNo += 1;
     return owner.inquiry.create({
@@ -97,7 +99,7 @@ async function makeWorld(name: string, slug: string, tag: string, extra: number)
         customerId: customer.id,
         movementType: 'OUTBOUND',
         polId: ctg,
-        podId: ham,
+        podId,
         status,
         ...(validTo === undefined ? {} : { validTo }),
       },
@@ -106,7 +108,8 @@ async function makeWorld(name: string, slug: string, tag: string, extra: number)
   };
   const first = await inquiry('SEA', 'WON', daysAgo(3));
   await inquiry('SEA', 'LOST', daysAgo(3));
-  await inquiry('AIR', 'QUOTED', daysAgo(3));
+  // To Rotterdam: Inquiry by destination has two ports to rank.
+  await inquiry('AIR', 'QUOTED', daysAgo(3), undefined, rtm);
   // Still OPEN, past its valid-to: the Live Inquiry list calls it Lapsed.
   await inquiry('SEA', 'OPEN', daysAgo(3), daysAgo(1));
   for (let i = 0; i < extra; i++) await inquiry('SEA', 'OPEN', daysAgo(3));
@@ -244,6 +247,12 @@ describe('GET /overview', () => {
       { status: 'LOST', count: 1 },
     ]);
     expect(a.sales!.winRate).toBe(0.5);
+    // Inquiry by destination: every inquiry in the range by its POD, most first.
+    expect(a.sales!.byDestination).toEqual([
+      { id: expect.any(String), name: 'HAM OA', detail: 'Germany', count: 3 },
+      { id: expect.any(String), name: 'RTM OA', detail: 'Netherlands', count: 1 },
+    ]);
+    expect(a.sales!.destinationCount).toBe(2);
 
     // Two live bookings; the cancelled one is a status, never a booking in a column.
     expect(total(a.bookings!.byBucket)).toBe(2);
@@ -263,6 +272,8 @@ describe('GET /overview', () => {
     // Workspace B has more of everything; none of it reached A, and vice versa.
     const b = await overview(B, B.tokens.super);
     expect(b.sales!.total).toBe(6);
+    // B's own ports only, counted from B's inquiries.
+    expect(b.sales!.byDestination.map((d) => [d.name, d.count])).toEqual([['HAM OB', 5], ['RTM OB', 1]]);
     expect(b.bookings!.total).toBe(4);
     expect(b.invoicing!.total).toBe('6000.00');
   });

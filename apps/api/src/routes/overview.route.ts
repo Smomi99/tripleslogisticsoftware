@@ -4,6 +4,7 @@ import {
   type ApiSuccess,
   isoCurrency,
   OVERVIEW_DAILY_MAX_DAYS,
+  OVERVIEW_DESTINATION_LIMIT,
   OVERVIEW_INQUIRY_STATUS_ORDER,
   OVERVIEW_SECTION_PERMISSIONS,
   type OverviewBalancesDto,
@@ -163,11 +164,20 @@ function byMode(buckets: string[], rows: { bucket: string; type: string; n: numb
   });
 }
 
+/** Top-N rows — customers, ports — as the ranked lists show them. */
+const ranked = (rows: { id: bigint; name: string; country?: string; n: number }[]): OverviewRankedDto[] =>
+  rows.map((r) => ({
+    id: r.id.toString(),
+    name: r.name,
+    ...(r.country === undefined ? {} : { detail: r.country }),
+    count: r.n,
+  }));
+
 async function salesSection(db: TenantDb, w: Window, today: string): Promise<OverviewSalesDto> {
   const scope = Prisma.sql`i.tenant_id = ${w.tenantId} AND i.deleted_at IS NULL`;
   const dated = Prisma.sql`i.inquiry_date`;
 
-  const [columns, statuses, previous] = await Promise.all([
+  const [columns, statuses, previous, destinations, destinationCount] = await Promise.all([
     db.$queryRaw<{ bucket: string; type: string; n: number }[]>`
       SELECT to_char(${dated}, ${w.pattern}) AS bucket, i.shipment_type::text AS type, COUNT(*)::int AS n
         FROM inquiry i
@@ -185,6 +195,22 @@ async function salesSection(db: TenantDb, w: Window, today: string): Promise<Ove
       SELECT COUNT(*)::int AS n
         FROM inquiry i
        WHERE ${scope} AND ${between(dated, w.range.previousFrom, w.range.previousTo)}`,
+    // Inquiry by destination (owner, 2026-11-01): every inquiry received in
+    // the range, whatever became of it, by its port of discharge. Ports may
+    // be shared rows (tenant_id NULL, §7A rule 7), so the port join is on id
+    // alone; the inquiry side is already scoped to this tenant.
+    db.$queryRaw<{ id: bigint; name: string; country: string; n: number }[]>`
+      SELECT p.id, p.name, p.country, COUNT(*)::int AS n
+        FROM inquiry i
+        JOIN port p ON p.id = i.pod_id
+       WHERE ${scope} AND ${between(dated, w.range.from, w.range.to)}
+       GROUP BY p.id, p.name, p.country
+       ORDER BY n DESC, p.name
+       LIMIT ${OVERVIEW_DESTINATION_LIMIT}`,
+    db.$queryRaw<{ n: number }[]>`
+      SELECT COUNT(DISTINCT i.pod_id)::int AS n
+        FROM inquiry i
+       WHERE ${scope} AND ${between(dated, w.range.from, w.range.to)}`,
   ]);
 
   const count = (status: OverviewInquiryStatus) => statuses.find((s) => s.status === status)?.n ?? 0;
@@ -196,6 +222,8 @@ async function salesSection(db: TenantDb, w: Window, today: string): Promise<Ove
     previousTotal: previous[0]?.n ?? 0,
     byStatus: OVERVIEW_INQUIRY_STATUS_ORDER.map((status) => ({ status, count: count(status) })).filter((s) => s.count > 0),
     winRate: won + lost === 0 ? null : won / (won + lost),
+    byDestination: ranked(destinations),
+    destinationCount: destinationCount[0]?.n ?? 0,
   };
 }
 
@@ -240,14 +268,6 @@ async function bookingsSection(db: TenantDb, w: Window, zone: string): Promise<O
        ORDER BY n DESC, p.name
        LIMIT 5`,
   ]);
-
-  const ranked = (rows: { id: bigint; name: string; country?: string; n: number }[]): OverviewRankedDto[] =>
-    rows.map((r) => ({
-      id: r.id.toString(),
-      name: r.name,
-      ...(r.country === undefined ? {} : { detail: r.country }),
-      count: r.n,
-    }));
 
   return {
     byBucket: byMode(w.buckets, columns),

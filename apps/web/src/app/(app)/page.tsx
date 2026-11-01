@@ -429,6 +429,24 @@ function Charts({ data }: { data: OverviewDto }) {
               empty="No inquiries in this range."
             />
           </ChartCard>
+          {/* Owner, 2026-11-01: where the inquiries are asking to ship to. */}
+          <ChartCard
+            module="SALES"
+            title="Inquiry by destination"
+            description={
+              sales.destinationCount > sales.byDestination.length
+                ? `The ${sales.byDestination.length} ports of discharge asked for most in this range, of ${count(sales.destinationCount)}.`
+                : 'Every inquiry received in this range, by its port of discharge.'
+            }
+            href="/sales/inquiry"
+          >
+            <BarList
+              label="Inquiries by port of discharge"
+              items={sales.byDestination.map((p) => ({ key: p.id, label: p.name, detail: p.detail, value: p.count }))}
+              format={count}
+              empty="No inquiries in this range."
+            />
+          </ChartCard>
         </>
       )}
 

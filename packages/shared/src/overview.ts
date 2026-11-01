@@ -128,7 +128,18 @@ export interface OverviewSalesDto {
   byStatus: { status: OverviewInquiryStatus; count: number }[];
   /** WON ÷ (WON + LOST) over the range, 0–1; null when nothing was decided. */
   winRate: number | null;
+  /**
+   * Inquiry by destination (owner, 2026-11-01): the ports of discharge the
+   * inquiries dated in the range asked for, most first, at most
+   * OVERVIEW_DESTINATION_LIMIT of them; `detail` is the port's country.
+   */
+  byDestination: OverviewRankedDto[];
+  /** How many different ports of discharge the range's inquiries named. */
+  destinationCount: number;
 }
+
+/** Inquiry by destination lists this many ports at most. */
+export const OVERVIEW_DESTINATION_LIMIT = 10;
 
 export interface OverviewRankedDto {
   id: string;
