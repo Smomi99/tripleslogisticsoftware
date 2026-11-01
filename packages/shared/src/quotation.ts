@@ -33,6 +33,17 @@ export const QUOTATION_STATUS_LABEL: Record<QuotationStatus, string> = {
   CANCELLED: 'Cancelled',
 };
 
+/** The status pill's tone, wherever a quotation is listed. */
+export const QUOTATION_STATUS_TONE: Record<QuotationStatus, 'active' | 'pending' | 'inactive' | 'overdue'> = {
+  DRAFT: 'pending',
+  SENT: 'pending',
+  ACCEPTED: 'active',
+  REJECTED: 'overdue',
+  EXPIRED: 'inactive',
+  SUPERSEDED: 'inactive',
+  CANCELLED: 'inactive',
+};
+
 export const TRANSIT_TYPES = ['DIRECT', 'INDIRECT'] as const;
 export type TransitType = (typeof TRANSIT_TYPES)[number];
 

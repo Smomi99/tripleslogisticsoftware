@@ -1,7 +1,11 @@
 'use client';
 
 import {
+  BUSINESS_MATRIX_FIGURE_LABEL,
   BUSINESS_MATRIX_SORT_FIELDS,
+  businessMatrixDetailPermissions,
+  type BusinessMatrixFigure,
+  type BusinessMatrixRowDto,
   type BusinessMatrixSortField,
   TRADE_LANE_DIRECTION_LABEL,
   TRADE_LANE_DIRECTIONS,
@@ -25,6 +29,7 @@ import { useSession } from '@/lib/session';
 import { useMasterList } from '@/lib/use-master-list';
 import { cn } from '@/lib/utils';
 
+import { type FigureTarget, FigureDetails } from './figure-details';
 import { TradeLaneForm } from './trade-lane-form';
 
 const FEATURE = 'SALES.BUSINESS_MATRIX';
@@ -54,7 +59,7 @@ export default function Page() {
     <div className="flex flex-col gap-4">
       <PageHeader
         title="Business Matrix"
-        description="Inquiries, quotations, shipped TEUs and revenue for each trade lane, port pair by port pair."
+        description="Live rates, inquiries, quotations, shipped TEUs and revenue for each trade lane, port pair by port pair. Open any figure to see what it counted."
         action={
           can(`${FEATURE}.CREATE`) ? <Button onClick={() => setAdding(true)}>+ Add trade lane</Button> : undefined
         }
@@ -86,6 +91,7 @@ function LaneList({ direction, onDirection }: { direction: TradeLaneDirection; o
   const [editing, setEditing] = useState<TradeLaneDto | null>(null);
   const [toToggle, setToToggle] = useState<TradeLaneDto | null>(null);
   const [isToggling, setToggling] = useState(false);
+  const [opened, setOpened] = useState<FigureTarget | null>(null);
 
   const { page, limit, total } = list.meta;
   const totalPages = limit > 0 ? Math.max(1, Math.ceil(total / limit)) : 1;
@@ -195,8 +201,8 @@ function LaneList({ direction, onDirection }: { direction: TradeLaneDirection; o
               title={`No ${direction === 'OUTBOUND' ? 'outbound' : 'inbound'} trade lanes yet`}
               description={
                 direction === 'OUTBOUND'
-                  ? 'Add a lane, one POL to the PODs it serves, to see its inquiries, quotations, TEUs and revenue port by port.'
-                  : 'Add a lane, the POLs that feed one POD, to see its inquiries, quotations, TEUs and revenue port by port.'
+                  ? 'Add a lane, one POL to the PODs it serves, to see its live rates, inquiries, quotations, TEUs and revenue port by port.'
+                  : 'Add a lane, the POLs that feed one POD, to see its live rates, inquiries, quotations, TEUs and revenue port by port.'
               }
             />
           )}
@@ -209,6 +215,16 @@ function LaneList({ direction, onDirection }: { direction: TradeLaneDirection; o
               lane={lane}
               onEdit={can(`${FEATURE}.EDIT`) ? () => setEditing(lane) : undefined}
               onToggle={can(`${FEATURE}.TOGGLE_STATUS`) ? () => setToToggle(lane) : undefined}
+              onOpen={(figure, row) =>
+                setOpened({
+                  figure,
+                  movementType: lane.movementType,
+                  pol: row.pol,
+                  pod: row.pod,
+                  from: list.filters.from ?? '',
+                  to: list.filters.to ?? '',
+                })
+              }
             />
           ))}
         </div>
@@ -231,6 +247,8 @@ function LaneList({ direction, onDirection }: { direction: TradeLaneDirection; o
           </div>
         </div>
       )}
+
+      {opened !== null && <FigureDetails target={opened} onClose={() => setOpened(null)} />}
 
       {editing !== null && (
         <TradeLaneForm
@@ -267,10 +285,43 @@ function LaneList({ direction, onDirection }: { direction: TradeLaneDirection; o
 }
 
 /** One lane: C8 "Trade Lane Name : …" and its table (row 9). */
-function LaneTable({ lane, onEdit, onToggle }: { lane: TradeLaneDto; onEdit?: (() => void) | undefined; onToggle?: (() => void) | undefined }) {
+function LaneTable({
+  lane,
+  onEdit,
+  onToggle,
+  onOpen,
+}: {
+  lane: TradeLaneDto;
+  onEdit?: (() => void) | undefined;
+  onToggle?: (() => void) | undefined;
+  onOpen: (figure: BusinessMatrixFigure, row: BusinessMatrixRowDto) => void;
+}) {
+  const { can } = useSession();
   const single = TRADE_LANE_SIDES[lane.movementType].single;
   const head = 'label-manifest whitespace-nowrap border-b border-line px-3 py-2';
   const numberCell = 'px-3 text-right font-mono tabular-nums';
+  // A figure opens onto another screen's records, so it takes that screen's
+  // VIEW (businessMatrixDetailPermissions); without it the number is plain.
+  const opens = (figure: BusinessMatrixFigure) => businessMatrixDetailPermissions(figure, lane.isAir).some((key) => can(key));
+
+  /** A figure, as a link to what it counted when there is something to show and the user may see it. */
+  const figureCell = (figure: BusinessMatrixFigure, row: BusinessMatrixRowDto, value: number | string, shown: string) =>
+    Number(value) === 0 || !opens(figure) ? (
+      shown
+    ) : (
+      <button
+        type="button"
+        onClick={() => onOpen(figure, row)}
+        aria-label={`${shown} — show the ${BUSINESS_MATRIX_FIGURE_LABEL[figure]} records for ${row.pol.name} to ${row.pod.name}`}
+        className={cn(
+          'rounded-sm font-medium text-harbour underline decoration-harbour/30 underline-offset-2',
+          'transition-colors duration-[120ms] ease-manifest hover:decoration-harbour',
+          'focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-harbour/30',
+        )}
+      >
+        {shown}
+      </button>
+    );
 
   return (
     <section className="rounded-card border border-line bg-surface shadow-manifest" aria-label={`Trade lane ${lane.name}`}>
@@ -296,7 +347,7 @@ function LaneTable({ lane, onEdit, onToggle }: { lane: TradeLaneDto; onEdit?: ((
         </div>
       </header>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[40rem] border-collapse text-cell">
+        <table className="w-full min-w-[46rem] border-collapse text-cell">
           <thead>
             <tr className="bg-module-soft">
               <th scope="col" className={cn(head, 'text-left')}>
@@ -304,6 +355,9 @@ function LaneTable({ lane, onEdit, onToggle }: { lane: TradeLaneDto; onEdit?: ((
               </th>
               <th scope="col" className={cn(head, 'text-left')}>
                 POD
+              </th>
+              <th scope="col" className={cn(head, 'text-right')} title="Purchase rates live today on the port pair, whatever the period">
+                Live Rate
               </th>
               <th scope="col" className={cn(head, 'text-right')}>
                 Inquiry Received
@@ -332,12 +386,13 @@ function LaneTable({ lane, onEdit, onToggle }: { lane: TradeLaneDto; onEdit?: ((
                 <tr key={`${row.pol.id}-${row.pod.id}`} className="h-9 border-b border-line last:border-b-0 hover:bg-row-hover">
                   <td className={cn('px-3', single === 'POL' && index === 0 && 'font-semibold')}>{portCell(row.pol, single === 'POL')}</td>
                   <td className={cn('px-3', single === 'POD' && index === 0 && 'font-semibold')}>{portCell(row.pod, single === 'POD')}</td>
-                  <td className={numberCell}>{row.inquiries}</td>
-                  <td className={numberCell}>{row.quotations}</td>
+                  <td className={numberCell}>{figureCell('liveRates', row, row.liveRates, String(row.liveRates))}</td>
+                  <td className={numberCell}>{figureCell('inquiries', row, row.inquiries, String(row.inquiries))}</td>
+                  <td className={numberCell}>{figureCell('quotations', row, row.quotations, String(row.quotations))}</td>
                   <td className={numberCell} title={row.teus === null ? 'An air lane has no containers.' : undefined}>
-                    {row.teus === null ? '—' : amount(row.teus)}
+                    {row.teus === null ? '—' : figureCell('teus', row, row.teus, amount(row.teus))}
                   </td>
-                  <td className={numberCell}>{amount(row.revenue)}</td>
+                  <td className={numberCell}>{figureCell('revenue', row, row.revenue, amount(row.revenue))}</td>
                 </tr>
               );
             })}

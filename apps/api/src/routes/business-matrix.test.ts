@@ -7,8 +7,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
  *
  * Two workspaces. Each has Chittagong → Antwerp traffic that every column
  * counts (inquiries, a quotation revised once, two finalised containers, an
- * issued invoice) beside traffic none of them may count: a draft quotation, a
- * draft load plan, a draft invoice and a Cross Border inquiry.
+ * issued invoice, two live purchase rates) beside traffic none of them may
+ * count: a draft quotation, a draft load plan, a draft invoice, a Cross Border
+ * inquiry, and rates that are draft, lapsed, not yet started or deleted.
  */
 
 const { createApp } = await import('../app');
@@ -29,6 +30,10 @@ interface World {
   slug: string;
   superToken: string;
   viewerToken: string;
+  /** Inquiry and quotation VIEW without VIEW_ALL, and no employee record. */
+  salesToken: string;
+  /** The Sea FCL price list only. */
+  fclToken: string;
   ports: { ctg: bigint; anr: bigint; rtm: bigint; leh: bigint; dac: bigint };
 }
 
@@ -40,6 +45,8 @@ async function cleanup(): Promise<void> {
   for (const table of [
     'trade_lane_port',
     'trade_lane',
+    'freight_rate_line',
+    'freight_rate',
     'debit_invoice',
     'clp_booking',
     'clp',
@@ -215,11 +222,58 @@ async function makeWorld(name: string, slug: string, tag: string): Promise<World
   await invoice('ISSUED', '4000');
   await invoice('DRAFT', '999');
 
+  // Purchase rates on Chittagong → Antwerp. Live today: an FCL and an LCL.
+  // Not live: a draft, one that lapsed yesterday, one that starts after the
+  // live one ends, and a deleted one. Published rates on one lane may not
+  // overlap (freight_rate_no_overlap), so the dates are spaced apart.
+  const goods = await owner.goodsType.findFirstOrThrow({ where: { tenantId: null }, select: { id: true } });
+  const tier = await owner.rateTier.findFirstOrThrow({ where: { code: 'FCL-20STD' }, select: { id: true } });
+  const day = 86_400_000;
+  let rateNo = 0;
+  const rate = async (
+    mode: 'SEA_FCL' | 'SEA_LCL',
+    over: { status?: 'PUBLISHED' | 'DRAFT'; from?: number; to?: number; deleted?: boolean } = {},
+  ) => {
+    rateNo += 1;
+    return owner.freightRate.create({
+      data: {
+        tenantId,
+        code: `FR-${tag}${rateNo}`,
+        mode,
+        polId: ports.ctg,
+        podId: ports.anr,
+        carrierId: carrier.id,
+        goodsTypeId: goods.id,
+        currencyId: bdt,
+        validFrom: new Date(Date.now() + (over.from ?? 0) * day),
+        validTo: new Date(Date.now() + (over.to ?? 30) * day),
+        status: over.status ?? 'PUBLISHED',
+        purchaseSourceType: 'CARRIER',
+        purchaseCarrierId: carrier.id,
+        ...(over.deleted === true ? { deletedAt: new Date() } : {}),
+      },
+      select: { id: true },
+    });
+  };
+  const fcl = await rate('SEA_FCL');
+  await owner.freightRateLine.create({
+    data: { tenantId, rateId: fcl.id, tierId: tier.id, buyPrice: '1100.0000', profitType: 'FLAT', profitValue: '150.0000' },
+  });
+  await rate('SEA_LCL');
+  await rate('SEA_FCL', { status: 'DRAFT' });
+  await rate('SEA_FCL', { from: -30, to: -1 });
+  await rate('SEA_FCL', { from: 31, to: 60 });
+  await rate('SEA_FCL', { deleted: true });
+
   return {
     tenantId,
     slug,
     superToken: superUser.token,
     viewerToken: (await user(`USR-V${tag}`, false, ['SALES.BUSINESS_MATRIX.VIEW'])).token,
+    salesToken: (
+      await user(`USR-P${tag}`, false, ['SALES.BUSINESS_MATRIX.VIEW', 'SALES.INQUIRY.VIEW', 'CUSTOMER_SERVICE.QUOTATION.VIEW'])
+    ).token,
+    fclToken: (await user(`USR-F${tag}`, false, ['SALES.BUSINESS_MATRIX.VIEW', 'PURCHASE.PRICE_LIST_SEA_FCL.VIEW'])).token,
     ports,
   };
 }
@@ -244,6 +298,7 @@ const lane = (w: World, name: string, portIds: bigint[], movementType: 'OUTBOUND
 interface Row {
   pol: { id: string };
   pod: { id: string };
+  liveRates: number;
   inquiries: number;
   quotations: number;
   teus: string | null;
@@ -279,16 +334,18 @@ describe('a trade lane', () => {
     const [antwerp, rotterdam] = res.body.data[0].rows as Row[];
     // Three outbound inquiries, not the Cross Border one. One quotation, not
     // its superseded revision, the draft, or the cancelled number. A 40' and a 20' that are final,
-    // not the draft plan. The issued invoice, not the draft.
-    expect(antwerp).toMatchObject({ pol: { id: A.ports.ctg.toString() }, pod: { id: A.ports.anr.toString() }, inquiries: 3, quotations: 1, teus: '3.00', revenue: '4000.0000' });
-    expect(rotterdam).toMatchObject({ inquiries: 1, quotations: 0, teus: '0.00', revenue: '0.0000' });
+    // not the draft plan. The issued invoice, not the draft. The FCL and LCL
+    // rates live today, not the draft, lapsed, future or deleted ones.
+    expect(antwerp).toMatchObject({ pol: { id: A.ports.ctg.toString() }, pod: { id: A.ports.anr.toString() }, liveRates: 2, inquiries: 3, quotations: 1, teus: '3.00', revenue: '4000.0000' });
+    expect(rotterdam).toMatchObject({ liveRates: 0, inquiries: 1, quotations: 0, teus: '0.00', revenue: '0.0000' });
     expect(res.body.data[0].revenueCurrency).toBe('BDT');
   });
 
   it('counts within a period by each record’s own date', async () => {
     const res = await api(A).get(`/?movementType=OUTBOUND&from=${YEAR}-03-01&to=${YEAR}-03-31`);
     const [antwerp] = res.body.data[0].rows as Row[];
-    expect(antwerp).toMatchObject({ inquiries: 2, quotations: 1, teus: '3.00', revenue: '4000.0000' });
+    // Live rates are live today, whatever the period.
+    expect(antwerp).toMatchObject({ liveRates: 2, inquiries: 2, quotations: 1, teus: '3.00', revenue: '4000.0000' });
     const backwards = await api(A).get(`/?from=${YEAR}-03-31&to=${YEAR}-03-01`);
     expect(backwards.status).toBe(400);
   });
@@ -367,6 +424,78 @@ describe('access', () => {
     const own = await api(B).post('/', lane(B, 'EU Base port', [B.ports.anr]));
     expect(own.status, JSON.stringify(own.body.error ?? {})).toBe(201);
     expect(own.body.data.code).toBe('TLN-001');
-    expect(own.body.data.rows[0]).toMatchObject({ inquiries: 3, quotations: 1, teus: '3.00', revenue: '4000.0000' });
+    expect(own.body.data.rows[0]).toMatchObject({ liveRates: 2, inquiries: 3, quotations: 1, teus: '3.00', revenue: '4000.0000' });
+  });
+});
+
+describe('opening a figure', () => {
+  const FIGURES = ['liveRates', 'inquiries', 'quotations', 'teus', 'revenue'] as const;
+  const pair = (w: World, figure: string, extra = '') =>
+    `/details?figure=${figure}&movementType=OUTBOUND&polId=${w.ports.ctg}&podId=${w.ports.anr}${extra}`;
+  type Rows = Record<string, unknown>[];
+
+  it('lists the live rates it counted, selling side only', async () => {
+    const res = await api(A).get(pair(A, 'liveRates'));
+    expect(res.status, JSON.stringify(res.body.error ?? {})).toBe(200);
+    expect(res.body.data).toMatchObject({ figure: 'liveRates', total: 2, hidden: 0, pol: { id: A.ports.ctg.toString() } });
+    const rows = res.body.data.rows as Rows;
+    expect(rows.map((r) => r['mode']).sort()).toEqual(['SEA_FCL', 'SEA_LCL']);
+    expect(rows.find((r) => r['mode'] === 'SEA_FCL')).toMatchObject({ code: 'FR-MA1', currencyCode: 'BDT', lines: [{ sellPrice: '1250.0000' }] });
+    expect(JSON.stringify(res.body.data)).not.toMatch(/buy|1100/i);
+  });
+
+  it('lists the inquiries, quotations, containers and invoices each figure counted', async () => {
+    const inquiries = await api(A).get(pair(A, 'inquiries'));
+    expect(inquiries.body.data).toMatchObject({ figure: 'inquiries', total: 3, hidden: 0 });
+    expect((inquiries.body.data.rows as Rows).map((r) => r['inquiryDate'])).toEqual([`${YEAR}-03-12`, `${YEAR}-03-10`, `${YEAR}-01-05`]);
+    const inMarch = await api(A).get(pair(A, 'inquiries', `&from=${YEAR}-03-01&to=${YEAR}-03-31`));
+    expect(inMarch.body.data.total).toBe(2);
+
+    // One row per number: the revision that counts, not the superseded one,
+    // the draft or the cancelled number.
+    const quotations = await api(A).get(pair(A, 'quotations'));
+    expect(quotations.body.data.rows).toEqual([expect.objectContaining({ code: `QTN-${YEAR}-7MA01`, revisionNo: 2, status: 'ACCEPTED' })]);
+
+    const teus = await api(A).get(pair(A, 'teus'));
+    expect(teus.body.data).toMatchObject({ figure: 'teus', total: 2, sum: '3.00' });
+    expect((teus.body.data.rows as Rows).map((r) => r['containerSize']).sort()).toEqual(['20STD', '40HC']);
+    expect((teus.body.data.rows as Rows)[0]).toMatchObject({ bookings: [`BKG-${YEAR}-7MA01`], loadedOn: `${YEAR}-03-20` });
+
+    const revenue = await api(A).get(pair(A, 'revenue'));
+    expect(revenue.body.data).toMatchObject({ figure: 'revenue', total: 1, sum: '4000.0000', currency: 'BDT' });
+    expect(revenue.body.data.rows).toEqual([expect.objectContaining({ code: `DN-${YEAR}-7MA01`, bookingCode: `BKG-${YEAR}-7MA01`, totalAmountBase: '4000.0000' })]);
+  });
+
+  it('needs the VIEW of the screen the records belong to', async () => {
+    for (const figure of FIGURES) {
+      const res = await api(A, A.viewerToken).get(pair(A, figure));
+      expect(res.status, figure).toBe(403);
+    }
+    const unknown = await api(A).get(pair(A, 'margin'));
+    expect(unknown.status).toBe(400);
+  });
+
+  it('keeps each screen’s row scope, and says how many it held back', async () => {
+    const own = await api(A, A.salesToken).get(pair(A, 'inquiries'));
+    expect(own.status, JSON.stringify(own.body.error ?? {})).toBe(200);
+    expect(own.body.data).toMatchObject({ total: 0, hidden: 3, rows: [] });
+    const quotes = await api(A, A.salesToken).get(pair(A, 'quotations'));
+    expect(quotes.body.data).toMatchObject({ total: 0, hidden: 1, rows: [] });
+    // A sea lane is two price lists; holding one shows that one's rates.
+    const fclOnly = await api(A, A.fclToken).get(pair(A, 'liveRates'));
+    expect(fclOnly.body.data).toMatchObject({ total: 1, hidden: 1 });
+    expect((fclOnly.body.data.rows as Rows).map((r) => r['mode'])).toEqual(['SEA_FCL']);
+  });
+
+  it('keeps each workspace to its own records', async () => {
+    const foreign = await api(B).get(pair(A, 'inquiries'));
+    expect(foreign.status).toBe(404);
+    for (const figure of FIGURES) {
+      const res = await api(B).get(pair(B, figure));
+      expect(res.status, figure).toBe(200);
+      expect(res.body.data.total, figure).toBeGreaterThan(0);
+      const listed = JSON.stringify(res.body.data.rows);
+      expect(listed, figure).not.toMatch(/7MA|FR-MA/);
+    }
   });
 });

@@ -2,7 +2,9 @@ import { z } from 'zod';
 
 import { listQuerySchema } from './api';
 import type { LookupOption } from './cost-head';
-import type { MovementType } from './inquiry';
+import type { InquiryStatus, MovementType } from './inquiry';
+import type { QuotationStatus } from './quotation';
+import type { RateMode } from './rate-lookups';
 
 /**
  * Sales & Marketing → Business Matrix (docs/DESIGN-UPDATE-2026-10-28.md §1).
@@ -88,6 +90,13 @@ export interface TradeLanePortDto {
 export interface BusinessMatrixRowDto {
   pol: TradeLanePortDto;
   pod: TradeLanePortDto;
+  /**
+   * "Live Rate" (client, 2026-11-01), the column after POD: purchase rates on
+   * this POL → POD live today, by the rule the Live Inquiry's lane check uses —
+   * PUBLISHED, valid from ≤ today ≤ valid to, sea modes on a sea lane and air
+   * on an air lane. As of today whatever the period, like any balance.
+   */
+  liveRates: number;
   /** E9 "Inquiry Received". */
   inquiries: number;
   /** F9 "No of Quotation". */
@@ -114,6 +123,156 @@ export interface TradeLaneDto {
   revenueCurrency: string;
   rows: BusinessMatrixRowDto[];
 }
+
+// ---------------------------------------------------------------------------
+// Opening a figure (client, 2026-11-01): "all the count on business matrix …
+// pop up and show the specific information". Each cell opens the records it
+// counted, matched by the same statement that counted them.
+// ---------------------------------------------------------------------------
+
+/** The matrix's figures, in column order. */
+export const BUSINESS_MATRIX_FIGURES = ['liveRates', 'inquiries', 'quotations', 'teus', 'revenue'] as const;
+export type BusinessMatrixFigure = (typeof BUSINESS_MATRIX_FIGURES)[number];
+
+/** The column headers, as the sheet writes them. */
+export const BUSINESS_MATRIX_FIGURE_LABEL: Record<BusinessMatrixFigure, string> = {
+  liveRates: 'Live Rate',
+  inquiries: 'Inquiry Received',
+  quotations: 'No of Quotation',
+  teus: 'Shipment Volume (TEUs)',
+  revenue: 'Total Revenue',
+};
+
+/** Which price list a live rate of each mode belongs to. */
+export const BUSINESS_MATRIX_RATE_PERMISSION: Record<RateMode, string> = {
+  SEA_FCL: 'PURCHASE.PRICE_LIST_SEA_FCL.VIEW',
+  SEA_LCL: 'PURCHASE.PRICE_LIST_SEA_LCL.VIEW',
+  AIR: 'PURCHASE.PRICE_LIST_AIR.VIEW',
+};
+
+/** A sea lane is rated FCL and LCL, an air lane air — the lane check's split. */
+export const businessMatrixRateModes = (isAir: boolean): RateMode[] => (isAir ? ['AIR'] : ['SEA_FCL', 'SEA_LCL']);
+
+/**
+ * A cell opens records from another screen, so it takes that screen's VIEW
+ * (CLAUDE.md §7) — any one of these keys. The matrix's own VIEW shows the
+ * number; it does not show the customers and prices behind it.
+ */
+export function businessMatrixDetailPermissions(figure: BusinessMatrixFigure, isAir: boolean): string[] {
+  switch (figure) {
+    case 'liveRates':
+      return businessMatrixRateModes(isAir).map((mode) => BUSINESS_MATRIX_RATE_PERMISSION[mode]);
+    case 'inquiries':
+      return ['SALES.INQUIRY.VIEW'];
+    case 'quotations':
+      return ['CUSTOMER_SERVICE.QUOTATION.VIEW'];
+    case 'teus':
+      return ['OPERATION.CONTAINER_LOAD_PLAN.VIEW'];
+    case 'revenue':
+      return ['ACCOUNTS.DEBIT_INVOICE.VIEW'];
+  }
+}
+
+/** A popup lists this many records at most; it says how many more there are. */
+export const BUSINESS_MATRIX_DETAIL_LIMIT = 200;
+
+export const businessMatrixDetailQuerySchema = z
+  .object({
+    figure: z.enum(BUSINESS_MATRIX_FIGURES),
+    movementType: z.enum(TRADE_LANE_DIRECTIONS),
+    polId: portId,
+    podId: portId,
+    from: isoDate.optional(),
+    to: isoDate.optional(),
+  })
+  .refine((q) => q.from === undefined || q.to === undefined || q.from <= q.to, {
+    message: 'The From date must be on or before the To date.',
+    path: ['to'],
+  });
+export type BusinessMatrixDetailQuery = z.input<typeof businessMatrixDetailQuerySchema>;
+
+/** A live purchase rate, as the Price List offers it: selling side only. */
+export interface MatrixRateRow {
+  id: string;
+  code: string;
+  mode: RateMode;
+  carrierName: string;
+  goodsTypeName: string;
+  validFrom: string;
+  validTo: string;
+  transitDays: number | null;
+  route: string | null;
+  currencyCode: string;
+  /** Each tier's sell price, e.g. 20' 1250.0000. Null until a price is set. */
+  lines: { label: string; sellPrice: string | null }[];
+}
+
+export interface MatrixInquiryRow {
+  id: string;
+  code: string;
+  inquiryDate: string;
+  customerName: string;
+  salesmanName: string | null;
+  status: InquiryStatus;
+  /** OPEN past its valid-to, which the Live Inquiry list reads as "Lapsed". */
+  isLapsed: boolean;
+}
+
+/** One per quotation number: its latest counted revision. */
+export interface MatrixQuotationRow {
+  id: string;
+  code: string;
+  revisionNo: number;
+  quotationDate: string;
+  customerName: string;
+  carrierName: string;
+  status: QuotationStatus;
+}
+
+/** A finalised container, counted once at its size's TEU factor. */
+export interface MatrixLoadPlanRow {
+  id: string;
+  code: string;
+  containerNo: string | null;
+  containerSize: string;
+  teus: string;
+  /** The date it is counted by: loaded, or finalised when no load time was kept. */
+  loadedOn: string;
+  carrierName: string;
+  /** The bookings on this port pair inside the box. */
+  bookings: string[];
+}
+
+export interface MatrixInvoiceRow {
+  id: string;
+  code: string;
+  invoiceDate: string;
+  customerName: string;
+  bookingCode: string;
+  currencyCode: string;
+  totalAmount: string;
+  /** In the workspace's base currency — what Total Revenue adds up. */
+  totalAmountBase: string;
+}
+
+interface MatrixDetailBase {
+  pol: TradeLanePortDto;
+  pod: TradeLanePortDto;
+  /** Records this user may open; `rows` holds the first BUSINESS_MATRIX_DETAIL_LIMIT of them. */
+  total: number;
+  /**
+   * Counted in the cell but not this user's to open: colleagues' inquiries and
+   * quotations without VIEW_ALL, or rates on a price list they do not hold.
+   */
+  hidden: number;
+}
+
+export type BusinessMatrixDetailDto =
+  | (MatrixDetailBase & { figure: 'liveRates'; /** The day "live" was judged on. */ asOf: string; rows: MatrixRateRow[] })
+  | (MatrixDetailBase & { figure: 'inquiries'; rows: MatrixInquiryRow[] })
+  | (MatrixDetailBase & { figure: 'quotations'; rows: MatrixQuotationRow[] })
+  | (MatrixDetailBase & { figure: 'teus'; /** The cell's figure. */ sum: string; rows: MatrixLoadPlanRow[] })
+  | (MatrixDetailBase & { figure: 'revenue'; /** ISO code of the base currency. */ currency: string; sum: string; rows: MatrixInvoiceRow[] });
 
 export interface TradeLanePortOption extends LookupOption {
   portCode: string;

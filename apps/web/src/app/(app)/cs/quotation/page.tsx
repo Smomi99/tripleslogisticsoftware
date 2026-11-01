@@ -2,6 +2,7 @@
 
 import {
   QUOTATION_STATUS_LABEL,
+  QUOTATION_STATUS_TONE,
   QUOTATION_STATUSES,
   type QuotationListItemDto,
   type QuotationStatus,
@@ -36,15 +37,7 @@ import { FollowupDrawer } from './followup-drawer';
  * disabled until the customer has accepted, because §1's flow starts there.
  */
 
-const TONE: Record<QuotationStatus, 'active' | 'pending' | 'inactive' | 'overdue'> = {
-  DRAFT: 'pending',
-  SENT: 'pending',
-  ACCEPTED: 'active',
-  REJECTED: 'overdue',
-  EXPIRED: 'inactive',
-  SUPERSEDED: 'inactive',
-  CANCELLED: 'inactive',
-};
+const TONE = QUOTATION_STATUS_TONE;
 
 /** "1450.5" -> "1,450.50", so a column of prices lines up (§12). */
 function money(value: string | null): string {
