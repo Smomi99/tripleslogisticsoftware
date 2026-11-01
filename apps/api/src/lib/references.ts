@@ -45,7 +45,11 @@ const OWNED_CHILDREN: Record<string, readonly OwnedChild[]> = {
     { table: 'carrier_port_pair', column: 'carrier_id', join: false },
   ],
   vendor: [{ table: 'vendor_pic', column: 'vendor_id', join: false }],
-  customer: [{ table: 'customer_pic', column: 'customer_id', join: false }],
+  customer: [
+    { table: 'customer_pic', column: 'customer_id', join: false },
+    // Being in a custom group is a label on the customer, not usage of it.
+    { table: 'customer_group_member', column: 'customer_id', join: false },
+  ],
   agent: [
     { table: 'agent_pic', column: 'agent_id', join: false },
     { table: 'agent_expert_area', column: 'agent_id', join: true },
@@ -116,6 +120,7 @@ const TABLE_LABEL: Record<string, string> = {
   clp: 'container load plans',
   commodity_item: 'commodity items',
   customer_pic: 'customer contacts',
+  customer_group_member: 'customer group memberships',
   employee_cv: 'employee CVs',
   employee_salary: 'salary records',
   freight_rate: 'purchase rates',

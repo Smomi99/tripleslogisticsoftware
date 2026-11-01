@@ -5,6 +5,7 @@ import {
   BUSINESS_AREAS,
   CUSTOMER_TYPE_LABEL,
   CUSTOMER_TYPES,
+  type CustomerGroupDto,
   type LookupOption,
 } from '@ff/shared';
 import { useSearchParams } from 'next/navigation';
@@ -26,7 +27,7 @@ function CustomerPriceEmail() {
 
   const filters = useMemo(() => {
     const picked: Record<string, string> = {};
-    for (const name of ['search', 'customerType', 'businessArea', 'industrySectorId']) {
+    for (const name of ['search', 'customerType', 'businessArea', 'industrySectorId', 'customerGroupId']) {
       const value = params.get(name);
       if (value !== null && value !== '') picked[name] = value;
     }
@@ -43,6 +44,16 @@ function CustomerPriceEmail() {
       .catch(() => setSectorName(null));
   }, [authorizedRequest, sectorId]);
 
+  // A custom group arrives as an id too (owner, 2026-11-01); the header names it.
+  const [groupName, setGroupName] = useState<string | null>(null);
+  const groupId = filters['customerGroupId'];
+  useEffect(() => {
+    if (groupId === undefined) return;
+    void authorizedRequest<CustomerGroupDto[]>('/api/tenant/crm/customer-groups')
+      .then((groups) => setGroupName(groups.find((g) => g.id === groupId)?.name ?? null))
+      .catch(() => setGroupName(null));
+  }, [authorizedRequest, groupId]);
+
   const type = CUSTOMER_TYPES.find((t) => t === filters['customerType']);
   const area = BUSINESS_AREAS.find((a) => a === filters['businessArea']);
   const described =
@@ -51,6 +62,7 @@ function CustomerPriceEmail() {
       type === undefined ? null : CUSTOMER_TYPE_LABEL[type],
       area === undefined ? null : BUSINESS_AREA_LABEL[area],
       sectorId === undefined ? null : (sectorName ?? 'one commodity'),
+      groupId === undefined ? null : `group ${groupName ?? ''}`.trim(),
     ]
       .filter((part): part is string => part !== null)
       .join(' · ') || null;

@@ -14,6 +14,7 @@ export interface CustomerFilter {
   customerType?: CustomerType | undefined;
   businessArea?: BusinessArea | undefined;
   industrySectorId?: string | undefined;
+  customerGroupId?: string | undefined;
   isActive?: boolean | undefined;
 }
 
@@ -53,6 +54,18 @@ export function customerFilterWhere(query: CustomerFilter): Prisma.CustomerWhere
       ? { industrySectorId: BigInt(query.industrySectorId) }
       : {}),
     ...(query.businessArea !== undefined ? { businessArea: query.businessArea } : {}),
+    // A custom group (owner, 2026-11-01): its live members, while the group is live.
+    ...(query.customerGroupId !== undefined
+      ? {
+          groupMemberships: {
+            some: {
+              customerGroupId: BigInt(query.customerGroupId),
+              deletedAt: null,
+              group: { deletedAt: null },
+            },
+          },
+        }
+      : {}),
     /*
      * The search box reaches the type and the commodity as well as the name,
      * because that is what an operator types into it: "garments", or

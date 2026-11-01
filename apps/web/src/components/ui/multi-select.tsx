@@ -45,14 +45,19 @@ export function MultiSelect({
     function onPointerDown(event: MouseEvent): void {
       if (!containerRef.current?.contains(event.target as Node)) setOpen(false);
     }
+    // Escape is caught on the window, before a dialog around this field hears
+    // it: it closes the list, not the form the user has been filling in.
     function onKeyDown(event: KeyboardEvent): void {
-      if (event.key === 'Escape') setOpen(false);
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen(false);
     }
     document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keydown', onKeyDown, true);
     return () => {
       document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keydown', onKeyDown, true);
     };
   }, [isOpen]);
 

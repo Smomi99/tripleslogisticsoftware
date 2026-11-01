@@ -27,6 +27,7 @@ const CODE_TABLES = {
   port: 'port',
   tariff: 'tariff',
   tradeLane: 'trade_lane',
+  customerGroup: 'customer_group',
   costHead: 'cost_head',
   costUnit: 'cost_unit',
   currency: 'currency',

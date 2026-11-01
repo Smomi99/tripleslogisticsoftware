@@ -185,6 +185,18 @@ employee_salary       (Table_Employee, 1:1)
   incentive, gross_salary (GENERATED — auto sum, never stored by hand)
 ```
 
+```
+customer_group        (no client table — owner request, 2026-11-01)
+  id, code(CGR-001), name                    unique per workspace among live groups
+customer_group_member [M:N customer ↔ customer_group]
+  customer_group_id FK, customer_id FK       removing a member retires the row
+```
+
+Custom groups are shared across the workspace. Choosing one filters the Customer list, and Bulk
+email writes to what the list shows, so a group is also a mailing list. They use the
+`CRM.CUSTOMER` permissions: VIEW to filter, CREATE to make one, EDIT to rename it or change its
+members, DELETE to retire it.
+
 `User` sits under CRM on the menu but has no wireframe — it is the auth account, linked
 `user.employee_id → employee.id`. See §7.
 

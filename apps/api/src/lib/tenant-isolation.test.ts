@@ -223,8 +223,9 @@ describe('model tier registry', () => {
     // + sales_lead_document (docs/SALES_LEAD_FOB.md, 2026-10-26)
     // + trade_lane and trade_lane_port (DESIGN-UPDATE-2026-10-28 §1)
     // + vgm and egm_document (§2)
-    // + copy_document (§3).
-    expect(known.length).toBe(122);
+    // + copy_document (§3)
+    // + customer_group and customer_group_member (owner, 2026-11-01).
+    expect(known.length).toBe(124);
   });
 
   it('applies the caller row level security to every view', async () => {

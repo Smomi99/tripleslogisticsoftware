@@ -17,6 +17,7 @@ import { carrierRouter } from './carrier.route';
 import { commodityRouter } from './commodity.route';
 import { costHeadRouter } from './cost-head.route';
 import { customerRouter } from './customer.route';
+import { customerGroupRouter } from './customer-group.route';
 import { customerPriceEmailRouter } from './customer-price-email.route';
 import { employeeRouter } from './employee.route';
 import { currencyRouter } from './currency.route';
@@ -148,6 +149,8 @@ tenantRouter.use('/sales', salesLeadRouter);
 
 // CRM.
 tenantRouter.use('/crm/customers', customerRouter);
+// Owner, 2026-11-01: CRM → Customer → custom groups.
+tenantRouter.use('/crm/customer-groups', customerGroupRouter);
 // CRM → Customer → Email prices. Its own path, so no route here can be read
 // as a customer id by /crm/customers/:id.
 tenantRouter.use('/crm/customer-price-email', customerPriceEmailRouter);

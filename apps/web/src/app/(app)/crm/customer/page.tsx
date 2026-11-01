@@ -6,11 +6,12 @@ import {
   CUSTOMER_TYPE_LABEL,
   CUSTOMER_TYPES,
   type CustomerDto,
+  type CustomerGroupDto,
   type CustomerSortField,
   type LookupOption,
 } from '@ff/shared';
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -24,10 +25,13 @@ import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 
 import { CustomerDetailDrawer } from './customer-detail-drawer';
+import { CustomerGroupForm } from './customer-group-form';
 import { useMasterList } from '@/lib/use-master-list';
 
 /** CRM → Customer (CLAUDE.md §6, §8). */
 const ENDPOINT = '/api/tenant/crm/customers';
+/** Custom groups (owner, 2026-11-01). */
+const GROUPS = '/api/tenant/crm/customer-groups';
 
 export default function CustomerPage() {
   const { authorizedRequest, can } = useSession();
@@ -40,6 +44,28 @@ export default function CustomerPage() {
       .then(setSectors)
       .catch(() => setSectors([]));
   }, [authorizedRequest]);
+
+  /*
+   * Custom groups (owner, 2026-11-01): a named set of customers. Choosing one
+   * filters the list to it, and Bulk email takes the filter with it.
+   */
+  const [groups, setGroups] = useState<CustomerGroupDto[]>([]);
+  const loadGroups = useCallback(async () => {
+    try {
+      setGroups(await authorizedRequest<CustomerGroupDto[]>(GROUPS));
+    } catch {
+      setGroups([]);
+    }
+  }, [authorizedRequest]);
+  useEffect(() => {
+    void loadGroups();
+  }, [loadGroups]);
+  const groupId = list.filters['customerGroupId'] ?? '';
+  const group = groups.find((g) => g.id === groupId) ?? null;
+  /** The group form: null closed, `{ group: null }` creating, `{ group }` editing. */
+  const [groupForm, setGroupForm] = useState<{ group: CustomerGroupDto | null } | null>(null);
+  const [groupToDelete, setGroupToDelete] = useState<CustomerGroupDto | null>(null);
+  const [isDeletingGroup, setDeletingGroup] = useState(false);
 
   /** The customer whose details are open. Read-only; editing is its own route. */
   const [viewing, setViewing] = useState<CustomerDto | null>(null);
@@ -127,9 +153,52 @@ export default function CustomerPage() {
   /** The list's search and filters, for Bulk email to select the same customers. */
   const emailQuery: Record<string, string> = {};
   if (list.searchInput.trim() !== '') emailQuery['search'] = list.searchInput.trim();
-  for (const name of ['customerType', 'businessArea', 'industrySectorId'] as const) {
+  for (const name of ['customerType', 'businessArea', 'industrySectorId', 'customerGroupId'] as const) {
     const value = list.filters[name];
     if (value !== undefined && value !== '') emailQuery[name] = value;
+  }
+
+  /** Out of the group shown, with an Undo that puts it straight back. */
+  async function removeFromGroup(row: CustomerDto): Promise<void> {
+    if (group === null) return;
+    const from = group;
+    try {
+      await authorizedRequest(`${GROUPS}/${from.id}/members/${row.id}`, { method: 'DELETE' });
+      toast.success(`${row.name} removed from ${from.name}`, {
+        action: {
+          label: 'Undo',
+          onClick: () => {
+            void authorizedRequest(`${GROUPS}/${from.id}/members`, { method: 'POST', body: { customerIds: [row.id] } })
+              .then(async () => {
+                toast.success(`${row.name} is back in ${from.name}`);
+                await Promise.all([list.reload(), loadGroups()]);
+              })
+              .catch((error: unknown) => {
+                toast.error(error instanceof ApiError ? error.message : 'Could not put the customer back.');
+              });
+          },
+        },
+      });
+      await Promise.all([list.reload(), loadGroups()]);
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : 'Could not remove the customer from the group.');
+    }
+  }
+
+  async function confirmDeleteGroup(): Promise<void> {
+    if (groupToDelete === null) return;
+    setDeletingGroup(true);
+    try {
+      await authorizedRequest(`${GROUPS}/${groupToDelete.id}`, { method: 'DELETE' });
+      toast.success(`Group ${groupToDelete.name} deleted`);
+      if (groupId === groupToDelete.id) list.setFilter('customerGroupId', '');
+      setGroupToDelete(null);
+      await loadGroups();
+    } catch (error) {
+      toast.error(error instanceof ApiError ? error.message : 'Could not delete the group.');
+    } finally {
+      setDeletingGroup(false);
+    }
   }
 
   async function confirmToggle(): Promise<void> {
@@ -176,6 +245,11 @@ export default function CustomerPage() {
               it carries the filters with it — what the operator is looking at
               is who gets the letter.
             */}
+            {can('CRM.CUSTOMER.CREATE') && (
+              <Button variant="secondary" onClick={() => setGroupForm({ group: null })}>
+                Create custom group
+              </Button>
+            )}
             {can('CRM.CUSTOMER.PRICE_EMAIL') && (
               <Button variant="secondary" asChild>
                 <Link href={{ pathname: '/crm/customer/price-email', query: emailQuery }}>
@@ -245,7 +319,48 @@ export default function CustomerPage() {
             </option>
           ))}
         </Select>
+        {groups.length > 0 && (
+          <Select
+            aria-label="Filter by group"
+            value={groupId}
+            onChange={(event) => list.setFilter('customerGroupId', event.target.value)}
+            className="w-full sm:w-52"
+          >
+            <option value="">All groups</option>
+            {groups.map((g) => (
+              <option key={g.id} value={g.id}>
+                {`${g.name} (${g.memberCount})`}
+              </option>
+            ))}
+          </Select>
+        )}
       </div>
+
+      {group !== null && (
+        // The group on show, and what can be done to it from here.
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-card border border-line bg-module-soft px-4 py-2.5">
+          <p className="text-body text-hull">
+            Showing the group <span className="font-semibold">{group.name}</span>
+            <span className="text-steel">
+              {' '}
+              · <span className="font-mono tabular-nums">{group.memberCount}</span>{' '}
+              {group.memberCount === 1 ? 'customer' : 'customers'}
+            </span>
+          </p>
+          <div className="flex flex-wrap items-center gap-4 sm:ml-auto">
+            {can('CRM.CUSTOMER.EDIT') && (
+              <Button variant="text" size="inline" onClick={() => setGroupForm({ group })}>
+                Add or remove customers
+              </Button>
+            )}
+            {can('CRM.CUSTOMER.DELETE') && (
+              <Button variant="destructive" size="inline" onClick={() => setGroupToDelete(group)}>
+                Delete group
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
 
       {list.error !== null && (
         <p role="alert" className="rounded-manifest border border-alert/30 bg-alert/5 px-3 py-2 text-body text-alert">
@@ -268,6 +383,11 @@ export default function CustomerPage() {
         isPending={list.isPending}
         actions={(row) => (
           <>
+            {group !== null && can('CRM.CUSTOMER.EDIT') && (
+              <Button variant="destructive" size="inline" onClick={() => void removeFromGroup(row)}>
+                Remove from group
+              </Button>
+            )}
             {can('CRM.CUSTOMER.VIEW') && (
               <Button variant="text" size="inline" asChild>
                 <Link href={`/crm/customer/${row.id}/pic`}>PIC</Link>
@@ -356,6 +476,37 @@ export default function CustomerPage() {
         isPending={isDeleting}
         onConfirm={() => void confirmDelete()}
       />
+      <ConfirmDialog
+        open={groupToDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setGroupToDelete(null);
+        }}
+        title="Delete this group?"
+        message={
+          groupToDelete === null
+            ? ''
+            : `The group ${groupToDelete.name} will be removed from the filter. Its ${groupToDelete.memberCount} ${groupToDelete.memberCount === 1 ? 'customer stays' : 'customers stay'} exactly as they are — only the group goes.`
+        }
+        confirmLabel="Delete group"
+        destructive
+        isPending={isDeletingGroup}
+        onConfirm={() => void confirmDeleteGroup()}
+      />
+
+      {groupForm !== null && (
+        <CustomerGroupForm
+          group={groupForm.group}
+          onClose={() => setGroupForm(null)}
+          onSaved={(saved) => {
+            setGroupForm(null);
+            void loadGroups();
+            // A new group is shown straight away; an edited one is reloaded in place.
+            if (groupForm.group === null) list.setFilter('customerGroupId', saved.id);
+            else void list.reload();
+          }}
+        />
+      )}
+
       <CustomerDetailDrawer customer={viewing} onClose={() => setViewing(null)} />
     </div>
   );

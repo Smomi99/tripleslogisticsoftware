@@ -92,6 +92,8 @@ export const customerListQuerySchema = listQuerySchema.extend({
   businessArea: z.enum(BUSINESS_AREAS).optional(),
   /** Narrow to one commodity category — the client calls it the commodity. */
   industrySectorId: z.string().regex(/^\d+$/).optional(),
+  /** Narrow to one custom group (owner, 2026-11-01). */
+  customerGroupId: z.string().regex(/^\d+$/).optional(),
 });
 
 export interface CustomerDto {

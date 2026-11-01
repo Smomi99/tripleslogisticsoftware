@@ -69,6 +69,8 @@ export const CODE_PREFIX = {
   tariff: 'TRF',
   // DESIGN-UPDATE-2026-10-28 §1: Sales → Business Matrix.
   tradeLane: 'TLN',
+  // Owner, 2026-11-01: CRM → Customer → custom groups.
+  customerGroup: 'CGR',
 
   // Sales. The lead's own Lead ID is now the yearly FOB-2026-0001 series
   // (lib/inquiry-no); LED is kept because the leads raised before the FOB form

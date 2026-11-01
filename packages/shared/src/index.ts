@@ -9,6 +9,7 @@ export * from './accounts';
 export * from './api';
 export * from './auth';
 export * from './business-matrix';
+export * from './customer-group';
 export * from './agent';
 export * from './carrier';
 export * from './codes';

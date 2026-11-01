@@ -65,6 +65,8 @@ export const TENANT_OWNED_MODELS = [
   'CurrencyRateHistory',
   'Customer',
   'CustomerPic',
+  'CustomerGroup', // owner, 2026-11-01: CRM → Customer → custom groups
+  'CustomerGroupMember',
   'Employee',
   'EmployeeCv',
   'EmployeeSalary',

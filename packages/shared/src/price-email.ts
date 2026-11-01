@@ -151,6 +151,8 @@ export const customerPriceEmailRecipientQuerySchema = customerListQuerySchema.pi
   customerType: true,
   businessArea: true,
   industrySectorId: true,
+  // A custom group is a filter like the others, so a group is a mailing list.
+  customerGroupId: true,
 });
 export type CustomerPriceEmailRecipientQuery = z.infer<typeof customerPriceEmailRecipientQuerySchema>;
 
