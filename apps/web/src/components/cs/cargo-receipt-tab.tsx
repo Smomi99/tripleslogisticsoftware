@@ -42,7 +42,11 @@ interface Draft {
   lineStatus: 'ACCEPTED' | 'DECLINED';
   declineReason: string;
   remarks: string;
-  /** Not on this screen; carried so saving a line again does not drop it. */
+  /**
+   * §5.5 rule 6: more cartons than are still owed needs a reason. The line's
+   * Reason box asks for it while the line is over (owner, 2026-11-03: a 265
+   * against 264 could not be confirmed, because nothing on the screen wrote it).
+   */
   overReceiptReason: string;
   /** G.WT still tracks the received cartons, because nobody has typed over it. */
   grossFollowsQty: boolean;
@@ -349,6 +353,11 @@ export function CargoReceiptTab({
 
   async function saveEdit(): Promise<void> {
     if (editing === null || editReason.trim() === '') return;
+    const missing = missingOverReason();
+    if (missing !== null) {
+      setError(missing);
+      return;
+    }
     setError(null);
     setPending(true);
     try {
@@ -368,7 +377,33 @@ export function CargoReceiptTab({
     }
   }
 
+  /**
+   * The first accepted line with more cartons than are owed and no reason —
+   * caught here, so the message can point at the box rather than only repeat
+   * the server's refusal.
+   */
+  function missingOverReason(): string | null {
+    for (const row of touched) {
+      const d = drafts[row.cargoLineId];
+      if (d === undefined || d.lineStatus !== 'ACCEPTED') continue;
+      const qty = Number(d.receivedCtnQty);
+      if (d.receivedCtnQty.trim() !== '' && qty > row.balanceCtnQty && d.overReceiptReason.trim() === '') {
+        return (
+          `Say why ${qty} cartons arrived against ${row.balanceCtnQty} owed on ${row.poNo} / ${row.itemCode} — ` +
+          'type it in that line’s “Why more than owed?” box.'
+        );
+      }
+    }
+    return null;
+  }
+
   async function save(thenConfirm: boolean): Promise<void> {
+    const missing = missingOverReason();
+    if (missing !== null) {
+      setError(missing);
+      setConfirming(false);
+      return;
+    }
     setError(null);
     setPending(true);
     try {
@@ -680,25 +715,47 @@ export function CargoReceiptTab({
                         </td>
                         <td className="px-2 py-1">
                           {editable ? (
+                            // One box, three jobs: why a line is declined, why
+                            // more arrived than is owed (§5.5 rule 6, required),
+                            // or plain remarks.
                             <Input
-                              aria-label={`Reason for ${row.poNo} ${row.itemCode}`}
-                              placeholder={
-                                d.lineStatus === 'DECLINED' ? 'Why is it declined?' : 'Remarks'
+                              aria-label={
+                                over
+                                  ? `Why more than owed for ${row.poNo} ${row.itemCode} (required)`
+                                  : `Reason for ${row.poNo} ${row.itemCode}`
                               }
-                              value={d.lineStatus === 'DECLINED' ? d.declineReason : d.remarks}
+                              placeholder={
+                                d.lineStatus === 'DECLINED'
+                                  ? 'Why is it declined?'
+                                  : over
+                                    ? 'Why more than owed? (required)'
+                                    : 'Remarks'
+                              }
+                              aria-invalid={over && d.overReceiptReason.trim() === ''}
+                              value={
+                                d.lineStatus === 'DECLINED'
+                                  ? d.declineReason
+                                  : over
+                                    ? d.overReceiptReason
+                                    : d.remarks
+                              }
                               onChange={(e) =>
                                 edit(
                                   row.cargoLineId,
                                   d.lineStatus === 'DECLINED'
                                     ? { declineReason: e.target.value }
-                                    : { remarks: e.target.value },
+                                    : over
+                                      ? { overReceiptReason: e.target.value }
+                                      : { remarks: e.target.value },
                                 )
                               }
                               className="w-56"
                             />
                           ) : (
                             <span className="text-steel">
-                              {row.declineReason ?? row.remarks ?? '—'}
+                              {[row.declineReason, row.overReceiptReason, row.remarks]
+                                .filter((v): v is string => v !== null && v.trim() !== '')
+                                .join(' · ') || '—'}
                             </span>
                           )}
                         </td>
