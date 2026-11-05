@@ -172,6 +172,32 @@ describe("the carrier copy (docs/Email Templet.docx)", () => {
   });
 });
 
+describe('several carriers on one lane', () => {
+  it('writes to each address separately, so no recipient sees who else was asked', async () => {
+    // Owner, 2026-11-05: one email per address, one address on each — even
+    // two people at the same carrier get one each.
+    queued.length = 0;
+    const result = await notifyInquiry(stubDb({}), {
+      ...base,
+      movementType: 'OUTBOUND',
+      plan: plan({
+        branch: 'OUTBOUND_AWAITING_RATE',
+        status: 'OPEN',
+        carrierEmails: ['pricing@maersk.test', 'desk@maersk.test', 'rates@msc.test'],
+      }),
+    });
+
+    expect(queued.map((q) => q.to)).toEqual([
+      ['pricing@maersk.test'],
+      ['desk@maersk.test'],
+      ['rates@msc.test'],
+    ]);
+    expect(queued.every((q) => q.templateKey === INQUIRY_CARRIER_RFQ)).toBe(true);
+    expect(queued.every((q) => q.cc === undefined && q.bcc === undefined)).toBe(true);
+    expect(result).toEqual({ kind: 'carriers', queued: true, recipients: 3 });
+  });
+});
+
 describe('the agent copy', () => {
   it('never names the customer', async () => {
     queued.length = 0;
@@ -225,6 +251,31 @@ describe('the agent copy', () => {
     // So "what was sent about this inquiry?" has an answer on the record.
     expect(queued[0]?.relatedType).toBe('inquiry');
     expect(queued[0]?.relatedId).toBe(1n);
+  });
+
+  it('writes to each address separately, so no recipient sees who else was asked', async () => {
+    // Owner, 2026-11-05: three agents on one To line, each one able to read
+    // its competitors' addresses. One email per address, one address on each.
+    queued.length = 0;
+    const result = await notifyInquiry(stubDb({}), {
+      ...base,
+      movementType: 'INBOUND',
+      plan: plan({
+        agentEmails: ['peter@acs.test', 'kelly@acs.test', 'michelle@alpha.test', 'alycia@ccl.test'],
+      }),
+    });
+
+    expect(queued.map((q) => q.to)).toEqual([
+      ['peter@acs.test'],
+      ['kelly@acs.test'],
+      ['michelle@alpha.test'],
+      ['alycia@ccl.test'],
+    ]);
+    // The same letter to every one of them.
+    expect(new Set(queued.map((q) => q.fallback.bodyText)).size).toBe(1);
+    expect(queued.every((q) => q.templateKey === INQUIRY_AGENT_RFQ)).toBe(true);
+    expect(queued.every((q) => q.cc === undefined && q.bcc === undefined)).toBe(true);
+    expect(result).toEqual({ kind: 'agents', queued: true, recipients: 4 });
   });
 });
 

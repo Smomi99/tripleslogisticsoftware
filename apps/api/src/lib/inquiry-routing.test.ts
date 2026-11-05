@@ -62,6 +62,7 @@ async function cleanup(): Promise<void> {
     'customer',
     'industry_sector',
     'port',
+    'carrier_pic',
     'carrier',
     'goods_type',
     'inquiry_source',
@@ -277,6 +278,32 @@ describe('branch 1 — inbound, no rate on the lane', () => {
     expect(await statusOf(id)).toEqual({ status: 'RFQ_SENT', awaitingRate: false });
   });
 
+  it('lists every ticked address once, one letter each', async () => {
+    // Owner, 2026-11-05: one email per address, so nobody asked about the
+    // lane sees anybody else on the To line.
+    const id = await makeInquiry({ movementType: 'INBOUND', withAgent: true, withContact: true });
+    const second = await owner.agent.create({
+      data: { tenantId, code: 'RT-AGT2', name: 'Route Agent Two', country: 'Malaysia', agentType: 'GENERAL' },
+      select: { id: true },
+    });
+    for (const [code, email] of [
+      // Two addresses in one contact's field: two letters, not one shared.
+      ['RT-PIC2', 'peter@second.test; kelly@second.test'],
+      // The first agent's inbox again, under another agent: still one letter.
+      ['RT-PIC3', 'Mette@Route.test'],
+    ] as const) {
+      const pic = await owner.agentPic.create({
+        data: { tenantId, code, agentId: second.id, name: code, email },
+        select: { id: true },
+      });
+      await owner.inquiryPartyContact.create({ data: { tenantId, inquiryId: id, agentPicId: pic.id } });
+    }
+    await owner.inquiryParty.create({ data: { tenantId, inquiryId: id, agentId: second.id } });
+
+    const plan = await route(id);
+    expect(plan.agentEmails).toEqual(['mette@route.test', 'peter@second.test', 'kelly@second.test']);
+  });
+
   it('stays OPEN when nobody was actually shared with', async () => {
     // An inquiry claiming RFQ_SENT with no agent on it is a lie the board
     // would repeat every morning.
@@ -344,6 +371,32 @@ describe('branch 3 — outbound with no rate', () => {
     // The client is explicit that the status does not move: to the salesman it
     // is still an ordinary open inquiry.
     expect(await statusOf(id)).toEqual({ status: 'OPEN', awaitingRate: true });
+  });
+
+  it('lists every ticked carrier address once, one letter each', async () => {
+    // Owner, 2026-11-05: carriers asked about one lane must not see each
+    // other on a shared To line, any more than agents may — even two people
+    // at the same carrier.
+    const id = await makeInquiry({ movementType: 'OUTBOUND' });
+    const carrierType = await owner.carrierType.findFirstOrThrow({ select: { id: true } });
+    const second = await owner.carrier.create({
+      data: { tenantId, code: 'RT-CAR2', name: 'Route Lines Two', typeId: carrierType.id },
+      select: { id: true },
+    });
+    for (const [code, carrier, email] of [
+      ['RT-CPIC1', carrierId, 'desk@lines.test'],
+      ['RT-CPIC2', second.id, 'pricing@two.test'],
+      ['RT-CPIC3', second.id, 'sales@two.test'],
+    ] as const) {
+      const pic = await owner.carrierPic.create({
+        data: { tenantId, code, carrierId: carrier, name: code, email },
+        select: { id: true },
+      });
+      await owner.inquiryPartyContact.create({ data: { tenantId, inquiryId: id, carrierPicId: pic.id } });
+    }
+
+    const plan = await route(id);
+    expect(plan.carrierEmails).toEqual(['desk@lines.test', 'pricing@two.test', 'sales@two.test']);
   });
 
   it('does not count an expired rate as cover', async () => {

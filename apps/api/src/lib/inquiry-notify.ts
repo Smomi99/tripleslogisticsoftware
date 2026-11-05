@@ -211,51 +211,66 @@ export async function notifyInquiry(
   }
 
   /*
+   * One rate request per address, with that address alone on it (owner,
+   * 2026-11-05): five contacts ticked is five emails, even when two of them
+   * work for the same agent or carrier. The agents or carriers on one lane
+   * compete for it, and a shared To line told each of them who else had been
+   * asked. Nothing goes on Cc; the workspace's standing Bcc, which recipients
+   * never see, still applies.
+   */
+  async function sendRfqs(
+    addresses: string[],
+    templateKey: string,
+    values: Record<string, string>,
+    audience: 'AGENT' | 'CARRIER',
+  ): Promise<boolean> {
+    let queued = false;
+    for (const address of addresses) {
+      const result = await queueMail({
+        tenantId: input.tenantId,
+        templateKey,
+        to: [address],
+        variables: values,
+        relatedType: 'inquiry',
+        relatedId: input.inquiryId,
+        actorId: input.actorId ?? null,
+        fallback: {
+          subject: `Rate Request. POL: ${input.polLabel}, POD: ${input.podLabel}, Inquiry No: ${input.code}`,
+          bodyText: rfqBody(values, audience),
+        },
+      });
+      queued ||= result.queued;
+    }
+    return queued;
+  }
+
+  /*
    * Carriers first, and independently of the agents: an inbound inquiry may
    * have both ticked, and each gets its own letter. The two differ by one line,
    * but sending an agent the carrier's letter would tell them there is nowhere
    * to submit — and sending a carrier the agent's would point them at a login
    * they do not have.
    */
-  let carrierQueued = false;
-  if (plan.carrierEmails.length > 0) {
-    const values = rfqVariables(input, await signatureBlock(_db));
-    const result = await queueMail({
-      tenantId: input.tenantId,
-      templateKey: INQUIRY_CARRIER_RFQ,
-      to: plan.carrierEmails,
-      variables: values,
-      relatedType: 'inquiry',
-      relatedId: input.inquiryId,
-      actorId: input.actorId ?? null,
-      fallback: {
-        subject: `Rate Request. POL: ${input.polLabel}, POD: ${input.podLabel}, Inquiry No: ${input.code}`,
-        bodyText: rfqBody(values, 'CARRIER'),
-      },
-    });
-    carrierQueued = result.queued;
-  }
+  const carrierQueued =
+    plan.carrierEmails.length > 0 &&
+    (await sendRfqs(
+      plan.carrierEmails,
+      INQUIRY_CARRIER_RFQ,
+      rfqVariables(input, await signatureBlock(_db)),
+      'CARRIER',
+    ));
 
   if (plan.agentEmails.length > 0) {
-    const to = plan.agentEmails;
-    const values = agentVariables(input, await signatureBlock(_db));
-    const result = await queueMail({
-      tenantId: input.tenantId,
-      templateKey: INQUIRY_AGENT_RFQ,
-      to,
-      variables: values,
-      relatedType: 'inquiry',
-      relatedId: input.inquiryId,
-      actorId: input.actorId ?? null,
-      fallback: {
-        subject: `Rate Request. POL: ${input.polLabel}, POD: ${input.podLabel}, Inquiry No: ${input.code}`,
-        bodyText: rfqBody(values, 'AGENT'),
-      },
-    });
+    const agentQueued = await sendRfqs(
+      plan.agentEmails,
+      INQUIRY_AGENT_RFQ,
+      agentVariables(input, await signatureBlock(_db)),
+      'AGENT',
+    );
     return {
       kind: 'agents',
-      queued: result.queued || carrierQueued,
-      recipients: to.length + plan.carrierEmails.length,
+      queued: agentQueued || carrierQueued,
+      recipients: plan.agentEmails.length + plan.carrierEmails.length,
     };
   }
 

@@ -1,5 +1,6 @@
 import { type MovementType, pricedByAgents } from '@ff/shared';
 
+import { parseAddressList } from './mailer';
 import { MANAGE_PROFIT } from './rate-visibility';
 import type { TenantDb } from './tenant-client';
 
@@ -40,10 +41,13 @@ export interface RoutePlan {
   /** What the inquiry's status becomes. */
   status: 'OPEN' | 'RFQ_SENT' | 'PRICED';
   awaitingRate: boolean;
-  /** Agent contacts to ask, empty when nobody is being asked. */
+  /**
+   * Agent contacts to ask, empty when nobody is being asked. Each address
+   * gets its own letter (owner, 2026-11-05) — see addressesOf.
+   */
   agentEmails: string[];
   /**
-   * Carrier contacts to ask.
+   * Carrier contacts to ask, each address its own letter like the agents'.
    *
    * inquiry_party_contact has carried carrier_pic_id since §6.1's "Share to
    * Agent / Carrier", and until now nothing read it — a user could tick a
@@ -177,15 +181,10 @@ export async function decideRoute(db: TenantDb, input: RouteInput): Promise<Rout
     // agent has. Choosing them was a deliberate act.
     const contacts = await db.inquiryPartyContact.findMany({
       where: { inquiryId: input.inquiryId, agentPicId: { not: null } },
+      orderBy: { id: 'asc' },
       select: { agentPic: { select: { email: true } } },
     });
-    const agentEmails = [
-      ...new Set(
-        contacts
-          .map((c) => c.agentPic?.email?.trim() ?? '')
-          .filter((email) => email !== ''),
-      ),
-    ];
+    const agentEmails = addressesOf(contacts.map((c) => c.agentPic?.email));
     const carrierEmails = await carrierContacts(db, input.inquiryId);
 
     const shared = await db.inquiryParty.count({
@@ -254,22 +253,43 @@ export async function decideRoute(db: TenantDb, input: RouteInput): Promise<Rout
 }
 
 /**
+ * The ticked contacts' addresses, each one once.
+ *
+ * Every address gets its own letter with nobody else on it (owner,
+ * 2026-11-05): five contacts ticked is five emails, each with one address in
+ * To, even when two of them work for the same agent or carrier. A shared To
+ * line showed every recipient who else had been asked.
+ *
+ * A contact's email field sometimes holds two addresses ("a@x.com; b@x.com");
+ * they are split, as Bulk email splits them, or both would land on one To
+ * line. An address ticked twice — two contacts sharing an inbox — is one
+ * letter. In the order the contacts were ticked.
+ */
+function addressesOf(fields: (string | null | undefined)[]): string[] {
+  const seen = new Set<string>();
+  const addresses: string[] = [];
+  for (const address of fields.flatMap((field) => parseAddressList(field))) {
+    if (seen.has(address.toLowerCase())) continue;
+    seen.add(address.toLowerCase());
+    addresses.push(address);
+  }
+  return addresses;
+}
+
+/**
  * The carrier contacts ticked on this inquiry.
  *
- * Same shape as the agent gather above, and deliberately so: the operator
+ * Gathered like the agents' contacts above, and deliberately so: the operator
  * chose these people on the form, and choosing them was the act of deciding
  * who to ask.
  */
 async function carrierContacts(db: TenantDb, inquiryId: bigint): Promise<string[]> {
   const contacts = await db.inquiryPartyContact.findMany({
     where: { inquiryId, carrierPicId: { not: null } },
+    orderBy: { id: 'asc' },
     select: { carrierPic: { select: { email: true } } },
   });
-  return [
-    ...new Set(
-      contacts.map((c) => c.carrierPic?.email?.trim() ?? '').filter((email) => email !== ''),
-    ),
-  ];
+  return addressesOf(contacts.map((c) => c.carrierPic?.email));
 }
 
 /**
