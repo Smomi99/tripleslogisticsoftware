@@ -71,6 +71,13 @@ const today = (): string => new Date().toISOString().slice(0, 10);
 let seq = 0;
 const nextKey = (): string => `r${(seq += 1)}`;
 
+/** The money section's columns: account and amount, plus the rate and the bank charge when shown. */
+const MONEY_GRID: Record<number, string> = {
+  2: 'md:grid-cols-2',
+  3: 'md:grid-cols-3',
+  4: 'md:grid-cols-2 xl:grid-cols-4',
+};
+
 /** Money typed on screen, as ten-thousandths — so 0.1 + 0.2 still balances. */
 function units(value: string): number {
   const n = Number(value);
@@ -189,10 +196,13 @@ export function VoucherForm({
   const [docKey, setDocKey] = useState('');
   const [settleAmount, setSettleAmount] = useState('');
   /**
-   * Base per unit of a foreign invoice's currency: the invoice's own rate,
-   * until the bank's figure is typed in and says otherwise (§14.5).
+   * Base per unit of a foreign invoice's currency, as typed: the invoice's own
+   * rate until the operator types the bank's (§14.5). The invoice amount, this
+   * rate and the base amount move together — whichever is typed, the others
+   * follow (client, 2026-11-08). Never sent: the server reads the rate the bank
+   * gave from the two amounts.
    */
-  const [rate, setRate] = useState<number | null>(null);
+  const [rateText, setRateText] = useState('');
   /** Receiving from a customer: what the bank kept of it, in the base (§14.15). */
   const [bankCharge, setBankCharge] = useState('');
 
@@ -245,7 +255,7 @@ export function VoucherForm({
         ? exact(doc.outstanding)
         : (Number(doc.outstanding) * Number(doc.conversionRate)).toFixed(2);
     setMoneyAmount(banked);
-    setRate(doc.isBaseCurrency || doc.conversionRate === null ? null : Number(doc.conversionRate));
+    setRateText(doc.isBaseCurrency || doc.conversionRate === null ? '' : exact(doc.conversionRate));
     // §14.5: the service the invoice was for picks its category, when there is one.
     const key =
       doc.serviceKey === null
@@ -349,6 +359,25 @@ export function VoucherForm({
   /** What the invoice says was earned, in the base: the deposit is what the bank left of it. */
   function setEarned(earned: string): void {
     setAmount(chargeUnits === 0 || units(earned) === 0 ? earned : fromUnits(units(earned) - chargeUnits));
+  }
+
+  /** The rate as typed, or null while it is blank or not a positive number. */
+  const rateNumber = Number(rateText);
+  const rate = rateText.trim() !== '' && Number.isFinite(rateNumber) && rateNumber > 0 ? rateNumber : null;
+
+  /** The base figure an invoice amount comes to at the rate on the form. */
+  const baseAt = (invoiceAmount: string, at: number): string =>
+    units(invoiceAmount) > 0 ? (Number(invoiceAmount) * at).toFixed(2) : '';
+
+  /**
+   * The invoice amount a base figure (amount + bank charge, in units) clears at
+   * the rate on the form. Paying what the whole balance comes to clears the
+   * exact balance, so a rounding cent never reads as more than is owed.
+   */
+  function invoiceAmountFor(earnedUnits: number, at: number, doc: OpenDocumentDto): string {
+    if (earnedUnits <= 0) return '';
+    if (earnedUnits === units(baseAt(doc.outstanding, at))) return exact(doc.outstanding);
+    return exact((earnedUnits / 10_000 / at).toFixed(4));
   }
 
   // ------------------------------------------------------------ saving
@@ -628,9 +657,9 @@ export function VoucherForm({
                   onChange={(e) => {
                     const value = e.target.value;
                     setSettleAmount(value);
-                    // The base amount follows, at the invoice's rate or the one the bank figure set.
+                    // The base amount follows, at the rate on the form.
                     if (chosenDoc.isBaseCurrency) setEarned(value);
-                    else if (rate !== null) setEarned(units(value) > 0 ? (Number(value) * rate).toFixed(2) : '');
+                    else if (rate !== null) setEarned(baseAt(value, rate));
                   }}
                 />
               </Field>
@@ -671,7 +700,7 @@ export function VoucherForm({
       {/* ------------------------------------------------ the money account */}
       {kind !== 'JOURNAL' && (
         <section
-          className={`grid grid-cols-1 gap-4 rounded-card border border-line bg-surface p-4 sm:p-5 shadow-manifest ${chargeShown ? 'md:grid-cols-3' : 'md:grid-cols-2'}`}
+          className={`grid grid-cols-1 gap-4 rounded-card border border-line bg-surface p-4 sm:p-5 shadow-manifest ${MONEY_GRID[2 + (chargeShown ? 1 : 0) + (foreignDoc ? 1 : 0)]}`}
         >
           <Field id="moneyAccount" label={moneyLabel} required hint={moneyHint}>
             <AccountSelect
@@ -683,14 +712,42 @@ export function VoucherForm({
               placeholder={kind === 'TRANSFER' ? 'Choose the account' : 'Choose a bank or cash account'}
             />
           </Field>
+          {foreignDoc && (
+            <Field
+              id="rate"
+              label={`Rate (${baseCode} per ${chosenDoc.currencyCode})`}
+              required
+              hint={
+                chosenDoc.conversionRate === null || rate === Number(chosenDoc.conversionRate)
+                  ? "The invoice's rate. Type the bank's if it gave another."
+                  : `The invoice's rate was ${exact(chosenDoc.conversionRate)}.`
+              }
+              error={rate === null ? 'Enter the rate, a number above zero.' : undefined}
+            >
+              <Input
+                id="rate"
+                numeric
+                inputMode="decimal"
+                value={rateText}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setRateText(value);
+                  // The bank's rate changes what the invoice amount comes to; the invoice amount stays as typed.
+                  const at = Number(value);
+                  if (value.trim() !== '' && Number.isFinite(at) && at > 0 && units(settleAmount) > 0) {
+                    setEarned(baseAt(settleAmount, at));
+                  }
+                }}
+              />
+            </Field>
+          )}
           <Field
             id="moneyAmount"
             label={`Amount (${baseCode})`}
             required
             hint={
-              foreignDoc && units(settleAmount) > 0 && moneyUnits > 0
-                ? `What the bank ${kind === 'EXPENSE' ? 'paid out' : 'credited'}${chargeUnits > 0 ? ', after its charge' : ''}. ` +
-                  `That is ${((moneyUnits + chargeUnits) / units(settleAmount)).toFixed(4)} ${baseCode} per ${chosenDoc.currencyCode}.`
+              foreignDoc && moneyUnits > 0
+                ? `What the bank ${kind === 'EXPENSE' ? 'paid out' : 'credited'}${chargeUnits > 0 ? ', after its charge' : ''}.`
                 : undefined
             }
             error={baseMismatch ? `The invoice is in ${baseCode}, so this must equal the amount against it.` : undefined}
@@ -704,9 +761,9 @@ export function VoucherForm({
               onChange={(e) => {
                 const value = e.target.value;
                 setAmount(value);
-                // What the bank actually moved, with what it kept, sets the rate; the invoice amount stays as typed.
-                if (foreignDoc && units(value) > 0 && units(settleAmount) > 0) {
-                  setRate((units(value) + chargeUnits) / units(settleAmount));
+                // The invoice amount follows, at the rate on the form: what the bank moved, with what it kept.
+                if (foreignDoc && rate !== null) {
+                  setSettleAmount(invoiceAmountFor(units(value) + chargeUnits, rate, chosenDoc));
                 }
               }}
             />

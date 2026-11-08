@@ -610,7 +610,7 @@ against that credit invoice. Both pre-fill:
 
 - `amount` on the settlement is in the **document's currency**: what comes off the invoice. The voucher's
   own figures are in the base: what the bank moved. For a base-currency document the two must be the same
-  figure; otherwise their ratio is the rate the bank gave, and the form shows it.
+  figure; otherwise their ratio is the rate the bank gave, and the form shows it (the Rate box, §21).
 - A settlement never exceeds what is outstanding (`OVER_RECEIVED` / `OVER_PAID`). The one that closes a
   document takes the base still open, so it nets to exactly zero (the §3.4 receipt rule, now also for
   payments).
@@ -1164,3 +1164,31 @@ three months:
 - a year, and a day range, with the year's closing equal to the list's Balance
 - the export, read back cell by cell, refused to a user who has only VIEW
 - refusals: a backwards range, a missing date, no permission, another workspace
+
+---
+
+## 21. EXPENSE AND INCOME — the Rate box (client, 2026-11-08)
+
+**The request.** On Expense against a USD invoice, typing the USD amount fills the BDT amount, but typing
+the BDT amount leaves the USD as it was. The client wants the BDT figure to fill the USD too, at the
+rate.
+
+**The catch.** Typing the BDT figure was how the form learnt the rate the bank actually gave (§14.5): the
+USD stayed and the ratio changed, and that ratio is what books an exchange difference. Converting BDT
+back at a fixed rate would have lost it. Agreed with the client: show the rate as its own box.
+
+**As built** (`components/accounts/voucher-form.tsx`, Expense and Income alike, against a foreign-currency
+invoice only):
+
+- A **Rate (BDT per USD)** box sits between the bank account and the BDT amount. It starts at the
+  invoice's own rate. Its hint says so, or names the invoice's rate once the operator has typed another.
+- The three move together:
+  - type the **USD** amount, and BDT = USD × rate;
+  - type the **BDT** amount, and USD = (BDT + any bank charge) ÷ rate, to four places;
+  - type the **rate**, and BDT = USD × rate, with the USD left as typed.
+- A BDT figure equal to the whole balance at the rate clears the exact balance, so a rounding cent never
+  reads as more than is owed.
+- The rate is never sent. The server still takes the bank's rate from the two amounts (§14.6), so nothing
+  in the API, the books or the exchange difference changes.
+- A base-currency invoice shows no Rate box; its BDT amount is locked to the amount against it, as before.
+
