@@ -294,6 +294,16 @@ sheet's nine, as *C&F certificate* and *Encashment certificate*, on sea and air 
 the system holds either, so each reads *Not on file — Upload a copy* until one is uploaded. Upload,
 replace, remove and permissions are the other papers'. The list's count is now *n of 11*.
 
+### 3.6 Shipper NOC and Bank NOC (client, 2026-11-08)
+
+**The request.** On Upload Doc, add two upload options: *Shipper NOC* and *Bank NOC*.
+
+**As built.** Migration `20261108100000_copy_document_noc` adds `SHIPPER_NOC` and `BANK_NOC` to
+`copy_document_kind`, after the Encashment certificate. The form lists them last, as *Shipper NOC*
+and *Bank NOC*, on sea and air alike. Like §3.5's two, nothing else in the system holds them, so each
+reads *Not on file — Upload a copy* until one is uploaded, with the other papers' upload, replace,
+remove and permissions. The list's count is now *n of 13*.
+
 ---
 
 ## 4. INQUIRY REGISTER (Report) — not built

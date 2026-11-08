@@ -6000,6 +6000,10 @@ enum CopyDocumentKind {
   CNF_CERTIFICATE
   /// Added by the client, 2026-10-28: the bank's encashment certificate.
   ENCASHMENT_CERTIFICATE
+  /// Added by the client, 2026-11-08: the shipper's no-objection certificate.
+  SHIPPER_NOC
+  /// Added by the client, 2026-11-08: the bank's no-objection certificate.
+  BANK_NOC
 
   @@map("copy_document_kind")
 }

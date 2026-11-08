@@ -32,8 +32,9 @@ import { blPrintDocument } from './bl-print.route';
  *
  * The list is every booking that has an approved schedule or an advise, sea
  * and air, inbound and outbound — the sheet's two sample rows are a sea export
- * and an air import. `Upload Doc` opens the nine papers (C16–C24), and the two
- * the client added on 2026-10-28 (C&F certificate, Encashment certificate).
+ * and an air import. `Upload Doc` opens the nine papers (C16–C24), the two the
+ * client added on 2026-10-28 (C&F certificate, Encashment certificate) and the
+ * two added on 2026-11-08 (Shipper NOC, Bank NOC).
  *
  * What a paper shows, in order of preference:
  *   a copy uploaded here    always wins
@@ -42,7 +43,7 @@ import { blPrintDocument } from './bl-print.route';
  *                           upload; IGM: IGM Update's file; Delivery Order:
  *                           the issued DO letter
  * so nothing has to be uploaded twice. CO, commercial invoice, packing list,
- * GSP and EXP exist nowhere else and are uploads only.
+ * GSP, EXP and the client's additions exist nowhere else and are uploads only.
  */
 
 export const copyDocRouter: Router = Router();

@@ -8,10 +8,11 @@ import { MILESTONE_SORT_FIELDS, type MilestoneRow } from './milestone';
  * Documentation → Copy Doc upload (docs/DESIGN-UPDATE-2026-10-28.md §3). The
  * sheet `Copy doc upload`, titled "Shipping Documens upload": a booking row
  * for sea and air, inbound and outbound, and `Upload Doc` opening nine papers,
- * each "browse and upload" — and two more the client added on 2026-10-28.
+ * each "browse and upload" — then two more the client added on 2026-10-28, and
+ * two more on 2026-11-08.
  */
 
-/** C16–C24, in the sheet's order, then the client's two additions (2026-10-28). */
+/** C16–C24, in the sheet's order, then the client's additions (2026-10-28, 2026-11-08). */
 export const COPY_DOCUMENT_KINDS = [
   'HOUSE_BL',
   'MASTER_BL',
@@ -24,6 +25,8 @@ export const COPY_DOCUMENT_KINDS = [
   'DELIVERY_ORDER',
   'CNF_CERTIFICATE',
   'ENCASHMENT_CERTIFICATE',
+  'SHIPPER_NOC',
+  'BANK_NOC',
 ] as const;
 export type CopyDocumentKind = (typeof COPY_DOCUMENT_KINDS)[number];
 
@@ -39,6 +42,8 @@ const LABEL: Record<CopyDocumentKind, string> = {
   DELIVERY_ORDER: 'Delivery order',
   CNF_CERTIFICATE: 'C&F certificate',
   ENCASHMENT_CERTIFICATE: 'Encashment certificate',
+  SHIPPER_NOC: 'Shipper NOC',
+  BANK_NOC: 'Bank NOC',
 };
 
 /** On air the bills are air waybills. */

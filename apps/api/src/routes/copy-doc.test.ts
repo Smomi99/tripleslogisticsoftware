@@ -246,7 +246,7 @@ describe('the list', () => {
 });
 
 describe('the papers', () => {
-  it('are offered in the sheet’s order, then the two added, as air waybills on air', async () => {
+  it('are offered in the sheet’s order, then the client’s additions, as air waybills on air', async () => {
     const res = await api(A).get(`/copy-docs/${A.airImport.id}`);
     expect(res.status).toBe(200);
     expect(res.body.data.documents.map((d: Doc) => d.kind)).toEqual([
@@ -261,12 +261,16 @@ describe('the papers', () => {
       'DELIVERY_ORDER',
       'CNF_CERTIFICATE',
       'ENCASHMENT_CERTIFICATE',
+      'SHIPPER_NOC',
+      'BANK_NOC',
     ]);
     expect(docOf(res.body, 'HOUSE_BL').label).toBe('House air waybill (HAWB)');
     expect(docOf(res.body, 'IGM')).toMatchObject({ source: 'SYSTEM', fileName: 'igm-dxb.pdf', note: 'From IGM Update.' });
-    // Nothing else in the system holds these two: they wait on an upload.
+    // Nothing else in the system holds the client's additions: they wait on an upload.
     expect(docOf(res.body, 'CNF_CERTIFICATE')).toMatchObject({ label: 'C&F certificate', source: null, note: 'Upload a copy.' });
     expect(docOf(res.body, 'ENCASHMENT_CERTIFICATE')).toMatchObject({ label: 'Encashment certificate', source: null });
+    expect(docOf(res.body, 'SHIPPER_NOC')).toMatchObject({ label: 'Shipper NOC', source: null, note: 'Upload a copy.' });
+    expect(docOf(res.body, 'BANK_NOC')).toMatchObject({ label: 'Bank NOC', source: null, note: 'Upload a copy.' });
   });
 
   it('lets an uploader add a first copy but not replace it', async () => {
