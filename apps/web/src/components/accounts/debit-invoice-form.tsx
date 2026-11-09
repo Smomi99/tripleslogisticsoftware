@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  type DebitInvoiceBankAccountDto,
   type DebitInvoiceDto,
   type DebitInvoiceOptionsDto,
   type DebitInvoicePrefillDto,
@@ -15,7 +16,7 @@ import { ArrowLeft } from 'lucide-react';
 import type { Route } from 'next';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -91,6 +92,7 @@ function initialState(mode: DebitInvoiceFormMode, options: DebitInvoiceOptionsDt
               options,
             ),
       emails: p.recipientEmails.join(', '),
+      bankAccountId: '',
     };
   }
   if (mode.kind === 'other') {
@@ -102,6 +104,7 @@ function initialState(mode: DebitInvoiceFormMode, options: DebitInvoiceOptionsDt
       lines: [] as LineDraft[],
       blocks: options.canViewBuyPrice ? withEveryType([], options) : [],
       emails: '',
+      bankAccountId: '',
     };
   }
   const inv = mode.invoice;
@@ -129,7 +132,24 @@ function initialState(mode: DebitInvoiceFormMode, options: DebitInvoiceOptionsDt
             options,
           ),
     emails: inv.recipientEmails.join(', '),
+    bankAccountId: inv.bankAccount?.id ?? '',
   };
+}
+
+/** "Select Bank" (client, 2026-11-09): what the invoice prints, in the Account setup sheet's words. */
+function bankRows(b: DebitInvoiceBankAccountDto): { label: string; value: string; mono: boolean }[] {
+  return (
+    [
+      { label: 'Account Name', value: b.accountName, mono: false },
+      { label: 'Account No', value: b.accountNo, mono: true },
+      { label: 'Bank', value: b.bankName, mono: false },
+      { label: 'Branch', value: b.branch, mono: false },
+      { label: 'Bank Address', value: b.bankAddress, mono: false },
+      { label: 'Swift No', value: b.swiftNo, mono: true },
+      { label: 'Routing No', value: b.routingNo, mono: true },
+      { label: 'IBAN No', value: b.ibanNo, mono: true },
+    ] as { label: string; value: string | null; mono: boolean }[]
+  ).filter((r): r is { label: string; value: string; mono: boolean } => r.value !== null && r.value.trim() !== '');
 }
 
 export function DebitInvoiceForm({
@@ -155,6 +175,7 @@ export function DebitInvoiceForm({
   const [lines, setLines] = useState<LineDraft[]>(initial.lines);
   const [blocks, setBlocks] = useState<BlockDraft[]>(initial.blocks);
   const [emails, setEmails] = useState(initial.emails);
+  const [bankAccountId, setBankAccountId] = useState(initial.bankAccountId);
   const [busy, setBusy] = useState<'save' | 'send' | 'cancel' | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
@@ -175,6 +196,14 @@ export function DebitInvoiceForm({
   const baseCode = options.baseCurrencyCode ?? '';
   const sellCode = currency(currencyId)?.code ?? '';
   const isBase = (id: string) => id !== '' && id === options.baseCurrencyId;
+
+  /** The active accounts, plus a switched-off one this invoice already prints. */
+  const bankAccounts = useMemo(() => {
+    const current = invoice?.bankAccount ?? null;
+    if (current === null || options.bankAccounts.some((b) => b.id === current.id)) return options.bankAccounts;
+    return [...options.bankAccounts, current];
+  }, [invoice, options.bankAccounts]);
+  const chosenBank = bankAccounts.find((b) => b.id === bankAccountId) ?? null;
 
   /** Changing a grid's currency takes today's rate for it — 1 for the base (§3.4). */
   function rateFor(id: string): string {
@@ -230,6 +259,7 @@ export function DebitInvoiceForm({
         .split(',')
         .map((e) => e.trim())
         .filter((e) => e !== ''),
+      bankAccountId: bankAccountId === '' ? null : bankAccountId,
     };
   }
 
@@ -710,20 +740,58 @@ export function DebitInvoiceForm({
         )}
       </section>
 
-      {/* --------------------------------------- Email id + the buttons */}
+      {/* ----------------------------- Bank, Email id + the buttons */}
       <section className="rounded-card border border-line bg-surface p-4 shadow-manifest sm:p-5">
-        <Field
-          id="emails"
-          label="Email id of Customer"
-          hint="Prefilled from the customer’s contacts. Separate more with commas."
-        >
-          <Input
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="flex flex-col gap-2">
+            <Field
+              id="bankAccountId"
+              label="Bank account"
+              hint={
+                bankAccounts.length === 0
+                  ? 'No bank account is set up yet. Add one on Account Set up to print it here.'
+                  : 'Its details print on the invoice, so the customer knows where to pay.'
+              }
+            >
+              <Select
+                id="bankAccountId"
+                value={bankAccountId}
+                disabled={!sellEditable}
+                onChange={(e) => setBankAccountId(e.target.value)}
+              >
+                <option value="">No bank details</option>
+                {bankAccounts.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.label}
+                    {b.isActive ? '' : ' (switched off)'}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            {chosenBank !== null && (
+              <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 rounded-manifest border border-line bg-paper px-3 py-2">
+                {bankRows(chosenBank).map((row) => (
+                  <Fragment key={row.label}>
+                    <dt className="label-manifest self-center">{row.label}</dt>
+                    <dd className={`text-cell text-hull ${row.mono ? 'font-mono tabular-nums' : ''}`}>{row.value}</dd>
+                  </Fragment>
+                ))}
+              </dl>
+            )}
+          </div>
+          <Field
             id="emails"
-            value={emails}
-            disabled={invoice?.status === 'CANCELLED'}
-            onChange={(e) => setEmails(e.target.value)}
-          />
-        </Field>
+            label="Email id of Customer"
+            hint="Prefilled from the customer’s contacts. Separate more with commas."
+          >
+            <Input
+              id="emails"
+              value={emails}
+              disabled={invoice?.status === 'CANCELLED'}
+              onChange={(e) => setEmails(e.target.value)}
+            />
+          </Field>
+        </div>
 
         {/* On a phone the buttons stack full width. */}
         <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">

@@ -1,5 +1,6 @@
 import {
   BANK_CHARGE_ACCOUNT_KEY,
+  type DebitInvoiceBankAccountDto,
   type DebitInvoiceBookingDto,
   type DebitInvoiceCostDto,
   type DebitInvoiceDto,
@@ -125,6 +126,65 @@ export const BOOKING_SELECT = {
 
 export type BookingRow = Prisma.ShipmentGetPayload<{ select: typeof BOOKING_SELECT }>;
 
+// ------------------------------------------------------- Select Bank
+
+/**
+ * An Account Set up row with its branch, as the invoice prints it (client,
+ * 2026-11-09). Read at print time, never copied onto the invoice (§14.3).
+ */
+export const BANK_ACCOUNT_SELECT = {
+  id: true,
+  accountName: true,
+  accountNo: true,
+  isActive: true,
+  bank: {
+    select: { bankName: true, branch: true, bankAddress: true, swiftNo: true, routingNo: true, ibanNo: true },
+  },
+} satisfies Prisma.BankAccountSelect;
+
+export type BankAccountRow = Prisma.BankAccountGetPayload<{ select: typeof BANK_ACCOUNT_SELECT }>;
+
+export function bankAccountDto(row: BankAccountRow): DebitInvoiceBankAccountDto {
+  return {
+    id: row.id.toString(),
+    label: `${row.bank.bankName}, ${row.bank.branch} · ${row.accountNo}`,
+    accountName: row.accountName,
+    accountNo: row.accountNo,
+    bankName: row.bank.bankName,
+    branch: row.bank.branch,
+    bankAddress: row.bank.bankAddress,
+    swiftNo: row.bank.swiftNo,
+    routingNo: row.bank.routingNo,
+    ibanNo: row.bank.ibanNo,
+    isActive: row.isActive,
+  };
+}
+
+/**
+ * The bank account a save names, checked. A switched-off account is refused
+ * unless the invoice already prints it: re-saving an old invoice must not
+ * fail because the account was retired after it was chosen.
+ */
+async function bankAccountFor(db: TenantDb, invoiceId: bigint, id: string): Promise<bigint> {
+  const row = await db.bankAccount.findFirst({
+    where: { id: BigInt(id), deletedAt: null },
+    select: { id: true, isActive: true, accountName: true, accountNo: true },
+  });
+  if (row === null) throw HttpError.badRequest('That bank account is not available. Choose another from the list.');
+  if (!row.isActive) {
+    const kept = await db.debitInvoice.findFirst({
+      where: { id: invoiceId, bankAccountId: row.id },
+      select: { id: true },
+    });
+    if (kept === null) {
+      throw HttpError.badRequest(
+        `${row.accountName} (${row.accountNo}) is switched off on Account Set up. Choose another bank account.`,
+      );
+    }
+  }
+  return row.id;
+}
+
 export const INVOICE_SELECT = {
   id: true,
   code: true,
@@ -141,6 +201,7 @@ export const INVOICE_SELECT = {
   totalAmountBase: true,
   costTotalBase: true,
   recipientEmails: true,
+  bankAccount: { select: BANK_ACCOUNT_SELECT },
   issuedAt: true,
   sentAt: true,
   cancelledAt: true,
@@ -408,6 +469,7 @@ export function invoiceDto(
     grossProfitBase: ctx.canViewBuyPrice ? money(grossProfit) : null,
     grossProfitPercent: ctx.canViewBuyPrice ? grossProfitPercent : null,
     recipientEmails: row.recipientEmails,
+    bankAccount: row.bankAccount === null ? null : bankAccountDto(row.bankAccount),
     receipts: row.receipts.map((r) => ({
       id: r.id.toString(),
       paymentDate: day(r.paymentDate) ?? '',
@@ -853,6 +915,12 @@ export async function saveSellSide(
     recipientEmails: [...new Set(input.recipientEmails)],
     updatedBy: userId,
   };
+
+  // "Select Bank": absent leaves the one chosen before; null prints none.
+  if (input.bankAccountId === null) header.bankAccountId = null;
+  else if (input.bankAccountId !== undefined) {
+    header.bankAccountId = await bankAccountFor(db, invoiceId, input.bankAccountId);
+  }
 
   if (kind === 'OTHER') {
     if (input.customerId !== null) {

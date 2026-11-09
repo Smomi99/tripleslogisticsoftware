@@ -6633,6 +6633,12 @@ model DebitInvoice {
   /// "Email id of Customer" (sheet B61), kept with the draft.
   recipientEmails String[] @default([]) @map("recipient_emails")
 
+  /// "Select Bank" (client, 2026-11-09): the Account Set up row whose details
+  /// print on the document, so the customer knows where to pay. The details
+  /// are read from the account and its branch, never copied (§14.3). Null
+  /// prints no bank block.
+  bankAccountId BigInt? @map("bank_account_id")
+
   status DebitInvoiceStatus @default(DRAFT)
 
   issuedAt     DateTime? @map("issued_at") @db.Timestamptz(6)
@@ -6658,6 +6664,7 @@ model DebitInvoice {
   customer  Customer   @relation(fields: [tenantId, customerId], references: [tenantId, id], onDelete: Restrict)
   /// Currency is system-capable, so a single-column key plus the tenant guard.
   currency  Currency   @relation("DebitInvoiceCurrency", fields: [currencyId], references: [id], onDelete: Restrict)
+  bankAccount BankAccount? @relation(fields: [tenantId, bankAccountId], references: [tenantId, id], onDelete: Restrict)
 
   issuedByUser    User? @relation("DebitInvoiceIssuedBy", fields: [issuedBy], references: [id], onDelete: Restrict)
   sentByUser      User? @relation("DebitInvoiceSentBy", fields: [sentBy], references: [id], onDelete: Restrict)
@@ -6677,6 +6684,7 @@ model DebitInvoice {
   @@index([tenantId, status])
   @@index([tenantId, shipmentId])
   @@index([tenantId, customerId])
+  @@index([tenantId, bankAccountId])
   @@index([quotationId])
   @@index([currencyId])
   @@index([issuedBy])
@@ -7237,6 +7245,9 @@ model BankAccount {
 
   createdByUser User? @relation("BankAccountCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
   updatedByUser User? @relation("BankAccountUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  /// Debit invoices that print this account's details ("Select Bank").
+  debitInvoices DebitInvoice[]
 
   @@unique([tenantId, code])
   @@unique([tenantId, id])

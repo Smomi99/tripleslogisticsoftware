@@ -1192,3 +1192,44 @@ invoice only):
   in the API, the books or the exchange difference changes.
 - A base-currency invoice shows no Rate box; its BDT amount is locked to the amount against it, as before.
 
+
+---
+
+## 22. DEBIT INVOICE — Select Bank (client, 2026-11-09)
+
+**The request.** *"On the debit invoice please add select bank from the account setup, and this selected
+bank's details will print on the debit invoice."*
+
+**As built.** One schema change, no new permission.
+
+- **Schema.** Migration `20261109100000_debit_invoice_bank_account` adds a nullable
+  `debit_invoice.bank_account_id` → `bank_account`. The FK is composite with `tenant_id` and
+  `ON DELETE RESTRICT`. Only `debit_invoice` is affected; its audit trigger, RLS and grants already
+  cover the column. Existing invoices keep a null value and print as before.
+- **The details are not copied.** The invoice stores which account was chosen. Account Name and Account
+  No come from Account Set up, and Bank, Branch, Bank Address, Swift No, Routing No and IBAN No from that
+  branch's Bank Set up row, read at print time (§14.3). A corrected SWIFT code therefore shows on the
+  next print. What a customer actually received is the PDF stored when the invoice was sent (`pdf_file`).
+- **The form.** A **Bank account** dropdown sits beside *Email id of Customer*. Its options look like
+  "Bank Asia Plc, Ring Road · 08633033878". Its first option is *No bank details*, which is also where it
+  starts. The chosen account's details show under it as they will print. The dropdown is editable with
+  the rest of the bill and locks with it once money is received (§3.7). The read-only popup on the
+  list shows the bank and account no as well.
+- **Which accounts.** The dropdown offers active Account Set up rows only. If an account is switched off
+  after an invoice chose it, that invoice keeps it, saves with it, and still prints it; the dropdown
+  marks it *(switched off)*. A new choice of a switched-off account is refused with a message that names
+  it. An account from another workspace is refused (and the composite FK would stop it anyway).
+- **The API.** `GET /debit-invoices/options` returns `bankAccounts`, gated by the same permission as
+  the rest of its options. The save body takes `bankAccountId`: an id chooses an account, `null` or `''`
+  clears it, and leaving the field out keeps the current one, so a caller that does not know the field
+  never wipes it. `DebitInvoiceDto.bankAccount` carries the details.
+- **The document.** A **BANK DETAILS** block under *In word*, in the Account setup sheet's order and
+  words. A blank field is left out rather than printed as a dash. The block is kept whole: if it would
+  run into the signature, it moves to the next page.
+
+Tests: `routes/accounts.test.ts`, "Select Bank on the debit invoice", 4 cases:
+- the options list this workspace's active accounts with their branch details, and none of workspace B's
+- a chosen account is saved, and its details are on the PDF
+- a save that leaves the field out keeps the account; `null` clears it and removes the block from the PDF
+- refusals: workspace B's account, and a switched-off account on a new invoice. A switched-off account
+  the invoice already prints is kept.

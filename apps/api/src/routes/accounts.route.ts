@@ -44,6 +44,8 @@ import { type BaseCurrency, baseCurrency } from '../lib/currency-rate';
 import {
   addCostBlock,
   assertInvoiceable,
+  BANK_ACCOUNT_SELECT,
+  bankAccountDto,
   BOOKING_SELECT,
   cancellable,
   costEditable,
@@ -363,17 +365,24 @@ accountsRouter.get(
   async (req, res) => {
     const auth = req.auth!;
     const data = await withTenant(auth.tenantId, async (db): Promise<DebitInvoiceOptionsDto> => {
-      const [costs, customers] = await Promise.all([
+      const [costs, customers, bankAccounts] = await Promise.all([
         costOptionsFor(db, auth.tenantId),
         db.customer.findMany({
           where: { deletedAt: null, isActive: true },
           select: { id: true, name: true },
           orderBy: { name: 'asc' },
         }),
+        // "Select Bank" (client, 2026-11-09): what Account Set up holds, live.
+        db.bankAccount.findMany({
+          where: { deletedAt: null, isActive: true },
+          select: BANK_ACCOUNT_SELECT,
+          orderBy: [{ bank: { bankName: 'asc' } }, { bank: { branch: 'asc' } }, { accountNo: 'asc' }],
+        }),
       ]);
       return {
         ...costs,
         customers: customers.map((r) => ({ id: r.id.toString(), label: r.name })),
+        bankAccounts: bankAccounts.map(bankAccountDto),
         canViewBuyPrice: canViewBuyPrice(auth),
       };
     });
@@ -695,6 +704,19 @@ async function invoiceDocument(
             baseCurrencyCode: isoOf(base),
             rate: row.conversionRate.toString(),
             totalBase: row.totalAmountBase.toFixed(2),
+          },
+    bank:
+      row.bankAccount === null
+        ? null
+        : {
+            accountName: row.bankAccount.accountName,
+            accountNo: row.bankAccount.accountNo,
+            bankName: row.bankAccount.bank.bankName,
+            branch: row.bankAccount.bank.branch,
+            bankAddress: row.bankAccount.bank.bankAddress,
+            swiftNo: row.bankAccount.bank.swiftNo,
+            routingNo: row.bankAccount.bank.routingNo,
+            ibanNo: row.bankAccount.bank.ibanNo,
           },
   });
   return { pdf, filename: `${row.code}.pdf` };

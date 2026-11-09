@@ -88,6 +88,9 @@ async function cleanup(): Promise<void> {
   const scope = `(SELECT id FROM tenant WHERE slug IN ('${SLUG_A}', '${SLUG_B}'))`;
   const wipe = (table: string, extra = '') =>
     owner.$executeRawUnsafe(`DELETE FROM "${table}" WHERE tenant_id IN ${scope}${extra}`);
+  // An invoice points at the bank account it prints ("Select Bank"), and the
+  // accounts go with the books, before the invoices.
+  await owner.$executeRawUnsafe(`UPDATE "debit_invoice" SET bank_account_id = NULL WHERE tenant_id IN ${scope}`);
   // The books first: they point at the invoices, the parties and the users.
   for (const table of ['debit_invoice_receipt', 'supplier_payment', 'opening_settlement', 'journal_line', 'journal_entry', 'bank_account']) {
     await wipe(table);
@@ -883,5 +886,130 @@ describe('Money receipt', () => {
     const [first] = await receipts();
     expect((await receiptOf(first!.journalEntryId, A.bareToken)).status).toBe(403);
     expect((await receiptOf(first!.journalEntryId, B.superToken, SLUG_B)).status).toBe(404);
+  });
+});
+
+describe('Select Bank on the debit invoice (client, 2026-11-09)', () => {
+  let accountId: string;
+  let secondId: string;
+  let foreignId: string;
+  let draftId: string;
+
+  const pdfOf = (id: string) =>
+    asA()
+      .get(`/debit-invoices/${id}/pdf`)
+      .buffer(true)
+      .parse((res, cb) => {
+        const parts: Buffer[] = [];
+        res.on('data', (c: Buffer) => parts.push(c));
+        res.on('end', () => cb(null, Buffer.concat(parts)));
+      });
+  const otherInvoice = (bankAccountId?: string | null) => ({
+    invoiceDate: TODAY,
+    customerId: A.customerId.toString(),
+    shipmentId: null,
+    currencyId: bdt.toString(),
+    conversionRate: '1',
+    lines: [{ costHeadId: A.blHead.toString(), quantity: '1', unitPrice: '1500' }],
+    ...(bankAccountId === undefined ? {} : { bankAccountId }),
+  });
+
+  it('offers the active Account Set up rows of this workspace only, with their branch details', async () => {
+    // The sample on the client's Account setup sheet.
+    const branch = await asA()
+      .post('/banks')
+      .send({ bankName: 'Bank Asia Plc', branch: 'Ring Road', bankAddress: 'Ring Road, Mohammadpur, Dhaka', swiftNo: 'BAHDD9876', routingNo: '07214563' });
+    expect(branch.status, JSON.stringify(branch.body.error ?? {})).toBe(201);
+    const acct = await asA()
+      .post('/bank-accounts')
+      .send({ accountName: 'Triple S Logistics', accountNo: '08633033878', bankId: branch.body.data.id });
+    expect(acct.status, JSON.stringify(acct.body.error ?? {})).toBe(201);
+    accountId = acct.body.data.id;
+    const second = await asA()
+      .post('/bank-accounts')
+      .send({ accountName: 'Triple S Logistics', accountNo: '1103456789', bankId: branch.body.data.id });
+    expect(second.status, JSON.stringify(second.body.error ?? {})).toBe(201);
+    secondId = second.body.data.id;
+
+    const bBranch = await asB().post('/banks').send({ bankName: 'City Bank PLC', branch: 'Gulshan' });
+    const bAcct = await asB()
+      .post('/bank-accounts')
+      .send({ accountName: 'Beta Freight', accountNo: '2200111222', bankId: bBranch.body.data.id });
+    expect(bAcct.status, JSON.stringify(bAcct.body.error ?? {})).toBe(201);
+    foreignId = bAcct.body.data.id;
+
+    const options = await asA().get('/debit-invoices/options');
+    expect(options.status).toBe(200);
+    const offered = options.body.data.bankAccounts as { id: string }[];
+    expect(offered.map((b) => b.id)).toEqual(expect.arrayContaining([accountId, secondId]));
+    expect(offered.map((b) => b.id)).not.toContain(foreignId);
+    expect(offered.find((b) => b.id === accountId)).toEqual({
+      id: accountId,
+      label: 'Bank Asia Plc, Ring Road · 08633033878',
+      accountName: 'Triple S Logistics',
+      accountNo: '08633033878',
+      bankName: 'Bank Asia Plc',
+      branch: 'Ring Road',
+      bankAddress: 'Ring Road, Mohammadpur, Dhaka',
+      swiftNo: 'BAHDD9876',
+      routingNo: '07214563',
+      ibanNo: null,
+      isActive: true,
+    });
+  });
+
+  it('saves the chosen account and prints its details on the invoice', async () => {
+    const res = await asA().post('/debit-invoices').send(otherInvoice(accountId));
+    expect(res.status, JSON.stringify(res.body.error ?? {})).toBe(201);
+    draftId = res.body.data.id;
+    expect(res.body.data.bankAccount).toMatchObject({ id: accountId, accountNo: '08633033878', bankName: 'Bank Asia Plc' });
+
+    const pdf = await pdfOf(draftId);
+    expect(pdf.status).toBe(200);
+    const text = extractPdfText(pdf.body as Buffer);
+    expect(text).toContain('BANK DETAILS');
+    expect(text).toContain('Triple S Logistics');
+    expect(text).toContain('08633033878');
+    expect(text).toContain('Bank Asia Plc');
+    expect(text).toContain('Ring Road, Mohammadpur, Dhaka');
+    expect(text).toContain('BAHDD9876');
+    expect(text).toContain('07214563');
+    // A blank field is left off the page, not printed as a dash.
+    expect(text).not.toContain('IBAN No');
+  });
+
+  it('keeps it when a save leaves the field out, and prints none once cleared', async () => {
+    const kept = await asA().patch(`/debit-invoices/${draftId}`).send(otherInvoice());
+    expect(kept.status, JSON.stringify(kept.body.error ?? {})).toBe(200);
+    expect(kept.body.data.bankAccount?.id).toBe(accountId);
+
+    const cleared = await asA().patch(`/debit-invoices/${draftId}`).send(otherInvoice(null));
+    expect(cleared.status, JSON.stringify(cleared.body.error ?? {})).toBe(200);
+    expect(cleared.body.data.bankAccount).toBeNull();
+    expect(extractPdfText((await pdfOf(draftId)).body as Buffer)).not.toContain('BANK DETAILS');
+  });
+
+  it('refuses another workspace’s account, and a switched-off one the invoice does not already print', async () => {
+    const foreign = await asA().patch(`/debit-invoices/${draftId}`).send(otherInvoice(foreignId));
+    expect(foreign.status).toBe(400);
+
+    const chosen = await asA().patch(`/debit-invoices/${draftId}`).send(otherInvoice(secondId));
+    expect(chosen.status, JSON.stringify(chosen.body.error ?? {})).toBe(200);
+    const off = await asA().post(`/bank-accounts/${secondId}/toggle-status`);
+    expect(off.body.data.isActive).toBe(false);
+
+    const options = await asA().get('/debit-invoices/options');
+    expect((options.body.data.bankAccounts as { id: string }[]).map((b) => b.id)).not.toContain(secondId);
+
+    // Retired after it was chosen: the invoice still saves, and still prints it.
+    const resaved = await asA().patch(`/debit-invoices/${draftId}`).send(otherInvoice(secondId));
+    expect(resaved.status, JSON.stringify(resaved.body.error ?? {})).toBe(200);
+    expect(resaved.body.data.bankAccount).toMatchObject({ id: secondId, isActive: false });
+    expect(extractPdfText((await pdfOf(draftId)).body as Buffer)).toContain('1103456789');
+
+    // A new invoice cannot pick it.
+    const fresh = await asA().post('/debit-invoices').send(otherInvoice(secondId));
+    expect(fresh.status).toBe(400);
+    expect(fresh.body.error.message).toContain('switched off on Account Set up');
   });
 });

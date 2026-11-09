@@ -295,6 +295,15 @@ function DebitInvoiceBody({ invoice }: { invoice: DebitInvoiceDto }) {
             <Fact label="Required Container">{booking.requiredContainer}</Fact>
           </>
         )}
+        {/* "Select Bank" (client, 2026-11-09): the account the invoice prints. */}
+        <Fact label="Bank account">
+          {invoice.bankAccount === null ? null : (
+            <>
+              {invoice.bankAccount.bankName}, {invoice.bankAccount.branch}
+              <span className="block font-mono text-cell tabular-nums text-steel">{invoice.bankAccount.accountNo}</span>
+            </>
+          )}
+        </Fact>
       </dl>
 
       <Section title="Selling">

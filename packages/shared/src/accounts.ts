@@ -229,6 +229,18 @@ export const debitInvoiceSaveSchema = z.object({
   lines: z.array(invoiceLineInputSchema).max(200, 'That is too many lines for one invoice.'),
   costs: z.array(invoiceCostInputSchema).max(20, 'That is too many cost blocks.').optional(),
   recipientEmails: z.array(email).max(20, 'That is too many addresses.').default([]),
+  /**
+   * "Select Bank" (client, 2026-11-09): the Account Set up row printed on the
+   * invoice. Null or '' prints none; absent keeps the one already chosen, so
+   * a caller that does not know the field never wipes it.
+   */
+  bankAccountId: z
+    .string()
+    .trim()
+    .regex(/^\d*$/, 'Choose a bank account from the list.')
+    .nullable()
+    .optional()
+    .transform((v) => (v === '' ? null : v)),
 });
 export type DebitInvoiceSaveInput = z.input<typeof debitInvoiceSaveSchema>;
 
@@ -432,6 +444,26 @@ export interface DebitInvoiceReceiptDto {
   bankChargeBase: string | null;
 }
 
+/**
+ * An Account Set up row as the debit invoice prints it (client, 2026-11-09):
+ * the account, then its branch's details, read from Bank Set up (§14.3).
+ */
+export interface DebitInvoiceBankAccountDto {
+  id: string;
+  /** "Bank Asia Plc, Ring Road · 08633033878" — what the dropdown shows. */
+  label: string;
+  accountName: string;
+  accountNo: string;
+  bankName: string;
+  branch: string;
+  bankAddress: string | null;
+  swiftNo: string | null;
+  routingNo: string | null;
+  ibanNo: string | null;
+  /** False once it is switched off on Account Set up; an invoice that already names it keeps it. */
+  isActive: boolean;
+}
+
 /** The booking an invoice was raised against, as the invoice shows it. */
 export interface DebitInvoiceBookingDto {
   shipmentId: string;
@@ -486,6 +518,8 @@ export interface DebitInvoiceDto {
   grossProfitPercent: string | null;
 
   recipientEmails: string[];
+  /** "Select Bank" (client, 2026-11-09): printed on the invoice. Null when none is chosen. */
+  bankAccount: DebitInvoiceBankAccountDto | null;
   receipts: DebitInvoiceReceiptDto[];
   /** The Freight Certificate made from it, once there is one (2026-10-18). */
   freightCertificate: { id: string; code: string } | null;
@@ -575,6 +609,8 @@ export interface CostOptionsDto {
 
 export interface DebitInvoiceOptionsDto extends CostOptionsDto {
   customers: InvoiceOptionDto[];
+  /** "Select Bank": the active Account Set up rows (client, 2026-11-09). */
+  bankAccounts: DebitInvoiceBankAccountDto[];
   canViewBuyPrice: boolean;
 }
 

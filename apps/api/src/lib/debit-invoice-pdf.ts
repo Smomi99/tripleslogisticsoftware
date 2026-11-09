@@ -60,6 +60,21 @@ export interface DebitInvoicePdfInput {
    * Null when it is in the base.
    */
   baseEquivalent: { baseCurrencyCode: string; rate: string; totalBase: string } | null;
+
+  /**
+   * "Select Bank" (client, 2026-11-09): where the customer pays — the chosen
+   * Account Set up row and its branch. Null prints no bank block.
+   */
+  bank: {
+    accountName: string;
+    accountNo: string;
+    bankName: string;
+    branch: string;
+    bankAddress: string | null;
+    swiftNo: string | null;
+    routingNo: string | null;
+    ibanNo: string | null;
+  } | null;
 }
 
 const HULL = '#10243A';
@@ -250,6 +265,45 @@ export function renderDebitInvoicePdf(input: DebitInvoicePdfInput): Promise<Buff
         .text(`In word (${input.currencyCode}): `, left, y, { continued: true });
       doc.font('Helvetica').fillColor(HULL).text(input.amountInWords);
       y = doc.y + 14;
+    }
+
+    // ---------------------------------------------------------- bank details
+    if (input.bank !== null) {
+      const b = input.bank;
+      // The Account setup sheet's order and words; a blank field is left out.
+      const rows = (
+        [
+          ['Account Name', b.accountName],
+          ['Account No', b.accountNo],
+          ['Bank', b.bankName],
+          ['Branch', b.branch],
+          ['Bank Address', b.bankAddress],
+          ['Swift No', b.swiftNo],
+          ['Routing No', b.routingNo],
+          ['IBAN No', b.ibanNo],
+        ] as [string, string | null][]
+      ).filter((r): r is [string, string] => r[1] !== null && r[1].trim() !== '');
+
+      const labelW = 78;
+      const valueW = width / 2 - labelW;
+      doc.font('Helvetica-Bold').fontSize(8.5);
+      const height =
+        20 + rows.reduce((h, [, value]) => h + Math.max(doc.heightOfString(value, { width: valueW }), 10) + 2, 0);
+      // Kept whole, and clear of the signature at the foot of the page.
+      if (y + height > doc.page.height - 110) {
+        doc.addPage();
+        y = doc.page.margins.top;
+      }
+
+      doc.moveTo(left, y).lineTo(right, y).strokeColor(LINE).stroke();
+      y += 8;
+      doc.font('Helvetica').fontSize(6.5).fillColor(STEEL).text('BANK DETAILS', left, y, { width });
+      y += 12;
+      for (const [label, value] of rows) {
+        doc.font('Helvetica').fontSize(8).fillColor(STEEL).text(label, left, y, { width: labelW - 6 });
+        doc.font('Helvetica-Bold').fontSize(8.5).fillColor(HULL).text(value, left + labelW, y, { width: valueW });
+        y = Math.max(doc.y, y + 10) + 2;
+      }
     }
 
     // --------------------------------------------------------------- signed
