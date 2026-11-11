@@ -117,8 +117,8 @@ const COPY_GREY = '#6B7A88';
 /** The particulars body, where the marks, containers and description go. */
 const BODY_TOP = 392;
 const BODY_BOTTOM = 560;
-/** One container in Marks and Numbers: two lines and a gap; and the heading above them. */
-const CONTAINER_H = 21;
+/** One container in Marks and Numbers: one line and a gap; and the heading above them. */
+const CONTAINER_H = 12;
 const CONTAINER_HEAD_H = 11;
 /** "N CONTAINERS / AS PER ATTACHED SHEET", with the gap above it. */
 const SHEET_NOTE_H = 30;
@@ -193,15 +193,13 @@ const withTwoDecimals = (bill: BlDraftPdfInput): BlDraftPdfInput => ({
 
 type BlContainer = BlDraftPdfInput['containers'][number];
 
-/** "TEMU1006375/20' Standard/M2604875" — the first of a container's two lines. */
+/**
+ * "TEMU1006375/20' Standard/M2604875" — a container's one line under Marks and
+ * Numbers. Its CBM and weight are not repeated there (client, 2026-11-11): the
+ * bill's own columns carry them, and the attached sheet lists them per container.
+ */
 const containerId = (c: BlContainer): string =>
   [c.containerNo, c.containerSize, c.sealNo].filter((v) => !blank(v)).join('/');
-
-/** "23.73 CBM, 5981.50 KGS" — the second. */
-const containerMeasure = (c: BlContainer): string =>
-  [blank(c.measurementCbm) ? '' : `${c.measurementCbm} CBM`, blank(c.grossWeightKg) ? '' : `${c.grossWeightKg} KGS`]
-    .filter((v) => v !== '')
-    .join(', ');
 
 /**
  * The name at the top of a party block, without the address, cut to `max`
@@ -356,9 +354,9 @@ export async function renderBlDraftPdf(bill: BlDraftPdfInput): Promise<Buffer> {
     };
 
     /*
-     * Marks and Numbers carries the containers under the merchant's marks, two
-     * lines each — container/size/seal over CBM and weight (client,
-     * 2026-10-06). When they do not all fit, the column says so and every one
+     * Marks and Numbers carries the containers under the merchant's marks, one
+     * line each — container/size/seal (client, 2026-10-06; CBM and weight
+     * dropped 2026-11-11). When they do not all fit, the column says so and every one
      * is listed on an attached sheet after the bill. The page is the same for
      * every copy, so this is worked out once.
      */
@@ -505,7 +503,6 @@ export async function renderBlDraftPdf(bill: BlDraftPdfInput): Promise<Buffer> {
           y += CONTAINER_HEAD_H;
           for (const c of input.containers) {
             fitted(containerId(c), marksX, y, marksW, 7.5);
-            fitted(containerMeasure(c), marksX, y + 9, marksW, 7.5);
             y += CONTAINER_H;
           }
         }

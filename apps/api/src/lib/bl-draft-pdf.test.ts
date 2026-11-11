@@ -123,19 +123,21 @@ const pageCount = (pdf: Buffer): number => (pdf.toString('latin1').match(/\/Type
 const containers = (n: number) => Array.from({ length: n }, (_, i) => container(i + 1));
 
 describe('the containers on the printed bill (client, 2026-10-06)', () => {
-  it('lists them under Marks and Numbers when they fit, two lines each', async () => {
+  it('lists them under Marks and Numbers when they fit, one line each without CBM or weight', async () => {
     const pdf = await renderBlDraftPdf({ ...bill, containers: containers(2) });
     expect(pageCount(pdf)).toBe(1);
     const text = extractPdfText(pdf);
     expect(text).toContain("TEMU1006301/20' Standard/M2604801");
-    expect(text).toContain('23.73 CBM, 5981.50 KGS');
+    // client, 2026-11-11: the container line stops at the seal.
+    expect(text).not.toContain('23.73 CBM');
+    expect(text).not.toContain('5981.50 KGS');
     expect(text).not.toContain('ATTACHED SHEET');
   });
 
   it('lists every one on an attached sheet when they do not, after each printed page', async () => {
     const pdf = await renderBlDraftPdf({
       ...bill,
-      containers: containers(12),
+      containers: containers(14),
       copies: [
         { mark: 'ORIGINAL', note: '1 of 2', watermark: null },
         { mark: 'ORIGINAL', note: '2 of 2', watermark: null },
@@ -143,10 +145,10 @@ describe('the containers on the printed bill (client, 2026-10-06)', () => {
     });
     expect(pageCount(pdf)).toBe(4);
     const text = extractPdfText(pdf);
-    expect(text).toContain('12 CONTAINERS');
+    expect(text).toContain('14 CONTAINERS');
     expect(text).toContain('AS PER ATTACHED SHEET');
-    for (const c of containers(12)) expect(text).toContain(c.containerNo);
-    expect(text).toContain('TOTAL 12 CONTAINERS');
+    for (const c of containers(14)) expect(text).toContain(c.containerNo);
+    expect(text).toContain('TOTAL 14 CONTAINERS');
   });
 
   it('runs a long list onto further sheets', async () => {
@@ -167,7 +169,7 @@ describe('weight and measurement on the bill (client, 2026-10-06)', () => {
     expect(twoDecimals(' ')).toBeNull();
   });
 
-  it('carries two places into the columns, the container lines and the QR', async () => {
+  it('carries two places into the columns and the QR', async () => {
     const plain: BlDraftPdfInput = {
       ...bill,
       grossWeightKg: '5400',
@@ -177,7 +179,6 @@ describe('weight and measurement on the bill (client, 2026-10-06)', () => {
     const text = extractPdfText(await renderBlDraftPdf(plain));
     expect(text.split('\n')).toContain('5400.00');
     expect(text.split('\n')).toContain('27.00');
-    expect(text).toContain('27.00 CBM, 5400.00 KGS');
     expect(blQrText(plain, null)).toContain('Gross Wt: 5400.00 KG');
     expect(blQrText(plain, null)).toContain('Measurement: 27.00 CBM');
   });
