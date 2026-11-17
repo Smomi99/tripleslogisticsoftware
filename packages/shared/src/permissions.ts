@@ -737,6 +737,12 @@ export const FEATURES: readonly FeatureDefinition[] = [
   // Workstation and Warehouse are on the §3 menu but have no wireframe (§11).
   // No permission is defined for a screen that cannot be built — an unusable
   // checkbox in the superadmin matrix is worse than an absent one.
+  //
+  // Business Settings (owner request, 2026-11-17): the name, logo, address and
+  // registration numbers every printed document carries. First in the group,
+  // because it is the first thing a new workspace fills in. One row of
+  // configuration, like Notifications: it is read and written, nothing else.
+  { module: 'SETTING', feature: 'SETTING.BUSINESS', label: 'Business Settings', actions: ['VIEW', 'EDIT'] },
   { module: 'SETTING', feature: 'SETTING.SEA_AIR_PORT', label: 'Sea-Air Port', actions: MASTER_DELETABLE },
   { module: 'SETTING', feature: 'SETTING.COST_HEAD', label: 'Cost Head', actions: MASTER_DELETABLE },
   {

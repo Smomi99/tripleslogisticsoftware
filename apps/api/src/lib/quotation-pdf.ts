@@ -1,5 +1,7 @@
 import PDFDocument from 'pdfkit';
 
+import { drawLetterheadDetails } from './letterhead-pdf';
+
 /**
  * The Quotation document — MODULE_INQUIRY_QUOTATION.md §6.6.
  *
@@ -17,6 +19,11 @@ import PDFDocument from 'pdfkit';
 export interface QuotationPdfInput {
   /** From tenant settings (§6.6). The email signature is never printed (2026-10-21). */
   companyName: string;
+  /**
+   * Settings → Business Settings: the address, contact and registration lines
+   * under the name (owner, 2026-11-17). Empty prints the name alone.
+   */
+  companyDetails: string[];
   /** PNG or JPEG bytes; omitted when the workspace has not uploaded one. */
   logo: Buffer | null;
 
@@ -129,6 +136,7 @@ export function renderQuotationPdf(input: QuotationPdfInput): Promise<Buffer> {
       }
     }
     doc.font('Helvetica-Bold').fontSize(16).fillColor(HULL).text(input.companyName, headerX, 40);
+    drawLetterheadDetails(doc, input.companyDetails, headerX, doc.y + 2, right - headerX);
 
     let y = Math.max(doc.y, 84) + 10;
     doc.font('Helvetica-Bold').fontSize(13).fillColor(HULL).text('QUOTATION', left, y, {

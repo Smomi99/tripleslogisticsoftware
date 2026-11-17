@@ -1,5 +1,7 @@
 import PDFDocument from 'pdfkit';
 
+import { drawLetterheadDetails } from './letterhead-pdf';
+
 /**
  * The delivery order letter — docs/DESIGN-UPDATE-2026-10-04.md §4.2.
  *
@@ -7,11 +9,17 @@ import PDFDocument from 'pdfkit';
  * SUBJECT, the operator's own words, and CONTAINER NO. Every word of the
  * letterhead and of the letter arrives as data; the sheet supplies only the
  * frame, so nothing here says what a delivery order should say. The letterhead
- * is the name: the email signature is never printed (client, 2026-10-21).
+ * is the name and the Business Settings lines under it (2026-11-17); the email
+ * signature is never printed (client, 2026-10-21).
  */
 
 export interface DeliveryOrderPdfInput {
   companyName: string;
+  /**
+   * Settings → Business Settings: the address, contact and registration lines
+   * under the name (owner, 2026-11-17). Empty prints the name alone.
+   */
+  companyDetails: string[];
   doNo: string;
   issueDate: string;
   addressee: string;
@@ -40,10 +48,12 @@ export function renderDeliveryOrderPdf(input: DeliveryOrderPdfInput): Promise<Bu
 
     // ---------------------------------------------------------- letterhead
     doc.font('Helvetica-Bold').fontSize(15).fillColor(HULL).text(input.companyName, left, 48, { width: width - 180 });
+    // Kept, because the DO number drawn next moves the cursor back up the page.
+    const headEnd = drawLetterheadDetails(doc, input.companyDetails, left, doc.y + 2, width - 180);
     doc.font('Helvetica').fontSize(6.5).fillColor(STEEL).text('DO NO', right - 170, 48, { width: 170, align: 'right' });
     doc.font('Courier-Bold').fontSize(12).fillColor(HULL).text(input.doNo, right - 170, 58, { width: 170, align: 'right' });
 
-    let y = Math.max(doc.y, 96) + 12;
+    let y = Math.max(headEnd, doc.y, 96) + 12;
     doc.moveTo(left, y).lineTo(right, y).strokeColor(LINE).lineWidth(1).stroke();
     y += 18;
 

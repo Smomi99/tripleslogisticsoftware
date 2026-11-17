@@ -55,6 +55,7 @@ import { tariffRouter } from './tariff.route';
 import { salesLeadRouter } from './sales-lead.route';
 import { portRouter } from './port.route';
 import { notificationSettingRouter } from './notification-setting.route';
+import { businessProfileRouter } from './business-profile.route';
 import { overviewRouter } from './overview.route';
 import { rateLookupRouter } from './rate-lookup.route';
 import { vendorRouter } from './vendor.route';
@@ -85,6 +86,8 @@ tenantRouter.use('/crm/vendors', vendorRouter);
 tenantRouter.use('/setting/commodity-categories', commodityRouter);
 // Purchase & Sales lookups (docs/MODULE_PURCHASE_SALES.md §3.1).
 tenantRouter.use('/setting/notifications', notificationSettingRouter);
+// Business Settings (owner, 2026-11-17) — before '/setting', whose lookups would take the path.
+tenantRouter.use('/setting/business', businessProfileRouter);
 tenantRouter.use('/setting', rateLookupRouter);
 
 // Purchase — rate entry for all three modes (MODULE_PURCHASE_SALES §5.1).

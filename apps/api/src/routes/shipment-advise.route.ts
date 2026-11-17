@@ -995,7 +995,7 @@ export async function adviseDocument(
   const isAir = row.shipment.shipmentType === 'AIR';
 
   const pdf = await renderShipmentAdvisePdf({
-    companyName: head.companyName,
+    ...head,
     adviseNo: row.code,
     bookingNo: covered.map((b) => b.code).join(', '),
     soNo: soNos.length === 0 ? null : soNos.join(', '),

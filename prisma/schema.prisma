@@ -271,6 +271,7 @@ model Tenant {
   inquiryPartyContacts InquiryPartyContact[]
 
   notificationSetting  NotificationSetting?
+  businessProfile      BusinessProfile?
   notificationTeams    NotificationTeamSetting[]
   preAlertDocuments    PreAlertDocument[]
   preAlerts            PreAlert[]
@@ -1925,6 +1926,8 @@ model User {
   createdNotificationTeams    NotificationTeamSetting[] @relation("NotificationTeamSettingCreatedBy")
   updatedNotificationTeams    NotificationTeamSetting[] @relation("NotificationTeamSettingUpdatedBy")
   updatedNotificationSettings NotificationSetting[] @relation("NotificationSettingUpdatedBy")
+  createdBusinessProfiles     BusinessProfile[]     @relation("BusinessProfileCreatedBy")
+  updatedBusinessProfiles     BusinessProfile[]     @relation("BusinessProfileUpdatedBy")
 
   submittedAgentQuotes        AgentQuote[]          @relation("AgentQuoteSubmittedBy")
   createdAgentQuoteOptions    AgentQuoteOption[]    @relation("AgentQuoteOptionCreatedBy")
@@ -3392,6 +3395,55 @@ model NotificationSetting {
 
   @@unique([tenantId])
   @@map("notification_setting")
+}
+
+/// client: none — Settings → Business Settings (owner request, 2026-11-17).
+///
+/// The company's own details for the head of every printed document: the name,
+/// the logo, the office address, how to reach it, and the registration numbers
+/// a Bangladeshi invoice is read for. One row per workspace.
+///
+/// Its own table rather than columns on tenant, for notification_setting's
+/// reason: tenant is platform-owned (§4 rule 2) and this is the workspace's own
+/// configuration, edited from Settings. tenant.name and tenant.logo_file stay
+/// what they are — the account's name on the platform — and are the fallback
+/// for a workspace that has never saved this screen (lib/letterhead.ts).
+///
+/// Every detail is optional: a blank one prints nothing, so a workspace that
+/// does not want its TIN on a delivery order simply leaves it out.
+model BusinessProfile {
+  tenantId       BigInt  @map("tenant_id")
+  id             BigInt  @id @default(autoincrement())
+  /// The name at the head of every document. Starts as the workspace name.
+  businessName   String  @map("business_name") @db.VarChar(200)
+  /// Office address, printed line for line as typed (four lines at most).
+  address        String? @db.Text
+  /// Free text: "+880 2 5501 2345, +880 1711 000000".
+  phone          String? @db.VarChar(100)
+  email          String? @db.VarChar(320)
+  website        String? @db.VarChar(200)
+  /// VAT Business Identification Number — the BIN a customer's accounts team
+  /// looks for on a Bangladeshi invoice. vendor.vat_no is the same number for
+  /// a vendor (§5).
+  binNo          String? @map("bin_no") @db.VarChar(50)
+  /// e-TIN. vendor.tin_no is the same number for a vendor (§5).
+  tinNo          String? @map("tin_no") @db.VarChar(50)
+  tradeLicenceNo String? @map("trade_licence_no") @db.VarChar(50)
+  /// Storage key only, never the file itself (§2). PNG or JPEG: the PDF
+  /// renderer reads nothing else.
+  logoFile       String? @map("logo_file") @db.VarChar(500)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+  createdBy BigInt?  @map("created_by")
+  updatedBy BigInt?  @map("updated_by")
+
+  tenant        Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  createdByUser User?  @relation("BusinessProfileCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  updatedByUser User?  @relation("BusinessProfileUpdatedBy", fields: [updatedBy], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId])
+  @@map("business_profile")
 }
 
 /// client: Notification sheet — one block per team (C4–R12): who the team's

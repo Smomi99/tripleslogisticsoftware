@@ -1,14 +1,17 @@
 import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
 
+import { drawLetterheadDetails } from './letterhead-pdf';
+
 /**
  * The Shipping Order document — MODULE_BOOKING_CARGO.md §6.6.
  *
  * §5.4 rule 4: "The PDF carries the tenant's letterhead, address and QR code —
  * from tenant settings, not hardcoded, exactly as the Quotation PDF." So every
  * word of the header comes in as data; nothing about one forwarder is written
- * into this file. The address came from the email signature block, which the
- * client wants on no print (2026-10-21), so the letterhead is the name.
+ * into this file. The address once came from the email signature block, which
+ * the client wants on no print (2026-10-21); it now comes from Settings →
+ * Business Settings (2026-11-17), with the contact and registration lines.
  *
  * §9 Q5, answered 2026-09-02: the QR is the compact offline payload, because
  * the reader is a warehouse gate in a yard with no signal.
@@ -17,6 +20,11 @@ import QRCode from 'qrcode';
 export interface ShippingOrderPdfInput {
   /** From tenant settings (§5.4 rule 4). */
   companyName: string;
+  /**
+   * Settings → Business Settings: the address, contact and registration lines
+   * under the name (owner, 2026-11-17). Empty prints the name alone.
+   */
+  companyDetails: string[];
 
   soNo: string;
   bookingNo: string;
@@ -90,6 +98,8 @@ export async function renderShippingOrderPdf(input: ShippingOrderPdfInput): Prom
 
     // ---------------------------------------------------------- letterhead
     doc.font('Helvetica-Bold').fontSize(15).fillColor(HULL).text(input.companyName, left, 40);
+    // Short of the QR, so the address never runs under the code.
+    drawLetterheadDetails(doc, input.companyDetails, left, doc.y + 2, width - QR_SIZE - 16);
 
     // The QR sits top-right, where a hand reaching for a scanner expects it.
     doc.image(qr, right - QR_SIZE, QR_TOP, { width: QR_SIZE });

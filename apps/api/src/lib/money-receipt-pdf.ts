@@ -1,5 +1,7 @@
 import PDFDocument from 'pdfkit';
 
+import { drawLetterheadDetails } from './letterhead-pdf';
+
 /**
  * The Money Receipt — what the customer is handed for money received
  * (client, 2026-10-28: on the debit invoice, once money is received and
@@ -16,6 +18,11 @@ import PDFDocument from 'pdfkit';
 
 export interface MoneyReceiptPdfInput {
   companyName: string;
+  /**
+   * Settings → Business Settings: the address, contact and registration lines
+   * under the name (owner, 2026-11-17). Empty prints the name alone.
+   */
+  companyDetails: string[];
   logo: Buffer | null;
 
   receiptNo: string;
@@ -83,6 +90,7 @@ export function renderMoneyReceiptPdf(input: MoneyReceiptPdfInput): Promise<Buff
       }
     }
     doc.font('Helvetica-Bold').fontSize(16).fillColor(HULL).text(input.companyName, headerX, 40);
+    drawLetterheadDetails(doc, input.companyDetails, headerX, doc.y + 2, right - headerX);
 
     let y = Math.max(doc.y, 84) + 10;
     doc.font('Helvetica-Bold').fontSize(13).fillColor(HULL).text('MONEY RECEIPT', left, y, { width, align: 'center' });

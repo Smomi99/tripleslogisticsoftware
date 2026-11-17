@@ -44,7 +44,7 @@ import {
 import { pullQuotationLines } from '../lib/quotation-pull';
 import { parseId, parseRefId } from '../lib/request';
 import { queueMail } from '../lib/email-queue';
-import { logoOf } from '../lib/letterhead';
+import { letterheadOf, logoOf } from '../lib/letterhead';
 import { renderQuotationPdf } from '../lib/quotation-pdf';
 import { renderRequiredContainer } from '../lib/render-volumes';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
@@ -1548,14 +1548,11 @@ quotationRouter.get(
       const dto = toDto(row);
 
       // §6.6's logo, when the workspace has uploaded one.
-      const [settings, tenant, logo, customer, inquiry] = await Promise.all([
+      const [settings, letterhead, logo, customer, inquiry] = await Promise.all([
         db.notificationSetting.findFirst({
           select: { quotationNotes: true },
         }),
-        db.tenant.findFirst({
-          where: { id: auth.tenantId },
-          select: { name: true },
-        }),
+        letterheadOf(db, auth.tenantId),
         logoOf(db, auth.tenantId),
         db.customer.findFirst({
           where: { id: BigInt(dto.customerId) },
@@ -1569,7 +1566,7 @@ quotationRouter.get(
 
       const isAir = dto.shipmentType === 'AIR';
       const pdfBuffer = await renderQuotationPdf({
-        companyName: tenant?.name ?? 'Freight Forwarder',
+        ...letterhead,
         logo,
         inquiryNo: dto.inquiryCode,
         inquiryDate: inquiry?.inquiryDate.toISOString().slice(0, 10) ?? null,

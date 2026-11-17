@@ -90,6 +90,7 @@ export const TENANT_OWNED_MODELS = [
   'InquiryRateCharge',
   'InquiryVolume',
   'NotificationSetting',
+  'BusinessProfile', // owner, 2026-11-17: Settings → Business Settings
   'RateLocalCharge',
   'RateProfitLog',
   'Role',

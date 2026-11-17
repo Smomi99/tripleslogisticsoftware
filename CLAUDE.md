@@ -139,7 +139,19 @@ industry_sector       (Table_Commodity_Class)
 
 commodity_item        (Table_Industry_Sector_Item_List)   [child of industry_sector]
   id, industry_sector_id FK, name, hs_code
+
+business_profile      (no client table — owner request, 2026-11-17)   [one row per workspace]
+  business_name, address (≤ 4 lines), phone, email, website,
+  bin_no, tin_no, trade_licence_no, logo_file
 ```
+
+**Business Settings** (`/setting/business`, `SETTING.BUSINESS` VIEW/EDIT) is the letterhead every
+printed document reads through `apps/api/src/lib/letterhead.ts`: the name and logo on all of them,
+and on the quotation, debit invoice, money receipt, shipping order, shipment advise and delivery
+order the address, a contact line and a registration line under the name. Only the name is
+required; a blank detail prints nothing. Its own table, not columns on `tenant`, because `tenant` is
+platform-owned; until a workspace first saves, documents fall back to `tenant.name` and
+`tenant.logo_file`. The bill of lading and air waybill keep their fixed layouts (name and logo).
 
 `Workstation` and `Warehouse` appear on the menu but have **no wireframe** — do not invent them;
 flag and ask.
