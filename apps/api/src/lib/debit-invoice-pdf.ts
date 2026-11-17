@@ -1,5 +1,7 @@
 import PDFDocument from 'pdfkit';
 
+import { drawLetterheadDetails } from './letterhead-pdf';
+
 /**
  * The Debit Invoice document — docs/MODULE_ACCOUNTS.md §9, what `Print` and
  * `Save & Send` put in front of the customer (sheet D64, C64).
@@ -16,8 +18,13 @@ import PDFDocument from 'pdfkit';
  */
 
 export interface DebitInvoicePdfInput {
-  /** The letterhead is the name and logo; the email signature is never printed (2026-10-21). */
+  /** The email signature is never printed (2026-10-21). */
   companyName: string;
+  /**
+   * Settings → Business Settings: the address, contact and registration lines
+   * under the name (owner, 2026-11-17). Empty prints the name alone.
+   */
+  companyDetails: string[];
   logo: Buffer | null;
 
   invoiceNo: string;
@@ -127,6 +134,7 @@ export function renderDebitInvoicePdf(input: DebitInvoicePdfInput): Promise<Buff
       }
     }
     doc.font('Helvetica-Bold').fontSize(16).fillColor(HULL).text(input.companyName, headerX, 40);
+    drawLetterheadDetails(doc, input.companyDetails, headerX, doc.y + 2, right - headerX);
 
     let y = Math.max(doc.y, 84) + 10;
     doc.font('Helvetica-Bold').fontSize(13).fillColor(HULL).text('DEBIT NOTE', left, y, {

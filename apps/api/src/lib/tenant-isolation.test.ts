@@ -224,8 +224,9 @@ describe('model tier registry', () => {
     // + trade_lane and trade_lane_port (DESIGN-UPDATE-2026-10-28 §1)
     // + vgm and egm_document (§2)
     // + copy_document (§3)
-    // + customer_group and customer_group_member (owner, 2026-11-01).
-    expect(known.length).toBe(124);
+    // + customer_group and customer_group_member (owner, 2026-11-01)
+    // + business_profile (owner, 2026-11-17).
+    expect(known.length).toBe(125);
   });
 
   it('applies the caller row level security to every view', async () => {

@@ -1407,7 +1407,7 @@ ledgerRouter.get('/income/:id/money-receipt', requirePermission('ACCOUNTS.INCOME
           : { currencyCode: baseCode, amount: money(row.totalAmount) };
 
     const pdf = await renderMoneyReceiptPdf({
-      companyName: letterhead.companyName,
+      ...letterhead,
       logo,
       receiptNo: row.code,
       receiptDate: day(row.entryDate) ?? '',

@@ -12,6 +12,7 @@ import { CODE_RETRY_LIMIT, isUniqueViolation } from '../lib/codes';
 import { Prisma } from '../generated/prisma/client';
 import { HttpError } from '../lib/http-error';
 import { nextShippingOrderNo, seriesYearOf } from '../lib/inquiry-no';
+import { letterheadOf } from '../lib/letterhead';
 import { parseId } from '../lib/request';
 import { renderShippingOrderPdf } from '../lib/shipping-order-pdf';
 import { transitionShipment } from '../lib/shipment-status';
@@ -434,12 +435,10 @@ shippingOrderRouter.get(
         },
       });
 
-      // §5.4 rule 4: the tenant's own letterhead — its name. The email
-      // signature is never printed (client, 2026-10-21).
-      const tenant = await db.tenant.findFirst({
-        where: { id: auth.tenantId },
-        select: { name: true },
-      });
+      // §5.4 rule 4: the tenant's own letterhead — its name, address and
+      // details from Business Settings. The email signature is never printed
+      // (client, 2026-10-21).
+      const letterhead = await letterheadOf(db, auth.tenantId);
 
       const sum = (pick: (l: (typeof lines)[number]) => unknown, dp: number): string => {
         let total = 0;
@@ -449,7 +448,7 @@ shippingOrderRouter.get(
 
       const isAir = shipment.shipmentType === 'AIR';
       const pdfBuffer = await renderShippingOrderPdf({
-        companyName: tenant?.name ?? 'Freight Forwarder',
+        ...letterhead,
         soNo: so.code,
         bookingNo: shipment.code,
         quotationNo: shipment.quotation.code,

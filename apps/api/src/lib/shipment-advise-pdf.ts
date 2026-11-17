@@ -1,5 +1,7 @@
 import PDFDocument from 'pdfkit';
 
+import { drawLetterheadDetails } from './letterhead-pdf';
+
 /**
  * The Shipment Advise document — docs/MODULE_DOCUMENTATION.md §2.1, §2.2.
  *
@@ -8,12 +10,19 @@ import PDFDocument from 'pdfkit';
  * with its totals row, then the numbers the customer will quote back at you.
  *
  * The company name arrives as data, like the shipping order's — nothing about
- * one forwarder is written into this file. The letterhead stops at the name:
- * the email signature block is printed on no document (client, 2026-10-21).
+ * one forwarder is written into this file. Under the name, the address,
+ * contact and registration lines from Settings → Business Settings
+ * (2026-11-17); the email signature block is printed on no document (client,
+ * 2026-10-21).
  */
 
 export interface ShipmentAdvisePdfInput {
   companyName: string;
+  /**
+   * Settings → Business Settings: the address, contact and registration lines
+   * under the name (owner, 2026-11-17). Empty prints the name alone.
+   */
+  companyDetails: string[];
 
   adviseNo: string;
   /** CR-005: every booking the advise covers, comma-separated. */
@@ -85,7 +94,11 @@ export function renderShipmentAdvisePdf(input: ShipmentAdvisePdfInput): Promise<
     const width = right - left;
 
     // ---------------------------------------------------------- letterhead
-    doc.font('Helvetica-Bold').fontSize(15).fillColor(HULL).text(input.companyName, left, 40);
+    doc.font('Helvetica-Bold').fontSize(15).fillColor(HULL).text(input.companyName, left, 40, {
+      width: width - 200,
+    });
+    // Short of the house and master numbers on the right.
+    const detailsEnd = drawLetterheadDetails(doc, input.companyDetails, left, doc.y + 2, width - 200);
 
     // The two numbers this page exists to carry, where the eye lands first.
     doc
@@ -113,11 +126,11 @@ export function renderShipmentAdvisePdf(input: ShipmentAdvisePdfInput): Promise<
       .font('Helvetica-Bold')
       .fontSize(13)
       .fillColor(HULL)
-      .text(input.isAir ? 'SHIPMENT ADVISE - AIR' : 'SHIPMENT ADVISE', left, 92, {
+      .text(input.isAir ? 'SHIPMENT ADVISE - AIR' : 'SHIPMENT ADVISE', left, Math.max(92, detailsEnd + 8), {
         width: width - 200,
       });
 
-    let y = 112;
+    let y = Math.max(112, doc.y + 4);
     doc.moveTo(left, y).lineTo(right, y).strokeColor(LINE).lineWidth(1).stroke();
     y += 10;
 

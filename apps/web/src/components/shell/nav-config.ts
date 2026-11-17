@@ -73,6 +73,8 @@ const ROUTES: Record<string, RouteEntry> = {
   'SALES.LOCAL_SALES': '/sales/local-sales',
   // docs/DESIGN-UPDATE-2026-10-28.md §1, Menu D10.
   'SALES.BUSINESS_MATRIX': '/sales/business-matrix',
+  // Owner request, 2026-11-17: the letterhead every printed document carries.
+  'SETTING.BUSINESS': '/setting/business',
   'SETTING.SEA_AIR_PORT': '/setting/port',
   'SETTING.COST_HEAD': '/setting/cost-head',
   'SETTING.CURRENCY': '/setting/currency',
