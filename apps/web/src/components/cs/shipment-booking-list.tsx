@@ -1,10 +1,14 @@
 'use client';
 
 import {
+  SHIPMENT_LIST_TAB_LABEL,
+  SHIPMENT_LIST_TAB_STATUSES,
+  SHIPMENT_LIST_TABS,
   SHIPMENT_STATUS_LABEL,
-  SHIPMENT_STATUSES,
   type ShipmentListRow,
+  type ShipmentListTab,
   type ShipmentStatus,
+  type ShipmentTabCountsDto,
   shipmentAction,
 } from '@ff/shared';
 import Link from 'next/link';
@@ -17,6 +21,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Input, Select } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/form-layout';
 import { Status } from '@/components/ui/status';
+import { Tabs } from '@/components/ui/tabs';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 
@@ -74,11 +79,19 @@ interface Meta {
 }
 
 export function ShipmentBookingList({ mode }: { mode: 'SEA' | 'AIR' }) {
-  const { authorizedList, can } = useSession();
+  const { authorizedList, authorizedRequest, can } = useSession();
 
   const [rows, setRows] = useState<ShipmentListRow[]>([]);
   const [meta, setMeta] = useState<Meta>({ page: 1, limit: 25, total: 0 });
   const [page, setPage] = useState(1);
+  /*
+   * Owner, 2026-11-20: two tabs — the bookings still being worked, and the
+   * cancelled ones — and a From / To on the day each booking was made.
+   */
+  const [tab, setTab] = useState<ShipmentListTab>('ACTIVE');
+  const [tabCounts, setTabCounts] = useState<ShipmentTabCountsDto | null>(null);
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
@@ -101,14 +114,18 @@ export function ShipmentBookingList({ mode }: { mode: 'SEA' | 'AIR' }) {
     let cancelled = false;
     setPending(true);
 
-    const params = new URLSearchParams({
-      page: String(page),
-      limit: '25',
-      shipmentType: mode,
-      scope,
-      sortOrder,
-    });
-    if (search !== '') params.set('search', search);
+    // The filters the tab counts share with the list: everything but the
+    // tab, the status within it, and the page.
+    const filters = new URLSearchParams({ shipmentType: mode, scope });
+    if (search !== '') filters.set('search', search);
+    if (fromDate !== '') filters.set('fromDate', fromDate);
+    if (toDate !== '') filters.set('toDate', toDate);
+
+    const params = new URLSearchParams(filters);
+    params.set('tab', tab);
+    params.set('page', String(page));
+    params.set('limit', '25');
+    params.set('sortOrder', sortOrder);
     if (status !== '') params.set('status', status);
     if (sortBy !== '') params.set('sortBy', sortBy);
 
@@ -128,19 +145,70 @@ export function ShipmentBookingList({ mode }: { mode: 'SEA' | 'AIR' }) {
         if (!cancelled) setPending(false);
       });
 
+    // Each tab's count, fetched with the list so the two never disagree. A
+    // failed count drops the numbers rather than showing stale ones.
+    void authorizedRequest<ShipmentTabCountsDto>(
+      `/api/tenant/cs/bookings/tab-counts?${filters.toString()}`,
+    )
+      .then((counts) => {
+        if (!cancelled) setTabCounts(counts);
+      })
+      .catch(() => {
+        if (!cancelled) setTabCounts(null);
+      });
+
     return () => {
       cancelled = true;
     };
-  }, [authorizedList, mode, page, scope, search, sortBy, sortOrder, status]);
+  }, [
+    authorizedList,
+    authorizedRequest,
+    fromDate,
+    mode,
+    page,
+    scope,
+    search,
+    sortBy,
+    sortOrder,
+    status,
+    tab,
+    toDate,
+  ]);
 
   const isAir = mode === 'AIR';
-  const hasFilters = search !== '' || status !== '';
+  const hasFilters = search !== '' || status !== '' || fromDate !== '' || toDate !== '';
+  // The open tab's statuses. Cancelled is one status, so it has nothing to choose.
+  const tabStatuses = SHIPMENT_LIST_TAB_STATUSES[tab];
+
+  function changeTab(next: ShipmentListTab): void {
+    setTab(next);
+    // A status belongs to one tab, so it does not travel; the page starts again.
+    setStatus('');
+    setPage(1);
+  }
+
+  function clearFilters(): void {
+    setSearchInput('');
+    setSearch('');
+    setStatus('');
+    setFromDate('');
+    setToDate('');
+    setPage(1);
+  }
 
   // CR-005: one colour per advise group, in the order the groups appear.
   const colours = useMemo(() => groupColours(rows), [rows]);
 
   const columns: DataTableColumn<ShipmentListRow>[] = useMemo(
     () => [
+      // The day the booking was made — what From / To filter on.
+      {
+        id: 'bookingDate',
+        header: 'Booking Date',
+        numeric: true,
+        sortable: true,
+        cell: (r) => r.bookingDate,
+      },
       {
         id: 'quotationCode',
         header: 'Quotation No',
@@ -200,8 +268,19 @@ export function ShipmentBookingList({ mode }: { mode: 'SEA' | 'AIR' }) {
         description="Bookings raised against an accepted quotation, and what each one is waiting on."
       />
 
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="flex w-full flex-col gap-1 sm:w-72">
+      <Tabs
+        label="Booking status"
+        value={tab}
+        onChange={changeTab}
+        tabs={SHIPMENT_LIST_TABS.map((t) => ({
+          id: t,
+          label: SHIPMENT_LIST_TAB_LABEL[t],
+          count: tabCounts?.[t],
+        }))}
+      />
+
+      <div className="grid grid-cols-2 items-end gap-3 sm:flex sm:flex-wrap">
+        <div className="col-span-2 flex flex-col gap-1 sm:w-72">
           <span className="label-field">Search</span>
           <Input
             type="search"
@@ -211,27 +290,56 @@ export function ShipmentBookingList({ mode }: { mode: 'SEA' | 'AIR' }) {
             onChange={(e) => setSearchInput(e.target.value)}
           />
         </div>
-        <div className="flex min-w-0 flex-1 flex-col gap-1 sm:w-52 sm:flex-none">
-          <span className="label-field">Status</span>
-          <Select
-            aria-label="Filter by status"
-            value={status}
+        {/* The booking date, both days included. */}
+        <label className="flex min-w-0 flex-col gap-1 sm:w-40">
+          <span className="label-field">From</span>
+          <Input
+            type="date"
+            numeric
+            value={fromDate}
+            max={toDate === '' ? undefined : toDate}
             onChange={(e) => {
-              setStatus(e.target.value);
+              setFromDate(e.target.value);
               setPage(1);
             }}
-          >
-            <option value="">All</option>
-            {SHIPMENT_STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {SHIPMENT_STATUS_LABEL[s]}
-              </option>
-            ))}
-          </Select>
-        </div>
+          />
+        </label>
+        <label className="flex min-w-0 flex-col gap-1 sm:w-40">
+          <span className="label-field">To</span>
+          <Input
+            type="date"
+            numeric
+            value={toDate}
+            min={fromDate === '' ? undefined : fromDate}
+            onChange={(e) => {
+              setToDate(e.target.value);
+              setPage(1);
+            }}
+          />
+        </label>
+        {tabStatuses.length > 1 && (
+          <div className="flex min-w-0 flex-col gap-1 sm:w-52">
+            <span className="label-field">Status</span>
+            <Select
+              aria-label="Filter by status"
+              value={status}
+              onChange={(e) => {
+                setStatus(e.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="">All</option>
+              {tabStatuses.map((s) => (
+                <option key={s} value={s}>
+                  {SHIPMENT_STATUS_LABEL[s]}
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
         {/* §7's VIEW_ALL. Hidden from anyone who only ever sees their own. */}
         {can('CUSTOMER_SERVICE.CARGO_BOOKING.VIEW_ALL') && (
-          <div className="flex min-w-0 flex-1 flex-col gap-1 sm:w-44 sm:flex-none">
+          <div className="flex min-w-0 flex-col gap-1 sm:w-44">
             <span className="label-field">Show</span>
             <Select
               aria-label="Filter by owner"
@@ -245,6 +353,11 @@ export function ShipmentBookingList({ mode }: { mode: 'SEA' | 'AIR' }) {
               <option value="OWN">Mine</option>
             </Select>
           </div>
+        )}
+        {hasFilters && (
+          <Button variant="secondary" onClick={clearFilters} className="col-span-2">
+            Clear filters
+          </Button>
         )}
       </div>
 
@@ -324,20 +437,18 @@ export function ShipmentBookingList({ mode }: { mode: 'SEA' | 'AIR' }) {
         empty={
           hasFilters ? (
             <EmptyState
-              title="No bookings match that search"
-              description="Try a different term, or clear the filters to see them all."
+              title="No bookings match those filters"
+              description="Try a different term or a wider date range, or clear the filters to see them all."
               action={
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    setSearchInput('');
-                    setStatus('');
-                    setPage(1);
-                  }}
-                >
+                <Button variant="secondary" onClick={clearFilters}>
                   Clear filters
                 </Button>
               }
+            />
+          ) : tab === 'CANCELLED' ? (
+            <EmptyState
+              title={`No cancelled ${isAir ? 'air' : 'sea'} bookings`}
+              description="A booking moves here when it is cancelled. The ones still being worked are on the Active tab."
             />
           ) : (
             <EmptyState

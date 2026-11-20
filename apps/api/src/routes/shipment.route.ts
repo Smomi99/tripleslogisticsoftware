@@ -11,9 +11,13 @@ import {
   type ShipmentActivityDto,
   type ShipmentDto,
   SHIPMENT_EDITABLE,
+  SHIPMENT_LIST_TAB_STATUSES,
+  type ShipmentListQuery,
   type ShipmentListRow,
+  type ShipmentListTab,
   shipmentListQuerySchema,
   type ShipmentPrefillDto,
+  type ShipmentTabCountsDto,
   shipmentUpdateSchema,
 } from '@ff/shared';
 
@@ -29,6 +33,7 @@ import { parseId, parseRefId } from '../lib/request';
 import { shipmentActivities } from '../lib/shipment-activity';
 import { transitionShipment } from '../lib/shipment-status';
 import { type TenantDb, withTenant } from '../lib/tenant-client';
+import { dayIn, nextDay, startOfDayIn, tenantZoneOf } from '../lib/tenant-day';
 import { authenticate } from '../middleware/authenticate';
 import { requirePermission } from '../middleware/require-permission';
 
@@ -454,34 +459,72 @@ async function scopeFor(
  * the same table the API guards transitions with. A column the server sent
  * would be the server deciding what the operator may do next.
  */
+/**
+ * The list's filters as a where clause, for the list and its tab counts alike,
+ * so a tab's count is the number of rows the tab shows. `withStatus` false
+ * leaves out the tab and the status filter: the counts are per tab.
+ *
+ * The From / To days are the workspace's (§9: stored UTC, read in the
+ * workspace's zone), so a booking made at 01:00 in Dhaka on the 5th is on the
+ * 5th, not the 4th it was in UTC.
+ */
+async function bookingListWhere(
+  db: TenantDb,
+  auth: { userId: bigint; isSuperadmin: boolean; permissions: ReadonlySet<string> },
+  query: ShipmentListQuery,
+  zone: string,
+  withStatus: boolean,
+): Promise<Prisma.ShipmentWhereInput> {
+  const scope = await scopeFor(db, auth, query.scope);
+
+  // The tab's statuses and the status filter both apply: a status from
+  // another tab narrows the tab to nothing rather than escaping it.
+  const statuses: Prisma.ShipmentWhereInput[] = [];
+  if (withStatus && query.tab !== undefined) {
+    statuses.push({ status: { in: [...SHIPMENT_LIST_TAB_STATUSES[query.tab]] } });
+  }
+  if (withStatus && query.status !== undefined) statuses.push({ status: query.status });
+
+  const from = query.fromDate === undefined || query.fromDate === '' ? null : query.fromDate;
+  const to = query.toDate === undefined || query.toDate === '' ? null : query.toDate;
+  const bookedOn: Prisma.DateTimeFilter = {
+    ...(from === null ? {} : { gte: startOfDayIn(from, zone) }),
+    // To is the whole of its day: before the next one starts.
+    ...(to === null ? {} : { lt: startOfDayIn(nextDay(to), zone) }),
+  };
+
+  return {
+    deletedAt: null,
+    ...scope,
+    ...(statuses.length > 0 ? { AND: statuses } : {}),
+    ...(query.shipmentType === undefined ? {} : { shipmentType: query.shipmentType }),
+    ...(query.isActive === undefined ? {} : { isActive: query.isActive }),
+    ...(from === null && to === null ? {} : { createdAt: bookedOn }),
+    // §8's Search box, over the two numbers on the row and the customer —
+    // which is what an operator has in their hand when they come looking.
+    ...(query.search === undefined
+      ? {}
+      : {
+          OR: [
+            { code: { contains: query.search, mode: 'insensitive' } },
+            { quotation: { code: { contains: query.search, mode: 'insensitive' } } },
+            { customer: { name: { contains: query.search, mode: 'insensitive' } } },
+            { exporterName: { contains: query.search, mode: 'insensitive' } },
+          ],
+        }),
+  };
+}
+
 shipmentRouter.get('/bookings', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
   const auth = req.auth!;
   const query = shipmentListQuerySchema.parse(req.query);
 
-  const { rows, total, efrs, groups } = await withTenant(auth.tenantId, async (db) => {
-    const scope = await scopeFor(db, auth, query.scope);
-
-    const where: Prisma.ShipmentWhereInput = {
-      deletedAt: null,
-      ...scope,
-      ...(query.shipmentType === undefined ? {} : { shipmentType: query.shipmentType }),
-      ...(query.status === undefined ? {} : { status: query.status }),
-      ...(query.isActive === undefined ? {} : { isActive: query.isActive }),
-      // §8's Search box, over the two numbers on the row and the customer —
-      // which is what an operator has in their hand when they come looking.
-      ...(query.search === undefined
-        ? {}
-        : {
-            OR: [
-              { code: { contains: query.search, mode: 'insensitive' } },
-              { quotation: { code: { contains: query.search, mode: 'insensitive' } } },
-              { customer: { name: { contains: query.search, mode: 'insensitive' } } },
-              { exporterName: { contains: query.search, mode: 'insensitive' } },
-            ],
-          }),
-    };
+  const { rows, total, efrs, groups, dayOf } = await withTenant(auth.tenantId, async (db) => {
+    const zone = await tenantZoneOf(db, auth.tenantId);
+    const where = await bookingListWhere(db, auth, query, zone, true);
 
     const sortable: Record<string, Prisma.ShipmentOrderByWithRelationInput> = {
+      bookingDate: { createdAt: query.sortOrder },
       code: { code: query.sortOrder },
       etd: { etd: query.sortOrder },
       eta: { eta: query.sortOrder },
@@ -501,6 +544,7 @@ shipmentRouter.get('/bookings', requirePermission(`${FEATURE}.VIEW`), async (req
         select: {
           id: true,
           code: true,
+          createdAt: true,
           shipmentType: true,
           status: true,
           transitType: true,
@@ -553,6 +597,7 @@ shipmentRouter.get('/bookings', requirePermission(`${FEATURE}.VIEW`), async (req
       total: count,
       efrs: await efrsOfBookings(db, ids),
       groups: await efrGroupTags(db, ids),
+      dayOf: dayIn(zone),
     };
   });
 
@@ -560,6 +605,7 @@ shipmentRouter.get('/bookings', requirePermission(`${FEATURE}.VIEW`), async (req
     id: row.id.toString(),
     quotationCode: row.quotation.code,
     code: row.code,
+    bookingDate: dayOf(row.createdAt),
     customerName: row.customer.name,
     commodity:
       row.commodities.map((c) => c.commodityItem.name).join(', ') || '—',
@@ -584,6 +630,33 @@ shipmentRouter.get('/bookings', requirePermission(`${FEATURE}.VIEW`), async (req
     data,
     meta: buildMeta(query.page, query.limit, total),
   };
+  res.json(payload);
+});
+
+/**
+ * GET /bookings/tab-counts — how many bookings the Active and Cancelled tabs
+ * hold under the list's other filters: the mode, the search, the dates, whose.
+ * The status filter is left out, as it is a choice within one tab.
+ *
+ * Registered before /bookings/:id so "tab-counts" is not read as an id.
+ */
+shipmentRouter.get('/bookings/tab-counts', requirePermission(`${FEATURE}.VIEW`), async (req, res) => {
+  const auth = req.auth!;
+  const query = shipmentListQuerySchema.parse(req.query);
+
+  const counts = await withTenant(auth.tenantId, async (db) => {
+    const zone = await tenantZoneOf(db, auth.tenantId);
+    const where = await bookingListWhere(db, auth, query, zone, false);
+    return db.shipment.groupBy({ by: ['status'], where, _count: { _all: true } });
+  });
+
+  const inTab = (tab: ShipmentListTab): number =>
+    counts
+      .filter((c) => SHIPMENT_LIST_TAB_STATUSES[tab].includes(c.status))
+      .reduce((n, c) => n + c._count._all, 0);
+  const data: ShipmentTabCountsDto = { ACTIVE: inTab('ACTIVE'), CANCELLED: inTab('CANCELLED') };
+
+  const payload: ApiSuccess<ShipmentTabCountsDto> = { success: true, data };
   res.json(payload);
 });
 

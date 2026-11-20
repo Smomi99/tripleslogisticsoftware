@@ -472,6 +472,12 @@ export interface ShipmentListRow {
   id: string;
   quotationCode: string;
   code: string;
+  /**
+   * The day the booking was made, in the workspace's own zone — the date the
+   * list's From / To filter reads (owner, 2026-11-20), and the day the
+   * Overview counts a booking on.
+   */
+  bookingDate: string;
   customerName: string;
   /** The commodities, joined — the column is one cell wide. */
   commodity: string;
@@ -530,6 +536,41 @@ export interface EfrGroupTag {
   groupKey: string | null;
 }
 
+/**
+ * The Booking List's tabs (owner, 2026-11-20): the bookings still being
+ * worked, and the cancelled ones.
+ *
+ * Cancelled is the one status nothing follows (§5.1), so it is the only one
+ * set aside. REJECTED goes back to a new proposal and SHORT_CLOSED is cargo
+ * that did ship, so both stay Active.
+ */
+export const SHIPMENT_LIST_TABS = ['ACTIVE', 'CANCELLED'] as const;
+export type ShipmentListTab = (typeof SHIPMENT_LIST_TABS)[number];
+
+export const SHIPMENT_LIST_TAB_LABEL: Record<ShipmentListTab, string> = {
+  ACTIVE: 'Active',
+  CANCELLED: 'Cancelled',
+};
+
+export const SHIPMENT_LIST_TAB_STATUSES: Record<ShipmentListTab, readonly ShipmentStatus[]> = {
+  ACTIVE: SHIPMENT_STATUSES.filter((s) => s !== 'CANCELLED'),
+  CANCELLED: ['CANCELLED'],
+};
+
+/** How many bookings each tab holds under the list's other filters. */
+export type ShipmentTabCountsDto = Record<ShipmentListTab, number>;
+
+/** A From / To day, or blank for no bound. A day that does not parse is refused, not read as no bound. */
+const listDay = z
+  .union([
+    z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Use the date picker.')
+      .refine((v) => !Number.isNaN(Date.parse(`${v}T00:00:00Z`)), 'Use the date picker.'),
+    z.literal(''),
+  ])
+  .optional();
+
 export const shipmentListQuerySchema = listQuerySchema.extend({
   /**
    * §3 splits the menu into Shipment Booking - Sea and - Air. One screen, one
@@ -537,6 +578,11 @@ export const shipmentListQuerySchema = listQuerySchema.extend({
    */
   shipmentType: z.enum(SHIPMENT_TYPES).optional(),
   status: z.enum(SHIPMENT_STATUSES).optional(),
+  /** One tab's statuses; the status filter narrows within it. No tab is every booking. */
+  tab: z.enum(SHIPMENT_LIST_TABS).optional(),
+  /** The booking date, both ends included. */
+  fromDate: listDay,
+  toDate: listDay,
   /** §7's VIEW_ALL: your own bookings by default, the team's with it. */
   scope: z.enum(['OWN', 'ALL']).default('ALL'),
 });

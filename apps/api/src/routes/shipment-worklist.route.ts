@@ -500,7 +500,7 @@ function handler(worklist: ShipmentWorklistId) {
     const wanted: ShipmentStatus[] =
       query.status !== undefined ? [query.status] : [...view.statuses];
 
-    const { rows, total, details, byStatus, efrs, groups } = await withTenant(auth.tenantId, async (db) => {
+    const { rows, total, details, byStatus, efrs, groups, dayOf } = await withTenant(auth.tenantId, async (db) => {
       /*
        * No ownership scope here, deliberately — the one place a worklist
        * departs from the Booking List.
@@ -559,6 +559,7 @@ function handler(worklist: ShipmentWorklistId) {
           select: {
             id: true,
             code: true,
+            createdAt: true,
             shipmentType: true,
             status: true,
             transitType: true,
@@ -619,7 +620,15 @@ function handler(worklist: ShipmentWorklistId) {
       const ids = found.map((r) => r.id);
       const efrNos = await efrsOfBookings(db, ids);
       const groupTags = await efrGroupTags(db, ids);
-      return { rows: found, total: counted, details: detail, byStatus, efrs: efrNos, groups: groupTags };
+      return {
+        rows: found,
+        total: counted,
+        details: detail,
+        byStatus,
+        efrs: efrNos,
+        groups: groupTags,
+        dayOf: await tenantDayOf(db, auth.tenantId),
+      };
     });
 
     const awaiting = new Set<string>(config.awaiting);
@@ -627,6 +636,7 @@ function handler(worklist: ShipmentWorklistId) {
       id: row.id.toString(),
       quotationCode: row.quotation.code,
       code: row.code,
+      bookingDate: dayOf(row.createdAt),
       customerName: row.customer.name,
       commodity: row.commodities.map((c) => c.commodityItem.name).join(', ') || '—',
       shipmentType: row.shipmentType,
