@@ -514,6 +514,46 @@ column (Inquiry List, Quotation List, Shipment Booking, Shipment status, Financi
 the Agent column's three new items are a portal-sized piece of work with no wireframes in this
 workbook — §12 Q7. The user-kind plumbing above is built once and carries all of them.
 
+### 7.4 My Shipments tabs — built 2026-11-26 (owner request)
+
+The customer's My Shipments page (`/portal/shipment`) is now nine tabs, each listing the signed-in
+customer's own records of one kind: **Inquiry · Quotation · Booking · Awaiting approval · Shipping
+Order · Cargo Receipt · Shipment Advise · BL · Invoice**. Owner's answers: a tab per kind of
+record (a booking appears in several as it moves); Awaiting approval is **view only** (C/S still
+decides on Shipment Approval); each issued document has **Print**.
+
+| Tab | Shows | Print | Permission |
+|---|---|---|---|
+| Inquiry | all their inquiries; RFQ_SENT / PRICED / OPEN read as "In progress" | — | `CUSTOMER.INQUIRY` |
+| Quotation | every revision **sent** to them (never a draft) | the quotation PDF | `CUSTOMER.QUOTATION` |
+| Booking | their bookings | — | `CUSTOMER.SHIPMENT` |
+| Awaiting approval | bookings in `VESSEL_PROPOSED`: leg 1 voyage/flight, cut-off, ETD/ETA, PO counts | — | `CUSTOMER.APPROVAL` |
+| Shipping Order | ISSUED and CANCELLED (not SKIPPED) | issued only | `CUSTOMER.SHIPPING_ORDER` |
+| Cargo Receipt | CONFIRMED receipts, accepted lines summed | — | `CUSTOMER.CARGO_RECEIPT` |
+| Shipment Advise | SENT and cancelled-after-sending | sent only | `CUSTOMER.ADVISE` |
+| BL | one row per sent advise: draft status, issue date; opens the §2.4 draft | **copy only**, once issued | `CUSTOMER.BL_DRAFT` |
+| Invoice | ISSUED and CANCELLED debit invoices (never a draft) | issued only | `CUSTOMER.INVOICE` |
+
+**Database** (migration `20261126100000_customer_portal_tabs`). `customer_read` policies open
+`inquiry`, `quotation`, `shipment_schedule`, `shipment_schedule_leg`, `shipment_po`,
+`shipping_order`, `cargo_receipt`, `cargo_receipt_line` and `debit_invoice` to the customer's own
+rows, with the state gates above **in the policy**, not only in the view. One
+`security_invoker` view per tab (`customer_*_v`) names the columns a customer may see; the
+portal reads only the views. Still closed: every priced-line and cost table, carrier, vessel,
+CLP, rates, users, audit.
+
+**Printing** runs in two sessions (`printOwned` in `customer-portal.route.ts`): the customer
+session proves through the view that the document is theirs and printable, then a staff session
+renders that one id with the staff renderer, which needs letterhead, carrier, bank and line
+tables no customer session may read. Renderers write nothing.
+
+**Rollout.** The migration grants every new permission to each role (and each user ALLOW) that
+already holds `CUSTOMER.SHIPMENT.VIEW`, so existing customer logins see the tabs at once. Untick
+a tab on the Roles matrix to hide it.
+
+Tests: `routes/customer-portal.test.ts` (two customers in one workspace plus a second workspace,
+through sign-in), `lib/customer-rls.test.ts`, and the view pin in `lib/tenant-isolation.test.ts`.
+
 ---
 
 ## 8. API

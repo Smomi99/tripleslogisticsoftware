@@ -246,9 +246,19 @@ describe('model tier registry', () => {
     expect(views.map((v) => v.viewname)).toEqual([
       'agent_inquiry_v',
       'agent_inquiry_volume_v',
+      // The tabs on the customer's My Shipments page (owner, 2026-11-26),
+      // each naming the columns a customer may see of their own rows.
+      'customer_advise_v',
+      'customer_approval_v',
+      'customer_bill_v',
+      'customer_cargo_receipt_v',
+      'customer_inquiry_v',
+      'customer_invoice_v',
+      'customer_quotation_v',
       // CR-004 §5.4: the customer's own bookings, without the salesman, the
       // quotation or the forwarder's notes that sit on the same row.
       'customer_shipment_v',
+      'customer_shipping_order_v',
     ]);
     for (const view of views) {
       expect(view.invoker, view.viewname).toBe('true');

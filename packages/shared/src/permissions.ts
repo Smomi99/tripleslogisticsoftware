@@ -370,6 +370,57 @@ export const FEATURES: readonly FeatureDefinition[] = [
    * and the first of the Menu sheet's Customer column (§2.5) to be built.
    */
   { module: 'CUSTOMER', feature: 'CUSTOMER.SHIPMENT', label: 'My Shipments', actions: ['VIEW', 'EXPORT'] },
+  /*
+   * The tabs on My Shipments (owner, 2026-11-26). One feature per tab, so the
+   * forwarder can show a customer's clerk the bookings and not the invoices.
+   * Child screens: each is a tab on /portal/shipment, with no sidebar entry.
+   * Read only — Awaiting approval shows the proposal, the C/S team still
+   * decides it — and EXPORT_PDF prints what the forwarder already issued.
+   * The BL tab is CUSTOMER.BL_DRAFT, above.
+   */
+  { module: 'CUSTOMER', feature: 'CUSTOMER.INQUIRY', label: 'My Inquiries', actions: ['VIEW'], childScreen: true },
+  {
+    module: 'CUSTOMER',
+    feature: 'CUSTOMER.QUOTATION',
+    label: 'My Quotations',
+    actions: ['VIEW', 'EXPORT_PDF'],
+    childScreen: true,
+  },
+  {
+    module: 'CUSTOMER',
+    feature: 'CUSTOMER.APPROVAL',
+    label: 'My Awaiting Approval',
+    actions: ['VIEW'],
+    childScreen: true,
+  },
+  {
+    module: 'CUSTOMER',
+    feature: 'CUSTOMER.SHIPPING_ORDER',
+    label: 'My Shipping Orders',
+    actions: ['VIEW', 'EXPORT_PDF'],
+    childScreen: true,
+  },
+  {
+    module: 'CUSTOMER',
+    feature: 'CUSTOMER.CARGO_RECEIPT',
+    label: 'My Cargo Receipts',
+    actions: ['VIEW'],
+    childScreen: true,
+  },
+  {
+    module: 'CUSTOMER',
+    feature: 'CUSTOMER.ADVISE',
+    label: 'My Shipment Advises',
+    actions: ['VIEW', 'EXPORT_PDF'],
+    childScreen: true,
+  },
+  {
+    module: 'CUSTOMER',
+    feature: 'CUSTOMER.INVOICE',
+    label: 'My Invoices',
+    actions: ['VIEW', 'EXPORT_PDF'],
+    childScreen: true,
+  },
   // The client's FOB Sales Lead Form, 2026-10-26 (docs/SALES_LEAD_FOB.md). The
   // menu reads "Sales Lead-FOB" and "Sales Lead follow up"; the keys keep their
   // original names so roles already granted them keep working.

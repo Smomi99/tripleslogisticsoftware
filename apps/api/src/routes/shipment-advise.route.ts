@@ -271,7 +271,7 @@ async function rebuild(
   await writeLines(db, args.tenantId, args.adviseId, args.userId, lines);
 }
 
-async function loadById(db: TenantDb, id: bigint): Promise<AdviseRow> {
+export async function loadById(db: TenantDb, id: bigint): Promise<AdviseRow> {
   const row = await db.shipmentAdvise.findFirst({ where: { id, deletedAt: null }, ...adviseArgs });
   if (row === null) throw HttpError.notFound('Shipment advise not found.');
   return row;

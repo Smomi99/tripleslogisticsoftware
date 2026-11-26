@@ -394,10 +394,105 @@ shippingOrderRouter.post(
 );
 
 /**
- * GET /bookings/:id/shipping-order/pdf — §6.6's print-ready document.
+ * The printed shipping order — §6.6's print-ready document.
  *
  * §5.4 rule 4: the letterhead comes from tenant settings, never hardcoded.
+ * Prints the booking's issued order, or the one named by `soId` when the
+ * caller is holding a particular row (the customer portal lists them).
  */
+export async function shippingOrderDocument(
+  db: TenantDb,
+  tenantId: bigint,
+  shipmentId: bigint,
+  soId?: bigint,
+): Promise<{ pdf: Buffer; filename: string }> {
+  const shipment = await gather(db, shipmentId);
+  const so = await db.shippingOrder.findFirst({
+    where: { shipmentId, deletedAt: null, status: 'ISSUED', ...(soId === undefined ? {} : { id: soId }) },
+    ...soArgs,
+  });
+  if (so === null) {
+    throw HttpError.notFound('This booking has no issued shipping order to print.');
+  }
+
+  const approved = await db.shipmentPo.findMany({
+    where: { shipmentId, deletedAt: null, approvalStatus: 'APPROVED' },
+    select: { id: true },
+  });
+  const lines = await db.shipmentCargoLine.findMany({
+    where: { shipmentId, deletedAt: null, shipmentPoId: { in: approved.map((p) => p.id) } },
+    orderBy: [{ shipmentPoId: 'asc' }, { id: 'asc' }],
+    select: {
+      itemCode: true,
+      sku: true,
+      ctnQty: true,
+      pcsQty: true,
+      netWeightKg: true,
+      grossWeightKg: true,
+      volumeCbm: true,
+      chargeableWtKg: true,
+      shipmentPo: { select: { poNo: true } },
+    },
+  });
+
+  // §5.4 rule 4: the tenant's own letterhead — its name, address and
+  // details from Business Settings. The email signature is never printed
+  // (client, 2026-10-21).
+  const letterhead = await letterheadOf(db, tenantId);
+
+  const sum = (pick: (l: (typeof lines)[number]) => unknown, dp: number): string => {
+    let total = 0;
+    for (const line of lines) total += Number(pick(line) ?? 0);
+    return total.toFixed(dp);
+  };
+
+  const isAir = shipment.shipmentType === 'AIR';
+  const pdfBuffer = await renderShippingOrderPdf({
+    ...letterhead,
+    soNo: so.code,
+    bookingNo: shipment.code,
+    quotationNo: shipment.quotation.code,
+    issueDate: day(so.issueDate) ?? '',
+    qrPayload: so.qrPayload ?? so.code,
+    customerName: shipment.customer.name,
+    exporterName: shipment.exporterName,
+    exporterAddress: shipment.exporterAddress,
+    importerName: shipment.importerName,
+    importerAddress: shipment.importerAddress,
+    isAir,
+    carrierName: shipment.carrier.name,
+    firstVesselOrFlight: isAir ? so.firstFlightNo : so.firstVesselName,
+    polName: shipment.pol.name,
+    podName: shipment.pod.name,
+    cutOff: stamp(so.cutOff),
+    etd: stamp(so.etd),
+    eta: stamp(so.eta),
+    warehouseCfs: so.warehouseCfs,
+    lines: lines.map((l) => ({
+      poNo: l.shipmentPo.poNo,
+      itemCode: l.itemCode,
+      sku: l.sku,
+      ctnQty: l.ctnQty,
+      pcsQty: l.pcsQty,
+      netWeightKg: l.netWeightKg?.toString() ?? null,
+      grossWeightKg: l.grossWeightKg?.toString() ?? null,
+      volumeCbm: l.volumeCbm?.toString() ?? null,
+      chargeableWtKg: l.chargeableWtKg?.toString() ?? null,
+    })),
+    totals: {
+      ctnQty: lines.reduce((n, l) => n + l.ctnQty, 0),
+      pcsQty: lines.reduce((n, l) => n + (l.pcsQty ?? 0), 0),
+      netWeightKg: sum((l) => l.netWeightKg, 3),
+      grossWeightKg: sum((l) => l.grossWeightKg, 3),
+      volumeCbm: sum((l) => l.volumeCbm, 4),
+      chargeableWtKg: sum((l) => l.chargeableWtKg, 3),
+    },
+  });
+
+  return { pdf: pdfBuffer, filename: `${so.code}.pdf` };
+}
+
+/** GET /bookings/:id/shipping-order/pdf — §6.6's print-ready document. */
 shippingOrderRouter.get(
   '/bookings/:id/shipping-order/pdf',
   requirePermission(`${FEATURE}.EXPORT_PDF`),
@@ -405,95 +500,12 @@ shippingOrderRouter.get(
     const auth = req.auth!;
     const shipmentId = parseId(req.params.id, 'booking');
 
-    const { pdf, code } = await withTenant(auth.tenantId, async (db) => {
-      const shipment = await gather(db, shipmentId);
-      const so = await db.shippingOrder.findFirst({
-        where: { shipmentId, deletedAt: null, status: 'ISSUED' },
-        ...soArgs,
-      });
-      if (so === null) {
-        throw HttpError.notFound('This booking has no issued shipping order to print.');
-      }
-
-      const approved = await db.shipmentPo.findMany({
-        where: { shipmentId, deletedAt: null, approvalStatus: 'APPROVED' },
-        select: { id: true },
-      });
-      const lines = await db.shipmentCargoLine.findMany({
-        where: { shipmentId, deletedAt: null, shipmentPoId: { in: approved.map((p) => p.id) } },
-        orderBy: [{ shipmentPoId: 'asc' }, { id: 'asc' }],
-        select: {
-          itemCode: true,
-          sku: true,
-          ctnQty: true,
-          pcsQty: true,
-          netWeightKg: true,
-          grossWeightKg: true,
-          volumeCbm: true,
-          chargeableWtKg: true,
-          shipmentPo: { select: { poNo: true } },
-        },
-      });
-
-      // §5.4 rule 4: the tenant's own letterhead — its name, address and
-      // details from Business Settings. The email signature is never printed
-      // (client, 2026-10-21).
-      const letterhead = await letterheadOf(db, auth.tenantId);
-
-      const sum = (pick: (l: (typeof lines)[number]) => unknown, dp: number): string => {
-        let total = 0;
-        for (const line of lines) total += Number(pick(line) ?? 0);
-        return total.toFixed(dp);
-      };
-
-      const isAir = shipment.shipmentType === 'AIR';
-      const pdfBuffer = await renderShippingOrderPdf({
-        ...letterhead,
-        soNo: so.code,
-        bookingNo: shipment.code,
-        quotationNo: shipment.quotation.code,
-        issueDate: day(so.issueDate) ?? '',
-        qrPayload: so.qrPayload ?? so.code,
-        customerName: shipment.customer.name,
-        exporterName: shipment.exporterName,
-        exporterAddress: shipment.exporterAddress,
-        importerName: shipment.importerName,
-        importerAddress: shipment.importerAddress,
-        isAir,
-        carrierName: shipment.carrier.name,
-        firstVesselOrFlight: isAir ? so.firstFlightNo : so.firstVesselName,
-        polName: shipment.pol.name,
-        podName: shipment.pod.name,
-        cutOff: stamp(so.cutOff),
-        etd: stamp(so.etd),
-        eta: stamp(so.eta),
-        warehouseCfs: so.warehouseCfs,
-        lines: lines.map((l) => ({
-          poNo: l.shipmentPo.poNo,
-          itemCode: l.itemCode,
-          sku: l.sku,
-          ctnQty: l.ctnQty,
-          pcsQty: l.pcsQty,
-          netWeightKg: l.netWeightKg?.toString() ?? null,
-          grossWeightKg: l.grossWeightKg?.toString() ?? null,
-          volumeCbm: l.volumeCbm?.toString() ?? null,
-          chargeableWtKg: l.chargeableWtKg?.toString() ?? null,
-        })),
-        totals: {
-          ctnQty: lines.reduce((n, l) => n + l.ctnQty, 0),
-          pcsQty: lines.reduce((n, l) => n + (l.pcsQty ?? 0), 0),
-          netWeightKg: sum((l) => l.netWeightKg, 3),
-          grossWeightKg: sum((l) => l.grossWeightKg, 3),
-          volumeCbm: sum((l) => l.volumeCbm, 4),
-          chargeableWtKg: sum((l) => l.chargeableWtKg, 3),
-        },
-      });
-
-      return { pdf: pdfBuffer, code: so.code };
-    });
+    const { pdf, filename } = await withTenant(auth.tenantId, (db) =>
+      shippingOrderDocument(db, auth.tenantId, shipmentId),
+    );
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="${code}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
     res.send(pdf);
   },
 );

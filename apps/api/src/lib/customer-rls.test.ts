@@ -287,10 +287,23 @@ describe('the commercially sensitive tables are shut', () => {
     expect(await count('vendor')).toBe(0);
   });
 
-  it('cannot read quotations, inquiries or rates', async () => {
+  it('reads their own inquiries, and no quotation that was never sent', async () => {
+    // Opened for the My Shipments tabs (20261126100000), each to the
+    // customer's own rows. Both seeded quotations are drafts: a price nobody
+    // has committed to is not the customer's to see, even their own.
+    const inquiries = await rows('SELECT customer_id FROM inquiry');
+    expect(inquiries).toHaveLength(1);
+    expect(String(inquiries[0]?.['customer_id'])).toBe(alpha.toString());
     expect(await count('quotation')).toBe(0);
-    expect(await count('inquiry')).toBe(0);
+  });
+
+  it('cannot read rates, priced lines or the forwarder’s costs', async () => {
     expect(await count('freight_rate')).toBe(0);
+    expect(await count('quotation_line')).toBe(0);
+    expect(await count('quotation_cost')).toBe(0);
+    expect(await count('debit_invoice_line')).toBe(0);
+    expect(await count('debit_invoice_cost')).toBe(0);
+    expect(await count('vessel')).toBe(0);
   });
 
   it('cannot read the audit trail or the workspace record', async () => {
@@ -318,6 +331,29 @@ describe('the commercially sensitive tables are shut', () => {
     // without them, and neither is confidential.
     expect(await count('port')).toBeGreaterThan(0);
     expect(await count('mode')).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('a quotation opens to its customer once it is sent', () => {
+  beforeAll(async () => {
+    await owner.$executeRawUnsafe(
+      `UPDATE quotation SET status = 'SENT', sent_at = now() WHERE tenant_id = ${tenantA}`,
+    );
+    await asCustomer(tenantA, alpha);
+  });
+
+  it('reads their own sent quotation, and not the other customer’s', async () => {
+    const quotes = await rows('SELECT customer_id FROM quotation');
+    expect(quotes).toHaveLength(1);
+    expect(String(quotes[0]?.['customer_id'])).toBe(alpha.toString());
+    expect(await count('customer_quotation_v')).toBe(1);
+  });
+
+  it('cannot read the quotation through a view it was not given either', async () => {
+    // The views carry the same customer predicate as the policy beneath them.
+    await asStaff(tenantA);
+    expect(await count('customer_quotation_v')).toBe(0);
+    expect(await count('customer_inquiry_v')).toBe(0);
   });
 });
 

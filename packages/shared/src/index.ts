@@ -11,6 +11,7 @@ export * from './auth';
 export * from './business-matrix';
 export * from './business-profile';
 export * from './customer-group';
+export * from './customer-portal';
 export * from './agent';
 export * from './carrier';
 export * from './codes';

@@ -650,7 +650,7 @@ accountsRouter.put(
 // ------------------------------------------------------ Print, Send
 
 /** The document, rendered from what is stored (§9). */
-async function invoiceDocument(
+export async function invoiceDocument(
   db: TenantDb,
   tenantId: bigint,
   row: InvoiceRow,

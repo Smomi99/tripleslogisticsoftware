@@ -1524,7 +1524,7 @@ quotationRouter.post('/quotations/:id/cancel', requirePermission(`${FEATURE}.CAN
 });
 
 /**
- * GET /api/tenant/cs/quotations/:id/pdf — §6.6's document.
+ * The printed quotation — §6.6's document.
  *
  * §6.6's one structural instruction: the header "must come from the tenant, not
  * be hardcoded". So the name, the logo and the standing notes are all read from
@@ -1534,7 +1534,112 @@ quotationRouter.post('/quotations/:id/cancel', requirePermission(`${FEATURE}.CAN
  * §2.2's rule holds too: every figure printed is the one the row stored. The
  * totals, the frozen conversion rate and the words are read, never recomputed —
  * a document that disagrees with the record behind it is worse than none.
+ *
+ * Shared by staff Print and the customer portal, so the page a customer
+ * prints is the page the forwarder sent them.
  */
+export async function quotationDocument(
+  db: TenantDb,
+  tenantId: bigint,
+  row: QuotationRow,
+): Promise<{ pdf: Buffer; filename: string }> {
+  const dto = toDto(row);
+
+  // §6.6's logo, when the workspace has uploaded one.
+  const [settings, letterhead, logo, customer, inquiry] = await Promise.all([
+    db.notificationSetting.findFirst({
+      select: { quotationNotes: true },
+    }),
+    letterheadOf(db, tenantId),
+    logoOf(db, tenantId),
+    db.customer.findFirst({
+      where: { id: BigInt(dto.customerId) },
+      select: { address: true },
+    }),
+    db.inquiry.findFirst({
+      where: { id: BigInt(dto.inquiryId) },
+      select: { inquiryDate: true },
+    }),
+  ]);
+
+  const isAir = dto.shipmentType === 'AIR';
+  const pdfBuffer = await renderQuotationPdf({
+    ...letterhead,
+    logo,
+    inquiryNo: dto.inquiryCode,
+    inquiryDate: inquiry?.inquiryDate.toISOString().slice(0, 10) ?? null,
+    quotationNo: dto.code,
+    revisionNo: dto.revisionNo,
+    quotationDate: dto.quotationDate,
+    validTill: dto.validityDate,
+    customerName: dto.customerName,
+    customerAddress: customer?.address ?? null,
+    shipmentType: isAir ? 'Air' : 'Sea',
+    isAir,
+    polName: dto.polName ?? '—',
+    podName: dto.podName ?? '—',
+    goodsTypeName: dto.goodsTypeName,
+    commodity: dto.commodities.map((c) => c.commodityName).join(', ') || '—',
+    // The words, not the enum — this page goes to the customer, and
+    // "CONSOL_BOX" on a quotation is not a thing anybody would send.
+    loadingType: loadingTypeLabel(dto.loadingType),
+    tosName: dto.tosName,
+    modeName: dto.modeName,
+    carrierName: dto.carrierName,
+    firstVesselName: dto.firstVesselName,
+    transitType: dto.transitType,
+    etd: dto.etd,
+    eta: dto.eta,
+    conversionRate: dto.conversionRate,
+    localCurrencyCode: dto.localCurrencyCode ?? 'BDT',
+    printsConvertedTotal: dto.printsConvertedTotal,
+    lines: dto.lines.map((line) => ({
+      description: line.costHeadName,
+      containerSize: line.containerSizeName,
+      unit: line.unitName,
+      quantity: line.quantity,
+      sellingPrice: line.sellingPrice,
+      total: line.totalAmount,
+      currencyCode: line.currencyCode,
+    })),
+    totalUsd: dto.totalAmountUsd ?? '0.0000',
+    totalLocal: dto.totalAmountLocal ?? '0.0000',
+    totalsByCurrency: dto.totalsByCurrency,
+    totalCurrencyCode: dto.totalCurrencyCode,
+    /*
+      §5.3 rule 7 generated these words on save; printing them is reading.
+      The fallback names the same currency the total does — computing them
+      here in dollars was half of how "USD" ended up on a taka quotation.
+    */
+    amountInWords:
+      dto.amountInWords ??
+      (dto.totalCurrencyCode === null
+        ? ''
+        : amountInWords(dto.totalAmountUsd ?? '0', dto.totalCurrencyCode)),
+    notes: quotationNotes(settings?.quotationNotes),
+    cancelled: dto.status === 'CANCELLED',
+  });
+
+  return { pdf: pdfBuffer, filename: `${dto.code}.pdf` };
+}
+
+/**
+ * A quotation by id, without the staff row scope (§4 rule 10).
+ *
+ * Only for a caller that has already proven, in its own session, that it may
+ * print this quotation — the customer portal, which checks the row through
+ * customer_quotation_v first. Every staff path goes through findScoped.
+ */
+export async function loadQuotationForPrint(db: TenantDb, id: bigint): Promise<QuotationRow> {
+  const row = await db.quotation.findFirst({
+    where: { id, deletedAt: null },
+    include: QUOTATION_INCLUDE,
+  });
+  if (row === null) throw HttpError.notFound('That quotation no longer exists.');
+  return row;
+}
+
+/** GET /api/tenant/cs/quotations/:id/pdf — §6.6's document. */
 quotationRouter.get(
   '/quotations/:id/pdf',
   requirePermission(`${FEATURE}.EXPORT_PDF`),
@@ -1542,91 +1647,13 @@ quotationRouter.get(
     const auth = req.auth!;
     const id = parseId(req.params.id, 'quotation');
 
-    const { pdf, code } = await withTenant(auth.tenantId, async (db) => {
+    const { pdf, filename } = await withTenant(auth.tenantId, async (db) =>
       // Scoped like every other read of a quotation (§4 rule 10's row scope).
-      const row = await findScoped(db, auth, id);
-      const dto = toDto(row);
-
-      // §6.6's logo, when the workspace has uploaded one.
-      const [settings, letterhead, logo, customer, inquiry] = await Promise.all([
-        db.notificationSetting.findFirst({
-          select: { quotationNotes: true },
-        }),
-        letterheadOf(db, auth.tenantId),
-        logoOf(db, auth.tenantId),
-        db.customer.findFirst({
-          where: { id: BigInt(dto.customerId) },
-          select: { address: true },
-        }),
-        db.inquiry.findFirst({
-          where: { id: BigInt(dto.inquiryId) },
-          select: { inquiryDate: true },
-        }),
-      ]);
-
-      const isAir = dto.shipmentType === 'AIR';
-      const pdfBuffer = await renderQuotationPdf({
-        ...letterhead,
-        logo,
-        inquiryNo: dto.inquiryCode,
-        inquiryDate: inquiry?.inquiryDate.toISOString().slice(0, 10) ?? null,
-        quotationNo: dto.code,
-        revisionNo: dto.revisionNo,
-        quotationDate: dto.quotationDate,
-        validTill: dto.validityDate,
-        customerName: dto.customerName,
-        customerAddress: customer?.address ?? null,
-        shipmentType: isAir ? 'Air' : 'Sea',
-        isAir,
-        polName: dto.polName ?? '—',
-        podName: dto.podName ?? '—',
-        goodsTypeName: dto.goodsTypeName,
-        commodity: dto.commodities.map((c) => c.commodityName).join(', ') || '—',
-        // The words, not the enum — this page goes to the customer, and
-        // "CONSOL_BOX" on a quotation is not a thing anybody would send.
-        loadingType: loadingTypeLabel(dto.loadingType),
-        tosName: dto.tosName,
-        modeName: dto.modeName,
-        carrierName: dto.carrierName,
-        firstVesselName: dto.firstVesselName,
-        transitType: dto.transitType,
-        etd: dto.etd,
-        eta: dto.eta,
-        conversionRate: dto.conversionRate,
-        localCurrencyCode: dto.localCurrencyCode ?? 'BDT',
-        printsConvertedTotal: dto.printsConvertedTotal,
-        lines: dto.lines.map((line) => ({
-          description: line.costHeadName,
-          containerSize: line.containerSizeName,
-          unit: line.unitName,
-          quantity: line.quantity,
-          sellingPrice: line.sellingPrice,
-          total: line.totalAmount,
-          currencyCode: line.currencyCode,
-        })),
-        totalUsd: dto.totalAmountUsd ?? '0.0000',
-        totalLocal: dto.totalAmountLocal ?? '0.0000',
-        totalsByCurrency: dto.totalsByCurrency,
-        totalCurrencyCode: dto.totalCurrencyCode,
-        /*
-          §5.3 rule 7 generated these words on save; printing them is reading.
-          The fallback names the same currency the total does — computing them
-          here in dollars was half of how "USD" ended up on a taka quotation.
-        */
-        amountInWords:
-          dto.amountInWords ??
-          (dto.totalCurrencyCode === null
-            ? ''
-            : amountInWords(dto.totalAmountUsd ?? '0', dto.totalCurrencyCode)),
-        notes: quotationNotes(settings?.quotationNotes),
-        cancelled: dto.status === 'CANCELLED',
-      });
-
-      return { pdf: pdfBuffer, code: dto.code };
-    });
+      quotationDocument(db, auth.tenantId, await findScoped(db, auth, id)),
+    );
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename="${code}.pdf"`);
+    res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
     res.send(pdf);
   },
 );

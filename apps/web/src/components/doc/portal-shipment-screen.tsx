@@ -1,73 +1,77 @@
 'use client';
 
 import {
-  BL_DRAFT_STATUS_LABEL,
   billTerms,
   type BlDraftDto,
   type BlDraftPrefillDto,
-  type BlDraftStatus,
   type BlTemplateDto,
-  SHIPMENT_STATUS_LABEL,
-  type ShipmentStatus,
+  type PortalBillRow,
+  PORTAL_TAB_LABEL,
+  PORTAL_TAB_PERMISSION,
+  PORTAL_TABS,
+  type PortalTab,
 } from '@ff/shared';
 import { ArrowLeft } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 
 import { BlDraftForm, type BlDraftFormValues, bodyFrom, valuesFrom } from './bl-draft-form';
+import {
+  AdviseTab,
+  ApprovalTab,
+  BillTab,
+  BookingTab,
+  CargoReceiptTab,
+  InquiryTab,
+  InvoiceTab,
+  QuotationTab,
+  ShippingOrderTab,
+} from './portal-tabs';
 import { Button } from '@/components/ui/button';
-import { DataTable, type DataTableColumn } from '@/components/ui/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
 import { backLinkClasses, PageHeader } from '@/components/ui/form-layout';
-import { Status } from '@/components/ui/status';
+import { TabPanel, Tabs } from '@/components/ui/tabs';
 import { ApiError } from '@/lib/api-client';
 import { useSession } from '@/lib/session';
 
 /**
- * The customer's own screen — docs/MODULE_DOCUMENTATION.md §2.4, §7.
+ * The customer's own screen — docs/MODULE_DOCUMENTATION.md §2.4, §7, and the
+ * tabs the owner asked for on 2026-11-26: Inquiry · Quotation · Booking ·
+ * Awaiting approval · Shipping Order · Cargo Receipt · Shipment Advise · BL ·
+ * Invoice, each the customer's own records of that kind (portal-tabs.tsx).
  *
- * Their shipments, and the BL draft on one of them. §2.5 does not put BL Draft
- * on the Customer menu, so it opens from a shipment row the way every other
- * child screen in the product does (CLAUDE.md §8), with a Back link.
+ * A tab shows only with its own permission, so a forwarder can give a
+ * customer's clerk the bookings without the invoices. The BL draft opens from
+ * a row of the BL tab as a child screen (CLAUDE.md §8), with a Back link.
  *
  * Everything this screen can reach is behind `authenticateCustomer` and
  * `withCustomer` on the server. The screen enforces nothing on its own.
  */
 
-interface PortalShipmentRow {
-  id: string;
-  code: string;
-  shipmentType: string;
-  status: ShipmentStatus;
-  exporterName: string | null;
-  importerName: string | null;
-  polName: string;
-  podName: string;
-  etd: string | null;
-  eta: string | null;
-  blDraftStatus: BlDraftStatus | null;
+/** The bill whose draft is open: which booking it hangs off, and what to call it. */
+interface OpenBill {
+  shipmentId: string;
+  blNo: string;
+  shipmentType: PortalBillRow['shipmentType'];
 }
-
-const TONE: Record<BlDraftStatus, 'active' | 'pending' | 'inactive' | 'overdue'> = {
-  DRAFT: 'pending',
-  SUBMITTED: 'pending',
-  APPROVED: 'active',
-  SENT: 'active',
-  CANCELLED: 'overdue',
-};
 
 export function PortalShipmentScreen() {
   const { authorizedRequest, authorizedObjectUrl, can } = useSession();
 
-  const [rows, setRows] = useState<PortalShipmentRow[]>([]);
-  const [openId, setOpenId] = useState<string | null>(null);
+  const visibleTabs = PORTAL_TABS.filter((t) => can(PORTAL_TAB_PERMISSION[t]));
+  const [tab, setTab] = useState<PortalTab>('BOOKING');
+  // A tab loads when first opened and stays mounted, so coming back is instant.
+  const [visited, setVisited] = useState<ReadonlySet<PortalTab>>(new Set(['BOOKING']));
+  const current = visibleTabs.includes(tab) ? tab : (visibleTabs[0] ?? 'BOOKING');
+
+  const [openBill, setOpenBill] = useState<OpenBill | null>(null);
+  const openId = openBill?.shipmentId ?? null;
   const [draft, setDraft] = useState<BlDraftDto | null>(null);
   const [values, setValues] = useState<BlDraftFormValues | null>(null);
   const [prefill, setPrefill] = useState<BlDraftPrefillDto | null>(null);
   const [templates] = useState<BlTemplateDto[]>([]);
   const [modes, setModes] = useState<{ id: string; name: string }[]>([]);
   const [isPending, setPending] = useState(false);
-  const [listPending, setListPending] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // B34 is starred on the client's sheet, so the form cannot be completed
@@ -80,19 +84,9 @@ export function PortalShipmentScreen() {
       .catch(() => setModes([]));
   }, [authorizedRequest]);
 
-  useEffect(() => {
-    void authorizedRequest<PortalShipmentRow[]>('/api/tenant/portal/shipments')
-      .then(setRows)
-      .catch((e: unknown) =>
-        setError(e instanceof ApiError ? e.message : 'Could not load your shipments.'),
-      )
-      .finally(() => setListPending(false));
-  }, [authorizedRequest]);
-
   const openDraft = useCallback(
     async (shipmentId: string) => {
       setError(null);
-      setOpenId(shipmentId);
       setDraft(null);
       setValues(null);
       setPrefill(null);
@@ -131,34 +125,10 @@ export function PortalShipmentScreen() {
     }
   }
 
-  const columns: DataTableColumn<PortalShipmentRow>[] = [
-    { id: 'type', header: 'Type', cell: (r) => (r.shipmentType === 'AIR' ? 'Air' : 'Sea') },
-    { id: 'pol', header: 'POL / AOL', cell: (r) => r.polName },
-    { id: 'pod', header: 'POD / AOD', cell: (r) => r.podName },
-    { id: 'etd', header: 'ETD', numeric: true, cell: (r) => r.etd?.slice(0, 10) ?? '—' },
-    { id: 'eta', header: 'ETA', numeric: true, cell: (r) => r.eta?.slice(0, 10) ?? '—' },
-    {
-      id: 'status',
-      header: 'Status',
-      cell: (r) => <Status tone="active">{SHIPMENT_STATUS_LABEL[r.status]}</Status>,
-    },
-    {
-      id: 'bl',
-      header: 'BL draft',
-      cell: (r) =>
-        r.blDraftStatus === null ? (
-          <span className="text-steel">—</span>
-        ) : (
-          <Status tone={TONE[r.blDraftStatus]}>{BL_DRAFT_STATUS_LABEL[r.blDraftStatus]}</Status>
-        ),
-    },
-  ];
-
-  if (openId !== null) {
+  if (openBill !== null && openId !== null) {
     const editable = draft === null || draft.status === 'DRAFT';
-    const booking = rows.find((r) => r.id === openId);
     // §14: an air booking's bill is a House Air Waybill.
-    const isAir = (draft?.shipmentType ?? prefill?.shipmentType ?? booking?.shipmentType) === 'AIR';
+    const isAir = (draft?.shipmentType ?? prefill?.shipmentType ?? openBill.shipmentType) === 'AIR';
     const terms = billTerms(isAir ? 'AIR' : 'SEA');
 
     return (
@@ -168,9 +138,10 @@ export function PortalShipmentScreen() {
           type="button"
           className={backLinkClasses}
           onClick={() => {
-            setOpenId(null);
+            setOpenBill(null);
             setDraft(null);
             setValues(null);
+            setError(null);
           }}
         >
           <ArrowLeft className="size-3.5" aria-hidden="true" />
@@ -178,7 +149,7 @@ export function PortalShipmentScreen() {
         </button>
 
         <PageHeader
-          title={`${terms.draft} — ${booking?.code ?? ''}`}
+          title={`${terms.draft} — ${openBill.blNo}`}
           description={`Fill in the ${terms.document} and submit it to your forwarder.`}
         />
 
@@ -319,52 +290,67 @@ export function PortalShipmentScreen() {
     );
   }
 
+  function choose(next: PortalTab): void {
+    setTab(next);
+    setVisited((seen) => (seen.has(next) ? seen : new Set([...seen, next])));
+  }
+
+  function panel(id: PortalTab) {
+    switch (id) {
+      case 'INQUIRY':
+        return <InquiryTab />;
+      case 'QUOTATION':
+        return <QuotationTab />;
+      case 'BOOKING':
+        return <BookingTab />;
+      case 'APPROVAL':
+        return <ApprovalTab />;
+      case 'SHIPPING_ORDER':
+        return <ShippingOrderTab />;
+      case 'CARGO_RECEIPT':
+        return <CargoReceiptTab />;
+      case 'ADVISE':
+        return <AdviseTab />;
+      case 'BL':
+        return (
+          <BillTab
+            onOpenDraft={(row) => {
+              setOpenBill({ shipmentId: row.shipmentId, blNo: row.blNo, shipmentType: row.shipmentType });
+              void openDraft(row.shipmentId);
+            }}
+          />
+        );
+      case 'INVOICE':
+        return <InvoiceTab />;
+    }
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
         title="My shipments"
-        description="Your bookings with this forwarder, and the bill of lading on each."
+        description="Your inquiries, quotations, bookings and their documents with this forwarder."
       />
 
-      {error !== null && (
-        <p
-          role="alert"
-          className="rounded-manifest border border-alert/30 bg-alert/5 px-3 py-2 text-body text-alert"
-        >
-          {error}
-        </p>
+      {visibleTabs.length > 1 && (
+        <Tabs
+          label="My shipments"
+          idBase="portal"
+          value={current}
+          onChange={choose}
+          tabs={visibleTabs.map((t) => ({ id: t, label: PORTAL_TAB_LABEL[t] }))}
+        />
       )}
 
-      <DataTable
-          columns={columns}
-          rows={rows}
-          getRowId={(r) => r.id}
-          getCode={(r) => r.code}
-          total={rows.length}
-          page={1}
-          limit={rows.length === 0 ? 25 : rows.length}
-          sortOrder="desc"
-          onSortChange={() => undefined}
-          onPageChange={() => undefined}
-          isPending={listPending}
-          empty={
-            <EmptyState
-              title="No shipments yet"
-              description="Bookings your forwarder raises for you will appear here."
-            />
-          }
-          actions={(row) =>
-            can('CUSTOMER.BL_DRAFT.VIEW') ? (
-              <button
-                type="button"
-                className="text-body text-harbour hover:underline"
-                onClick={() => void openDraft(row.id)}
-              >
-                {`${row.blDraftStatus === null ? 'Make' : 'Open'} ${billTerms(row.shipmentType === 'AIR' ? 'AIR' : 'SEA').draft}`}
-              </button>
-            ) : null
-          }
-        />
+      {visibleTabs.map((t) =>
+        // Mounted on first visit only: nine lists are nine requests, and
+        // most visits look at one or two of them.
+        t === current || visited.has(t) ? (
+          <TabPanel key={t} idBase="portal" id={t} selected={t === current}>
+            {panel(t)}
+          </TabPanel>
+        ) : null,
+      )}
     </div>
   );
 }
